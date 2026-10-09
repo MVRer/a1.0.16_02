@@ -8,6 +8,7 @@ import com.forzacode.a1016_02.world.live.EmptiedHouseCard;
 import com.forzacode.a1016_02.world.live.LightOnMountainCard;
 import com.forzacode.a1016_02.world.live.LoneLightNearBaseCard;
 import com.forzacode.a1016_02.world.live.NewScarCard;
+import com.forzacode.a1016_02.world.live.NewScarPlacer;
 import com.forzacode.a1016_02.world.live.WorldWatch;
 
 import net.fabricmc.fabric.api.biome.v1.BiomeModifications;
@@ -35,6 +36,7 @@ public final class WorldInit {
 
 	public static void init() {
 		Registry.register(BuiltInRegistries.FEATURE_TYPE, A1016_02.id("world/scars"), ScarFeature.CODEC);
+		Registry.register(BuiltInRegistries.TICKET_TYPE, A1016_02.id("world/new_scar"), NewScarPlacer.TICKET);
 		// Last in vegetal decoration: after the trees (so they can be stripped), before snow and ice.
 		BiomeModifications.addFeature(BiomeSelectors.foundInOverworld(), GenerationStep.Decoration.VEGETAL_DECORATION, SCARS);
 
@@ -56,11 +58,15 @@ public final class WorldInit {
 				A1016_02.LOGGER.warn("[a1016] world: scar snapshot not ready at start, retrying when the server runs", e);
 			}
 		});
-		ServerLifecycleEvents.SERVER_STARTED.register(ScarContext::refresh);
+		ServerLifecycleEvents.SERVER_STARTED.register(server -> {
+			ScarContext.refresh(server);
+			ScarContext.warmUp(server);
+		});
 		ServerLifecycleEvents.SERVER_STOPPING.register(WorldSites::drain);
 		ServerLifecycleEvents.SERVER_STOPPED.register(server -> {
 			ScarContext.clear();
 			WorldSites.clear();
+			NewScarPlacer.clear();
 		});
 		ServerTickEvents.END_SERVER_TICK.register(server -> {
 			if (server.getTickCount() % 100 == 0) {
@@ -68,6 +74,7 @@ public final class WorldInit {
 			}
 			WorldSites.drain(server);
 			WorldWatch.tick(server);
+			NewScarPlacer.tick(server);
 		});
 	}
 }

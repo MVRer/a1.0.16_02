@@ -63,6 +63,19 @@ public final class ScarContext {
 		long seed = server.getWorldGenSettings().options().seed();
 		current = new ScarContext(seed, salt, profile, WorldConfig.get(), ModConfig.pacing().oldScarMinFromSpawn);
 		A1016_02.LOGGER.info("[a1016] world: scar snapshot habits={} density={}", profile.habits(), profile.density());
+		warmUp(server);
+	}
+
+	/** Starts the background work for the overworld planner, once the overworld exists. Server thread. */
+	public static void warmUp(MinecraftServer server) {
+		ScarContext now = current;
+		ServerLevel overworld = server.overworld();
+		if (now != null && overworld != null) {
+			ScarPlanner planner = now.planner(overworld);
+			if (planner != null) {
+				planner.warmUp();
+			}
+		}
 	}
 
 	/** Tests: use this snapshot. */

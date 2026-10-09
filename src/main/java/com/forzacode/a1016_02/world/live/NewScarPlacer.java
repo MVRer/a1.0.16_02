@@ -8,6 +8,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.function.Consumer;
 import java.util.function.Predicate;
 
 import com.forzacode.a1016_02.A1016_02;
@@ -26,9 +27,11 @@ import com.forzacode.a1016_02.world.gen.Vegetation;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.GlobalPos;
 import net.minecraft.core.Holder;
+import net.minecraft.resources.ResourceKey;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.server.level.TicketType;
 import net.minecraft.util.RandomSource;
 import net.minecraft.util.Util;
 import net.minecraft.world.level.ChunkPos;
@@ -48,10 +51,21 @@ import org.jspecify.annotations.Nullable;
  */
 public final class NewScarPlacer {
 	public static final String CAUSE = "world:new_scar";
+	/** Loads the chunks of a waiting new scar in the background; it never ticks them and expires on its own. */
+	public static final TicketType TICKET = new TicketType(1200L, TicketType.FLAG_LOADING);
 	/** At most this many stale chunks are looked at per try. */
 	private static final int MAX_LOOKS = 64;
 	/** New scars keep this far (plus their radius) from the player's base. */
 	private static final int BASE_CLEARANCE = 64;
+	/** Loading tickets asked for per tick while a new scar waits for its chunks. */
+	private static final int LOADS_PER_TICK = 2;
+	/** A waiting new scar gives up after this long (its chunks did not load, or it stayed in view). */
+	private static final long JOB_TIMEOUT_TICKS = 1200;
+	/** Ticks between commit tries once its chunks are loaded (it may be in view). */
+	private static final long RETRY_TICKS = 20;
+	/** Leaves of a removed trunk are taken this far around it. */
+	private static final int CROWN = 3;
+	private static final String IN_VIEW = "in view";
 
 	/** Where a chunk was last visited (seeded in tests). */
 	@FunctionalInterface
@@ -59,16 +73,52 @@ public final class NewScarPlacer {
 		long lastVisitDay(ServerLevel level, ChunkPos chunk);
 	}
 
-	/** What the placer did. */
-	public record Outcome(boolean placed, String message) {
+	/**
+	 * What the placer did.
+	 *
+	 * @param placed    the scar is there now
+	 * @param scheduled the scar waits for its chunks to load and is applied over the next ticks
+	 */
+	public record Outcome(boolean placed, boolean scheduled, String message) {
+		static Outcome done(String message) {
+			return new Outcome(true, false, message);
+		}
+
+		static Outcome failed(String message) {
+			return new Outcome(false, false, message);
+		}
 	}
 
 	/** One planned block change: removal, or conversion to {@code to}. */
 	public record Edit(BlockPos pos, @Nullable BlockState to) {
 	}
 
-	private record Candidate(boolean dead, BlockPos center, int contourY, double score) {
+	/** {@code tree}: the fake, one bare tree in the chunk of {@code center}. */
+	private record Candidate(boolean dead, boolean tree, BlockPos center, int contourY, double score) {
 	}
+
+	/** A new scar waiting for its chunks: one at a time, never more than {@link #LOADS_PER_TICK} loads a tick. */
+	private static final class Job {
+		final ResourceKey<Level> dimension;
+		final Candidate candidate;
+		final VisitLookup visits;
+		final List<ChunkPos> chunks;
+		final Set<Long> requested = new HashSet<>();
+		final long started;
+		final @Nullable Consumer<String> report;
+		long nextTry;
+
+		Job(ResourceKey<Level> dimension, Candidate candidate, VisitLookup visits, List<ChunkPos> chunks, long started, @Nullable Consumer<String> report) {
+			this.dimension = dimension;
+			this.candidate = candidate;
+			this.visits = visits;
+			this.chunks = chunks;
+			this.started = started;
+			this.report = report;
+		}
+	}
+
+	private static @Nullable Job pending;
 
 	private NewScarPlacer() {
 	}
@@ -84,20 +134,28 @@ public final class NewScarPlacer {
 		return chunk -> cache.computeIfAbsent(chunk.pack(), k -> stale(visits.lastVisitDay(level, chunk), today, away));
 	}
 
-	/** {@code /a1016 world newscar now}: the subject's best stale area, rules kept. */
-	public static Outcome forceNow(MinecraftServer server) {
+	/** {@code /a1016 world newscar now}: the subject's best stale area, rules kept. {@code report} hears how it ends. */
+	public static Outcome forceNow(MinecraftServer server, @Nullable Consumer<String> report) {
 		Optional<ServerPlayer> subject = Services.watch().subject(server);
 		if (subject.isEmpty()) {
-			return new Outcome(false, "the subject is not online");
+			return Outcome.failed("the subject is not online");
 		}
-		return place(subject.get(), RandomSource.create(), false, Services.watch()::lastVisitDay, GameClock.day(server));
+		return place(subject.get(), RandomSource.create(), false, Services.watch()::lastVisitDay, GameClock.day(server), report);
 	}
 
-	/** Finds the best stale area near the player and kills or strips it. {@code fake}: one bare tree. */
-	public static Outcome place(ServerPlayer player, RandomSource random, boolean fake, VisitLookup visits, long today) {
+	/**
+	 * Finds the best stale area near the player and kills or strips it ({@code fake}: one bare tree). Areas whose
+	 * chunks are all loaded are done now; the first one that needs loading is scheduled (only one at a time) and its
+	 * chunks load through tickets over the next ticks. Nothing is loaded synchronously.
+	 */
+	public static Outcome place(ServerPlayer player, RandomSource random, boolean fake, VisitLookup visits, long today,
+			@Nullable Consumer<String> report) {
 		ServerLevel level = player.level();
 		if (level.dimension() != Level.OVERWORLD) {
-			return new Outcome(false, "new scars only happen in the overworld");
+			return Outcome.failed("new scars only happen in the overworld");
+		}
+		if (pending != null) {
+			return Outcome.failed("a new scar is already waiting for its chunks");
 		}
 		WorldConfig config = WorldConfig.get();
 		Predicate<ChunkPos> allowed = staleChunks(level, visits, today);
@@ -112,18 +170,100 @@ public final class NewScarPlacer {
 				}
 			}
 		}
-		if (stale.isEmpty()) {
-			return new Outcome(false, "no chunk the player left " + ModConfig.pacing().newScarAwayDays + "+ in-game days ago within " + range + " chunks");
-		}
 		// Never at the player's base: their own trees are another card's ("Your trees stripped").
 		Optional<BlockPos> base = Services.watch().base(player).filter(b -> b.dimension().equals(level.dimension())).map(GlobalPos::pos);
 		int baseClearance = BASE_CLEARANCE + config.newScarRadius;
 		if (base.isPresent()) {
-			stale.removeIf(c -> base.get().distToCenterSqr(c.getMiddleBlockX(), base.get().getY(), c.getMiddleBlockZ()) < (double) baseClearance * baseClearance);
+			stale.removeIf(c -> base.get().distToCenterSqr(c.getMiddleBlockX(), base.get().getY(), c.getMiddleBlockZ())
+					< (double) baseClearance * baseClearance);
 		}
-		if (fake) {
-			return bareOneTree(level, stale, allowed, random);
+		if (stale.isEmpty()) {
+			return Outcome.failed("no chunk the player left " + ModConfig.pacing().newScarAwayDays + "+ in-game days ago within " + range
+					+ " chunks (away from the base)");
 		}
+		List<Candidate> candidates = fake ? trees(stale, random) : areas(level, stale, allowed, random);
+		if (candidates.isEmpty()) {
+			return Outcome.failed(stale.size() + " stale chunk(s), but no hill or grove among them");
+		}
+		int tried = 0;
+		for (Candidate candidate : candidates) {
+			List<ChunkPos> chunks = chunksFor(candidate, config, allowed);
+			if (chunks.stream().allMatch(c -> level.getChunkSource().getChunkNow(c.x(), c.z()) != null)) {
+				Outcome outcome = apply(level, candidate, allowed, config);
+				if (outcome.placed()) {
+					return outcome;
+				}
+				tried++;
+				continue;
+			}
+			pending = new Job(level.dimension(), candidate, visits, chunks, level.getServer().getTickCount(), report);
+			String what = candidate.tree() ? "one bare tree" : candidate.dead() ? "a dead hill" : "a bare grove";
+			return new Outcome(false, true, "scheduled " + what + " at " + candidate.center().toShortString() + ", loading " + chunks.size()
+					+ " chunk(s) in the background");
+		}
+		return Outcome.failed("every loaded candidate area (" + tried + ") was in view or empty");
+	}
+
+	/** Called every server tick: loads a waiting new scar's chunks a few at a time, then applies it. */
+	public static void tick(MinecraftServer server) {
+		Job job = pending;
+		if (job == null) {
+			return;
+		}
+		ServerLevel level = server.getLevel(job.dimension);
+		long now = server.getTickCount();
+		if (level == null || now - job.started > JOB_TIMEOUT_TICKS) {
+			finish(job, Outcome.failed("the new scar at " + job.candidate.center().toShortString()
+					+ " gave up (its chunks did not load, or it stayed in view)"));
+			return;
+		}
+		boolean ready = true;
+		int asked = 0;
+		for (ChunkPos chunk : job.chunks) {
+			if (level.getChunkSource().getChunkNow(chunk.x(), chunk.z()) != null) {
+				continue;
+			}
+			ready = false;
+			if (asked < LOADS_PER_TICK && job.requested.add(chunk.pack())) {
+				level.getChunkSource().addTicketWithRadius(TICKET, chunk, 0);
+				asked++;
+			}
+		}
+		if (!ready || now < job.nextTry) {
+			return;
+		}
+		// The player may have come back while the chunks loaded: check the visits again.
+		Predicate<ChunkPos> allowed = staleChunks(level, job.visits, GameClock.day(server));
+		Outcome outcome = apply(level, job.candidate, allowed, WorldConfig.get());
+		if (outcome.placed() || !outcome.message().equals(IN_VIEW)) {
+			finish(job, outcome);
+		} else {
+			job.nextTry = now + RETRY_TICKS;
+		}
+	}
+
+	private static void finish(Job job, Outcome outcome) {
+		pending = null;
+		if (!outcome.placed()) {
+			A1016_02.LOGGER.debug("[a1016] world: new scar not placed: {}", outcome.message());
+		}
+		if (job.report != null) {
+			job.report.accept(outcome.message());
+		}
+	}
+
+	/** True while a new scar waits for its chunks. */
+	public static boolean waiting() {
+		return pending != null;
+	}
+
+	/** Called when a server stops. */
+	public static void clear() {
+		pending = null;
+	}
+
+	/** Hills and groves among the stale chunks, best first (from the noise: nothing is loaded). */
+	private static List<Candidate> areas(ServerLevel level, List<ChunkPos> stale, Predicate<ChunkPos> allowed, RandomSource random) {
 		Terrain terrain = terrain(level);
 		List<Candidate> hills = new ArrayList<>();
 		List<Candidate> groves = new ArrayList<>();
@@ -145,34 +285,54 @@ public final class NewScarPlacer {
 				}
 			}
 			if (Terrain.isWooded(biome)) {
-				groves.add(new Candidate(false, new BlockPos(x, ground, z), Integer.MIN_VALUE, neighbours + random.nextDouble()));
+				groves.add(new Candidate(false, false, new BlockPos(x, ground, z), Integer.MIN_VALUE, neighbours + random.nextDouble()));
 			}
 			if (Terrain.isGrassy(biome) && ground >= terrain.seaLevel() + 4) {
 				int around = (terrain.ground(x + 20, z) + terrain.ground(x - 20, z) + terrain.ground(x, z + 20) + terrain.ground(x, z - 20)) / 4;
 				int prominence = ground - around;
 				if (prominence >= 4) {
 					int contour = ground - Math.clamp(prominence, 4, 10);
-					hills.add(new Candidate(true, new BlockPos(x, ground, z), contour, prominence + neighbours + random.nextDouble()));
+					hills.add(new Candidate(true, false, new BlockPos(x, ground, z), contour, prominence + neighbours + random.nextDouble()));
 				}
 			}
 		}
 		hills.sort(Comparator.comparingDouble(Candidate::score).reversed());
 		groves.sort(Comparator.comparingDouble(Candidate::score).reversed());
-		List<List<Candidate>> order = random.nextBoolean() ? List.of(hills, groves) : List.of(groves, hills);
-		int inView = 0;
-		for (List<Candidate> list : order) {
-			for (Candidate candidate : list.subList(0, Math.min(4, list.size()))) {
-				Outcome outcome = apply(level, candidate, allowed, config);
-				if (outcome.placed()) {
-					return outcome;
+		List<Candidate> order = new ArrayList<>();
+		for (List<Candidate> list : random.nextBoolean() ? List.of(hills, groves) : List.of(groves, hills)) {
+			order.addAll(list.subList(0, Math.min(4, list.size())));
+		}
+		return order;
+	}
+
+	/** The fake: a few stale chunks, in one of which one tree will lose its leaves. */
+	private static List<Candidate> trees(List<ChunkPos> stale, RandomSource random) {
+		List<ChunkPos> shuffled = new ArrayList<>(stale);
+		Util.shuffle(shuffled, random);
+		List<Candidate> order = new ArrayList<>();
+		for (ChunkPos chunk : shuffled.subList(0, Math.min(6, shuffled.size()))) {
+			order.add(new Candidate(false, true, chunk.getMiddleBlockPosition(0), Integer.MIN_VALUE, 0));
+		}
+		return order;
+	}
+
+	/** The allowed chunks a candidate reads and changes. */
+	private static List<ChunkPos> chunksFor(Candidate candidate, WorldConfig config, Predicate<ChunkPos> allowed) {
+		if (candidate.tree()) {
+			return List.of(ChunkPos.containing(candidate.center()));
+		}
+		int reach = config.newScarRadius + CROWN;
+		List<ChunkPos> chunks = new ArrayList<>();
+		BlockPos c = candidate.center();
+		for (int cx = (c.getX() - reach) >> 4; cx <= (c.getX() + reach) >> 4; cx++) {
+			for (int cz = (c.getZ() - reach) >> 4; cz <= (c.getZ() + reach) >> 4; cz++) {
+				ChunkPos chunk = new ChunkPos(cx, cz);
+				if (allowed.test(chunk)) {
+					chunks.add(chunk);
 				}
-				inView++;
 			}
 		}
-		if (hills.isEmpty() && groves.isEmpty()) {
-			return new Outcome(false, stale.size() + " stale chunk(s), but no hill or grove among them");
-		}
-		return new Outcome(false, "every candidate area (" + inView + ") was in view or empty");
+		return chunks;
 	}
 
 	private static Terrain terrain(ServerLevel level) {
@@ -181,43 +341,40 @@ public final class NewScarPlacer {
 		return planner != null ? planner.terrain() : new LiveTerrain(level);
 	}
 
+	/** Applies one candidate on loaded chunks (columns in unloaded chunks are skipped, never loaded). */
 	private static Outcome apply(ServerLevel level, Candidate candidate, Predicate<ChunkPos> allowed, WorldConfig config) {
+		if (candidate.tree()) {
+			ChunkPos chunk = ChunkPos.containing(candidate.center());
+			BlockPos trunk = level.getChunkSource().getChunkNow(chunk.x(), chunk.z()) == null ? null : findTree(level, chunk);
+			if (trunk == null || !allowed.test(chunk)) {
+				return Outcome.failed("no tree there");
+			}
+			List<Edit> edits = collectBare(level, trunk, CROWN, allowed);
+			if (edits.isEmpty()) {
+				return Outcome.failed("nothing to change");
+			}
+			return commit(level, edits, CAUSE + "/tree") ? Outcome.done("one bare tree at " + trunk.toShortString() + " (" + edits.size() + " blocks)")
+					: Outcome.failed(IN_VIEW);
+		}
 		for (int radius = config.newScarRadius; radius >= 8; radius -= 4) {
 			List<Edit> edits = candidate.dead() ? collectDead(level, candidate.center(), radius, candidate.contourY(), allowed)
 					: collectBare(level, candidate.center(), radius, allowed);
 			if (edits.isEmpty()) {
-				return new Outcome(false, "nothing to change");
+				return Outcome.failed("nothing to change");
 			}
 			if (edits.size() > config.newScarMaxBlocks) {
 				continue;
 			}
 			if (!commit(level, edits, CAUSE + (candidate.dead() ? "/dead" : "/bare"))) {
-				return new Outcome(false, "in view");
+				return Outcome.failed(IN_VIEW);
 			}
 			BlockPos site = candidate.dead() ? siteOnGround(level, candidate.center()) : nearestTrunk(level, candidate.center(), radius);
 			WorldSites.record(candidate.dead() ? SiteType.DEAD_MOUNTAIN : SiteType.BARE_GROVE, level.dimension(), site, radius, null);
 			String what = candidate.dead() ? "dead hill" : "bare grove";
 			A1016_02.LOGGER.info("[a1016] world: new scar ({}) at {} r={} ({} blocks)", what, site.toShortString(), radius, edits.size());
-			return new Outcome(true, "new scar: " + what + " at " + site.toShortString() + " radius " + radius + " (" + edits.size() + " blocks)");
+			return Outcome.done("new scar: " + what + " at " + site.toShortString() + " radius " + radius + " (" + edits.size() + " blocks)");
 		}
-		return new Outcome(false, "too large");
-	}
-
-	private static Outcome bareOneTree(ServerLevel level, List<ChunkPos> stale, Predicate<ChunkPos> allowed, RandomSource random) {
-		List<ChunkPos> shuffled = new ArrayList<>(stale);
-		Util.shuffle(shuffled, random);
-		for (ChunkPos chunk : shuffled.subList(0, Math.min(6, shuffled.size()))) {
-			level.getChunk(chunk.x(), chunk.z());
-			BlockPos trunk = findTree(level, chunk);
-			if (trunk == null) {
-				continue;
-			}
-			List<Edit> edits = collectBare(level, trunk, 3, allowed);
-			if (!edits.isEmpty() && commit(level, edits, CAUSE + "/tree")) {
-				return new Outcome(true, "one bare tree at " + trunk.toShortString() + " (" + edits.size() + " blocks)");
-			}
-		}
-		return new Outcome(false, "no tree out of view in a stale chunk");
+		return Outcome.failed("too large");
 	}
 
 	/** A trunk base in the chunk whose crown is above it, or null. */
@@ -283,8 +440,9 @@ public final class NewScarPlacer {
 			}
 		});
 		for (BlockPos log : logs) {
-			for (BlockPos pos : BlockPos.betweenClosed(log.offset(-3, -1, -3), log.offset(3, 3, 3))) {
-				if (edits.containsKey(pos) || !allowed.test(ChunkPos.containing(pos)) || !level.hasChunkAt(pos)) {
+			for (BlockPos pos : BlockPos.betweenClosed(log.offset(-CROWN, -1, -CROWN), log.offset(CROWN, CROWN, CROWN))) {
+				ChunkPos crownChunk = ChunkPos.containing(pos);
+				if (edits.containsKey(pos) || !allowed.test(crownChunk) || level.getChunkSource().getChunkNow(crownChunk.x(), crownChunk.z()) == null) {
 					continue;
 				}
 				BlockState state = level.getBlockState(pos);
@@ -325,7 +483,6 @@ public final class NewScarPlacer {
 	}
 
 	private static void forColumns(ServerLevel level, BlockPos center, int radius, Predicate<ChunkPos> allowed, ColumnVisitor visitor) {
-		Set<Long> loaded = new HashSet<>();
 		for (int x = center.getX() - radius; x <= center.getX() + radius; x++) {
 			for (int z = center.getZ() - radius; z <= center.getZ() + radius; z++) {
 				long dx = x - center.getX();
@@ -334,11 +491,8 @@ public final class NewScarPlacer {
 					continue;
 				}
 				ChunkPos chunk = new ChunkPos(x >> 4, z >> 4);
-				if (!allowed.test(chunk)) {
-					continue;
-				}
-				if (loaded.add(chunk.pack())) {
-					level.getChunk(chunk.x(), chunk.z()); // unloaded areas are allowed: load them to read the blocks
+				if (!allowed.test(chunk) || level.getChunkSource().getChunkNow(chunk.x(), chunk.z()) == null) {
+					continue; // never load a chunk here: a waiting new scar loads its chunks through tickets first
 				}
 				int top = level.getHeight(Heightmap.Types.WORLD_SURFACE, x, z) - 1;
 				int ground = Vegetation.groundY(level, x, z, top, level.getMinY());
@@ -359,7 +513,7 @@ public final class NewScarPlacer {
 		for (int x = center.getX() - radius; x <= center.getX() + radius; x++) {
 			for (int z = center.getZ() - radius; z <= center.getZ() + radius; z++) {
 				double d = (x - center.getX()) * (double) (x - center.getX()) + (z - center.getZ()) * (double) (z - center.getZ());
-				if (d >= bestDist || !level.hasChunk(x >> 4, z >> 4)) {
+				if (d >= bestDist || level.getChunkSource().getChunkNow(x >> 4, z >> 4) == null) {
 					continue;
 				}
 				int top = level.getHeight(Heightmap.Types.WORLD_SURFACE, x, z) - 1;

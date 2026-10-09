@@ -121,8 +121,10 @@ final class WorldCommands {
 	}
 
 	private static int newScarNow(CommandContext<CommandSourceStack> ctx) {
-		NewScarPlacer.Outcome outcome = NewScarPlacer.forceNow(ctx.getSource().getServer());
-		if (outcome.placed()) {
+		CommandSourceStack source = ctx.getSource();
+		NewScarPlacer.Outcome outcome = NewScarPlacer.forceNow(source.getServer(),
+				message -> source.sendSuccess(() -> Component.literal("[a1016] " + message), false));
+		if (outcome.placed() || outcome.scheduled()) {
 			say(ctx, "[a1016] " + outcome.message());
 			return 1;
 		}

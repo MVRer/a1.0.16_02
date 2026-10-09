@@ -5,7 +5,10 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 
 import com.forzacode.a1016_02.A1016_02;
 import com.forzacode.a1016_02.core.Habit;
@@ -18,6 +21,7 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.core.Holder;
 import net.minecraft.server.level.ServerLevel;
+import net.minecraft.util.Util;
 import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.WorldGenLevel;
 import net.minecraft.world.level.biome.Biome;
@@ -34,8 +38,13 @@ import org.jspecify.annotations.Nullable;
  * answer: a scar that spans many chunks is built piece by piece as they generate. Thread-safe.
  */
 public final class ScarPlanner {
-	/** How far a small scar's blocks can reach past its cell (the stair runs about 130 blocks). */
-	private static final int POINT_REACH = 144;
+	/**
+	 * How far a small scar's blocks may reach past its cell. Every chunk looks at the cells within this reach, and a
+	 * plan that would reach farther is dropped ({@link #withinReach}), so no scar is ever built in part. A tunnel
+	 * reaches about 220 blocks from its spot; a stair runs one block out per block down, so one starting above
+	 * about Y 200 is dropped.
+	 */
+	public static final int POINT_REACH = 272;
 	private static final int CACHE_LIMIT = 50_000;
 	private static final int SPOTS_PER_CELL = 4;
 
@@ -48,10 +57,10 @@ public final class ScarPlanner {
 	private final Map<Long, Optional<ScarPlan>> pointCells = new ConcurrentHashMap<>();
 	private final Map<Long, Optional<ScarPlan>> areaCells = new ConcurrentHashMap<>();
 	private volatile @Nullable BlockPos origin;
-	private volatile @Nullable Optional<ScarPlan> hut;
-	private volatile @Nullable Optional<BlockPos> corePyramid;
-	private final Object hutLock = new Object();
-	private final Object coreLock = new Object();
+	/** Computed without a lock (deterministic, so a race only repeats work) and published once. */
+	private final AtomicReference<Optional<ScarPlan>> hut = new AtomicReference<>();
+	private final AtomicReference<Optional<BlockPos>> corePyramid = new AtomicReference<>();
+	private final AtomicBoolean warming = new AtomicBoolean();
 
 	ScarPlanner(ScarContext ctx, ServerLevel level) {
 		this.ctx = ctx;
@@ -166,6 +175,18 @@ public final class ScarPlanner {
 		return plans;
 	}
 
+	/** True if a chunk looks at this small-scar cell ({@link #pointPlansTouching}). */
+	public static boolean seesCell(ChunkPos chunk, int cx, int cz, int cell) {
+		return cx >= Math.floorDiv(chunk.getMinBlockX() - POINT_REACH, cell) && cx <= Math.floorDiv(chunk.getMaxBlockX() + POINT_REACH, cell)
+				&& cz >= Math.floorDiv(chunk.getMinBlockZ() - POINT_REACH, cell) && cz <= Math.floorDiv(chunk.getMaxBlockZ() + POINT_REACH, cell);
+	}
+
+	/** True if every block of the footprint lies within {@link #POINT_REACH} of the cell, so every chunk it touches sees it. */
+	public static boolean withinReach(BoundingBox footprint, int cx, int cz, int cell) {
+		return footprint.minX() >= cx * cell - POINT_REACH && footprint.maxX() <= cx * cell + cell - 1 + POINT_REACH
+				&& footprint.minZ() >= cz * cell - POINT_REACH && footprint.maxZ() <= cz * cell + cell - 1 + POINT_REACH;
+	}
+
 	/** The large scar of the cell containing (x, z), if any. Large scars never leave their cell. */
 	public Optional<ScarPlan> areaPlanAt(int x, int z) {
 		int cell = config.areaCellBlocks;
@@ -267,15 +288,10 @@ public final class ScarPlanner {
 
 	/** The one ruined cobble hut of the world, 300 to 800 blocks from spawn. */
 	public Optional<ScarPlan> ruinedHut() {
-		Optional<ScarPlan> known = hut;
+		Optional<ScarPlan> known = hut.get();
 		if (known == null) {
-			synchronized (hutLock) {
-				known = hut;
-				if (known == null) {
-					known = safely(this::computeHut);
-					hut = known;
-				}
-			}
+			hut.compareAndSet(null, safely(this::computeHut));
+			known = hut.get();
 		}
 		return known;
 	}
@@ -310,17 +326,30 @@ public final class ScarPlanner {
 
 	/** The core of the largest ocean pyramid within the configured radius of spawn, if there is one. */
 	public Optional<BlockPos> corePyramid() {
-		Optional<BlockPos> known = corePyramid;
+		Optional<BlockPos> known = corePyramid.get();
 		if (known == null) {
-			synchronized (coreLock) {
-				known = corePyramid;
-				if (known == null) {
-					known = computeCorePyramid();
-					corePyramid = known;
-				}
-			}
+			corePyramid.compareAndSet(null, computeCorePyramid());
+			known = corePyramid.get();
 		}
 		return known;
+	}
+
+	/**
+	 * Works out the one-off answers (the hut, the core pyramid: about 290 cells) on a background thread, so the
+	 * worldgen thread that first needs them usually finds them ready. Nothing waits on it.
+	 */
+	public void warmUp() {
+		if (!warming.compareAndSet(false, true)) {
+			return;
+		}
+		CompletableFuture.runAsync(() -> {
+			try {
+				ruinedHut();
+				corePyramid();
+			} catch (RuntimeException e) {
+				A1016_02.LOGGER.error("[a1016] world: scar warm-up failed", e);
+			}
+		}, Util.backgroundExecutor());
 	}
 
 	private Optional<BlockPos> computeCorePyramid() {
@@ -379,7 +408,7 @@ public final class ScarPlanner {
 			}
 			ScarKind kind = pickWeighted(options, hs ^ 3);
 			ScarPlan plan = planPoint(kind, ground, x, z, Hash.of(hs, kind.ordinal()));
-			if (plan != null && farFromSpawn(plan.footprint())) {
+			if (plan != null && withinReach(plan.footprint(), cx, cz, cell) && farFromSpawn(plan.footprint())) {
 				return Optional.of(plan);
 			}
 		}

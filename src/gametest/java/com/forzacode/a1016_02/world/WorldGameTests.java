@@ -14,9 +14,11 @@ import com.forzacode.a1016_02.core.TraceLedger;
 import com.forzacode.a1016_02.core.WorldProfile;
 import com.forzacode.a1016_02.world.gen.AreaScars;
 import com.forzacode.a1016_02.world.gen.Builds;
+import com.forzacode.a1016_02.world.gen.Carves;
 import com.forzacode.a1016_02.world.gen.ScarContext;
 import com.forzacode.a1016_02.world.gen.ScarPlan;
 import com.forzacode.a1016_02.world.gen.ScarPlanner;
+import com.forzacode.a1016_02.world.gen.Terrain;
 import com.forzacode.a1016_02.world.live.EmptiedHouseCard;
 import com.forzacode.a1016_02.world.live.NewScarPlacer;
 import com.forzacode.a1016_02.world.live.WorldWatch;
@@ -25,12 +27,16 @@ import net.fabricmc.fabric.api.gametest.v1.GameTest;
 
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
+import net.minecraft.core.Holder;
+import net.minecraft.core.registries.Registries;
 import net.minecraft.gametest.framework.GameTestHelper;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.Container;
 import net.minecraft.world.entity.EntityTypes;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.level.ChunkPos;
+import net.minecraft.world.level.biome.Biome;
+import net.minecraft.world.level.biome.Biomes;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.DoorBlock;
 import net.minecraft.world.level.block.LeavesBlock;
@@ -276,6 +282,86 @@ public class WorldGameTests {
 	}
 
 	// --- old scars: planning ---
+
+	/** Terrain for planning tests: ground from a function, stone up to it, plains everywhere. */
+	private static Terrain terrain(ServerLevel level, java.util.function.IntBinaryOperator ground) {
+		Holder<Biome> plains = level.registryAccess().lookupOrThrow(Registries.BIOME).getOrThrow(Biomes.PLAINS);
+		return new Terrain() {
+			@Override
+			public int seaLevel() {
+				return 63;
+			}
+
+			@Override
+			public int minY() {
+				return level.getMinY();
+			}
+
+			@Override
+			public int ground(int x, int z) {
+				return ground.applyAsInt(x, z);
+			}
+
+			@Override
+			public int surface(int x, int z) {
+				return ground.applyAsInt(x, z);
+			}
+
+			@Override
+			public Holder<Biome> biome(int x, int y, int z) {
+				return plains;
+			}
+
+			@Override
+			public BlockState block(int x, int y, int z) {
+				return y <= ground.applyAsInt(x, z) ? Blocks.STONE.defaultBlockState() : Blocks.AIR.defaultBlockState();
+			}
+		};
+	}
+
+	/**
+	 * Worldgen builds a small scar piece by piece: every chunk it touches must look at its cell, or a piece (and the
+	 * site in it) is never built. Checks a plan of cell (0, 0) the way {@code ScarPlanner.decorate} finds plans.
+	 */
+	private static void assertBuiltWhole(GameTestHelper helper, ScarPlan plan, int cell) {
+		helper.assertTrue(ScarPlanner.withinReach(plan.footprint(), 0, 0, cell), plan.kind().id() + " reaches past what chunks look at");
+		List<ScarPlan.SiteMark> recorded = new ArrayList<>();
+		plan.blueprint().box().intersectingChunks().filter(plan::touches).forEach(chunk -> {
+			helper.assertTrue(ScarPlanner.seesCell(chunk, 0, 0, cell), plan.kind().id() + ": chunk " + chunk + " never builds its part");
+			plan.sites().stream().filter(mark -> chunk.contains(mark.pos())).forEach(recorded::add);
+		});
+		helper.assertTrue(recorded.size() == plan.sites().size(), plan.kind().id() + ": only " + recorded.size() + " of " + plan.sites().size()
+				+ " sites would be recorded");
+	}
+
+	@GameTest
+	public void longStairsAndTunnelsAreBuiltWholeWithTheirSites(GameTestHelper helper) {
+		ServerLevel level = helper.getLevel();
+		int cell = new WorldConfig().pointCellBlocks;
+
+		// A stair starting high (Y 190) runs about 250 blocks out before it reaches the bedrock layer.
+		Carves.Carve stair = Carves.stair(terrain(level, (x, z) -> 190), cell / 2, cell / 2, Direction.EAST, Carves.PathCheck.SOLID);
+		helper.assertTrue(stair != null, "no stair from Y 190");
+		helper.assertTrue(stair.site().getX() - cell / 2 > 240 && stair.site().getY() == level.getMinY() + 5, "the stair stops at " + stair.site());
+		assertBuiltWhole(helper, new ScarPlan(ScarKind.STAIR, stair.site(), 1, stair.blueprint(), null,
+				List.of(ScarPlan.SiteMark.of(SiteType.STAIR_BOTTOM, stair.site(), 1))), cell);
+
+		// A tunnel through a 230-block ridge, with a cross at its far mouth.
+		Terrain ridge = terrain(level, (x, z) -> Math.abs(x - cell / 2) <= 115 ? 140 : 70);
+		Carves.Carve tunnel = Carves.tunnel(ridge, cell / 2, cell / 2, Direction.EAST, 75, 120);
+		helper.assertTrue(tunnel != null && tunnel.endB().getX() - tunnel.endA().getX() > 220, "no long tunnel");
+		Builds.Build cross = Builds.cross(tunnel.endB().getX() + 2, 70, tunnel.endB().getZ(), Direction.EAST, Builds.Wood.OAK, 1L);
+		cross.blueprint().ops().forEach(tunnel.blueprint()::add);
+		assertBuiltWhole(helper, new ScarPlan(ScarKind.TUNNEL, tunnel.site(), tunnel.size(), tunnel.blueprint(), null,
+				List.of(ScarPlan.SiteMark.of(SiteType.CUT, tunnel.site(), tunnel.size()), ScarPlan.SiteMark.of(SiteType.CROSS, cross.site(), 3))), cell);
+
+		// A stair from near the top of the world, at the edge of its cell, would reach too far: the planner drops it.
+		Carves.Carve tooLong = Carves.stair(terrain(level, (x, z) -> 300), cell - 16, cell / 2, Direction.EAST, Carves.PathCheck.SOLID);
+		helper.assertTrue(tooLong != null && !ScarPlanner.withinReach(tooLong.blueprint().box(), 0, 0, cell),
+				"a stair reaching past the chunks that look at its cell was kept");
+		helper.succeed();
+	}
+
 
 	private static ScarContext context(Density density) {
 		WorldProfile rolled = WorldProfile.roll(0x5EED, 0x5A17);

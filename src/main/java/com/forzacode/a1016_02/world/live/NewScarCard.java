@@ -56,13 +56,15 @@ public final class NewScarCard implements EventCard {
 
 	@Override
 	public boolean contextFits(ServerPlayer player, ServerLevel world) {
-		return world.dimension() == Level.OVERWORLD && GameClock.day(world.getServer()) >= ModConfig.pacing().newScarAwayDays;
+		return world.dimension() == Level.OVERWORLD && GameClock.day(world.getServer()) >= ModConfig.pacing().newScarAwayDays
+				&& !NewScarPlacer.waiting();
 	}
 
 	@Override
 	public FireResult fire(FireContext ctx) {
 		NewScarPlacer.Outcome outcome = NewScarPlacer.place(ctx.player(), ctx.random(), ctx.fake(), Services.watch()::lastVisitDay,
-				GameClock.day(ctx.level().getServer()));
-		return outcome.placed() ? FireResult.FIRED : FireResult.NO_SPOT;
+				GameClock.day(ctx.level().getServer()), null);
+		// Scheduled: its chunks load over the next ticks and it happens out of view then (never on camera).
+		return outcome.placed() || outcome.scheduled() ? FireResult.FIRED : FireResult.NO_SPOT;
 	}
 }
