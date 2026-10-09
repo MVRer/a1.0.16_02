@@ -15,6 +15,12 @@ public final class LoreConfig {
 	public int candidatesPerAttempt = 3;
 	/** Fragments attempted per check, so a stage change does not place everything in one tick. */
 	public int attemptsPerCheck = 2;
+	/**
+	 * A fragment that fills a site world or dig record (hut, tunnel end, pyramid...) waits this many minutes of play
+	 * after it could first be placed before lore builds a minimal site of its own: the real one may only exist once
+	 * its chunk generates.
+	 */
+	public double ownBuildDelayMinutes = 60;
 
 	/** Reading a sign: the player stands this close (eye to the block's center, blocks)... */
 	public double readDistance = 4.5;

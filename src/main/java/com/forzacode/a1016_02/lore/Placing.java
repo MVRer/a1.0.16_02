@@ -57,9 +57,10 @@ final class Placing {
 	 * @param tries       how many candidate spots an own build may try (each may load a chunk)
 	 * @param traces      the trace service (forced in tests)
 	 * @param playerName  replaces {@code [PLAYER NAME]}
+	 * @param ownBuilds   may build its own site when world or dig recorded none ({@link LoreConfig#ownBuildDelayMinutes})
 	 */
 	record Request(ServerLevel level, Fragment fragment, BlockPos origin, int minDistance, int maxDistance, int tries,
-			TraceService traces, String playerName, Facts facts, RandomSource random) {
+			TraceService traces, String playerName, Facts facts, RandomSource random, boolean ownBuilds) {
 		String id() {
 			return fragment.id();
 		}
@@ -69,7 +70,7 @@ final class Placing {
 		}
 
 		Request withBand(BlockPos newOrigin, int min, int max) {
-			return new Request(level, fragment, newOrigin, min, max, tries, traces, playerName, facts, random);
+			return new Request(level, fragment, newOrigin, min, max, tries, traces, playerName, facts, random, ownBuilds);
 		}
 	}
 

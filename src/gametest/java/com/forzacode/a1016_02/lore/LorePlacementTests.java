@@ -45,7 +45,7 @@ public class LorePlacementTests extends LoreTextTests {
 
 	static Placing.Request request(GameTestHelper helper, String id, BlockPos absOrigin, int min, int max, TestFacts facts) {
 		ServerLevel level = helper.getLevel();
-		return new Placing.Request(level, fragment(id), absOrigin, min, max, 1, Services.traces().forced(), NAME, facts, level.getRandom());
+		return new Placing.Request(level, fragment(id), absOrigin, min, max, 1, Services.traces().forced(), NAME, facts, level.getRandom(), true);
 	}
 
 	static Placing.Result place(GameTestHelper helper, String id, BlockPos absOrigin, TestFacts facts) {
@@ -158,6 +158,28 @@ public class LorePlacementTests extends LoreTextTests {
 		seed(helper, SiteType.RUINED_HUT, new BlockPos(3, 1, 3), 1);
 		TestFacts facts = new TestFacts(helper);
 		helper.assertTrue(pass(helper, Stage.REMOVAL, facts, abs(helper, 3, 1, 3), "F01").isEmpty(), "a disabled fragment was placed");
+		helper.succeed();
+	}
+
+	/** With no world site yet, F23 waits; once own builds are allowed it leaves its own panic tower (a recorded site). */
+	@GameTest(skyAccess = true)
+	public void ownBuildsWaitForWorldSites(GameTestHelper helper) {
+		floor(helper);
+		ServerLevel level = helper.getLevel();
+		BlockPos center = abs(helper, 3, 1, 3);
+		Placing.Request waiting = new Placing.Request(level, fragment("F23"), center, 0, 2, 4, Services.traces().forced(), NAME,
+				new TestFacts(helper), level.getRandom(), false);
+		helper.assertTrue(Placers.place(waiting).isEmpty(), "F23 built its own tower before the wait");
+		Placing.Request building = new Placing.Request(level, fragment("F23"), center, 0, 2, 4, Services.traces().forced(), NAME,
+				new TestFacts(helper), level.getRandom(), true);
+		Placing.Result result = Placers.place(building).orElseThrow(() -> helper.assertionException(Component.literal("no own panic tower")));
+		assertHolds(helper, result.pos, "F23");
+		helper.assertTrue(level.getBlockState(result.pos.below()).is(Blocks.DIRT), "the chest is not on a dirt pillar");
+		assertClaimed(helper, result, "F23");
+		BlockPos ground = helper.absolutePos(new BlockPos(0, 0, 0));
+		for (BlockPos pos : BlockPos.betweenClosed(ground.offset(0, 1, 0), ground.offset(7, 20, 7))) {
+			level.setBlock(pos, Blocks.AIR.defaultBlockState(), Block.UPDATE_CLIENTS | Block.UPDATE_SKIP_BLOCK_ENTITY_SIDEEFFECTS);
+		}
 		helper.succeed();
 	}
 

@@ -6,6 +6,7 @@ import java.util.Optional;
 import java.util.Set;
 
 import com.forzacode.a1016_02.A1016_02;
+import com.forzacode.a1016_02.core.GameClock;
 import com.forzacode.a1016_02.core.HerobrineState;
 import com.forzacode.a1016_02.core.ModConfig;
 import com.forzacode.a1016_02.core.Services;
@@ -67,7 +68,9 @@ public final class FragmentEngine {
 			if (attempts++ >= config.attemptsPerCheck) {
 				break;
 			}
-			Request request = request(level, fragment, facts, name, Services.traces(), config.candidatesPerAttempt);
+			long since = LoreData.get(server).eligibleSince(id, GameClock.playTicks(server));
+			boolean ownBuilds = GameClock.playTicks(server) - since >= ModConfig.realTicks(config.ownBuildDelayMinutes * 60);
+			Request request = request(level, fragment, facts, name, Services.traces(), config.candidatesPerAttempt, ownBuilds);
 			Optional<Result> result = attempt(request);
 			if (result.isPresent()) {
 				record(server, level, fragment, result.get());
@@ -91,11 +94,12 @@ public final class FragmentEngine {
 	}
 
 	/** The request the engine makes: distances from spawn or the base, as the data says. */
-	static Request request(ServerLevel level, Fragment fragment, Facts facts, String playerName, TraceService traces, int tries) {
+	static Request request(ServerLevel level, Fragment fragment, Facts facts, String playerName, TraceService traces, int tries,
+			boolean ownBuilds) {
 		Fragment.Placement placement = fragment.placement();
 		BlockPos origin = placement.fromSpawn() ? facts.spawn() : facts.base();
 		return new Request(level, fragment, origin, placement.minDistance(), placement.maxDistance(), tries, traces, playerName, facts,
-				level.getRandom());
+				level.getRandom(), ownBuilds);
 	}
 
 	static Optional<Result> attempt(Request request) {
@@ -130,7 +134,7 @@ public final class FragmentEngine {
 		Facts facts = LiveFacts.of(server, viewer.or(() -> Services.watch().subject(server)).orElse(null));
 		String name = HerobrineState.get(server).subject().map(HerobrineState.Subject::name)
 				.orElse(viewer.map(p -> p.getName().getString()).orElse("Steve"));
-		Request request = new Request(level, fragment, hint, min, max, tries, Services.traces(), name, facts, level.getRandom());
+		Request request = new Request(level, fragment, hint, min, max, tries, Services.traces(), name, facts, level.getRandom(), true);
 		Optional<Result> result = attempt(request);
 		if (result.isEmpty() && fallback) {
 			result = Placers.plain(request, viewer);

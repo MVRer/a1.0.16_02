@@ -180,12 +180,26 @@ final class Placers {
 		return site;
 	}
 
+	/**
+	 * Own builds for a site kind that world or dig record wait until {@link Request#ownBuilds()}: their site may
+	 * just not be generated yet, and the world should not get a second hut or pyramid.
+	 */
+	private static boolean mayBuild(Request req) {
+		return req.ownBuilds() || req.placement().site().isEmpty();
+	}
+
 	private static List<BlockPos> candidates(Request req) {
+		if (!mayBuild(req)) {
+			return List.of();
+		}
 		return Terrain.candidates(req.level(), req.origin(), req.minDistance(), req.maxDistance(), Math.max(1, req.tries()), req.random());
 	}
 
-	/** A container inside a site's area, if any. */
+	/** The container at the site itself (world's huts: the site is the chest), else one inside the site's area. */
 	private static Optional<BlockPos> containerIn(ServerLevel level, BlockPos center, int size) {
+		if (level.getBlockEntity(center) instanceof Container) {
+			return Optional.of(center);
+		}
 		int r = Math.max(2, size);
 		for (BlockPos pos : BlockPos.betweenClosed(center.offset(-r, -3, -r), center.offset(r, 4, r))) {
 			BlockEntity blockEntity = level.getBlockEntity(pos);
@@ -377,15 +391,23 @@ final class Placers {
 		for (Site site : sites(req, SiteType.OCEAN_PYRAMID)) {
 			BlockPos core = site.pos();
 			BlockState state = level.getBlockState(core);
-			if (!state.canBeReplaced() || level.getBlockEntity(core) != null) {
+			boolean solid = !state.canBeReplaced();
+			if (level.getBlockEntity(core) != null || solid && !Terrain.isNaturalSolid(state)) {
 				continue;
 			}
 			Build build = content == Content.FIRST_BLOCK ? his(req) : left(req);
+			if (solid) {
+				// Only the largest pyramid has an air pocket; in the others the core sand is taken out for it.
+				build.remove(core);
+			}
 			fillCore(req, build, core, content, first, false);
 			if (!build.commit()) {
 				return Optional.empty();
 			}
 			return Optional.of(claim(coreResult(core, content, first), site, req.id()));
+		}
+		if (!mayBuild(req)) {
+			return Optional.empty();
 		}
 		Optional<BlockPos> ocean = nearestOcean(req);
 		if (ocean.isEmpty()) {
@@ -469,7 +491,7 @@ final class Placers {
 	private static Optional<Result> groveBurial(Request req) {
 		ServerLevel level = req.level();
 		for (Site site : sites(req, SiteType.BARE_GROVE)) {
-			for (BlockPos trunk : Builders.trunks(level, site.pos(), 3)) {
+			for (BlockPos trunk : Builders.trunks(level, site.pos(), Math.max(3, Math.min(site.size(), 8)))) {
 				Optional<Result> result = burial(req, trunk);
 				if (result.isPresent()) {
 					return Optional.of(claim(result.get(), site, req.id()));
@@ -590,6 +612,9 @@ final class Placers {
 		for (Site site : sites(req.withBand(req.facts().base(), 0, req.maxDistance()), SiteType.UNDER_BASE)) {
 			return chestNear(req, site, 2);
 		}
+		if (!mayBuild(req)) {
+			return Optional.empty();
+		}
 		BlockPos base = req.facts().base();
 		int length = length(req);
 		BlockPos end = new BlockPos(base.getX(), base.getY() - 12, base.getZ());
@@ -698,7 +723,24 @@ final class Placers {
 					}
 				}
 			}
-			return chestNear(req, site, r);
+			Optional<BlockPos> furnace = Terrain.floorNear(level, site.pos(), 2, 1, List.of());
+			if (furnace.isEmpty()) {
+				continue;
+			}
+			for (Direction dir : Direction.Plane.HORIZONTAL) {
+				BlockPos chest = furnace.get().relative(dir);
+				if (!Terrain.isFloor(level, chest)) {
+					continue;
+				}
+				Build build = left(req);
+				stillBurning(build, furnace.get(), dir.getOpposite());
+				build.chest(chest, dir.getClockWise(), contents(req));
+				if (!build.commit()) {
+					return Optional.empty();
+				}
+				HerobrineState.get(level.getServer()).setFlag(STILL_BURNING, true);
+				return Optional.of(claim(new Result(chest).anchor("F21/furnace", furnace.get()), site, req.id()));
+			}
 		}
 		for (BlockPos column : candidates(req)) {
 			Direction door = Direction.Plane.HORIZONTAL.getRandomDirection(req.random());
@@ -711,17 +753,10 @@ final class Placers {
 			BlockPos chest = furnace.relative(door.getClockWise());
 			Build build = left(req);
 			Builders.place(build, house.get().pieces());
-			build.leave(furnace, Blocks.FURNACE.defaultBlockState().setValue(AbstractFurnaceBlock.FACING, door).setValue(AbstractFurnaceBlock.LIT, true));
-			build.then(l -> {
-				if (l.getBlockEntity(furnace) instanceof Container container) {
-					container.setItem(0, new ItemStack(Items.COBBLESTONE, 8));
-					container.setItem(1, new ItemStack(Items.COAL, 1));
-					container.setChanged();
-				}
-			});
+			stillBurning(build, furnace, door);
 			build.chest(chest, door, contents(req));
 			if (build.commit()) {
-				HerobrineState.get(level.getServer()).setFlag("lore:still_burning", true);
+				HerobrineState.get(level.getServer()).setFlag(STILL_BURNING, true);
 				Site site = ownSite(req, SiteType.EMPTIED_HOUSE, center, 3, true);
 				return Optional.of(new Result(chest).site(site).anchor("F21/furnace", furnace));
 			}
@@ -729,12 +764,28 @@ final class Placers {
 		return Optional.empty();
 	}
 
+	/** Set when lore left F21's still-burning furnace: the world's one "still burning" moment (D-004). */
+	static final String STILL_BURNING = "lore:still_burning";
+
+	/** A lit furnace with a little left to smelt; it lights again from its fuel when the player comes near. */
+	private static void stillBurning(Build build, BlockPos furnace, Direction facing) {
+		build.leave(furnace, Blocks.FURNACE.defaultBlockState().setValue(AbstractFurnaceBlock.FACING, facing).setValue(AbstractFurnaceBlock.LIT, true));
+		build.then(level -> {
+			if (level.getBlockEntity(furnace) instanceof Container container) {
+				container.setItem(0, new ItemStack(Items.COBBLESTONE, 8));
+				container.setItem(1, new ItemStack(Items.COAL, 1));
+				container.setChanged();
+			}
+		});
+	}
+
 	// --- F23 top of a panic tower ---
 
 	private static Optional<Result> panicTower(Request req) {
 		ServerLevel level = req.level();
 		for (Site site : sites(req, SiteType.PANIC_TOWER)) {
-			BlockPos top = Terrain.ground(level, site.pos().getX(), site.pos().getZ()).above();
+			BlockPos top = Terrain.isAirOrReplaceable(level.getBlockState(site.pos())) && level.getBlockEntity(site.pos()) == null
+					? site.pos() : Terrain.ground(level, site.pos().getX(), site.pos().getZ()).above();
 			if (!Terrain.isAirOrReplaceable(level.getBlockState(top))) {
 				continue;
 			}
