@@ -327,9 +327,10 @@ public final class AccidentPlannerImpl implements AccidentPlanner {
 		ArmedTrap out = d.restoring().orElse(null);
 		if (out != null) {
 			ServerLevel level = forServer.getLevel(out.dimension());
-			if (level == null || out.saved().stream().allMatch(s -> level.isLoaded(s.pos())) && DarkCornerTrap.restore(level, view, out)) {
+			ArmedTrap back = level == null || !out.saved().stream().allMatch(s -> level.isLoaded(s.pos())) ? null : DarkCornerTrap.restore(level, view, out);
+			if (level == null || back != null) {
 				d.setRestoring(null);
-				d.log("day " + day + ": dark corner torches back");
+				d.log("day " + day + ": dark corner torches back" + (back != null && !back.clue().equals(out.clue()) ? "; " + back.clue() : ""));
 			}
 		}
 		ArmedTrap trap = d.armed().orElse(null);

@@ -282,11 +282,12 @@ public class TrapGameTests extends AttributionGameTests {
 				Yard.NOBODY, base);
 		ArmedTrap armed = AccidentPlannerImpl.build(Traps.DARK_CORNER, y.ctx(Yard.NOBODY, base), spot, y.cfg);
 
-		helper.assertFalse(DarkCornerTrap.restore(y.level, Yard.EVERYONE, armed), "put back while in view");
+		helper.assertTrue(DarkCornerTrap.restore(y.level, Yard.EVERYONE, armed) == null, "put back while in view");
 		for (ArmedTrap.SavedBlock torch : armed.saved()) {
 			helper.assertTrue(y.level.getBlockState(torch.pos()).isAir(), "a torch came back in view");
 		}
-		helper.assertTrue(DarkCornerTrap.restore(y.level, Yard.NOBODY, armed), "not put back out of view");
+		ArmedTrap back = DarkCornerTrap.restore(y.level, Yard.NOBODY, armed);
+		helper.assertTrue(back != null && back.clue().equals(armed.clue()), "not put back out of view, or the clue changed");
 		ArmedTrap.SavedBlock moved = armed.saved().get(0);
 		BlockPos off = armed.offPos().orElseThrow();
 		helper.assertTrue(y.level.getBlockState(off).is(moved.state().getBlock()), "the moved torch is not a block off");

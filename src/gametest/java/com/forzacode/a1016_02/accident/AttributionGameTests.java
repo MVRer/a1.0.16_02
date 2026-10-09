@@ -149,7 +149,8 @@ public class AttributionGameTests extends BridgeGameTests {
 		List<BlockPos> taken = trap.saved().stream().map(ArmedTrap.SavedBlock::pos).toList();
 		// The player put a block where the torch was to come back.
 		y.level.setBlockAndUpdate(off, Blocks.COBBLESTONE.defaultBlockState());
-		helper.assertTrue(DarkCornerTrap.restore(y.level, Yard.NOBODY, trap), "not put back");
+		ArmedTrap back = DarkCornerTrap.restore(y.level, Yard.NOBODY, trap);
+		helper.assertTrue(back != null && back.clue().equals(trap.clue()), "not put back, or the clue changed");
 		BlockPos at = null;
 		for (Direction dir : Direction.Plane.HORIZONTAL) {
 			BlockPos spot = moved.pos().relative(dir);
@@ -170,23 +171,64 @@ public class AttributionGameTests extends BridgeGameTests {
 	}
 
 	@GameTest(structure = Yard.STRUCTURE, maxTicks = 40, padding = Yard.BASE_PADDING)
-	public void darkCornerTorchComesBackInPlaceWhenNoSpotABlockOffIsLeft(GameTestHelper helper) {
+	public void darkCornerPutsAnotherTorchABlockOffWhenTheFirstHasNoSpot(GameTestHelper helper) {
+		Yard y = darkBase(helper);
+		AccidentPlannerImpl planner = new AccidentPlannerImpl(server -> y.data, Yard.NOBODY);
+		ArmedTrap trap = planner.arm(y.player, Traps.DARK_CORNER, true).trap();
+		helper.assertTrue(trap != null && trap.offPos().isPresent() && trap.saved().size() > 1, "not armed");
+		ArmedTrap.SavedBlock planned = trap.saved().get(0);
+		List<BlockPos> taken = trap.saved().stream().map(ArmedTrap.SavedBlock::pos).toList();
+		// The player blocked every spot a block off the planned torch.
+		block(y, List.of(planned.pos()), taken);
+		ArmedTrap back = DarkCornerTrap.restore(y.level, Yard.NOBODY, trap);
+		helper.assertTrue(back != null && back.clue().equals(trap.clue()), "not put back, or the clue changed");
+		helper.assertTrue(y.level.getBlockState(planned.pos()) == planned.state() && ledgered(y, planned.pos()).isEmpty(), "the planned torch is not back in place");
+		int off = 0;
+		for (ArmedTrap.SavedBlock torch : trap.saved().subList(1, trap.saved().size())) {
+			List<TraceLedger.Entry> left = ledgered(y, torch.pos());
+			if (y.level.getBlockState(torch.pos()) == torch.state() && left.isEmpty()) {
+				continue;
+			}
+			BlockPos to = left.size() == 1 && left.getFirst().kind() == TraceLedger.Kind.MOVE ? left.getFirst().to().orElseThrow() : null;
+			helper.assertTrue(to != null && to.distManhattan(torch.pos()) == 1 && y.level.getBlockState(to).is(torch.state().getBlock()),
+					"torch at " + torch.pos() + " is neither back nor a block off: " + left);
+			off++;
+		}
+		helper.assertTrue(off == 1, "not exactly one torch a block off: " + off);
+		y.succeedWithoutDrops();
+	}
+
+	@GameTest(structure = Yard.STRUCTURE, maxTicks = 40, padding = Yard.BASE_PADDING)
+	public void darkCornerLeavesOneTorchMissingWhenNoSpotABlockOffIsLeft(GameTestHelper helper) {
 		Yard y = darkBase(helper);
 		AccidentPlannerImpl planner = new AccidentPlannerImpl(server -> y.data, Yard.NOBODY);
 		ArmedTrap trap = planner.arm(y.player, Traps.DARK_CORNER, true).trap();
 		helper.assertTrue(trap != null && trap.offPos().isPresent(), "not armed");
-		ArmedTrap.SavedBlock moved = trap.saved().get(0);
+		ArmedTrap.SavedBlock planned = trap.saved().get(0);
 		List<BlockPos> taken = trap.saved().stream().map(ArmedTrap.SavedBlock::pos).toList();
-		for (Direction dir : Direction.Plane.HORIZONTAL) {
-			BlockPos spot = moved.pos().relative(dir);
-			if (!taken.contains(spot) && y.level.getBlockState(spot).isAir()) {
-				y.level.setBlockAndUpdate(spot, Blocks.COBBLESTONE.defaultBlockState());
+		// The player blocked every spot a block off every taken torch.
+		block(y, taken, taken);
+		ArmedTrap back = DarkCornerTrap.restore(y.level, Yard.NOBODY, trap);
+		helper.assertTrue(back != null && back.clue().contains("One torch is missing"), "the clue is not the missing torch: " + (back == null ? null : back.clue()));
+		helper.assertTrue(y.level.getBlockState(planned.pos()).isAir(), "the planned torch came back with no spot a block off");
+		List<TraceLedger.Entry> open = ledgered(y, planned.pos());
+		helper.assertTrue(open.size() == 1 && open.getFirst().kind() == TraceLedger.Kind.REMOVE, "its removal is not left open for Ending D: " + open);
+		for (ArmedTrap.SavedBlock torch : trap.saved().subList(1, trap.saved().size())) {
+			helper.assertTrue(y.level.getBlockState(torch.pos()) == torch.state() && ledgered(y, torch.pos()).isEmpty(), "torch at " + torch.pos() + " not back in place");
+		}
+		y.succeedWithoutDrops();
+	}
+
+	/** Cobblestone in every open spot beside these torches, except where a taken torch goes back. */
+	private static void block(Yard y, List<BlockPos> around, List<BlockPos> taken) {
+		for (BlockPos torch : around) {
+			for (Direction dir : Direction.Plane.HORIZONTAL) {
+				BlockPos spot = torch.relative(dir);
+				if (!taken.contains(spot) && y.level.getBlockState(spot).isAir()) {
+					y.level.setBlockAndUpdate(spot, Blocks.COBBLESTONE.defaultBlockState());
+				}
 			}
 		}
-		helper.assertTrue(DarkCornerTrap.restore(y.level, Yard.NOBODY, trap), "not put back");
-		helper.assertTrue(y.level.getBlockState(moved.pos()) == moved.state(), "the torch is missing instead of back in its own spot");
-		helper.assertTrue(ledgered(y, moved.pos()).isEmpty(), "its removal is still open in the ledger");
-		y.succeedWithoutDrops();
 	}
 
 	/** The dark corner's ledger entries that start at {@code pos}. */

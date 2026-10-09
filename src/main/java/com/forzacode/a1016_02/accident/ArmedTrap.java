@@ -179,6 +179,11 @@ public record ArmedTrap(String type, ResourceKey<Level> dimension, BlockPos pos,
 		return with(targets, mobs, phase, window, zoneMin, zoneMax, step, cells);
 	}
 
+	/** The clue as it now stands (the dark corner's torch that stayed missing). */
+	public ArmedTrap withClue(String newClue) {
+		return new ArmedTrap(type, dimension, pos, targets, saved, offPos, mobs, phase, window, zoneMin, zoneMax, newClue, step, lit, worn);
+	}
+
 	public ArmedTrap withWorn(Worn newWorn) {
 		return new ArmedTrap(type, dimension, pos, targets, saved, offPos, mobs, phase, window, zoneMin, zoneMax, clue, step, lit, Optional.of(newWorn));
 	}
