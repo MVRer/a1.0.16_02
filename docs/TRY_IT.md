@@ -2,6 +2,23 @@
 
 One entry per merge, newest first. Run the game from the main checkout (this folder, on `main`).
 
+## READY TO TRY: World signatures (still burning, your house elsewhere, the cross row, redstone torches)  (merged feat/world-signatures, commit af92e15)
+```
+Restart needed: full game restart (Java code)
+See it now:
+  1. Launch "Dev Client". /a1016 world signature status   (which signature this world rolled, and what has happened)
+  2. /a1016 world signature still_burning now   (prints coordinates; /tp there: an abandoned camp, the furnace still lit)
+  3. /a1016 world signature cross_row now   (a row of crosses on a hilltop, one per "gone" name, plus a fresh one with
+     dug-up ground around it)
+  4. Your house, elsewhere: build a small first shelter, then /a1016 world signature house_elsewhere now, walk away,
+     /a1016 world housecopy step 5 a few times, /a1016 world housecopy status. Your walls lose a few blocks at a time
+     (never the roof, never opening the house); the copy far away grows from them.
+  5. /a1016 fire lone_redstone_torch   (one redstone torch deep in a cave you explored and left)
+What to look for: each one happens at most once per world. Everything is moved or "left by others", never created.
+Known rough edges: in worlds with F21, the camp sits about 900-1450 blocks out instead of about 2000 until a lore
+  fix lands (in progress). Dead mountains are now recorded from their first chunk, so worldgen animals are blocked too.
+```
+
 ## READY TO TRY: Dead mountains are silent and empty  (merged feat/atmosphere-followups, commit 9ada3a8)
 ```
 Restart needed: full game restart (client sound filter and a spawn mixin)
