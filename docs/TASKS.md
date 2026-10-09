@@ -24,6 +24,7 @@ Status values: queued, running, review, fix, merged, blocked. Only the orchestra
 | P1-1b | Director fixes: Stage 3 only on a TELLING that names him (D-041); signature stage minimum; no early deck reshuffle; quiet check after any tension rise | director | feat/director-fixes | v0.6 | merged | Must merge together with or before P1-7 |
 | P1-4c | Fix the flaky dig test `networkChestNeverLoadsAChunkInTheTick` (2 of 5 runs fail on main) | dig | feat/dig-flaky | - | merged | Test-only timing race. 6/6 on the branch, 2/2 with --rerun-tasks on main |
 | P1-1c | Director pacing tuning with the playthrough tool: SLOW_BURN minors 0.42/h overall, VERY_LATE 1 major in 12 h of Proximity. Bring the soft rates to 4b's low end; hard limits stay | director | feat/director-tuning | v1.0 | queued (after P2-3 merges) | Rarity stays the product (D-020) |
+| P1-6b | Lore: F21 only in world's still-burning camp (D-004); never a second furnace | lore | feat/lore-stillburning | v0.8 | running | Then world moves the camp back to about 2000 blocks (config) |
 | P2-1 | Endings A, B, C, D (full D chain) | ending | feat/ending-endings | v0.8-endings | queued, phase 2 | |
 | P2-2 | Integration: wire all cards, close contract gaps, guardrail pass | (multi) | feat/integration-pass | v1.0 | queued, phase 2 | |
 | P2-3 | Playtest tooling: dev overlay and a 20 h scripted timewarp log | debug | feat/debug-playtest | v1.0 | review | Narrow exception: one public read-only DirectorApi |
@@ -45,7 +46,7 @@ Status values: queued, running, review, fix, merged, blocked. Only the orchestra
 - `fogDriftStrengthMin` 0.45, `fogDriftStrengthMax` 0.7 (D-022). Already set in Mariano's run/config.
 
 ## Cross-workstream follow-ups for P2-1 (ending) and P2-2 (integration)
-- lore: when `lore:still_burning` is set, put F21 in the EMPTIED_HOUSE next to the lit furnace, whatever the distance (F21's 1500 max conflicts with still burning's ~2000). Never build a second one.
+- lore: F21 in the still-burning camp (P1-6b running)
 - ending D undo: skip ledger causes `lore:left/*` and the `world:still_burning` REMOVE entries (terrain cleared for the camp)
 - entity: retire `Pacing.sightingMinDistance` and `Pacing.stareSeconds` (entity has its own now)
 - director: the 20 h sims never reach Telling; add a sim that does
