@@ -37,9 +37,11 @@ public final class EmptyWaterCard extends AtmosphereCard {
 		return creatures(world, player).size() >= MIN_CREATURES;
 	}
 
+	/** Wild fish and squid only: the player's own (bucketed into an aquarium, or named) are left alone. */
 	private static List<Mob> creatures(ServerLevel level, ServerPlayer player) {
 		return untampered(level, Mob.class, player.position(), cfg().waterRadius,
-				mob -> (mob instanceof AbstractFish || mob instanceof Squid) && mob.isInWater() && !mob.isLeashed() && !mob.isPassenger());
+				mob -> (mob instanceof AbstractFish fish && !fish.fromBucket() || mob instanceof Squid) && !mob.isPersistenceRequired()
+						&& mob.isInWater() && !mob.isLeashed() && !mob.isPassenger());
 	}
 
 	@Override
