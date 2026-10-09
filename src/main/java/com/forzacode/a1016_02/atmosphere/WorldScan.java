@@ -321,12 +321,12 @@ public final class WorldScan {
 		return spots;
 	}
 
-	/** A natural solid block near {@code origin}, a little below it, out of every player's view: where mining would be. */
+	/** A natural solid block near {@code origin} (1 above to 12 below), out of every player's view: where mining would be. */
 	public static @Nullable BlockPos miningSpot(ServerLevel level, BlockPos origin, int minDist, int maxDist, RandomSource random) {
 		for (int attempt = 0; attempt < 32; attempt++) {
 			double angle = random.nextDouble() * Math.PI * 2.0;
 			double dist = minDist + random.nextDouble() * Math.max(1, maxDist - minDist);
-			BlockPos pos = origin.offset((int) Math.round(Math.cos(angle) * dist), -random.nextInt(9) + 1, (int) Math.round(Math.sin(angle) * dist));
+			BlockPos pos = origin.offset((int) Math.round(Math.cos(angle) * dist), 1 - random.nextInt(14), (int) Math.round(Math.sin(angle) * dist));
 			if (!level.isLoaded(pos)) {
 				continue;
 			}
