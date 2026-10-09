@@ -1,0 +1,19 @@
+# Decisions
+
+Creative and design decisions the orchestrator made where DESIGN.md is silent or ambiguous. Items marked **NEEDS MARIANO** wait for his answer. Until he answers, the default stands.
+
+| ID | Decision | Why |
+| --- | --- | --- |
+| D-001 | We use the official Fabric 26.3 template that was already in the folder (Loom 1.18-SNAPSHOT, loader 0.19.5, Fabric API 0.162.0+26.3, Java 25) instead of generating it again. The existing `HimEntity` prototype and its textures become the entity workstream's starting point. | It already builds, and its versions are the template's. |
+| D-002 | Singleplayer first. There is one `HerobrineState` per world with one "subject" player, the first to join. Multiplayer is out of scope for v1. | DESIGN.md leaves multiplayer open. Singleplayer hardcore is the intended mode. Mariano can override. |
+| D-003 | Fragment roll: 10 fragments always exist. They are the core set from DESIGN.md (F01, F03, F06, F10) plus the Ending D chain (F07, F13, F23, F25, F28, F30), so the true ending is always possible. About 12 of the other 20 are rolled. Dependencies come along with them: F16, F22 and F29 need F15, and F29 needs F21. F20 appears only on the Ending B path. F04 is an event after "Stop.", not a placed fragment. | DESIGN.md says "about 12 of 20" and "keep the path open on every route". Exactly 20 fragments are left once the 10 are fixed. |
+| D-004 | Still burning happens at most once per world. If F21 is rolled, its furnace is that moment, whatever the signature is. | Keeps the "once per world" rule. |
+| D-005 | If F27 is rolled, the copy of your house gets built once, after day 20, even when the signature is something else. It still happens at most once. | F27 needs the copy to exist. |
+| D-006 | There is no timed fallback into Telling. A player who never tells about him stays in Proximity, where accidents still happen. Stage 4 is entered by the ending workstream. | "Telling: player-driven" and "there is no safe default". |
+| D-007 | "Real play time" means server ticks while the subject is online. The integrated server pauses with the game menu, so paused time doesn't count. An "in-game day" is overworld day time / 24000, so sleeping moves it forward. | We need one clock everyone shares. |
+| D-008 | The profile salt is random per world and made on the first load. Two worlds with the same seed get different profiles. `/a1016 profile reroll` makes a new salt. | "Never the same run." |
+| D-009 | Old scars stay at least 300 blocks from world spawn by default (configurable). | Matches F01's 300 to 800 band. "Far from spawn." |
+| D-010 | `devFastMode` divides every real-time pacing duration by `devFastDivisor` (default 60). It is only for tests and debug runs. | Lets us test pacing without hard-coding faster timings. |
+| D-011 | Pacing rules are the defaults: director tick every 30 s, 1 in 3 fired events is fake, at least 15 real minutes between minor events, at most 1 major per real hour, nothing in the first 5 minutes after joining, no major in the first in-game day. Stage times are from 4b and are scaled by the tempo `paceFactor` (0.6 / 1.0 / 1.4, which is ±40%). | DESIGN.md 4b. |
+| D-012 | The out-of-view rule: a target is in view if any player is within 3 blocks of it, or has line of sight to it within a 160° cone and within view distance. The cone is conservative because the server can't know the client's FOV (Quake Pro at 16:9 is about 137° horizontal). | Guardrail: nothing vanishes on camera. |
+| D-013 | F06 usernames have to be checked against real players before release. **NEEDS MARIANO** (open question in DESIGN.md). | Guardrail 6. |
