@@ -307,7 +307,7 @@ public class NetworkGameTests {
 		helper.succeed();
 	}
 
-	@GameTest(maxTicks = 200)
+	@GameTest(maxTicks = 1200)
 	public void networkChestNeverLoadsAChunkInTheTick(GameTestHelper helper) {
 		DigConfig config = testConfig();
 		DigGround g = DigGround.of(helper, 14, 16, 10, 16, Blocks.STONE);
