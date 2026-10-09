@@ -1,10 +1,52 @@
 package com.forzacode.a1016_02.world;
 
+import com.forzacode.a1016_02.A1016_02;
+import com.forzacode.a1016_02.world.gen.ScarContext;
+import com.forzacode.a1016_02.world.gen.ScarFeature;
+
+import net.fabricmc.fabric.api.biome.v1.BiomeModifications;
+import net.fabricmc.fabric.api.biome.v1.BiomeSelectors;
+import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
+import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
+
+import net.minecraft.core.Registry;
+import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.core.registries.Registries;
+import net.minecraft.resources.ResourceKey;
+import net.minecraft.world.level.levelgen.GenerationStep;
+import net.minecraft.world.level.levelgen.placement.PlacedFeature;
+
 /** Common entrypoint of the world workstream. Called by the main entrypoint after {@code CoreInit}. */
 public final class WorldInit {
+	/** The placed feature that grows every old scar ({@code data/a1016_02/worldgen/placed_feature/world/scars.json}). */
+	public static final ResourceKey<PlacedFeature> SCARS = ResourceKey.create(Registries.PLACED_FEATURE, A1016_02.id("world/scars"));
+
 	private WorldInit() {
 	}
 
 	public static void init() {
+		Registry.register(BuiltInRegistries.FEATURE_TYPE, A1016_02.id("world/scars"), ScarFeature.CODEC);
+		// Last in vegetal decoration: after the trees (so they can be stripped), before snow and ice.
+		BiomeModifications.addFeature(BiomeSelectors.foundInOverworld(), GenerationStep.Decoration.VEGETAL_DECORATION, SCARS);
+
+		ServerLifecycleEvents.SERVER_STARTING.register(server -> {
+			try {
+				ScarContext.refresh(server);
+			} catch (RuntimeException e) {
+				A1016_02.LOGGER.warn("[a1016] world: scar snapshot not ready at start, retrying when the server runs", e);
+			}
+		});
+		ServerLifecycleEvents.SERVER_STARTED.register(ScarContext::refresh);
+		ServerLifecycleEvents.SERVER_STOPPING.register(WorldSites::drain);
+		ServerLifecycleEvents.SERVER_STOPPED.register(server -> {
+			ScarContext.clear();
+			WorldSites.clear();
+		});
+		ServerTickEvents.END_SERVER_TICK.register(server -> {
+			if (server.getTickCount() % 100 == 0) {
+				ScarContext.refresh(server);
+			}
+			WorldSites.drain(server);
+		});
 	}
 }
