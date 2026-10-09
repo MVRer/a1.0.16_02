@@ -166,4 +166,15 @@ public class CoreGameTests extends TraceGameTests {
 		helper.assertTrue(committed && level.getBlockState(a).is(Blocks.DIRT) && level.getBlockState(b).is(Blocks.GLOWSTONE), "batch did not apply");
 		helper.succeed();
 	}
+
+	/** An old config file that still has the retired pacing keys (sightingMinDistance, stareSeconds) loads without errors. */
+	@GameTest
+	public void oldConfigWithRetiredPacingKeysLoads(GameTestHelper helper) {
+		String old = "{\"devFastMode\": false, \"devFastDivisor\": 60, \"pacing\": {\"sightingMinDistance\": 30, \"sightingMinSpacing\": 250,"
+				+ " \"sightingsPerDayMax\": 1, \"stareSeconds\": 2.5}, \"sections\": {}}";
+		ModConfig parsed = ModConfig.parse(old);
+		helper.assertTrue(parsed != null && parsed.pacing != null, "old config did not parse");
+		helper.assertTrue(parsed.pacing.sightingMinSpacing == 250 && parsed.pacing.sightingsPerDayMax == 1, "kept keys were not read");
+		helper.succeed();
+	}
 }

@@ -10,7 +10,6 @@ import com.forzacode.a1016_02.core.CardTag;
 import com.forzacode.a1016_02.core.FireContext;
 import com.forzacode.a1016_02.core.FireResult;
 import com.forzacode.a1016_02.core.Habit;
-import com.forzacode.a1016_02.core.ModConfig;
 import com.forzacode.a1016_02.core.Services;
 import com.forzacode.a1016_02.core.SiteRegistry;
 import com.forzacode.a1016_02.core.SiteType;
@@ -60,7 +59,7 @@ public final class CowWhereNothingSpawnsCard extends AtmosphereCard {
 		if (cows.isEmpty()) {
 			return FireResult.NO_SPOT;
 		}
-		int minDistance = ModConfig.pacing().sightingMinDistance;
+		int minDistance = cfg.cowMinDistance;
 		for (SiteRegistry.Site site : sites) {
 			BlockPos spot = spotOn(level, site, player, minDistance, ctx.random());
 			if (spot == null) {

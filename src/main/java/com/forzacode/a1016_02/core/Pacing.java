@@ -76,10 +76,10 @@ public final class Pacing {
 	public double pityMaxBonus = 1.0;
 
 	// --- sightings ---
-	public int sightingMinDistance = 24;
+	// sightingMinDistance and stareSeconds are retired: the figure's distances and stare live in the entity section
+	// (D-035). Old config files that still have them load fine; the keys are skipped and dropped on the next save.
 	public int sightingMinSpacing = 300;
 	public int sightingsPerDayMax = 1;
-	public double stareSeconds = 2;
 
 	// --- mining in the dark ---
 	public double miningDarkStillSeconds = 20;
@@ -189,10 +189,6 @@ public final class Pacing {
 
 	public long pityStartTicks() {
 		return ModConfig.realTicks(pityStartHours * 3600);
-	}
-
-	public long stareTicks() {
-		return ModConfig.realTicks(stareSeconds);
 	}
 
 	public long miningDarkStillTicks() {

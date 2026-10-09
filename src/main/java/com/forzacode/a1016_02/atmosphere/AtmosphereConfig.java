@@ -89,6 +89,8 @@ public final class AtmosphereConfig {
 	public int deadMountainSearchRadius = 192;
 	public int cowSearchRadius = 96;
 	public double cowStandSeconds = 120;
+	/** The cow on a dead mountain is moved at least this far from the player (blocks). */
+	public int cowMinDistance = 24;
 	public int villagerRadius = 48;
 	public long noonFrom = 4500;
 	public long noonTo = 7500;

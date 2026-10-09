@@ -83,6 +83,11 @@ public final class ModConfig {
 		return value;
 	}
 
+	/** Parses a config file's text with the same rules as {@link #load()} (unknown keys are skipped). Tests only. */
+	static ModConfig parse(String json) {
+		return GSON.fromJson(json, ModConfig.class);
+	}
+
 	/** Loads (or creates) the config file. Called by {@code CoreInit}. */
 	public static synchronized void load() {
 		Path path = path();
