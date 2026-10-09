@@ -79,7 +79,7 @@ public class EndingDUndoTests extends EndingDStingTests {
 		helper.setBlock(3, 1, 3, Blocks.STONE);
 		helper.assertTrue(Services.traces().forced().remove(level, at, "lore:left/F99"), "setup remove failed");
 		TraceLedger.Entry left = only(helper, server, "lore:left/F99");
-		helper.assertTrue(Undo.undo(server, left, Services.traces().forced(), null) == Undo.Result.SKIP, "a lore:left entry was not skipped");
+		helper.assertTrue(Undo.undo(server, left, Services.traces().forced()) == Undo.Result.SKIP, "a lore:left entry was not skipped");
 		helper.assertBlockPresent(Blocks.AIR, new BlockPos(3, 1, 3));
 		TraceLedger.get(server).remove(left);
 		helper.succeed();
@@ -99,10 +99,10 @@ public class EndingDUndoTests extends EndingDStingTests {
 		String removeCause = cause(helper, "remove");
 		helper.assertTrue(traces.remove(level, removed, removeCause), "setup remove failed");
 		TraceLedger.Entry entry = only(helper, server, removeCause);
-		helper.assertTrue(Undo.undo(server, entry, traces, null) == Undo.Result.DONE, "the removal was not undone");
+		helper.assertTrue(Undo.undo(server, entry, traces) == Undo.Result.DONE, "the removal was not undone");
 		helper.assertBlockPresent(Blocks.STONE, new BlockPos(2, 1, 2));
 		helper.assertTrue(entries(server, removeCause).isEmpty(), "the entry is still open");
-		helper.assertTrue(Undo.undo(server, entry, traces, null) == Undo.Result.BLOCKED, "an undone entry was undone again");
+		helper.assertTrue(Undo.undo(server, entry, traces) == Undo.Result.BLOCKED, "an undone entry was undone again");
 
 		// REMOVE over something the player built: never overwritten, never forced.
 		helper.setBlock(4, 1, 2, Blocks.STONE);
@@ -111,7 +111,7 @@ public class EndingDUndoTests extends EndingDStingTests {
 		helper.assertTrue(traces.remove(level, built, builtCause), "setup remove failed");
 		helper.setBlock(4, 1, 2, Blocks.OAK_PLANKS);
 		TraceLedger.Entry over = only(helper, server, builtCause);
-		helper.assertTrue(Undo.undo(server, over, traces, null) == Undo.Result.BLOCKED, "a removal was put back over a built block");
+		helper.assertTrue(Undo.undo(server, over, traces) == Undo.Result.BLOCKED, "a removal was put back over a built block");
 		helper.assertBlockPresent(Blocks.OAK_PLANKS, new BlockPos(4, 1, 2));
 		ledger.remove(over);
 
@@ -121,11 +121,11 @@ public class EndingDUndoTests extends EndingDStingTests {
 		helper.assertTrue(traces.move(level, helper.absolutePos(new BlockPos(2, 1, 5)), helper.absolutePos(new BlockPos(2, 1, 8)), moveCause), "setup move failed");
 		TraceLedger.Entry move = only(helper, server, moveCause);
 		int before = ledger.entries().size();
-		helper.assertTrue(Undo.undo(server, move, traces, null) == Undo.Result.DONE, "the move was not undone");
+		helper.assertTrue(Undo.undo(server, move, traces) == Undo.Result.DONE, "the move was not undone");
 		helper.assertBlockPresent(Blocks.GOLD_BLOCK, new BlockPos(2, 1, 5));
 		helper.assertBlockPresent(Blocks.AIR, new BlockPos(2, 1, 8));
 		helper.assertTrue(entries(server, moveCause).isEmpty() && ledger.entries().size() == before - 1, "the move left entries behind");
-		helper.assertTrue(Undo.undo(server, move, traces, null) == Undo.Result.BLOCKED, "the move was undone twice");
+		helper.assertTrue(Undo.undo(server, move, traces) == Undo.Result.BLOCKED, "the move was undone twice");
 		helper.assertBlockPresent(Blocks.GOLD_BLOCK, new BlockPos(2, 1, 5));
 
 		// CONVERT: dirt back to grass.
@@ -133,7 +133,7 @@ public class EndingDUndoTests extends EndingDStingTests {
 		String convertCause = cause(helper, "convert");
 		helper.assertTrue(traces.convert(level, helper.absolutePos(new BlockPos(6, 1, 2)), Blocks.DIRT.defaultBlockState(), convertCause), "setup convert failed");
 		TraceLedger.Entry convert = only(helper, server, convertCause);
-		helper.assertTrue(Undo.undo(server, convert, traces, null) == Undo.Result.DONE, "the conversion was not undone");
+		helper.assertTrue(Undo.undo(server, convert, traces) == Undo.Result.DONE, "the conversion was not undone");
 		helper.assertBlockPresent(Blocks.GRASS_BLOCK, new BlockPos(6, 1, 2));
 		helper.assertTrue(entries(server, convertCause).isEmpty() && entries(server, Undo.CAUSE).stream().noneMatch(e -> e.pos().pos().equals(
 				helper.absolutePos(new BlockPos(6, 1, 2)))), "the conversion left entries behind");
@@ -148,7 +148,7 @@ public class EndingDUndoTests extends EndingDStingTests {
 		String signCause = cause(helper, "sign");
 		helper.assertTrue(traces.editSign(level, signPos, List.of(), List.of(), signCause), "setup blank failed");
 		TraceLedger.Entry blank = only(helper, server, signCause);
-		helper.assertTrue(Undo.undo(server, blank, traces, null) == Undo.Result.DONE, "the blank sign was not undone");
+		helper.assertTrue(Undo.undo(server, blank, traces) == Undo.Result.DONE, "the blank sign was not undone");
 		String text = sign.getText(SignTextSlot.FRONT).getMessages(false).get(0).getString() + " " + sign.getText(SignTextSlot.FRONT).getMessages(false).get(1).getString();
 		helper.assertTrue(text.equals("we were here"), "the sign says '" + text + "'");
 		helper.succeed();
@@ -172,8 +172,8 @@ public class EndingDUndoTests extends EndingDStingTests {
 		String takeCause = cause(helper, "take");
 		helper.assertTrue(traces.removeStack(level, homePos, 0, 5, takeCause), "setup take failed");
 		TraceLedger.Entry take = only(helper, server, takeCause);
-		helper.assertTrue(Undo.undo(server, take, traces, null) == Undo.Result.DONE, "the taken stack did not come back");
-		helper.assertTrue(Undo.undo(server, take, traces, null) == Undo.Result.BLOCKED, "the taken stack came back twice");
+		helper.assertTrue(Undo.undo(server, take, traces) == Undo.Result.DONE, "the taken stack did not come back");
+		helper.assertTrue(Undo.undo(server, take, traces) == Undo.Result.BLOCKED, "the taken stack came back twice");
 		int diamonds = 0;
 		for (int i = 0; i < home.getContainerSize(); i++) {
 			if (home.getItem(i).is(Items.DIAMOND)) {
@@ -185,7 +185,7 @@ public class EndingDUndoTests extends EndingDStingTests {
 		String moveCause = cause(helper, "move_stack");
 		helper.assertTrue(traces.moveStack(level, homePos, 1, darkPos, moveCause), "setup move failed");
 		TraceLedger.Entry moved = only(helper, server, moveCause);
-		helper.assertTrue(Undo.undo(server, moved, traces, null) == Undo.Result.DONE, "the moved stack did not come back");
+		helper.assertTrue(Undo.undo(server, moved, traces) == Undo.Result.DONE, "the moved stack did not come back");
 		helper.assertTrue(dark.isEmpty(), "the stack is still in the dark chest");
 		int emeralds = 0;
 		for (int i = 0; i < home.getContainerSize(); i++) {
@@ -241,6 +241,67 @@ public class EndingDUndoTests extends EndingDStingTests {
 		Afterward.clear();
 		BlockState torch = level.getBlockState(helper.absolutePos(new BlockPos(5, 1, 6)));
 		helper.assertTrue(torch.is(Blocks.WALL_TORCH), "the torch is not on its wall");
+		helper.succeed();
+	}
+
+	@GameTest
+	public void farEntriesWaitInTheirChunkClusterWhileItIsHeld(GameTestHelper helper) {
+		ServerLevel level = helper.getLevel();
+		BlockPos far = new BlockPos(5_000_000, 64, 5_000_000);
+		TraceLedger.Entry a1 = entry(level, far, "test:far", TraceLedger.Kind.REMOVE);
+		TraceLedger.Entry a2 = entry(level, far.above(), "test:far", TraceLedger.Kind.REMOVE);
+		TraceLedger.Entry a3 = entry(level, far.east(), "test:far", TraceLedger.Kind.REMOVE);
+		TraceLedger.Entry b1 = entry(level, far.offset(64, 0, 0), "test:far", TraceLedger.Kind.REMOVE);
+		java.util.Set<net.minecraft.world.level.ChunkPos> loaded = new java.util.HashSet<>();
+		java.util.Map<net.minecraft.world.level.ChunkPos, Integer> holds = new java.util.HashMap<>();
+		java.util.Set<net.minecraft.world.level.ChunkPos> released = new java.util.HashSet<>();
+		ChunkClusters.Chunks chunks = new ChunkClusters.Chunks() {
+			@Override
+			public boolean loaded(net.minecraft.resources.ResourceKey<net.minecraft.world.level.Level> dimension, net.minecraft.world.level.ChunkPos chunk) {
+				return loaded.contains(chunk);
+			}
+
+			@Override
+			public void hold(net.minecraft.resources.ResourceKey<net.minecraft.world.level.Level> dimension, net.minecraft.world.level.ChunkPos chunk) {
+				holds.merge(chunk, 1, Integer::sum);
+			}
+
+			@Override
+			public void release(net.minecraft.resources.ResourceKey<net.minecraft.world.level.Level> dimension, net.minecraft.world.level.ChunkPos chunk) {
+				released.add(chunk);
+			}
+		};
+		java.util.Map<TraceLedger.Entry, Integer> calls = new java.util.HashMap<>();
+		java.util.function.Function<TraceLedger.Entry, Undo.Result> undo = e -> {
+			calls.merge(e, 1, Integer::sum);
+			return e == b1 ? Undo.Result.WAIT : Undo.Result.DONE;
+		};
+		net.minecraft.world.level.ChunkPos a = net.minecraft.world.level.ChunkPos.containing(far);
+		net.minecraft.world.level.ChunkPos b = net.minecraft.world.level.ChunkPos.containing(far.offset(64, 0, 0));
+		ChunkClusters clusters = new ChunkClusters(8);
+		for (TraceLedger.Entry e : List.of(a1, a2, a3, b1)) {
+			helper.assertTrue(clusters.add(e, 0), "an entry was not taken");
+		}
+		helper.assertFalse(clusters.add(a1, 0), "an entry joined twice");
+		helper.assertTrue(clusters.size() == 2, "expected one cluster per chunk, got " + clusters.size());
+		// One new chunk loaded per tick; nothing is tried until its chunk is in.
+		clusters.tick(0, 1, 600, 2400, 100, chunks, undo);
+		helper.assertTrue(holds.getOrDefault(a, 0) == 1 && !holds.containsKey(b) && calls.isEmpty(), "loads were not one per tick: " + holds);
+		clusters.tick(1, 1, 600, 2400, 100, chunks, undo);
+		helper.assertTrue(holds.getOrDefault(b, 0) == 1, "the second chunk was not loaded");
+		// Chunk A comes in: everything in it is worked through at once, then its ticket is let go.
+		loaded.add(a);
+		ChunkClusters.Tick tick = clusters.tick(2, 1, 600, 2400, 100, chunks, undo);
+		helper.assertTrue(tick.undone() == 3 && released.contains(a) && clusters.size() == 1, "chunk A's entries were not all undone while held");
+		helper.assertTrue(calls.get(a1) == 1 && calls.get(a2) == 1 && calls.get(a3) == 1, "an entry was undone twice: " + calls);
+		// Chunk B stays held (renewed before its ticket runs out) while its entry waits, until the bounded timeout.
+		loaded.add(b);
+		clusters.tick(300, 1, 600, 2400, 100, chunks, undo);
+		clusters.tick(601, 1, 600, 2400, 100, chunks, undo);
+		helper.assertTrue(holds.get(b) == 2 && !released.contains(b) && clusters.contains(b1), "the waiting chunk was not held: " + holds);
+		clusters.tick(2402, 1, 600, 2400, 100, chunks, undo);
+		helper.assertTrue(released.contains(b) && clusters.isEmpty() && !clusters.contains(b1), "the cluster was not let go after the timeout");
+		helper.assertTrue(calls.getOrDefault(a1, 0) == 1, "a done entry was tried again");
 		helper.succeed();
 	}
 }

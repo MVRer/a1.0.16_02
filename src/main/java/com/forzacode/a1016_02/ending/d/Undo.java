@@ -50,8 +50,10 @@ public final class Undo {
 		DONE,
 		/** Never undone (a skip rule). */
 		SKIP,
-		/** Not now: in view, or its chunk is loading. Try again. */
+		/** Not now: in view. Try again. */
 		WAIT,
+		/** Its chunk is not loaded: it waits in its chunk's cluster ({@link ChunkClusters}), which loads it. */
+		UNLOADED,
 		/** Cannot be undone as things stand (the block was taken or built over). Tried again next pass. */
 		BLOCKED
 	}
@@ -63,10 +65,8 @@ public final class Undo {
 	public static Optional<String> skipReason(MinecraftServer server, TraceLedger.Entry entry) {
 		String cause = entry.cause();
 		if (cause.startsWith("lore:left/")) {
+			// What others left, the team's stair to bedrock included ({@link Stair#CAUSE}).
 			return Optional.of("left by others");
-		}
-		if (cause.startsWith(Stair.CAUSE)) {
-			return Optional.of("the team's stair");
 		}
 		if (cause.startsWith(CAUSE)) {
 			return Optional.of("the undo's own");
@@ -107,9 +107,9 @@ public final class Undo {
 
 	/**
 	 * Undoes one entry if it can now. {@code traces} is core's service ({@code forced()} only in tests and debug).
-	 * Chunks that are not loaded are asked for (with {@code loads}) and the entry waits.
+	 * An entry whose chunk (or whose move's other end) is not loaded is {@link Result#UNLOADED}: nothing is loaded here.
 	 */
-	public static Result undo(MinecraftServer server, TraceLedger.Entry entry, TraceService traces, @Nullable ChunkRequests loads) {
+	public static Result undo(MinecraftServer server, TraceLedger.Entry entry, TraceService traces) {
 		if (skipReason(server, entry).isPresent()) {
 			return Result.SKIP;
 		}
@@ -123,8 +123,8 @@ public final class Undo {
 			return Result.BLOCKED;
 		}
 		BlockPos at = entry.pos().pos();
-		if (!loaded(level, at, loads) || entry.to().isPresent() && !loaded(level, entry.to().get(), loads)) {
-			return Result.WAIT;
+		if (!loaded(level, at) || entry.to().isPresent() && !loaded(level, entry.to().get())) {
+			return Result.UNLOADED;
 		}
 		return switch (entry.kind()) {
 			case REMOVE -> remove(level, entry, traces);
@@ -142,14 +142,8 @@ public final class Undo {
 		};
 	}
 
-	private static boolean loaded(ServerLevel level, BlockPos pos, @Nullable ChunkRequests loads) {
-		if (level.getChunkSource().getChunkNow(pos.getX() >> 4, pos.getZ() >> 4) != null) {
-			return true;
-		}
-		if (loads != null) {
-			loads.request(level, pos);
-		}
-		return false;
+	private static boolean loaded(ServerLevel level, BlockPos pos) {
+		return level.getChunkSource().getChunkNow(pos.getX() >> 4, pos.getZ() >> 4) != null;
 	}
 
 	private static Result remove(ServerLevel level, TraceLedger.Entry entry, TraceService traces) {
@@ -282,27 +276,5 @@ public final class Undo {
 			}
 		}
 		written.forEach(ledger::remove);
-	}
-
-	/** Chunk loads asked for by the undo, capped per tick. */
-	public static final class ChunkRequests {
-		private final int perTick;
-		private int asked;
-		private long tick = -1;
-
-		public ChunkRequests(int perTick) {
-			this.perTick = perTick;
-		}
-
-		void request(ServerLevel level, BlockPos pos) {
-			long now = level.getServer().getTickCount();
-			if (now != tick) {
-				tick = now;
-				asked = 0;
-			}
-			if (asked++ < perTick) {
-				level.getChunkSource().addTicketWithRadius(Stair.TICKET, new net.minecraft.world.level.ChunkPos(pos.getX() >> 4, pos.getZ() >> 4), 0);
-			}
-		}
 	}
 }

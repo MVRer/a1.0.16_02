@@ -31,7 +31,8 @@ public final class Afterward {
 	private static int passSkipped;
 	private static long restUntil;
 	private static long nextRegrow;
-	private static Undo.@Nullable ChunkRequests loads;
+	/** Far entries waiting for their chunk, grouped by chunk (each cluster holds its chunk loaded while it is worked). */
+	private static @Nullable ChunkClusters clusters;
 
 	private Afterward() {
 	}
@@ -41,8 +42,11 @@ public final class Afterward {
 		if (now % 100 == 0) {
 			keepEffects(server);
 		}
-		if (!data.undoFinished() && now >= restUntil && now % Math.max(1, cfg.undoIntervalTicks) == 0) {
-			step(server, data, cfg, Services.traces(), Math.max(1, cfg.undoPerTick));
+		if (!data.undoFinished()) {
+			tickClusters(server, data, cfg, Services.traces(), ChunkClusters.Chunks.of(server));
+			if (now >= restUntil && now % Math.max(1, cfg.undoIntervalTicks) == 0) {
+				step(server, data, cfg, Services.traces(), Math.max(1, cfg.undoPerTick));
+			}
 		}
 		// Groves regrow once the first pass has given back the leaves he took (crowns never cover a waiting leaf).
 		if (data.undoPasses() > 0 && now >= nextRegrow) {
@@ -92,16 +96,19 @@ public final class Afterward {
 				budget++;
 				continue;
 			}
-			if (loads == null) {
-				loads = new Undo.ChunkRequests(Math.max(1, cfg.chunkLoadsPerTick));
-			}
-			Undo.Result result = Undo.undo(server, entry, traces, loads);
+			ChunkClusters waiting = clusters(cfg);
+			Undo.Result result = waiting.contains(entry) ? Undo.Result.UNLOADED : Undo.undo(server, entry, traces);
 			switch (result) {
 				case DONE -> {
 					passDone++;
 					data.addUndone(1);
 				}
 				case WAIT -> passWaiting++;
+				case UNLOADED -> {
+					// Its chunk's cluster loads the chunk and works through everything in it while it is held.
+					waiting.add(entry, server.getTickCount());
+					passWaiting++;
+				}
 				case BLOCKED -> passBlocked++;
 				case SKIP -> passSkipped++;
 			}
@@ -118,13 +125,38 @@ public final class Afterward {
 		data.addUndoPass();
 		A1016_02.LOGGER.info("[a1016] ending d: undo pass {}: {} undone, {} waiting, {} cannot be, {} stay", data.undoPasses(), passDone, passWaiting,
 				passBlocked, passSkipped);
-		boolean finished = passDone == 0 && passWaiting == 0;
+		boolean finished = passDone == 0 && passWaiting == 0 && clusters(cfg).isEmpty();
 		if (finished) {
 			data.setUndoFinished(true);
 		} else if (passDone == 0) {
 			restUntil = server.getTickCount() + EndingDConfig.ticks(cfg.undoRestSeconds);
 		}
 		passDone = passWaiting = passBlocked = passSkipped = 0;
+	}
+
+	private static ChunkClusters clusters(EndingDConfig cfg) {
+		if (clusters == null) {
+			clusters = new ChunkClusters(Math.max(1, cfg.undoMaxClusters));
+		}
+		return clusters;
+	}
+
+	/**
+	 * The far clusters, every tick: a few new chunks are loaded, held ones are renewed before their ticket runs out,
+	 * and the entries of every loaded cluster are tried while it is held. What they undo counts for the pass.
+	 */
+	static ChunkClusters.Tick tickClusters(MinecraftServer server, EndingDState data, EndingDConfig cfg, TraceService traces, ChunkClusters.Chunks chunks) {
+		ChunkClusters waiting = clusters(cfg);
+		if (waiting.isEmpty()) {
+			return new ChunkClusters.Tick(0, 0, 0);
+		}
+		ChunkClusters.Tick tick = waiting.tick(server.getTickCount(), Math.max(1, cfg.chunkLoadsPerTick), ChunkClusters.TICKET.timeout() / 2,
+				EndingDConfig.ticks(cfg.undoClusterTimeoutSeconds), Math.max(1, cfg.undoPerTick), chunks, entry -> Undo.undo(server, entry, traces));
+		if (tick.undone() > 0) {
+			passDone += tick.undone();
+			data.addUndone(tick.undone());
+		}
+		return tick;
 	}
 
 	/** One bare grove at a time (loaded chunks only), one crown per call. */
@@ -152,12 +184,14 @@ public final class Afterward {
 	}
 
 	static String describe(EndingDState data) {
-		return String.format(Locale.ROOT, "%s, %d undone in %d passes, %d groves regrown", data.undoFinished() ? "finished" : "running", data.undone(),
-				data.undoPasses(), data.regrown().size());
+		ChunkClusters waiting = clusters;
+		return String.format(Locale.ROOT, "%s, %d undone in %d passes, %d groves regrown, %d far chunks waiting (%d entries)",
+				data.undoFinished() ? "finished" : "running", data.undone(), data.undoPasses(), data.regrown().size(),
+				waiting == null ? 0 : waiting.size(), waiting == null ? 0 : waiting.entries());
 	}
 
 	public static void clear() {
-		loads = null;
+		clusters = null;
 		cursor = -1;
 		passDone = passWaiting = passBlocked = passSkipped = 0;
 		restUntil = 0;

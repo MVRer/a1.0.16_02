@@ -22,6 +22,16 @@ public final class EndingDConfig {
 	public int sentenceRadius = 2;
 
 	// --- dangers ---
+	/**
+	 * Step 1: at night, while the player is this close to the map's camp, existing creepers this close to it are moved
+	 * into its tents (searched this far around it), at most this many per night, this often, silent this long.
+	 */
+	public int campWatchRadius = 96;
+	public int campRadius = 16;
+	public int creeperSearchRadius = 48;
+	public int creepersPerNight = 2;
+	public double creeperCooldownSeconds = 30;
+	public double creeperSilenceSeconds = 300;
 	/** The leaf under a climber in the grove: only this high above the ground, at most this often. */
 	public int leafDropMinHeight = 3;
 	public double leafDropCooldownSeconds = 45;
@@ -72,7 +82,10 @@ public final class EndingDConfig {
 	// --- afterward ---
 	public int undoPerTick = 4;
 	public int undoIntervalTicks = 2;
+	/** Far chunks the undo starts loading per tick, how many it holds at once, and how long it holds one at most. */
 	public int chunkLoadsPerTick = 2;
+	public int undoMaxClusters = 64;
+	public double undoClusterTimeoutSeconds = 120;
 	/** A full pass over the ledger that changed nothing waits this long before the next one. */
 	public double undoRestSeconds = 30;
 	public double regrowIntervalSeconds = 2;
