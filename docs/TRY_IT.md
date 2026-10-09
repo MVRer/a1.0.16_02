@@ -2,6 +2,18 @@
 
 One entry per merge, newest first. Run the game from the main checkout (this folder, on `main`).
 
+## READY TO TRY: Dusk fog that creeps in  (merged feat/atmosphere-dusk-ease, commit 6ecfc75)
+```
+Restart needed: full game restart (client fog code). Your config needs no changes.
+See it now:
+  1. Launch "Dev Client". /a1016 atmosphere fog dusk 0.45
+  2. /time set 9000, then /gamerule doDaylightCycle true, and just play or watch for a few minutes.
+  3. Level change: /a1016 atmosphere fog dusk 0.7, then back to 0.45: it eases over about 90 s instead of snapping.
+What to look for: you shouldn't be able to say when it started. About 1% thicker after 30 s, 8% after a minute,
+  full at deep dusk (13000), easing to the night level by 16000, gone by sunrise. Sky haze and clouds blend in too.
+Known rough edges: on first joining a world, the current level applies at once (no fade from clear).
+```
+
 ## READY TO TRY: Ending D, "No longer with us" (the true ending)  (merged feat/ending-d, commit df57a98)
 ```
 Restart needed: full game restart (Java code, worldgen mixins)
