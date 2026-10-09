@@ -50,7 +50,7 @@ final class Fakes {
 	static Optional<Mob> find(ServerPlayer player, Variant.Fake kind) {
 		ServerLevel level = player.level();
 		FogEdge edge = FogEdge.of(player, false);
-		double min = Math.max(ModConfig.pacing().sightingMinDistance, edge.outer() * 0.6);
+		double min = Math.max(EntityConfig.get().minDistance(), edge.outer() * 0.6);
 		double max = edge.outer() + 4.0;
 		List<Mob> candidates = new ArrayList<>();
 		for (EntityType<? extends Mob> type : types(kind)) {

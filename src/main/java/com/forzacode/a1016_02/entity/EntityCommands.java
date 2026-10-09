@@ -132,8 +132,8 @@ final class EntityCommands {
 		String where = spawned.figure() == null ? ""
 				: String.format(Locale.ROOT, " at %s, %d blocks out", spawned.figure().blockPosition().toShortString(),
 						Math.round(SpotFinder.horizontal(player.position(), spawned.figure().position())));
-		String line = String.format(Locale.ROOT, "[a1016] entity spawn %s -> %s%s (band %d..%d)", variant.get().shortName(), spawned.result(), where,
-				Math.round(edge.inner()), Math.round(edge.outer()));
+		String line = String.format(Locale.ROOT, "[a1016] entity spawn %s -> %s%s (band %.1f..%.1f of fog end %.1f, %s%s)", variant.get().shortName(),
+				spawned.result(), where, edge.inner(), edge.outer(), edge.limit(), source(edge), edge.seeable() ? "" : ", fog too thick to see him");
 		ctx.getSource().sendSuccess(() -> Component.literal(line), true);
 		return spawned.figure() != null ? 1 : 0;
 	}
@@ -150,12 +150,20 @@ final class EntityCommands {
 		ServerPlayer player = target(ctx);
 		List<HimEntity> out = FigureApi.active(server);
 		lines.add("[a1016] entity: " + out.size() + " out");
+		EntityConfig config = EntityConfig.get();
 		for (HimEntity him : out) {
-			String dist = player == null ? "?" : String.valueOf(Math.round(SpotFinder.horizontal(player.position(), him.position())));
+			String dist = player == null ? "?" : String.format(Locale.ROOT, "%.1f", SpotFinder.horizontal(player.position(), him.position()));
 			String closed = player == null ? "?" : String.format(Locale.ROOT, "%.1f", him.closedBy(player.getUUID()));
-			lines.add(String.format(Locale.ROOT, " %s %s at %s (%s blocks) age=%ds seenFor=%ds unseen=%d stare=%d closed=%s triggered=%s fled=%s low=%s",
-					him.variant().shortName(), him.phase(), him.blockPosition().toShortString(), dist, him.age() / 20,
-					him.seenFor() < 0 ? -1 : him.seenFor() / 20, him.unseenTicks(), him.stareTicks(), closed, him.triggered(), him.fled(), him.isLow()));
+			lines.add(String.format(Locale.ROOT, " %s %s at %s (%s blocks) spawnedAt=%.1f flee=%.1f approach=%.1f age=%ds seenFor=%ds unseen=%d stare=%d"
+					+ " closed=%s triggered=%s fled=%s low=%s speed=%.1f b/s outrun=%s",
+					him.variant().shortName(), him.phase(), him.blockPosition().toShortString(), dist, him.spawnDistance(), him.fleeDistance(config),
+					him.approachBlocks(config), him.age() / 20, him.seenFor() < 0 ? -1 : him.seenFor() / 20, him.unseenTicks(), him.stareTicks(), closed,
+					him.triggered(), him.fled(), him.isLow(), him.moveSpeed(), him.outrunning()));
+		}
+		FigureApi.LastSpawn lastSpawn = FigureApi.lastSpawn();
+		if (lastSpawn != null) {
+			lines.add(String.format(Locale.ROOT, "last spawn: %s at %.1f blocks (band %.1f..%.1f of fog end %.1f, %s)", lastSpawn.variant().shortName(),
+					lastSpawn.distance(), lastSpawn.edge().inner(), lastSpawn.edge().outer(), lastSpawn.edge().limit(), source(lastSpawn.edge())));
 		}
 		EntityData data = EntityData.get(server);
 		String last = data.lastPos() == null ? "-" : data.lastPos().pos().toShortString();
@@ -166,9 +174,13 @@ final class EntityCommands {
 			HerobrineState state = HerobrineState.get(server);
 			FogEdge edge = FogEdge.of(player, false);
 			FogEdge close = FogEdge.of(player, true);
-			lines.add(String.format(Locale.ROOT, "fog: view=%d chunks, render end=%d, visible end=%d (duskFog %.2f), band %d..%d, close %d..%d, time=%d base=%s",
-					edge.chunks(), Math.round(edge.renderLimit()), Math.round(edge.limit()), state.effects().duskFogLevel(), Math.round(edge.inner()),
-					Math.round(edge.outer()), Math.round(close.inner()), Math.round(close.outer()),
+			ReportedFog.Entry report = ReportedFog.latest(player);
+			String reported = report == null ? "none yet"
+					: String.format(Locale.ROOT, "%.1f (%.1fs ago)", report.blocks(), ReportedFog.ageTicks(player) / 20.0);
+			lines.add(String.format(Locale.ROOT, "fog: view=%d chunks, render end=%.1f, client fog end=%s, server estimate=%.1f (duskFog %.2f), using %.1f (%s)",
+					edge.chunks(), edge.renderLimit(), reported, edge.estimate(), state.effects().duskFogLevel(), edge.limit(), source(edge)));
+			lines.add(String.format(Locale.ROOT, "band %.1f..%.1f, close %.1f..%.1f, minDistance=%.1f%s, time=%d base=%s", edge.inner(), edge.outer(),
+					close.inner(), close.outer(), config.minDistance(), edge.seeable() ? "" : " (fog too thick to see him)",
 					SightingGates.timeOfDay(server), Services.watch().base(player).map(b -> b.pos().toShortString()).orElse("-")));
 			StringBuilder gates = new StringBuilder("gates:");
 			for (Variant variant : Variant.values()) {
@@ -181,6 +193,11 @@ final class EntityCommands {
 			ctx.getSource().sendSuccess(() -> Component.literal(line), false);
 		}
 		return out.size();
+	}
+
+	/** Where the band's fog end came from. */
+	private static String source(FogEdge edge) {
+		return edge.fromClient() ? "client" : "server estimate";
 	}
 
 	/** The command's player, otherwise the subject. */

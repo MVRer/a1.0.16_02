@@ -47,11 +47,22 @@ public final class FigureApi {
 	/**
 	 * The spawn band for a variant around a player.
 	 *
-	 * @param inner nearest horizontal distance, never under {@code Pacing.sightingMinDistance}
+	 * @param inner nearest horizontal distance, never under {@code EntityConfig.minDistance}
 	 * @param outer farthest horizontal distance, inside the fog edge and the entity-ticking range
 	 */
 	public record Band(double inner, double outer) {
 	}
+
+	/**
+	 * The last fog-edge spawn, for {@code /a1016 entity info}.
+	 *
+	 * @param distance horizontal distance from the player he appeared for
+	 * @param edge     the band and fog end used
+	 */
+	public record LastSpawn(Variant variant, double distance, FogEdge edge) {
+	}
+
+	private static volatile @Nullable LastSpawn lastSpawn;
 
 	private static final int SWEEP_INTERVAL = 5;
 	private static final int FULL_SWEEP_INTERVAL = 100;
@@ -63,15 +74,16 @@ public final class FigureApi {
 
 	/**
 	 * Spawns him with his feet at {@code feet}, facing {@code yaw}. Refused (empty) if any part of his rendered model
-	 * would be in view of a player or closer than {@code Pacing.sightingMinDistance} (24) to any player's eyes, or if
-	 * the spot is not entity-ticking. He never pops in on screen and never appears close.
+	 * would be in view of a player or closer than {@code EntityConfig.minDistance} (12, never under 8) to any player's
+	 * eyes, or if the spot is not entity-ticking. He never pops in on screen and never appears close. His spawn
+	 * distance (which scales his flee and approach distances) is the horizontal distance to the nearest player.
 	 *
 	 * @param anchor the trunk or light he relates to, or null
 	 */
 	public static Optional<HimEntity> spawnAt(ServerLevel level, Variant variant, Vec3 feet, float yaw, @Nullable BlockPos anchor) {
 		AABB view = HimEntity.viewBox(feet);
 		List<Vec3> eyes = level.players().stream().map(p -> p.getEyePosition()).toList();
-		if (tooClose(eyes, view, ModConfig.pacing().sightingMinDistance) || !level.isPositionEntityTicking(BlockPos.containing(feet))
+		if (tooClose(eyes, view, EntityConfig.get().minDistance()) || !level.isPositionEntityTicking(BlockPos.containing(feet))
 				|| !Services.traces().isOutOfView(level, view)) {
 			return Optional.empty();
 		}
@@ -81,6 +93,7 @@ public final class FigureApi {
 		}
 		him.snapTo(feet.x, feet.y, feet.z, yaw, 0.0F);
 		him.setup(variant, yaw, anchor);
+		him.setSpawnDistance(level.players().stream().mapToDouble(p -> SpotFinder.horizontal(p.position(), feet)).min().orElse(Double.NaN));
 		if (!level.addFreshEntity(him)) {
 			return Optional.empty();
 		}
@@ -118,7 +131,8 @@ public final class FigureApi {
 			}
 			out.forEach(him -> him.walkAway(Variant.Gait.WALK));
 		}
-		Optional<SpotFinder.Spot> spot = findSpot(player, variant, random, forced);
+		FogEdge edge = FogEdge.of(player, variant == Variant.CLOSE);
+		Optional<SpotFinder.Spot> spot = findSpot(player, variant, edge, random, forced);
 		if (spot.isEmpty()) {
 			return new Spawned(FireResult.NO_SPOT, null);
 		}
@@ -127,9 +141,17 @@ public final class FigureApi {
 		if (him.isEmpty()) {
 			return new Spawned(FireResult.NO_SPOT, null);
 		}
+		him.get().setSpawnDistance(s.distance());
+		lastSpawn = new LastSpawn(variant, s.distance(), edge);
 		EntityData.get(server).recordSighting(variant.shortName(), GlobalPos.of(level.dimension(), BlockPos.containing(s.pos())), GameClock.day(server));
-		A1016_02.LOGGER.debug("[a1016] sighting {} at {}, {} blocks out", variant.cardId(), BlockPos.containing(s.pos()).toShortString(), Math.round(s.distance()));
+		A1016_02.LOGGER.debug("[a1016] sighting {} at {}, {} blocks out (fog end {}, {})", variant.cardId(), BlockPos.containing(s.pos()).toShortString(),
+				Math.round(s.distance()), Math.round(edge.limit()), edge.fromClient() ? "client" : "estimate");
 		return new Spawned(FireResult.FIRED, him.get());
+	}
+
+	/** The last fog-edge spawn since the game started, or null. */
+	public static @Nullable LastSpawn lastSpawn() {
+		return lastSpawn;
 	}
 
 	static void track(HimEntity him) {
@@ -170,13 +192,19 @@ public final class FigureApi {
 		return out.size();
 	}
 
-	/** Where he would stand right now, without spawning him. */
-	static Optional<SpotFinder.Spot> findSpot(ServerPlayer player, Variant variant, RandomSource random, boolean forced) {
+	/**
+	 * Where he would stand right now in this band, without spawning him. Nowhere if the fog is too thick to see him
+	 * past the minimum distance ({@link FogEdge#seeable}).
+	 */
+	static Optional<SpotFinder.Spot> findSpot(ServerPlayer player, Variant variant, FogEdge edge, RandomSource random, boolean forced) {
+		if (!edge.seeable()) {
+			return Optional.empty();
+		}
 		ServerLevel level = player.level();
 		MinecraftServer server = level.getServer();
 		EntityConfig config = EntityConfig.get();
 		Pacing pacing = ModConfig.pacing();
-		Band band = band(player, variant);
+		Band band = new Band(edge.inner(), edge.outer());
 		EntityData data = EntityData.get(server);
 		boolean spacing = !forced && variant != Variant.LAST_ONE;
 		Predicate<BlockPos> allowed = pos -> HimEntity.tickingAround(level, Vec3.atBottomCenterOf(pos), HimEntity.SPAWN_TICK_MARGIN)
@@ -184,7 +212,7 @@ public final class FigureApi {
 				&& (!spacing || data.farEnough(GlobalPos.of(level.dimension(), pos), pacing.sightingMinSpacing));
 		Predicate<AABB> hidden = box -> Services.traces().isOutOfView(level, box);
 		SpotFinder.Query q = new SpotFinder.Query(level, player.position(), player.getEyePosition(), band.inner(), band.outer(),
-				pacing.sightingMinDistance, ModEntities.HIM.getDimensions(), hidden, allowed, random, config.spotSamples);
+				config.minDistance(), ModEntities.HIM.getDimensions(), hidden, allowed, random, config.spotSamples);
 		return switch (variant.spot()) {
 			case OPEN -> SpotFinder.open(q);
 			case RIDGE -> SpotFinder.ridge(q, config.ridgeMinRise);
@@ -201,9 +229,10 @@ public final class FigureApi {
 	}
 
 	/**
-	 * Where the variant may stand around this player: {@code spawnDistanceFractionMin..Max} of the visible fog end
-	 * (see {@link FogEdge}), so he reads as a hazy but clear shape. The close variant stands 24 to 36 blocks out.
-	 * Never under {@code Pacing.sightingMinDistance}.
+	 * Where the variant may stand around this player (D-035, see {@link FogEdge}): {@code normalFractionMin..Max}
+	 * (0.55 to 0.75) of the fog end the client draws, so he reads as a hazy but clear shape. The close variant stands
+	 * {@code closeFractionMin..Max} (0.35 to 0.50) of it, clamped to 16 to 28 blocks. Never under
+	 * {@code EntityConfig.minDistance}.
 	 */
 	public static Band band(ServerPlayer player, Variant variant) {
 		FogEdge edge = FogEdge.of(player, variant == Variant.CLOSE);

@@ -79,4 +79,76 @@ public final class SightingRules {
 	public static boolean mayEndOutOfView(boolean everSeen, long seenFor, long minSeenTicks, boolean fled) {
 		return !everSeen || fled || seenFor >= minSeenTicks;
 	}
+
+	/**
+	 * The flee distance for a figure that appeared {@code spawnDistance} blocks out (D-035): the configured one, but
+	 * never more than {@code fraction} of the spawn distance, so a close one does not flee the moment he is seen.
+	 * An unknown spawn distance (NaN or 0) keeps the configured value.
+	 */
+	public static double fleeDistance(double configured, double fraction, double spawnDistance) {
+		return scaled(configured, fraction, spawnDistance);
+	}
+
+	/** The approach that ends the sighting, scaled the same way as {@link #fleeDistance}. */
+	public static double approachBlocks(double configured, double fraction, double spawnDistance) {
+		return scaled(configured, fraction, spawnDistance);
+	}
+
+	private static double scaled(double configured, double fraction, double spawnDistance) {
+		if (Double.isNaN(spawnDistance) || spawnDistance <= 0.0 || Double.isNaN(fraction)) {
+			return configured;
+		}
+		return Math.min(configured, Math.max(0.0, fraction) * spawnDistance);
+	}
+
+	/**
+	 * His running speed in blocks per second (D-036): at least {@code base}, and {@code outrunFactor} times the chasing
+	 * player's speed, so he always pulls away; never past {@code max}.
+	 */
+	public static double runSpeed(double base, double chaserSpeed, double outrunFactor, double max) {
+		double chase = Double.isNaN(chaserSpeed) ? 0.0 : Math.max(0.0, chaserSpeed) * Math.max(1.0, outrunFactor);
+		return Math.min(max, Math.max(base, chase));
+	}
+
+	/** Ground friction times air drag on ordinary blocks: horizontal speed kept from one tick to the next. */
+	private static final double GROUND_DRAG = 0.6 * 0.91;
+	/**
+	 * The navigation speed modifier that makes a mob with this base movement speed cover {@code blocksPerSecond} on
+	 * flat ground once up to speed. A walking mob's input and its speed are both {@code s = modifier * base}, so it
+	 * gains {@code s * s} a tick and keeps {@link #GROUND_DRAG} of its speed: it settles at {@code s * s / (1 - drag)}
+	 * blocks a tick. (Ice and other slippery blocks compensate in vanilla, so this holds there too.)
+	 */
+	public static double speedModifier(double blocksPerSecond, double baseSpeed) {
+		double perTick = Math.max(0.0, blocksPerSecond) / 20.0;
+		return Math.sqrt(perTick * (1.0 - GROUND_DRAG)) / baseSpeed;
+	}
+
+	/** The inverse of {@link #speedModifier}: blocks per second on flat ground at this modifier. */
+	public static double groundSpeed(double modifier, double baseSpeed) {
+		double s = modifier * baseSpeed;
+		return s * s / (1.0 - GROUND_DRAG) * 20.0;
+	}
+
+	/**
+	 * Whether a walking figure breaks into the run (D-036): a player closes on him faster than {@code fastSpeed}
+	 * (blocks per second), or is already within the flee distance.
+	 */
+	public static boolean breaksIntoRun(double closingSpeed, double fastSpeed, boolean withinFlee) {
+		return withinFlee || !Double.isNaN(closingSpeed) && closingSpeed > fastSpeed;
+	}
+
+	/** Nobody gets closer than this to him: standing still (staring back, hiding), he runs before that. */
+	public static final double REACH_BLOCKS = 4.0;
+
+	/**
+	 * While he stands (the stare back, hiding behind a trunk): would a player closing at {@code closingSpeed} (blocks
+	 * per second) get within {@link #REACH_BLOCKS} of him in the next {@code seconds}? Then he cuts it short and runs.
+	 * Someone walking in after triggering him still gets the whole stare back from far enough away.
+	 */
+	public static boolean wouldBeReached(double distance, double closingSpeed, double seconds) {
+		if (distance <= REACH_BLOCKS) {
+			return true;
+		}
+		return !Double.isNaN(closingSpeed) && closingSpeed > 0.0 && distance - REACH_BLOCKS <= closingSpeed * Math.max(0.0, seconds);
+	}
 }

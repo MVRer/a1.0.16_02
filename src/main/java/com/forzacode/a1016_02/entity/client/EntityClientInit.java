@@ -20,6 +20,7 @@ public final class EntityClientInit {
 
 	public static void init() {
 		EntityRenderers.register(ModEntities.HIM, HimRenderer::new);
+		FogEndReporter.init();
 		// After the shaders reload, the eyes try their own pipeline again (see HimEyesLayer#brightEyes).
 		ResourceLoader resources = ResourceLoader.get(PackType.CLIENT_RESOURCES);
 		resources.registerReloadListener(EYE_SHADER_RELOAD, (ResourceManagerReloadListener) manager -> HimEyesLayer.resetAfterReload());

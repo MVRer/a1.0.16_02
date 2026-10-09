@@ -215,33 +215,50 @@ public class EntityGameTests extends SightingRuleGameTests {
 		EntityConfig config = EntityConfig.get();
 		double oldApproach = config.approachBlocks;
 		double oldFlee = config.fleeDistance;
-		double oldMin = config.spawnDistanceFractionMin;
+		double oldNormalMin = config.normalFractionMin;
 		double oldCloseMin = config.closeMinDistance;
+		double oldMinDistance = config.minDistance;
+		double oldOutrun = config.outrunFactor;
+		double oldMaxRun = config.maxRunSpeed;
 		try {
 			for (EntityTuning.Key key : EntityTuning.KEYS) {
 				String command = "a1016 entity tune " + key.name() + " " + EntityTuning.format(key.get().applyAsDouble(config));
 				ParseResults<CommandSourceStack> parsed = server.getCommands().getDispatcher().parse(command, source);
 				helper.assertTrue(!parsed.getReader().canRead() && parsed.getExceptions().isEmpty(), "does not parse: " + command);
 			}
+			for (String name : List.of("minDistance", "closeFractionMin", "closeFractionMax", "normalFractionMin", "normalFractionMax", "outrunFactor",
+					"maxRunSpeed")) {
+				helper.assertTrue(EntityTuning.byName(name).isPresent(), name + " is not tunable");
+			}
 			server.getCommands().performPrefixedCommand(source, "a1016 entity tune");
 			server.getCommands().performPrefixedCommand(source, "a1016 entity tune approachBlocks 12.5");
-			server.getCommands().performPrefixedCommand(source, "a1016 entity tune spawnDistanceFractionMin 0.5");
-			helper.assertTrue(config.approachBlocks == 12.5 && config.spawnDistanceFractionMin == 0.5, "not set live");
+			server.getCommands().performPrefixedCommand(source, "a1016 entity tune normalFractionMin 0.5");
+			server.getCommands().performPrefixedCommand(source, "a1016 entity tune minDistance 10");
+			server.getCommands().performPrefixedCommand(source, "a1016 entity tune outrunFactor 1.25");
+			server.getCommands().performPrefixedCommand(source, "a1016 entity tune maxRunSpeed 10");
+			helper.assertTrue(config.approachBlocks == 12.5 && config.normalFractionMin == 0.5 && config.minDistance == 10 && config.outrunFactor == 1.25
+					&& config.maxRunSpeed == 10, "not set live");
 			JsonObject saved = savedEntitySection();
-			helper.assertTrue(saved.get("approachBlocks").getAsDouble() == 12.5 && saved.get("spawnDistanceFractionMin").getAsDouble() == 0.5,
-					"not saved: " + saved);
-			// Out of range (he would flee the moment he appears, or stand closer than 24) and unknown keys change nothing.
-			server.getCommands().performPrefixedCommand(source, "a1016 entity tune fleeDistance 30");
-			server.getCommands().performPrefixedCommand(source, "a1016 entity tune closeMinDistance 20");
+			helper.assertTrue(saved.get("approachBlocks").getAsDouble() == 12.5 && saved.get("normalFractionMin").getAsDouble() == 0.5
+					&& saved.get("minDistance").getAsDouble() == 10 && saved.get("outrunFactor").getAsDouble() == 1.25, "not saved: " + saved);
+			// Out of range (closer than 8 blocks, an outrun that lets you catch him) and unknown keys change nothing.
+			server.getCommands().performPrefixedCommand(source, "a1016 entity tune fleeDistance 100");
+			server.getCommands().performPrefixedCommand(source, "a1016 entity tune minDistance 6");
+			server.getCommands().performPrefixedCommand(source, "a1016 entity tune closeMinDistance 4");
+			server.getCommands().performPrefixedCommand(source, "a1016 entity tune outrunFactor 0.9");
 			server.getCommands().performPrefixedCommand(source, "a1016 entity tune runSpeed 3");
 			helper.assertTrue(config.fleeDistance == oldFlee, "an out-of-range flee distance was taken: " + config.fleeDistance);
-			helper.assertTrue(config.closeMinDistance == oldCloseMin, "a close band under 24 blocks was taken: " + config.closeMinDistance);
-			helper.assertTrue(EntityTuning.byName("closeMaxDistance").isPresent(), "the close band is not tunable");
+			helper.assertTrue(config.minDistance == 10, "a minimum distance under 8 blocks was taken: " + config.minDistance);
+			helper.assertTrue(config.closeMinDistance == oldCloseMin, "a close clamp under 8 blocks was taken: " + config.closeMinDistance);
+			helper.assertTrue(config.outrunFactor == 1.25, "an outrun factor under 1 was taken: " + config.outrunFactor);
 			helper.assertTrue(EntityTuning.describe(config).contains("approachBlocks=12.50"), EntityTuning.describe(config));
 		} finally {
 			config.approachBlocks = oldApproach;
 			config.fleeDistance = oldFlee;
-			config.spawnDistanceFractionMin = oldMin;
+			config.normalFractionMin = oldNormalMin;
+			config.minDistance = oldMinDistance;
+			config.outrunFactor = oldOutrun;
+			config.maxRunSpeed = oldMaxRun;
 			config.save();
 		}
 		helper.succeed();
@@ -251,21 +268,35 @@ public class EntityGameTests extends SightingRuleGameTests {
 	public void olderConfigSectionsGetTheNewDefaults(GameTestHelper helper) {
 		EntityConfig defaults = new EntityConfig();
 		helper.assertTrue(defaults.approachBlocks == 10 && defaults.stareConeDegrees == 8 && defaults.stareBackSeconds == 2 && defaults.stareSeconds == 3
-				&& defaults.fleeDistance == 18 && defaults.minSeenSeconds == 3 && defaults.spawnDistanceFractionMin == 0.45
-				&& defaults.spawnDistanceFractionMax == 0.70, "playtest defaults");
+				&& defaults.fleeDistance == 18 && defaults.minSeenSeconds == 3, "playtest defaults");
+		helper.assertTrue(defaults.normalFractionMin == 0.55 && defaults.normalFractionMax == 0.75 && defaults.closeFractionMin == 0.35
+				&& defaults.closeFractionMax == 0.50 && defaults.closeMinDistance == 16 && defaults.closeMaxDistance == 28 && defaults.minDistance == 12
+				&& defaults.fleeSpawnFraction == 0.6, "D-035 defaults");
+		helper.assertTrue(defaults.baseRunSpeed == 5.8 && defaults.outrunFactor == 1.1 && defaults.maxRunSpeed == 9.0, "D-036 defaults");
 		// A section written before the playtest (no version): the old scaffold values give way, other values stay.
 		EntityConfig old = new EntityConfig();
 		old.approachBlocks = 6;
 		old.stareConeDegrees = 6;
 		old.stareBackSeconds = 1.0;
+		old.closeMinDistance = 24;
+		old.closeMaxDistance = 36;
 		old.baseRadius = 80;
 		helper.assertTrue(old.upgrade(), "an old section was not upgraded");
 		helper.assertTrue(old.approachBlocks == 10 && old.stareConeDegrees == 8 && old.stareBackSeconds == 2 && old.baseRadius == 80,
 				"upgrade: approach " + old.approachBlocks + " cone " + old.stareConeDegrees + " back " + old.stareBackSeconds + " base " + old.baseRadius);
+		helper.assertTrue(old.closeMinDistance == 16 && old.closeMaxDistance == 28, "the old 24..36 close band stayed: " + old.closeMinDistance);
+		// A version 2 section (after the first playtest) keeps its tunings but loses the 24-block close band.
+		EntityConfig v2 = new EntityConfig();
+		v2.version = 2;
+		v2.approachBlocks = 7;
+		v2.closeMinDistance = 24;
+		v2.closeMaxDistance = 36;
+		helper.assertTrue(v2.upgrade() && v2.approachBlocks == 7 && v2.closeMinDistance == 16 && v2.closeMaxDistance == 28, "version 2 upgrade");
 		// Once upgraded, values tuned later are left alone.
 		old.approachBlocks = 14;
+		old.closeMinDistance = 20;
 		helper.assertFalse(old.upgrade(), "upgraded twice");
-		helper.assertTrue(old.approachBlocks == 14, "a later tuning was reset");
+		helper.assertTrue(old.approachBlocks == 14 && old.closeMinDistance == 20, "a later tuning was reset");
 		helper.succeed();
 	}
 

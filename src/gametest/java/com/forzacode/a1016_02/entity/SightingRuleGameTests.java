@@ -31,48 +31,105 @@ import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
 
 /** Sighting gates and spawn spots. {@link EntityGameTests} extends this so they run under its registered entrypoint. */
-public class SightingRuleGameTests {
+public class SightingRuleGameTests extends FogAndRunGameTests {
 	private static final double NEAR = 3;
 	private static final double CONE = 160;
 
 	/** Atmosphere's default: fog end at full dusk fog. */
 	private static final double DUSK_MIN = 24;
 
+	private static boolean near(double a, double b) {
+		return Math.abs(a - b) < 1.0E-6;
+	}
+
 	@GameTest
 	public void fogBandNeverCloserThanTheMinimum(GameTestHelper helper) {
 		EntityConfig config = new EntityConfig();
-		int min = ModConfig.pacing().sightingMinDistance;
+		double min = config.minDistance();
+		helper.assertTrue(min == 12, "the minimum distance defaults to 12 (D-035): " + min);
 		for (int chunks = 2; chunks <= 32; chunks++) {
 			for (double dusk : new double[] {0.0, 0.5, 1.0}) {
 				for (int sim : new int[] {0, 2, 6, 12}) {
 					for (boolean close : new boolean[] {false, true}) {
-						FogEdge edge = FogEdge.compute(chunks, 32, sim, dusk, DUSK_MIN, close, min, config);
-						String what = "chunks=" + chunks + " dusk=" + dusk + " sim=" + sim + " close=" + close + " -> " + edge;
-						helper.assertTrue(edge.inner() >= min, "band starts closer than " + min + ": " + what);
-						helper.assertTrue(edge.outer() >= edge.inner(), "empty band: " + what);
-						helper.assertTrue(edge.outer() <= Math.max(edge.limit(), min + 2.0) + 1.0E-6, "band past the visible fog end: " + what);
-						helper.assertTrue(edge.limit() <= edge.renderLimit() + 1.0E-6, "dusk fog pushed the fog out: " + what);
-						helper.assertTrue(sim <= 0 || edge.outer() <= Math.max(FogEdge.tickingReach(sim), min + 2.0) + 1.0E-6,
-								"band reaches the edge of the ticking range: " + what);
-						helper.assertTrue(!close || edge.outer() <= Math.max(config.closeMaxDistance, min + 2.0) + 1.0E-6, "close band too far: " + what);
+						for (double reported : new double[] {Double.NaN, 6, 14, 20, 30, 55, 120, 400}) {
+							FogEdge edge = FogEdge.compute(chunks, 32, sim, dusk, DUSK_MIN, reported, close, config);
+							String what = "chunks=" + chunks + " dusk=" + dusk + " sim=" + sim + " close=" + close + " reported=" + reported + " -> " + edge;
+							helper.assertTrue(edge.inner() >= min, "band starts closer than " + min + ": " + what);
+							helper.assertTrue(edge.outer() >= edge.inner() + 2.0 - 1.0E-6, "band thinner than 2 blocks: " + what);
+							helper.assertTrue(edge.limit() == (Double.isNaN(reported) ? edge.estimate() : reported) && edge.fromClient() == !Double.isNaN(reported),
+									"the report does not decide the fog end: " + what);
+							helper.assertTrue(!edge.seeable() || edge.outer() <= edge.limit() - config.edgeMarginBlocks + 1.0E-6,
+									"a seeable band reaches into the fog: " + what);
+							helper.assertTrue(edge.seeable() || edge.limit() - config.edgeMarginBlocks < min + 2.0 + 1.0E-6,
+									"fog that leaves room past the minimum counted as too thick: " + what);
+							helper.assertTrue(edge.estimate() <= edge.renderLimit() + 1.0E-6, "dusk fog pushed the fog out: " + what);
+							helper.assertTrue(sim <= 0 || edge.outer() <= Math.max(FogEdge.tickingReach(sim), min + 2.0) + 1.0E-6,
+									"band reaches the edge of the ticking range: " + what);
+							helper.assertTrue(!close || edge.outer() <= Math.max(config.closeMaxDistance, min + 2.0) + 1.0E-6, "close band too far: " + what);
+						}
 					}
 				}
 			}
 		}
-		// 12 chunks, no dusk fog: 0.45 to 0.70 of the 192-block fog end, a clear shape and well inside the fog.
-		FogEdge vanilla = FogEdge.compute(12, 12, 0, 0.0, DUSK_MIN, false, min, config);
-		helper.assertTrue(Math.abs(vanilla.inner() - 0.45 * 192) < 1.0E-6 && Math.abs(vanilla.outer() - 0.70 * 192) < 1.0E-6,
-				"12 chunks should put him 86 to 134 blocks out: " + vanilla);
-		FogEdge client = FogEdge.compute(6, 12, 0, 0.0, DUSK_MIN, false, min, config);
-		helper.assertTrue(client.chunks() == 6 && client.outer() <= 0.70 * 96 + 1.0E-6, "the client's smaller view distance wins: " + client);
-		// Dusk fog, as atmosphere's client draws it: half of it closes 192 in to sqrt(192 * 24), all of it to 24.
-		FogEdge half = FogEdge.compute(12, 12, 0, 0.5, DUSK_MIN, false, min, config);
-		helper.assertTrue(Math.abs(half.limit() - Math.sqrt(192 * DUSK_MIN)) < 1.0E-6 && half.outer() < half.limit(), "half dusk fog: " + half);
-		FogEdge dusk = FogEdge.compute(12, 12, 0, 1.0, DUSK_MIN, false, min, config);
-		helper.assertTrue(Math.abs(dusk.limit() - DUSK_MIN) < 1.0E-6 && dusk.inner() == min, "full dusk fog: " + dusk);
-		// The close variant: 24 to 36 blocks whenever the fog allows it.
-		FogEdge close = FogEdge.compute(12, 12, 0, 0.0, DUSK_MIN, true, min, config);
-		helper.assertTrue(close.inner() == 24 && close.outer() == 36, "close band: " + close);
+		// 12 chunks, no dusk fog, no report yet: 0.55 to 0.75 of the 192-block fog end.
+		FogEdge vanilla = FogEdge.compute(12, 12, 0, 0.0, DUSK_MIN, Double.NaN, false, config);
+		helper.assertTrue(near(vanilla.inner(), 0.55 * 192) && near(vanilla.outer(), 0.75 * 192) && !vanilla.fromClient(),
+				"12 chunks should put him 106 to 144 blocks out: " + vanilla);
+		FogEdge client = FogEdge.compute(6, 12, 0, 0.0, DUSK_MIN, Double.NaN, false, config);
+		helper.assertTrue(client.chunks() == 6 && client.outer() <= 0.75 * 96 + 1.0E-6, "the client's smaller view distance wins: " + client);
+		// The estimate follows atmosphere's dusk fog: half of it closes 192 in to sqrt(192 * 24), all of it to 24.
+		FogEdge half = FogEdge.compute(12, 12, 0, 0.5, DUSK_MIN, Double.NaN, false, config);
+		helper.assertTrue(near(half.limit(), Math.sqrt(192 * DUSK_MIN)) && half.outer() < half.limit(), "half dusk fog: " + half);
+		FogEdge dusk = FogEdge.compute(12, 12, 0, 1.0, DUSK_MIN, Double.NaN, false, config);
+		helper.assertTrue(near(dusk.limit(), DUSK_MIN) && near(dusk.inner(), 0.55 * DUSK_MIN) && dusk.seeable(), "full dusk fog: " + dusk);
+		// The client's report wins over the estimate. Mariano's playtest: dusk fog 0.6 at dusk draws the fog end at
+		// 192 * (24 / 192)^0.6, about 55 blocks; he stands 30 to 41 blocks out, the close one 19 to 28.
+		double fogEnd = 192 * Math.pow(DUSK_MIN / 192, 0.6);
+		FogEdge reported = FogEdge.compute(12, 12, 0, 0.0, DUSK_MIN, fogEnd, false, config);
+		helper.assertTrue(reported.fromClient() && near(reported.limit(), fogEnd) && near(reported.inner(), 0.55 * fogEnd)
+				&& near(reported.outer(), 0.75 * fogEnd), "the reported fog end is not used: " + reported);
+		FogEdge reportedClose = FogEdge.compute(12, 12, 0, 0.0, DUSK_MIN, fogEnd, true, config);
+		helper.assertTrue(near(reportedClose.inner(), 0.35 * fogEnd) && near(reportedClose.outer(), 0.50 * fogEnd), "close in dusk fog: " + reportedClose);
+		// Fog so thick (a surge, blindness, under water) that 12 blocks out is past it: no sighting can be seen.
+		helper.assertFalse(FogEdge.compute(12, 12, 0, 0.0, DUSK_MIN, 14.0, false, config).seeable(), "a sighting in 14-block fog");
+		helper.succeed();
+	}
+
+	@GameTest
+	public void closeBandIsAShareOfTheFogClampedToItsBlocks(GameTestHelper helper) {
+		EntityConfig config = new EntityConfig();
+		helper.assertTrue(config.closeFractionMin == 0.35 && config.closeFractionMax == 0.50 && config.closeMinDistance == 16
+				&& config.closeMaxDistance == 28 && config.normalFractionMin == 0.55 && config.normalFractionMax == 0.75, "D-035 defaults");
+		// Inside the clamp: plain shares of the fog end.
+		double[] mid = FogEdge.band(55.0, true, 0, config);
+		helper.assertTrue(near(mid[0], 0.35 * 55) && near(mid[1], 0.50 * 55), "55-block fog: " + mid[0] + ".." + mid[1]);
+		// Clear weather: both shares past 28, so the band is the clamp's last 2 blocks.
+		double[] clear = FogEdge.band(192.0, true, 0, config);
+		helper.assertTrue(near(clear[0], 26) && near(clear[1], 28), "clear: " + clear[0] + ".." + clear[1]);
+		// Thick fog: both shares under 16, so the band is the clamp's first 2 blocks.
+		double[] thick = FogEdge.band(30.0, true, 0, config);
+		helper.assertTrue(near(thick[0], 16) && near(thick[1], 18), "30-block fog: " + thick[0] + ".." + thick[1]);
+		// Thicker still: the margin inside the fog end pulls it in, the minimum distance holds.
+		double[] thicker = FogEdge.band(18.0, true, 0, config);
+		helper.assertTrue(near(thicker[0], 14) && near(thicker[1], 16), "18-block fog: " + thicker[0] + ".." + thicker[1]);
+		// The normal band never takes the clamp.
+		double[] normal = FogEdge.band(55.0, false, 0, config);
+		helper.assertTrue(near(normal[0], 0.55 * 55) && near(normal[1], 0.75 * 55), "normal: " + normal[0] + ".." + normal[1]);
+		// Everything follows the tunables, swapped ends included.
+		config.closeFractionMin = 0.4;
+		config.closeFractionMax = 0.25;
+		config.closeMinDistance = 22;
+		config.closeMaxDistance = 12;
+		double[] tuned = FogEdge.band(55.0, true, 0, config);
+		helper.assertTrue(near(tuned[0], 0.25 * 55) && near(tuned[1], 22), "tuned: " + tuned[0] + ".." + tuned[1]);
+		// minDistance never goes under 8, whatever the file says.
+		config.minDistance = 4;
+		helper.assertTrue(config.minDistance() == EntityConfig.MIN_DISTANCE_FLOOR, "minDistance under 8: " + config.minDistance());
+		config.minDistance = Double.NaN;
+		helper.assertTrue(config.minDistance() == EntityConfig.MIN_DISTANCE_FLOOR, "a NaN minDistance");
+		config.minDistance = 20;
+		double[] far = FogEdge.band(55.0, true, 0, config);
+		helper.assertTrue(far[0] >= 20, "a tuned minDistance is not held: " + far[0]);
 		helper.succeed();
 	}
 
@@ -143,16 +200,18 @@ public class SightingRuleGameTests {
 		loadAround(level, viewer.blockPosition(), 3);
 		List<TraceService.Viewer> viewers = List.of(TraceService.Viewer.of(viewer, 8));
 		Predicate<AABB> hidden = box -> TraceService.isOutOfView(level, box, viewers, NEAR, CONE);
-		int min = ModConfig.pacing().sightingMinDistance;
+		double min = new EntityConfig().minDistance();
 
 		// Sanity: a figure ahead at 30 blocks (raised above any test structure) is in view, so the check is not vacuous.
 		Vec3 ahead = viewer.position().add(0.0, 12.0, 30.0);
 		helper.assertFalse(hidden.test(HimEntity.viewBox(ahead)), "a figure straight ahead counts as hidden");
 
-		// A tiny render distance and full dusk fog: the band collapses to the minimum distance, never closer.
-		FogEdge tight = FogEdge.compute(2, 2, 0, 1.0, DUSK_MIN, false, min, new EntityConfig());
-		for (FogEdge edge : List.of(tight, FogEdge.compute(3, 3, 0, 0.0, DUSK_MIN, false, min, new EntityConfig()),
-				FogEdge.compute(12, 12, 0, 0.0, DUSK_MIN, true, min, new EntityConfig()))) {
+		// A tiny render distance and full dusk fog, or a client reporting thick fog: the band collapses to the minimum
+		// distance, never closer.
+		FogEdge tight = FogEdge.compute(2, 2, 0, 1.0, DUSK_MIN, Double.NaN, false, new EntityConfig());
+		for (FogEdge edge : List.of(tight, FogEdge.compute(3, 3, 0, 0.0, DUSK_MIN, Double.NaN, false, new EntityConfig()),
+				FogEdge.compute(12, 12, 0, 0.0, DUSK_MIN, 20.0, true, new EntityConfig()),
+				FogEdge.compute(12, 12, 0, 0.0, DUSK_MIN, Double.NaN, true, new EntityConfig()))) {
 			for (long seed = 1; seed <= 4; seed++) {
 				SpotFinder.Query q = new SpotFinder.Query(level, viewer.position(), viewer.getEyePosition(), edge.inner(), edge.outer(), min,
 						ModEntities.HIM.getDimensions(), hidden, level::isLoaded, RandomSource.create(seed), 48);
@@ -276,13 +335,13 @@ public class SightingRuleGameTests {
 
 	@GameTest
 	public void spawnAtKeepsTheMinimumDistance(GameTestHelper helper) {
-		int min = ModConfig.pacing().sightingMinDistance;
+		double min = EntityConfig.get().minDistance();
 		Vec3 feet = new Vec3(0.5, 64.0, 0.5);
 		AABB box = HimEntity.viewBox(feet);
-		helper.assertTrue(FigureApi.tooClose(List.of(new Vec3(0.5, 65.6, min - 0.5)), box, min), "a player 23 blocks off is not too close");
+		helper.assertTrue(FigureApi.tooClose(List.of(new Vec3(0.5, 65.6, min - 0.5)), box, min), "a player just inside the minimum distance is not too close");
 		helper.assertTrue(FigureApi.tooClose(List.of(new Vec3(100, 65, 100), new Vec3(min, 65.6, 0.5)), box, min),
 				"one far player hides a near one");
-		helper.assertFalse(FigureApi.tooClose(List.of(new Vec3(0.5, 65.6, min + 1.5)), box, min), "a player 25 blocks off is too close");
+		helper.assertFalse(FigureApi.tooClose(List.of(new Vec3(0.5, 65.6, min + 1.5)), box, min), "a player just past the minimum distance is too close");
 		helper.assertFalse(FigureApi.tooClose(List.of(), box, min), "nobody is too close");
 		helper.succeed();
 	}
@@ -300,7 +359,7 @@ public class SightingRuleGameTests {
 		loadAround(level, light, 2);
 		Vec3 player = Vec3.atBottomCenterOf(light).add(-30.0, 0.0, 0.0);
 		Vec3 eye = player.add(0.0, 1.62, 0.0);
-		int min = ModConfig.pacing().sightingMinDistance;
+		double min = EntityConfig.get().minDistance();
 		helper.succeedWhen(() -> {
 			SpotFinder.Query band = new SpotFinder.Query(level, player, eye, 26.0, 34.0, min, ModEntities.HIM.getDimensions(),
 					box -> true, level::isLoaded, RandomSource.create(7), 48);

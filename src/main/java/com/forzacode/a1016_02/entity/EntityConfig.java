@@ -19,7 +19,8 @@ import net.fabricmc.loader.api.FabricLoader;
 
 /**
  * The entity workstream's tunables, stored under {@code sections.entity} in {@code config/a1016_02.json}.
- * Shared rules (24-block minimum, 300-block spacing, one per day, the 2 s stare) come from {@code Pacing}.
+ * Shared rules (300-block spacing, one per day) come from {@code Pacing}; the minimum distance is {@link #minDistance}
+ * here (D-035 replaced the 24-block floor).
  * Real-time values are in seconds and go through {@link ModConfig#realTicks(double)}.
  */
 public final class EntityConfig {
@@ -27,13 +28,23 @@ public final class EntityConfig {
 	/** Same settings as {@code ModConfig}'s writer. */
 	private static final Gson GSON = new GsonBuilder().setPrettyPrinting().disableHtmlEscaping().create();
 
-	// --- where he stands (see FogEdge) ---
-	/** He spawns this share of the visible fog end away (dusk fog included): a hazy but clear shape. Tunable live. */
-	public double spawnDistanceFractionMin = 0.45;
-	public double spawnDistanceFractionMax = 0.70;
-	/** The close variant's band in blocks, never past the general band's far side. */
-	public double closeMinDistance = 24;
-	public double closeMaxDistance = 36;
+	// --- where he stands (see FogEdge; D-035) ---
+	/**
+	 * Every variant but the close one stands this share of the visible fog end away: the fog end the client reports
+	 * (dusk fog, surges and vanilla fog included), else the server's estimate. Tunable live.
+	 */
+	public double normalFractionMin = 0.55;
+	public double normalFractionMax = 0.75;
+	/** The close variant's share of the visible fog end, then clamped to {@link #closeMinDistance}..{@link #closeMaxDistance}. Tunable live. */
+	public double closeFractionMin = 0.35;
+	public double closeFractionMax = 0.50;
+	/** The close variant's clamp in blocks. Tunable live. */
+	public double closeMinDistance = 16;
+	public double closeMaxDistance = 28;
+	/** Never closer than this (horizontal, and from any player's eyes to any part of him). Tunable live, never under {@link #MIN_DISTANCE_FLOOR}. */
+	public double minDistance = 12;
+	/** A client fog report older than this is ignored and the server's estimate is used. */
+	public double fogReportMaxAgeSeconds = 5;
 	/** He stands at least this far inside the visible fog end. */
 	public double edgeMarginBlocks = 2;
 	/** Hard cap on the spawn distance, whatever the render distance. */
@@ -65,12 +76,20 @@ public final class EntityConfig {
 	public double stareConeDegrees = 8;
 	/** Looking straight at him this long (in total, see HimEntity) ends the sighting. Tunable live. */
 	public double stareSeconds = 3;
-	/** Closing this many blocks on him, counted since he was first seen ({@link Approach}), ends the sighting. Tunable live. */
+	/**
+	 * Closing this many blocks on him, counted since he was first seen ({@link Approach}), ends the sighting; at most
+	 * {@link #approachSpawnFraction} of the distance he appeared at. Tunable live.
+	 */
 	public double approachBlocks = 10;
+	public double approachSpawnFraction = 0.3;
 	/** Closing less than this at a time is a step, not an approach, and does not count. */
 	public double approachStepBlocks = 1.5;
-	/** Coming this close (horizontal) ends the sighting at once, before {@link #minSeenSeconds} too. Tunable live. */
+	/**
+	 * Coming this close (horizontal) ends the sighting at once, before {@link #minSeenSeconds} too; at most
+	 * {@link #fleeSpawnFraction} of the distance he appeared at, so a close one does not flee at once. Tunable live.
+	 */
 	public double fleeDistance = 18;
+	public double fleeSpawnFraction = 0.6;
 	/** Once first seen, nothing but {@link #fleeDistance} ends the sighting (or removes him) before this. Tunable live. */
 	public double minSeenSeconds = 3;
 	/** He stares back this long before he turns away. Tunable live. */
@@ -86,10 +105,19 @@ public final class EntityConfig {
 	public double maxLifetimeSeconds = 300;
 	/** Trunk variant: how long he tries to slip behind the tree before he just leaves. */
 	public double hideMaxSeconds = 10;
-	/** Movement speed modifiers (on a 0.25 base speed). */
+	/** Movement speed modifiers (on a 0.25 base speed) of the slow walk and the walk. */
 	public double slowWalkSpeed = 0.7;
 	public double walkSpeed = 0.9;
-	public double runSpeed = 1.45;
+	/**
+	 * The run (D-036), in blocks per second on the ground: never slower than {@link #baseRunSpeed}, and
+	 * {@link #outrunFactor} times the chasing player's speed, up to {@link #maxRunSpeed} (sprint-jumping is about 7.1).
+	 * Tunable live.
+	 */
+	public double baseRunSpeed = 5.8;
+	public double outrunFactor = 1.1;
+	public double maxRunSpeed = 9.0;
+	/** A walking figure breaks into the run when a player closes on him faster than this (blocks per second). Tunable live. */
+	public double closeInFastSpeed = 3.5;
 
 	// --- variant spots ---
 	/** The ridge: his feet at least this far above the player's eyes, so the sky is behind him. */
@@ -114,7 +142,9 @@ public final class EntityConfig {
 
 	/** Section version, so changed defaults reach files written before the change ({@link #migrate}). */
 	public int version = 0;
-	private static final int CURRENT_VERSION = 2;
+	private static final int CURRENT_VERSION = 3;
+	/** {@link #minDistance} is never taken under this. */
+	public static final double MIN_DISTANCE_FLOOR = 8.0;
 
 	public static EntityConfig get() {
 		return ModConfig.section(SECTION, EntityConfig.class, EntityConfig::new);
@@ -122,7 +152,8 @@ public final class EntityConfig {
 
 	/**
 	 * Brings an older section up to date and saves it. Version 2 (playtest): approach 10 blocks (was 6), stare cone 8
-	 * degrees (was 6), stare back 2 s (was 1). Values that only appeared now take their defaults by themselves.
+	 * degrees (was 6), stare back 2 s (was 1). Version 3 (D-035): the close clamp is 16 to 28 blocks (was 24 to 36).
+	 * Values that only appeared now take their defaults by themselves.
 	 */
 	public void migrate() {
 		if (upgrade()) {
@@ -141,8 +172,19 @@ public final class EntityConfig {
 			stareConeDegrees = defaults.stareConeDegrees;
 			stareBackSeconds = defaults.stareBackSeconds;
 		}
+		if (version < 3) {
+			EntityConfig defaults = new EntityConfig();
+			closeMinDistance = defaults.closeMinDistance;
+			closeMaxDistance = defaults.closeMaxDistance;
+		}
 		version = CURRENT_VERSION;
 		return true;
+	}
+
+	/** {@link #minDistance}, never under {@link #MIN_DISTANCE_FLOOR} (a bad value in the file included). */
+	public double minDistance() {
+		double min = minDistance;
+		return Double.isNaN(min) ? MIN_DISTANCE_FLOOR : Math.max(MIN_DISTANCE_FLOOR, min);
 	}
 
 	/** The eye style, BRIGHT if the file holds an unknown value. */

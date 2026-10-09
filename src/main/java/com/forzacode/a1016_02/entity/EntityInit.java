@@ -16,6 +16,8 @@ public final class EntityInit {
 			Director.register(new SightingCard(variant));
 		}
 		EntityCommands.register();
+		FogEndPayload.register(); // the client's real fog end (D-035)
+		ReportedFog.register();
 		ServerTickEvents.END_SERVER_TICK.register(FigureApi::sweep);
 	}
 }
