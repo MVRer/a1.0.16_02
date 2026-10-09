@@ -21,12 +21,16 @@ import com.forzacode.a1016_02.lore.FragmentItems;
 
 import net.fabricmc.fabric.api.gametest.v1.GameTest;
 
+import com.mojang.brigadier.exceptions.CommandSyntaxException;
+
+import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.core.GlobalPos;
 import net.minecraft.gametest.framework.GameTestHelper;
 import net.minecraft.nbt.NbtOps;
 import net.minecraft.nbt.Tag;
+import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.util.RandomSource;
@@ -305,6 +309,18 @@ public class EndingWorldTests extends EndingBeatTests {
 		helper.assertTrue(back.waiters().size() == 1 && back.waiters().getFirst().mob().equals(mob) && back.waiters().getFirst().since() == 4100,
 				"the waiters were not kept");
 		helper.assertTrue(back.ended() && back.endedAt() == 5000 && back.log().contains("a line"), "the end was not kept");
+		helper.succeed();
+	}
+
+	/** {@code /a1016 ending status} runs through the real dispatcher (read-only; path and step would change the world's run). */
+	@GameTest
+	public void theStatusCommandRuns(GameTestHelper helper) throws CommandSyntaxException {
+		MinecraftServer server = helper.getLevel().getServer();
+		CommandSourceStack source = server.createCommandSourceStack().withSuppressedOutput();
+		int result = server.getCommands().getDispatcher().execute("a1016 ending status", source);
+		helper.assertTrue(result == 1, "status returned " + result);
+		List<String> lines = EndingCommands.status(EndingAbcInit.engine(), server);
+		helper.assertTrue(lines.getFirst().startsWith("[a1016] ending: path "), "status: " + lines);
 		helper.succeed();
 	}
 
