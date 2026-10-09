@@ -102,12 +102,12 @@ public class TraceContractTests extends CoreContractTests {
 		});
 	}
 
-	@GameTest(maxTicks = 40)
+	@GameTest(maxTicks = 80)
 	public void removeLettingFallRefusesBadFallsAndViewers(GameTestHelper helper) {
 		ServerLevel level = helper.getLevel();
 		floor(helper, Blocks.STONE);
 		TraceService traces = Services.traces();
-		// Would come to rest in a torch, on a slab, with an anvil, or in front of someone: nothing happens.
+		// Would come to rest in a torch, on a slab, or with an anvil: nothing happens.
 		helper.setBlock(1, 1, 1, Blocks.TORCH);
 		helper.setBlock(6, 1, 1, Blocks.STONE_SLAB.defaultBlockState().setValue(SlabBlock.TYPE, SlabType.BOTTOM));
 		int[][] columns = {{1, 1}, {6, 1}, {1, 6}, {6, 6}};
@@ -118,19 +118,23 @@ public class TraceContractTests extends CoreContractTests {
 		helper.assertFalse(traces.removeLettingFall(level, helper.absolutePos(new BlockPos(1, 6, 1)), "test:fall"), "sand would land in a torch");
 		helper.assertFalse(traces.removeLettingFall(level, helper.absolutePos(new BlockPos(6, 6, 1)), "test:fall"), "sand would land on a slab");
 		helper.assertFalse(traces.removeLettingFall(level, helper.absolutePos(new BlockPos(1, 6, 6)), "test:fall"), "an anvil fell");
-		TraceService.Viewer nearLanding = viewerAt(helper, new Vec3(4.5, 1.0, 6.5), 90.0F, 0.0F);
-		helper.assertFalse(traces.watchedBy(List.of(nearLanding)).removeLettingFall(level, helper.absolutePos(new BlockPos(6, 6, 6)), "test:fall"),
-				"fell where a player stands");
+		// D-038: the removed block must be out of view, the fall and the landing need not be.
+		BlockPos support = helper.absolutePos(new BlockPos(6, 6, 6));
+		TraceService.Viewer nearSupport = viewerAt(helper, new Vec3(4.5, 5.0, 6.5), 90.0F, 0.0F);
+		helper.assertFalse(traces.watchedBy(List.of(nearSupport)).removeLettingFall(level, support, "test:fall"), "removed a support in view");
 		for (int[] c : columns) {
 			helper.assertBlockPresent(Blocks.STONE, new BlockPos(c[0], 6, c[1]));
 		}
+		TraceService.Viewer nearLanding = viewerAt(helper, new Vec3(4.5, 1.0, 6.5), 90.0F, 0.0F);
+		helper.assertTrue(traces.watchedBy(List.of(nearLanding)).removeLettingFall(level, support, "test:fall"),
+				"a fall seen only where it lands was refused");
 		// Nothing resting on it: a plain removal.
 		helper.setBlock(4, 3, 3, Blocks.STONE);
 		helper.assertTrue(traces.removeLettingFall(level, helper.absolutePos(new BlockPos(4, 3, 3)), "test:fall"), "a free block was refused");
-		helper.runAfterDelay(10, () -> {
+		helper.succeedWhen(() -> {
+			helper.assertBlockPresent(Blocks.SAND, new BlockPos(6, 1, 6));
 			helper.assertEntityNotPresent(EntityTypes.ITEM);
 			helper.assertEntityNotPresent(EntityTypes.FALLING_BLOCK);
-			helper.succeed();
 		});
 	}
 
@@ -150,6 +154,14 @@ public class TraceContractTests extends CoreContractTests {
 		helper.assertFalse(TraceService.positionsOutOfView(level, List.of(under), List.of(ahead), 3, 160), "looking ahead, the block underfoot is hidden");
 		helper.assertFalse(TraceService.positionsOutOfView(level, List.of(under), List.of(slightlyUp), 3, 160), "20 degrees up already hides it");
 		helper.assertFalse(TraceService.positionsOutOfView(level, List.of(beside), List.of(up), 3, 160), "a block at feet level counts as under the feet");
+		BlockPos behind = helper.absolutePos(new BlockPos(3, 1, 1));
+		helper.assertFalse(TraceService.positionsOutOfView(level, List.of(behind), List.of(up), 3, 160), "floor behind the player counts as under the feet");
+		// Straddling two columns: the blocks under the hitbox go, the ring beyond it does not.
+		TraceService.Viewer straddling = viewerAt(helper, new Vec3(4.0, 2.0, 3.5), 0.0F, -45.0F);
+		helper.assertTrue(TraceService.positionsOutOfView(level, List.of(under, helper.absolutePos(new BlockPos(4, 1, 3))), List.of(straddling), 3, 160),
+				"a block under the hitbox counts as seen");
+		helper.assertFalse(TraceService.positionsOutOfView(level, List.of(helper.absolutePos(new BlockPos(5, 1, 3))), List.of(straddling), 3, 160),
+				"a block beyond the hitbox counts as under the feet");
 
 		helper.assertTrue(Services.traces().watchedBy(List.of(up)).remove(level, under, "test:under_you"), "the block under you did not go");
 		helper.assertBlockPresent(Blocks.AIR, new BlockPos(3, 1, 3));
@@ -175,7 +187,7 @@ public class TraceContractTests extends CoreContractTests {
 			helper.assertFalse(traces.remove(level, support, "test:veto"), "removed the support of a vetoed torch");
 			helper.assertFalse(traces.batch(level, "test:veto").remove(support).commit(), "a batch got past the veto");
 			helper.assertFalse(traces.forced().remove(level, support, "test:veto"), "the forced service got past the veto");
-			helper.assertFalse(traces.figureDig(level, support, "test:veto"), "figureDig got past the veto");
+			helper.assertFalse(traces.figureDig(level, traces.startFigureDig(level, support, "test:veto"), support), "figureDig got past the veto");
 			helper.assertFalse(traces.removeStack(level, helper.absolutePos(new BlockPos(5, 1, 5)), 0, 1, "test:veto"), "removeStack got past the veto");
 			helper.assertFalse(traces.editSign(level, helper.absolutePos(new BlockPos(1, 1, 6)), null, null, "test:veto"), "editSign got past the veto");
 			helper.assertFalse(traces.leave(level, helper.absolutePos(new BlockPos(6, 3, 6)), Blocks.GLOWSTONE.defaultBlockState(), "test:veto"),
@@ -294,36 +306,50 @@ public class TraceContractTests extends CoreContractTests {
 			}
 		}
 		TraceService watched = Services.traces().watchedBy(List.of(viewerAt(helper, new Vec3(3.5, 4.0, 1.5), 0.0F, 30.0F)));
-		String cause = "test:goes_under/" + helper.absolutePos(BlockPos.ZERO).toShortString();
 		BlockPos top = helper.absolutePos(new BlockPos(3, 3, 3));
+		TraceService.FigureDig dig = watched.startFigureDig(level, top, "test:goes_under");
 
 		helper.assertFalse(watched.remove(level, top, "test:in_view"), "an in-view removal went through");
 		for (int y = 3; y >= 1; y--) {
-			helper.assertTrue(watched.figureDig(level, helper.absolutePos(new BlockPos(3, y, 3)), cause), "figureDig refused at y " + y);
+			helper.assertTrue(watched.figureDig(level, dig, helper.absolutePos(new BlockPos(3, y, 3))), "figureDig refused at y " + y);
 		}
-		helper.assertTrue(entries(level, cause).size() == 3, "the dig is not ledgered");
+		helper.assertTrue(entries(level, dig.ledgerCause()).size() == 3, "the dig is not ledgered under its own cause");
 
 		helper.setBlock(5, 3, 5, Blocks.CHEST);
 		helper.setBlock(5, 3, 2, Blocks.BEDROCK);
 		helper.setBlock(2, 3, 5, Blocks.WATER);
-		helper.assertFalse(watched.figureDig(level, helper.absolutePos(new BlockPos(5, 3, 5)), cause), "dug a chest");
-		helper.assertFalse(watched.figureDig(level, helper.absolutePos(new BlockPos(5, 3, 2)), cause), "dug bedrock");
-		helper.assertFalse(watched.figureDig(level, helper.absolutePos(new BlockPos(2, 3, 5)), cause), "dug water");
-		helper.assertFalse(watched.figureDig(level, helper.absolutePos(new BlockPos(2, 3, 4)), cause), "dug beside water");
+		helper.setBlock(7, 3, 3, Blocks.DIRT);
+		helper.assertFalse(watched.figureDig(level, dig, helper.absolutePos(new BlockPos(5, 3, 5))), "dug a chest");
+		helper.assertFalse(watched.figureDig(level, dig, helper.absolutePos(new BlockPos(5, 3, 2))), "dug bedrock");
+		helper.assertFalse(watched.figureDig(level, dig, helper.absolutePos(new BlockPos(2, 3, 5))), "dug water");
+		helper.assertFalse(watched.figureDig(level, dig, helper.absolutePos(new BlockPos(2, 3, 4))), "dug beside water");
+		helper.assertFalse(watched.figureDig(level, dig, helper.absolutePos(new BlockPos(7, 3, 3))), "dug 4 blocks from the column");
 		BlockPos placed = helper.absolutePos(new BlockPos(6, 3, 6));
 		Services.watch().onPlaced((ServerPlayer) helper.makeMockServerPlayer(GameType.SURVIVAL), level, placed, Blocks.GRASS_BLOCK.defaultBlockState());
-		helper.assertFalse(watched.figureDig(level, placed, cause), "dug a block a player placed");
+		helper.assertFalse(watched.figureDig(level, dig, placed), "dug a block a player placed");
 
-		helper.assertFalse(watched.figureFill(level, top, Blocks.STONE.defaultBlockState(), cause), "filled with a block that was never dug");
-		helper.assertFalse(watched.figureFill(level, top, Blocks.DIRT.defaultBlockState(), "test:other_dig"), "filled from another dig");
-		helper.assertTrue(watched.figureFill(level, top, Blocks.DIRT.defaultBlockState(), cause), "the hole was not covered");
-		helper.assertBlockPresent(Blocks.DIRT, new BlockPos(3, 3, 3));
-		List<TraceLedger.Entry> after = entries(level, cause);
+		List<TraceLedger.Entry> dug = watched.figureDug(level, dig);
+		helper.assertTrue(dug.size() == 3 && dug.getFirst().pos().pos().equals(helper.absolutePos(new BlockPos(3, 1, 3))), "figureDug: " + dug);
+		TraceService.FigureDig other = watched.startFigureDig(level, top, "test:goes_under");
+		helper.assertFalse(other.id().equals(dig.id()), "two digs share an id");
+		helper.assertFalse(watched.figureFill(level, other, dug.getFirst(), top), "filled from another dig");
+		helper.assertFalse(watched.figureFill(level, dig, dug.getFirst(), helper.absolutePos(new BlockPos(7, 4, 3))), "filled 4 blocks from the column");
+		helper.assertTrue(watched.figureFill(level, dig, dug.getFirst(), top), "the hole was not covered");
+		helper.assertTrue(level.getBlockState(top) == dug.getFirst().state().orElseThrow(), "the fill is not the dug state");
+		List<TraceLedger.Entry> after = entries(level, dig.ledgerCause());
 		TraceLedger.Entry move = after.stream().filter(e -> e.kind() == TraceLedger.Kind.MOVE).findFirst().orElse(null);
 		helper.assertTrue(after.size() == 3 && move != null && move.pos().pos().equals(helper.absolutePos(new BlockPos(3, 1, 3)))
-				&& move.to().orElseThrow().equals(top), "the fill is not ledgered as a move from the newest dug dirt: " + after);
-		helper.assertTrue(watched.figureFill(level, top.below(), Blocks.DIRT.defaultBlockState(), cause), "the second dirt was refused");
-		helper.assertFalse(watched.figureFill(level, top.below(2), Blocks.DIRT.defaultBlockState(), cause), "filled with more dirt than was dug");
+				&& move.to().orElseThrow().equals(top), "the fill is not ledgered as a move from where it was dug: " + after);
+		helper.assertFalse(watched.figureFill(level, dig, dug.getFirst(), top.below()), "the same block came back twice");
+		helper.assertTrue(watched.figureFill(level, dig, dug.get(1), top.below()), "the second dirt was refused");
+
+		// The exact dug state comes back: a bottom slab stays a bottom slab.
+		BlockPos slabPos = helper.absolutePos(new BlockPos(5, 4, 4));
+		helper.setBlock(5, 4, 4, Blocks.STONE_SLAB.defaultBlockState().setValue(SlabBlock.TYPE, SlabType.BOTTOM));
+		helper.assertTrue(watched.figureDig(level, dig, slabPos), "the slab was not dug");
+		TraceLedger.Entry slab = watched.figureDug(level, dig).getFirst();
+		helper.assertTrue(watched.figureFill(level, dig, slab, slabPos), "the slab did not come back");
+		helper.assertTrue(level.getBlockState(slabPos).getValue(SlabBlock.TYPE) == SlabType.BOTTOM, "the slab came back as another block");
 		helper.runAfterDelay(5, () -> {
 			helper.assertEntityNotPresent(EntityTypes.ITEM);
 			helper.succeed();

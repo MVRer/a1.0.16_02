@@ -43,9 +43,10 @@ import org.jspecify.annotations.Nullable;
 /**
  * One planned trace edit: the requested changes, the neighbours that would break because of them (removed
  * silently, written to the ledger) and the neighbours that would change shape. {@link TraceService} plans,
- * checks vetoes and the view on {@link #checkedPositions()}, then {@link #apply()}s. With {@link #letFall} the
- * blocks of a {@link TraceFall} are left to fall by the game's rules: they count as empty while planning what
- * breaks, the neighbours of their landing cells are checked too, and the fall is started last.
+ * checks vetoes on {@link #affectedPositions()} and the view on {@link #checkedPositions()}, then {@link #apply()}s.
+ * With {@link #letFall} the blocks of a {@link TraceFall} are left to fall by the game's rules: they count as empty
+ * while planning what breaks, the neighbours of their landing cells are checked for breakage, and the fall is
+ * started last. The fall is the game's, so its cells are vetoed but not view-checked (D-038).
  *
  * <p>Lore's {@code TraceEditMixin} shadows {@code level} and {@code changes} and hooks the return of
  * {@link #expand()}: keep those names until lore moves to {@link TraceVeto}.
@@ -66,7 +67,10 @@ final class TraceEdit {
 	private final Map<BlockPos, BlockState> changes = new LinkedHashMap<>();
 	/** Block entity data loaded into a moved or placed block right after it is set. */
 	private final Map<BlockPos, CompoundTag> moveInto = new HashMap<>();
+	/** Neighbours this edit's own changes reshape (view-checked). */
 	private final Set<BlockPos> reshaped = new LinkedHashSet<>();
+	/** Neighbours only the fall reshapes, while blocks drop or once they land (vetoed, not view-checked). */
+	private final Set<BlockPos> fallReshaped = new LinkedHashSet<>();
 	private final List<Record> records = new ArrayList<>();
 	private TraceFall fall = TraceFall.NONE;
 
@@ -160,6 +164,7 @@ final class TraceEdit {
 		while (!queue.isEmpty()) {
 			BlockPos pos = queue.poll();
 			BlockState now = planned.get(pos);
+			boolean ours = changes.containsKey(pos);
 			for (Direction dir : Direction.values()) {
 				BlockPos n = pos.relative(dir);
 				if (planned.containsKey(n) || !level.isLoaded(n)) {
@@ -184,17 +189,19 @@ final class TraceEdit {
 					planned.put(n, empty);
 					queue.add(n);
 				} else if (shaped != state || !state.getFluidState().isEmpty()) {
-					reshaped.add(n);
+					(ours ? reshaped : fallReshaped).add(n);
 				}
 			}
 		}
 		reshaped.removeAll(planned.keySet());
+		fallReshaped.removeAll(planned.keySet());
+		fallReshaped.removeAll(reshaped);
 		return fall.landing().isEmpty() || expandLanding(planned, noTicks);
 	}
 
 	/**
 	 * Sand and gravel coming to rest: refuses if a neighbour of a landing cell would break (the game would drop it)
-	 * and view-checks the neighbours that would change shape.
+	 * and notes (for vetoes) the neighbours that would change shape.
 	 */
 	private boolean expandLanding(Map<BlockPos, BlockState> planned, ScheduledTickAccess noTicks) {
 		Map<BlockPos, BlockState> settled = new LinkedHashMap<>(planned);
@@ -215,11 +222,12 @@ final class TraceEdit {
 					return false;
 				}
 				if (shaped != state || !state.getFluidState().isEmpty()) {
-					reshaped.add(n);
+					fallReshaped.add(n);
 				}
 			}
 		}
-		reshaped.removeAll(settled.keySet());
+		fallReshaped.removeAll(settled.keySet());
+		fallReshaped.removeAll(reshaped);
 		return true;
 	}
 
@@ -253,13 +261,20 @@ final class TraceEdit {
 		return false;
 	}
 
-	/**
-	 * Every block whose look changes: edits, broken dependents and reshaped neighbours, plus for a fall every cell
-	 * that falls, that a falling block passes through and where it comes to rest.
-	 */
+	/** What this edit itself changes, for the view check: edits, broken dependents and the neighbours they reshape. */
 	Set<BlockPos> checkedPositions() {
 		Set<BlockPos> all = new LinkedHashSet<>(changes.keySet());
 		all.addAll(reshaped);
+		return all;
+	}
+
+	/**
+	 * Every cell involved, for vetoes: {@link #checkedPositions()} plus, for a fall, every cell that falls, that a
+	 * falling block passes through, where it comes to rest and the neighbours the fall reshapes.
+	 */
+	Set<BlockPos> affectedPositions() {
+		Set<BlockPos> all = checkedPositions();
+		all.addAll(fallReshaped);
 		all.addAll(fall.falling());
 		all.addAll(fall.path());
 		all.addAll(fall.landing().keySet());

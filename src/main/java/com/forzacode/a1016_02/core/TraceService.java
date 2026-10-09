@@ -6,6 +6,7 @@ import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.ThreadLocalRandom;
 
 import com.forzacode.a1016_02.A1016_02;
 
@@ -14,6 +15,7 @@ import net.minecraft.core.Direction;
 import net.minecraft.core.GlobalPos;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.network.chat.Component;
+import net.minecraft.resources.ResourceKey;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
@@ -45,8 +47,8 @@ import org.jspecify.annotations.Nullable;
  * containers never spill, and neighbours that would break (a torch on a removed block, the other door half) are
  * removed silently too and written to the ledger. Removals, moves, conversions, sign edits and stack changes go to
  * the {@link TraceLedger} so Ending D can undo them; {@link #leave} and {@link #leaveStack} place things "left by
- * others" and are never undone. The only edits allowed in view are {@link #figureDig} and {@link #figureFill}
- * (D-030). Server thread only.
+ * others" and are never undone. The only changes allowed in view are {@link #figureDig} and {@link #figureFill}
+ * (D-030), and the fall the game makes after {@link #removeLettingFall} (D-038). Server thread only.
  */
 public final class TraceService {
 	/**
@@ -72,6 +74,8 @@ public final class TraceService {
 	public static final String WAXED_SIGN_CAUSE = "lore:left/F30";
 	/** {@link #restoreBlock} puts a block back at most this many blocks (on every axis) from where it was. */
 	public static final int RESTORE_REACH = 2;
+	/** {@link #figureDig} and {@link #figureFill} work at most this many blocks (horizontally) from the dig's column. */
+	public static final int FIGURE_REACH = 3;
 
 	/** Half the diagonal of a block: how far a block's corners reach from its center. */
 	private static final double BLOCK_RADIUS = 0.87;
@@ -233,12 +237,22 @@ public final class TraceService {
 	}
 
 	/**
-	 * D-027: the box lies strictly below the viewer's feet, the viewer looks up at least
+	 * D-027: the box lies strictly below the viewer's feet and inside their footprint (the block columns their
+	 * hitbox overlaps: the blocks directly under them, at most a one-block ring), the viewer looks up at least
 	 * {@link #UNDER_FEET_LOOK_UP_DEGREES}, and no part of the box is inside the cone. Such a box is exempt from the
-	 * near rule (line of sight still counts, and cannot reach it outside the cone).
+	 * near rule (line of sight still counts, and cannot reach it outside the cone). Floor beside or behind them is not.
 	 */
 	public static boolean hiddenUnderFeet(Viewer viewer, AABB box, double halfConeRadians) {
-		if (box.maxY > viewer.body().minY + 1.0E-6 || viewer.look().y < LOOK_UP_MIN_Y) {
+		AABB body = viewer.body();
+		if (box.maxY > body.minY + 1.0E-6 || viewer.look().y < LOOK_UP_MIN_Y) {
+			return false;
+		}
+		// The footprint: the whole block columns the hitbox overlaps.
+		double minX = Math.floor(body.minX);
+		double maxX = Math.floor(body.maxX - 1.0E-7) + 1.0;
+		double minZ = Math.floor(body.minZ);
+		double maxZ = Math.floor(body.maxZ - 1.0E-7) + 1.0;
+		if (box.minX < minX - 1.0E-6 || box.maxX > maxX + 1.0E-6 || box.minZ < minZ - 1.0E-6 || box.maxZ > maxZ + 1.0E-6) {
 			return false;
 		}
 		Vec3 toCenter = box.getCenter().subtract(viewer.eye());
@@ -370,12 +384,14 @@ public final class TraceService {
 
 	/**
 	 * Removes a block and lets what rests on it fall by the game's rules: the sand, red sand or gravel column on top
-	 * of it drops and lands as blocks, or the stalactite (pointed dripstone) hanging under it drops and shatters,
-	 * hurting what it lands on. The removed block, every falling block, every cell they fall through and where they
-	 * land must be out of view, or nothing happens. The removed block (and broken dependents) is ledgered; the fallen
-	 * blocks are not (the game moved them). Refused if a falling block would break into an item (landing in a torch
-	 * or on a slab), if other falling blocks (concrete powder, anvils, suspicious sand) are involved, or if both a
-	 * column and a stalactite rest on the block. With nothing resting on it, this is {@link #remove}.
+	 * of it drops and lands as blocks, or the stalactite (pointed dripstone) hanging under it drops and shatters
+	 * into an item with its sound, hurting what it lands on. Only the removed block (and what this edit itself
+	 * changes: broken dependents, reshaped neighbours) must be out of view (D-038); the fall and the landing may be
+	 * seen, since that is the game's own behaviour once a support is gone. Vetoes apply to every cell involved. The
+	 * removed block (and broken dependents) is ledgered; the fallen blocks are not (the game moved them). Refused if
+	 * sand or gravel would break into an item (landing in a torch or on a slab), if other falling blocks (concrete
+	 * powder, anvils, suspicious sand) are involved, or if both a column and a stalactite rest on the block. With
+	 * nothing resting on it, this is {@link #remove}.
 	 */
 	public boolean removeLettingFall(ServerLevel level, BlockPos pos, String cause) {
 		if (level.getBlockState(pos).isAir()) {
@@ -477,19 +493,45 @@ public final class TraceService {
 	}
 
 	/**
-	 * ONLY for the figure entity's own dig-under exit (D-030). Every other caller must use the view-checked methods.
-	 * Removes one block even in view, silently (no drops, particles or sound), ledgered like {@link #remove}, with
-	 * the same dependent, hanging-entity, falling-block and veto safety. Refuses air, fluids (and waterlogged blocks or
-	 * water beside the hole), unbreakable blocks (bedrock), block entities and containers, and blocks a player placed
-	 * ({@code PlayerWatch.wasPlacedByPlayer}), for the block and for every dependent it would take with it.
+	 * One dig-under exit of the figure (D-030), from {@link #startFigureDig}: a unique id, the column he stands on,
+	 * and the cause its ledger entries carry ({@link #ledgerCause()}). Fills only take back blocks of the same dig.
 	 */
-	public boolean figureDig(ServerLevel level, BlockPos pos, String cause) {
+	public record FigureDig(String id, ResourceKey<Level> dimension, BlockPos column, String cause) {
+		/** The cause on this dig's ledger entries: {@code <cause>/<id>}. */
+		public String ledgerCause() {
+			return cause + "/" + id;
+		}
+
+		/** True if {@code pos} is in this dig's level within {@link #FIGURE_REACH} blocks (horizontally) of its column. */
+		public boolean reaches(Level level, BlockPos pos) {
+			return level.dimension().equals(dimension) && Math.max(Math.abs(pos.getX() - column.getX()), Math.abs(pos.getZ() - column.getZ())) <= FIGURE_REACH;
+		}
+	}
+
+	/**
+	 * ONLY for the figure entity's own dig-under exit (D-030). Every other caller must use the view-checked methods.
+	 * Starts one dig at the column he stands on, with a new unique id; changes nothing. Pass it to {@link #figureDig}
+	 * and {@link #figureFill}.
+	 */
+	public FigureDig startFigureDig(ServerLevel level, BlockPos column, String cause) {
+		return new FigureDig(Long.toHexString(ThreadLocalRandom.current().nextLong()), level.dimension(), column.immutable(), cause);
+	}
+
+	/**
+	 * ONLY for the figure entity's own dig-under exit (D-030). Every other caller must use the view-checked methods.
+	 * Removes one block of the dig, within {@link #FIGURE_REACH} blocks of its column, even in view, silently (no
+	 * drops, particles or sound), ledgered like {@link #remove} under the dig's {@link FigureDig#ledgerCause()},
+	 * with the same dependent, hanging-entity, falling-block and veto safety. Refuses air, fluids (and waterlogged
+	 * blocks or water beside the hole), unbreakable blocks (bedrock), block entities and containers, and blocks a
+	 * player placed ({@code PlayerWatch.wasPlacedByPlayer}), for the block and for every dependent it would take.
+	 */
+	public boolean figureDig(ServerLevel level, FigureDig dig, BlockPos pos) {
 		BlockState state = level.getBlockState(pos);
-		if (state.isAir() || !state.getFluidState().isEmpty() || state.getDestroySpeed(level, pos) < 0.0F || state.hasBlockEntity()
-				|| level.getBlockEntity(pos) != null) {
+		if (!dig.reaches(level, pos) || state.isAir() || !state.getFluidState().isEmpty() || state.getDestroySpeed(level, pos) < 0.0F
+				|| state.hasBlockEntity() || level.getBlockEntity(pos) != null) {
 			return false;
 		}
-		TraceEdit edit = plan(level, cause, List.of(new TraceBatch.Remove(pos.immutable())), null);
+		TraceEdit edit = plan(level, dig.ledgerCause(), List.of(new TraceBatch.Remove(pos.immutable())), null);
 		if (edit == null) {
 			return false;
 		}
@@ -503,34 +545,40 @@ public final class TraceService {
 		return true;
 	}
 
-	/**
-	 * ONLY for the figure entity's own dig-under exit (D-030). Every other caller must use the view-checked methods.
-	 * Covers the hole over him, even in view: puts {@code state} at {@code pos} (replaceable, no block entity, and
-	 * it must survive there), but only as one of the blocks {@link #figureDig} removed under the same {@code cause}
-	 * that is still missing (the newest that matches the block), so it is a move, not a creation. That ledger entry
-	 * is rewritten in place as a MOVE from where the block was dug to {@code pos}. Silent and vetoed.
-	 */
-	public boolean figureFill(ServerLevel level, BlockPos pos, BlockState state, String cause) {
-		TraceLedger ledger = TraceLedger.get(level.getServer());
-		List<TraceLedger.Entry> entries = ledger.entries();
-		TraceLedger.Entry source = null;
-		for (int i = entries.size() - 1; i >= 0 && source == null; i--) {
+	/** The blocks this dig removed that are still missing (its open REMOVE entries), newest first. */
+	public List<TraceLedger.Entry> figureDug(ServerLevel level, FigureDig dig) {
+		List<TraceLedger.Entry> open = new ArrayList<>();
+		List<TraceLedger.Entry> entries = TraceLedger.get(level.getServer()).entries();
+		for (int i = entries.size() - 1; i >= 0; i--) {
 			TraceLedger.Entry e = entries.get(i);
-			if (e.kind() == TraceLedger.Kind.REMOVE && e.cause().equals(cause) && e.pos().dimension().equals(level.dimension())
-					&& e.state().filter(s -> s.is(state.getBlock())).isPresent()) {
-				source = e;
+			if (e.kind() == TraceLedger.Kind.REMOVE && e.cause().equals(dig.ledgerCause()) && e.pos().dimension().equals(dig.dimension())) {
+				open.add(e);
 			}
 		}
-		if (source == null) {
+		return open;
+	}
+
+	/**
+	 * ONLY for the figure entity's own dig-under exit (D-030). Every other caller must use the view-checked methods.
+	 * Covers the hole over him, even in view: puts back the block of {@code entry} (one of {@link #figureDug}: this
+	 * dig's, still missing) at {@code pos}, within {@link #FIGURE_REACH} blocks of the dig's column, as exactly the
+	 * state that was dug (the caller picks the entry, never the state). The target must be replaceable without a
+	 * block entity and the block must survive there. It is a move, not a creation: the entry is rewritten in place
+	 * as a MOVE from where it was dug to {@code pos}. Silent and vetoed.
+	 */
+	public boolean figureFill(ServerLevel level, FigureDig dig, TraceLedger.Entry entry, BlockPos pos) {
+		TraceLedger ledger = TraceLedger.get(level.getServer());
+		if (entry.kind() != TraceLedger.Kind.REMOVE || !entry.cause().equals(dig.ledgerCause()) || entry.state().isEmpty()
+				|| !entry.pos().dimension().equals(level.dimension()) || !dig.reaches(level, pos) || !ledger.entries().contains(entry)) {
 			return false;
 		}
 		BlockPos to = pos.immutable();
-		TraceEdit edit = plan(level, cause, List.of(new TraceBatch.Restore(to, state, null)), null);
+		TraceEdit edit = plan(level, dig.ledgerCause(), List.of(new TraceBatch.Restore(to, entry.state().get(), null)), null);
 		if (edit == null) {
 			return false;
 		}
 		edit.apply();
-		ledger.replace(source, asMove(source, to));
+		ledger.replace(entry, asMove(entry, to));
 		return true;
 	}
 
@@ -685,7 +733,10 @@ public final class TraceService {
 		return true;
 	}
 
-	/** A planned edit that passed every safety rule and veto (not the view check), or null. */
+	/**
+	 * A planned edit that passed every safety rule and veto (vetoes see every affected cell, falls included), or
+	 * null. The view check is the caller's, on {@link TraceEdit#checkedPositions()}: what the edit itself changes.
+	 */
 	private static @Nullable TraceEdit plan(ServerLevel level, String cause, List<TraceBatch.Op> ops, @Nullable TraceFall fall) {
 		TraceEdit edit = new TraceEdit(level, cause);
 		if (fall != null) {
@@ -696,7 +747,7 @@ public final class TraceService {
 				return null;
 			}
 		}
-		if (edit.isEmpty() || !edit.expand() || edit.touchesAttachedEntity() || vetoed(level, edit.checkedPositions())) {
+		if (edit.isEmpty() || !edit.expand() || edit.touchesAttachedEntity() || vetoed(level, edit.affectedPositions())) {
 			return null;
 		}
 		return edit;

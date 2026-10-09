@@ -22,8 +22,8 @@ import org.jspecify.annotations.Nullable;
 /**
  * What falls, by the game's own rules, when {@link TraceService#removeLettingFall} takes a block out: the gravel or
  * sand column resting on it, or the stalactite (pointed dripstone) hanging from it. Planned before anything changes
- * so the whole fall can be view-checked: the cells that fall, every cell they pass through and where they come to
- * rest. The game does the falling itself (a block tick started on the lowest falling block).
+ * so vetoes and the safety checks see the whole fall: the cells that fall, every cell they pass through and where
+ * they come to rest. The fall itself may be seen (D-038): the game does it (a block tick on the lowest falling block).
  *
  * <p>Sand and gravel land as blocks; the plan refuses any fall where one would break into an item instead (it would
  * come to rest in a torch, a rail, a flower, on a slab or a carpet) or would fall out of the world. A stalactite
