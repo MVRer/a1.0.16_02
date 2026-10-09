@@ -5,6 +5,7 @@ import java.util.Collections;
 import java.util.EnumSet;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Random;
 import java.util.Set;
@@ -49,7 +50,7 @@ public record WorldProfile(Set<Habit> habits, Density density, Tempo tempo, Set<
 	public static List<String> allFragmentIds() {
 		List<String> ids = new ArrayList<>(30);
 		for (int n = 1; n <= 30; n++) {
-			ids.add(String.format("F%02d", n));
+			ids.add(String.format(Locale.ROOT, "F%02d", n));
 		}
 		return ids;
 	}

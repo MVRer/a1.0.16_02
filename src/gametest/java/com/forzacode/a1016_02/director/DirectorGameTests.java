@@ -555,7 +555,7 @@ public class DirectorGameTests {
 		}
 		double ratio = fakes / (double) fakeable;
 		helper.assertTrue(fakeable >= 200, "only " + fakeable + " fakeable fires");
-		helper.assertTrue(ratio > 0.26 && ratio < 0.41, String.format("fake ratio %.3f (%d of %d), expected about 1/3", ratio, fakes, fakeable));
+		helper.assertTrue(ratio > 0.26 && ratio < 0.41, String.format(Locale.ROOT, "fake ratio %.3f (%d of %d), expected about 1/3", ratio, fakes, fakeable));
 		helper.succeed();
 	}
 

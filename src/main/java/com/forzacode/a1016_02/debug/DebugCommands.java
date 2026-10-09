@@ -52,17 +52,17 @@ final class DebugCommands {
 		MinecraftServer server = ctx.getSource().getServer();
 		HerobrineState state = HerobrineState.get(server);
 		List<String> lines = new ArrayList<>();
-		lines.add(String.format("[a1016] stage=%s attention=%.1f tension=%.1f", state.stage(), state.attention(), state.tension()));
+		lines.add(Fmt.f("[a1016] stage=%s attention=%.1f tension=%.1f", state.stage(), state.attention(), state.tension()));
 		lines.add(profileLine(state.profile()));
 		lines.add("fragments (" + state.profile().fragments().size() + "): " + String.join(" ", state.profile().fragments()));
 		String subject = state.subject().map(s -> s.name() + (Services.watch().subject(server).isPresent() ? " (online)" : " (offline)")).orElse("none yet");
 		long playTicks = GameClock.playTicks(server);
-		lines.add(String.format("subject=%s play=%dh%02dm day=%d", subject, playTicks / 72000, playTicks / 1200 % 60, GameClock.day(server)));
-		lines.add(String.format("stopFired=%s listRead=%s tellingStarted=%s read=%s placed=%d markedDeaths=%d",
+		lines.add(Fmt.f("subject=%s play=%dh%02dm day=%d", subject, playTicks / 72000, playTicks / 1200 % 60, GameClock.day(server)));
+		lines.add(Fmt.f("stopFired=%s listRead=%s tellingStarted=%s read=%s placed=%d markedDeaths=%d",
 				state.stopFired(), state.listRead(), state.tellingStarted(), state.fragmentsRead(), state.fragmentsPlaced().size(), state.markedDeaths().size()));
 		HerobrineState.FirstBlocks first = state.firstBlocks();
 		lines.add("first: block=" + describe(first.block()) + " table=" + describe(first.craftingTable()) + " chest=" + describe(first.chest()));
-		lines.add(String.format("effects: musicOff=%s duskFog=%.2f flags=%s", state.effects().musicOff(), state.effects().duskFogLevel(), state.flags()));
+		lines.add(Fmt.f("effects: musicOff=%s duskFog=%.2f flags=%s", state.effects().musicOff(), state.effects().duskFogLevel(), state.flags()));
 		lines.add("sites=" + Services.sites().all().size() + " ledger=" + TraceLedger.get(server).entries().size() + " cards=" + CardRegistry.ids().size()
 				+ (ModConfig.get().devFastMode ? " devFastMode=ON /" + ModConfig.get().devFastDivisor : ""));
 		lines.addAll(Services.director().debugLines(server));
@@ -117,7 +117,7 @@ final class DebugCommands {
 	}
 
 	private static String profileLine(WorldProfile profile) {
-		return String.format("profile: habits=%s density=%s tempo=%s (x%.1f) signature=%s",
+		return Fmt.f("profile: habits=%s density=%s tempo=%s (x%.1f) signature=%s",
 				profile.habits(), profile.density(), profile.tempo(), profile.tempo().paceFactor(), profile.signature());
 	}
 

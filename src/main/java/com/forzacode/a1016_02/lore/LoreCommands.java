@@ -70,7 +70,7 @@ final class LoreCommands {
 			GlobalPos placed = state.fragmentsPlaced().get(id);
 			boolean enabled = Services.fragments().isEnabled(server, id);
 			boolean waiting = enabled && waitsForCamp && fragment.placement().rule().equals("emptied_house");
-			String line = String.format("%s %s | %s | from %s, %s | %s | %s", id, fragment.name(),
+			String line = String.format(java.util.Locale.ROOT, "%s %s | %s | from %s, %s | %s | %s", id, fragment.name(),
 					enabled ? "on" : "off",
 					fragment.stage().name().toLowerCase(java.util.Locale.ROOT), fragment.placement().rule(),
 					placed == null ? (waiting ? "waiting for still burning" : "not placed") : "placed " + placed.pos().toShortString()
