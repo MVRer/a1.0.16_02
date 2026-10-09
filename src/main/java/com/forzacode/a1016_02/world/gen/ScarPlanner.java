@@ -154,8 +154,25 @@ public final class ScarPlanner {
 	}
 
 	private void recordAreaSites(List<ScarPlan> areas, ChunkPos chunk, List<BlockPos> trunks) {
+		for (ScarPlan.SiteMark mark : areaSitesFor(areas, chunk, trunks)) {
+			WorldSites.record(mark.type(), level.dimension(), mark.pos(), mark.size(), mark.interior());
+		}
+	}
+
+	/**
+	 * The large scars' sites to record while {@code chunk} is decorated: every mark inside the chunk (a bare grove's
+	 * at its nearest trunk), and a dead mountain's own site as soon as any chunk of the mountain is decorated, so it
+	 * exists before that chunk spawns its first animals. Recording is idempotent, so later chunks change nothing.
+	 */
+	public static List<ScarPlan.SiteMark> areaSitesFor(List<ScarPlan> areas, ChunkPos chunk, List<BlockPos> trunks) {
+		List<ScarPlan.SiteMark> marks = new ArrayList<>();
 		for (ScarPlan plan : areas) {
+			boolean ofThisMountain = plan.kind() == ScarKind.DEAD_MOUNTAIN && plan.area() != null && plan.area().touches(chunk, 0);
 			for (ScarPlan.SiteMark mark : plan.sites()) {
+				if (ofThisMountain && mark.type() == SiteType.DEAD_MOUNTAIN) {
+					marks.add(mark);
+					continue;
+				}
 				if (!chunk.contains(mark.pos())) {
 					continue;
 				}
@@ -163,9 +180,10 @@ public final class ScarPlanner {
 				if (mark.nearestTree() && !trunks.isEmpty()) {
 					pos = trunks.stream().min(Comparator.comparingDouble(t -> t.distSqr(mark.pos()))).orElse(pos);
 				}
-				WorldSites.record(mark.type(), level.dimension(), pos, mark.size(), mark.interior());
+				marks.add(new ScarPlan.SiteMark(mark.type(), pos, mark.size(), mark.interior(), mark.nearestTree()));
 			}
 		}
+		return marks;
 	}
 
 	// --- lookups ---

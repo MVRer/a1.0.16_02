@@ -281,6 +281,41 @@ public class WorldGameTests {
 		helper.succeed();
 	}
 
+	/**
+	 * A dead mountain's site exists from the first of its chunks to be decorated (atmosphere's spawn rule keeps
+	 * worldgen animals off it from the start), not only once its center chunk generates; its cross on the peak is
+	 * still recorded only where the cross stands.
+	 */
+	@GameTest
+	public void deadMountainSiteFromAnyOfItsChunks(GameTestHelper helper) {
+		AreaScars.Area area = new AreaScars.Area(ScarKind.DEAD_MOUNTAIN, 1000, 1000, 60, 90, false);
+		BlockPos center = new BlockPos(1000, 121, 1000);
+		BlockPos crossBase = new BlockPos(1000, 121, 1000);
+		ScarPlan mountain = new ScarPlan(ScarKind.DEAD_MOUNTAIN, center, 60, null, area,
+				List.of(ScarPlan.SiteMark.of(SiteType.DEAD_MOUNTAIN, center, 60), ScarPlan.SiteMark.of(SiteType.CROSS, crossBase, 4)));
+		ChunkPos edge = ChunkPos.containing(new BlockPos(1000 + 55, 0, 1000));
+		ChunkPos outside = ChunkPos.containing(new BlockPos(1000 + 90, 0, 1000 + 90));
+		helper.assertFalse(edge.contains(center), "the edge chunk holds the center");
+
+		List<ScarPlan.SiteMark> atEdge = ScarPlanner.areaSitesFor(List.of(mountain), edge, List.of());
+		helper.assertTrue(atEdge.size() == 1 && atEdge.getFirst().type() == SiteType.DEAD_MOUNTAIN && atEdge.getFirst().pos().equals(center)
+				&& atEdge.getFirst().size() == 60, "an edge chunk of the mountain does not record its site: " + atEdge);
+		helper.assertTrue(ScarPlanner.areaSitesFor(List.of(mountain), outside, List.of()).isEmpty(), "a chunk off the mountain records a site");
+		List<ScarPlan.SiteMark> atCenter = ScarPlanner.areaSitesFor(List.of(mountain), ChunkPos.containing(center), List.of());
+		helper.assertTrue(atCenter.stream().filter(m -> m.type() == SiteType.DEAD_MOUNTAIN).count() == 1
+				&& atCenter.stream().anyMatch(m -> m.type() == SiteType.CROSS), "the center chunk records " + atCenter);
+
+		// A bare forest still records its grove only in the chunk that holds it, at the nearest trunk.
+		AreaScars.Area bare = new AreaScars.Area(ScarKind.BARE_FOREST, 1000, 1000, 60, Integer.MIN_VALUE, false);
+		ScarPlan forest = new ScarPlan(ScarKind.BARE_FOREST, center, 60, null, bare,
+				List.of(new ScarPlan.SiteMark(SiteType.BARE_GROVE, center, 60, null, true)));
+		helper.assertTrue(ScarPlanner.areaSitesFor(List.of(forest), edge, List.of()).isEmpty(), "a bare forest's edge chunk records its grove");
+		BlockPos trunk = center.offset(2, 0, 1);
+		List<ScarPlan.SiteMark> grove = ScarPlanner.areaSitesFor(List.of(forest), ChunkPos.containing(center), List.of(trunk));
+		helper.assertTrue(grove.size() == 1 && grove.getFirst().pos().equals(trunk), "the grove is not at its nearest trunk: " + grove);
+		helper.succeed();
+	}
+
 	// --- old scars: planning ---
 
 	/** Terrain for planning tests: ground from a function, stone up to it, plains everywhere. */
