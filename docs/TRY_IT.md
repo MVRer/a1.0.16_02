@@ -2,6 +2,24 @@
 
 One entry per merge, newest first. Run the game from the main checkout (this folder, on `main`).
 
+## READY TO TRY: The figure (all sighting variants)  (merged feat/entity-figure, commit 54e5a45)
+```
+Restart needed: full game restart (new entity, model and renderer)
+See it now:
+  1. Launch "Dev Client". Options > Video: Render Distance 6 (the small canon render distance).
+  2. /time set 13000, then /a1016 stage 2
+  3. /a1016 fire sighting_cow   (chat prints where he is; he spawns behind you, so turn slowly)
+  4. Variants: sighting_walks_away, sighting_ridge (face away from the peaks ~100 blocks off),
+     sighting_between_trunks (stay in the spawn forest), sighting_across_water (stand on the ocean shore,
+     back to the sea), sighting_close. /a1016 entity info shows his phase and every gate.
+What to look for: default Steve, blank white eyes with no glow, no name tag, no sound, at the edge of the fog.
+  He's never there when you first look; turning reveals him. Stare about 2 s or walk toward him and he
+  turns and leaves into the fog, then he's gone once you look away.
+Known rough edges: the skin is the placeholder. sighting_in_the_light needs world's lone lights (v0.3).
+  The fake "only a cow" needs atmosphere's MobTamper (v0.4). If your render distance is above your
+  simulation distance and you walk away, he may stand still while you watch, until you look away.
+```
+
 ## READY TO TRY: The director (decks, pacing, quiet, stages by time)  (merged feat/director-core, commit c41bff5)
 ```
 Restart needed: full game restart (new Java code and a jukebox mixin)
