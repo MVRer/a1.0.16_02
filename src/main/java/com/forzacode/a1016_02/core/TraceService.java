@@ -24,6 +24,8 @@ import net.minecraft.world.entity.EquipmentSlot;
 import net.minecraft.world.entity.Mob;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.enchantment.EnchantmentEffectComponents;
+import net.minecraft.world.item.enchantment.EnchantmentHelper;
 import net.minecraft.world.level.BlockGetter;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.Block;
@@ -618,15 +620,17 @@ public final class TraceService {
 	 * your sword"). {@code entry} is a REMOVE_STACK entry (the ledger holds the stack) or a MOVE_STACK entry (the
 	 * stack is taken back out of the slot it was moved to, which must still hold exactly that stack, in this level).
 	 * The mob must be alive, in this level, out of view, with that slot empty; the container it leaves must be out of
-	 * view and not vetoed. The mob drops it, undamaged, however it dies (the game's guaranteed "preserved" drop
-	 * chance, which is above 1) and no longer despawns. Silent (no equip
+	 * view and not vetoed. The mob drops it exactly as it was taken, undamaged, however it dies (the game's
+	 * guaranteed drop chance, above 1.0) and no longer despawns; stacks with a curse of vanishing are refused, since
+	 * they would vanish with the mob. Silent (no equip
 	 * sound). Never creates items: the entry is rewritten in place as EQUIP (taken from the original container, now
 	 * worn by the mob) under {@code cause}, so Ending D never returns it twice.
 	 */
 	public boolean equipFromLedger(ServerLevel level, TraceLedger.Entry entry, Mob mob, EquipmentSlot slot, String cause) {
 		TraceLedger ledger = TraceLedger.get(level.getServer());
 		ItemStack wanted = entry.stack().orElse(ItemStack.EMPTY);
-		if (wanted.isEmpty() || mob.level() != level || !mob.isAlive() || mob.isRemoved() || !mob.getItemBySlot(slot).isEmpty()
+		// A curse of vanishing would make it vanish with the mob instead of dropping: never equip those.
+		if (wanted.isEmpty() || EnchantmentHelper.has(wanted, EnchantmentEffectComponents.PREVENT_EQUIPMENT_DROP) || mob.level() != level || !mob.isAlive() || mob.isRemoved() || !mob.getItemBySlot(slot).isEmpty()
 				|| !ledger.entries().contains(entry) || !(force || isOutOfView(level, mob.getBoundingBox()))) {
 			return false;
 		}
@@ -650,7 +654,8 @@ public final class TraceService {
 		mob.setSilent(true);
 		mob.setItemSlot(slot, stack);
 		mob.setSilent(silent);
-		// Guaranteed and preserved: it drops whole whatever kills the mob (a plain 1.0 drops only on a player kill, damaged).
+		// Guaranteed drop: above 1.0 the game "preserves" the item, so it drops whatever kills the mob, never with
+		// random damage, exactly as it was taken (a plain 1.0 drops only on a player kill, and damaged). The clue.
 		mob.setDropChance(slot, DropChances.PRESERVE_ITEM_DROP_CHANCE);
 		mob.setPersistenceRequired();
 		ledger.replace(entry, new TraceLedger.Entry(TraceLedger.Kind.EQUIP, cause, entry.day(), entry.pos(), Optional.of(mob.blockPosition()),

@@ -352,8 +352,9 @@ public class TraceContractTests extends CoreContractTests {
 		TraceService.Viewer near = viewerAt(helper, new Vec3(2.5, 1.0, 4.5), -90.0F, 0.0F);
 		helper.assertFalse(traces.watchedBy(List.of(near)).equipFromLedger(level, taken, zombie, EquipmentSlot.MAINHAND, cause), "equipped in view");
 		helper.assertTrue(traces.equipFromLedger(level, taken, zombie, EquipmentSlot.MAINHAND, cause), "equipping the taken sword failed");
-		helper.assertTrue(zombie.getItemBySlot(EquipmentSlot.MAINHAND).is(Items.IRON_SWORD) && zombie.getDropChances().isPreserved(EquipmentSlot.MAINHAND)
-				&& zombie.isPersistenceRequired(), "the zombie does not hold the sword for good");
+		helper.assertTrue(ItemStack.matches(zombie.getItemBySlot(EquipmentSlot.MAINHAND), taken.stack().orElseThrow())
+				&& zombie.getDropChances().byEquipment(EquipmentSlot.MAINHAND) > 1.0F && zombie.getDropChances().isPreserved(EquipmentSlot.MAINHAND)
+				&& zombie.isPersistenceRequired(), "the zombie does not hold exactly that sword, with a guaranteed drop, for good");
 		List<TraceLedger.Entry> equipped = entries(level, cause);
 		helper.assertTrue(entries(level, cause + "/taken").isEmpty() && equipped.size() == 1 && equipped.getFirst().kind() == TraceLedger.Kind.EQUIP
 				&& equipped.getFirst().entity().orElseThrow().equals(zombie.getUUID()) && equipped.getFirst().pos().pos().equals(chest),
