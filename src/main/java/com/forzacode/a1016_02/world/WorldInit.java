@@ -10,6 +10,10 @@ import com.forzacode.a1016_02.world.live.LoneLightNearBaseCard;
 import com.forzacode.a1016_02.world.live.NewScarCard;
 import com.forzacode.a1016_02.world.live.NewScarPlacer;
 import com.forzacode.a1016_02.world.live.WorldWatch;
+import com.forzacode.a1016_02.world.sig.HouseCopier;
+import com.forzacode.a1016_02.world.sig.LoneTorch;
+import com.forzacode.a1016_02.world.sig.SignatureCards;
+import com.forzacode.a1016_02.world.sig.StillBurning;
 
 import net.fabricmc.fabric.api.biome.v1.BiomeModifications;
 import net.fabricmc.fabric.api.biome.v1.BiomeSelectors;
@@ -45,6 +49,10 @@ public final class WorldInit {
 		Director.register(new LightOnMountainCard());
 		Director.register(new LoneLightNearBaseCard());
 		Director.register(new EmptiedHouseCard());
+		Director.register(new SignatureCards.StillBurningCard());
+		Director.register(new SignatureCards.HouseElsewhereCard());
+		Director.register(new SignatureCards.CrossRowCard());
+		Director.register(new SignatureCards.LoneRedstoneTorchCard());
 		PlayerBlockBreakEvents.AFTER.register((level, player, pos, state, blockEntity) -> {
 			if (level instanceof ServerLevel serverLevel && player instanceof ServerPlayer serverPlayer) {
 				WorldWatch.onBroken(serverLevel, serverPlayer, pos, state);
@@ -69,6 +77,8 @@ public final class WorldInit {
 			ScarContext.clear();
 			WorldSites.clear();
 			NewScarPlacer.clear();
+			StillBurning.clear();
+			HouseCopier.clear();
 		});
 		ServerTickEvents.END_SERVER_TICK.register(server -> {
 			if (server.getTickCount() % 100 == 0) {
@@ -77,6 +87,13 @@ public final class WorldInit {
 			WorldSites.drain(server);
 			WorldWatch.tick(server);
 			NewScarPlacer.tick(server);
+			if (server.getTickCount() % 20 == 7) {
+				StillBurning.tick(server);
+				HouseCopier.tick(server);
+			}
+			if (server.getTickCount() % Math.max(20, Math.round(WorldConfig.get().watchSeconds * 20)) == 11) {
+				LoneTorch.trackCaves(server);
+			}
 		});
 	}
 }

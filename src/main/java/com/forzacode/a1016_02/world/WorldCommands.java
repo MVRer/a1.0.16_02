@@ -16,6 +16,13 @@ import com.forzacode.a1016_02.world.gen.ScarPlan;
 import com.forzacode.a1016_02.world.gen.ScarPlanner;
 import com.forzacode.a1016_02.world.live.LivePlacer;
 import com.forzacode.a1016_02.world.live.NewScarPlacer;
+import com.forzacode.a1016_02.core.HerobrineState;
+import com.forzacode.a1016_02.world.sig.CrossRow;
+import com.forzacode.a1016_02.world.sig.HouseCopier;
+import com.forzacode.a1016_02.world.sig.LoneTorch;
+import com.forzacode.a1016_02.world.sig.Outcome;
+import com.forzacode.a1016_02.world.sig.StillBurning;
+import com.mojang.brigadier.arguments.IntegerArgumentType;
 import com.mojang.brigadier.arguments.StringArgumentType;
 import com.mojang.brigadier.context.CommandContext;
 
@@ -24,12 +31,14 @@ import net.minecraft.commands.Commands;
 import net.minecraft.commands.SharedSuggestionProvider;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
+import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.phys.Vec3;
 
 /**
  * Debug commands for the world workstream (op level 2):
- * {@code /a1016 world sites [type] | locate <scar> | place <scar> | newscar now}.
+ * {@code /a1016 world sites [type] | locate <scar> | place <scar> | newscar now | signature <name> now | signature status |
+ * housecopy status | housecopy step <n>}.
  */
 final class WorldCommands {
 	private static final int SITE_LINES = 12;
@@ -54,7 +63,66 @@ final class WorldCommands {
 								.suggests((ctx, b) -> SharedSuggestionProvider.suggest(LivePlacer.names(), b))
 								.executes(WorldCommands::place)))
 				.then(Commands.literal("newscar")
-						.then(Commands.literal("now").executes(WorldCommands::newScarNow)))));
+						.then(Commands.literal("now").executes(WorldCommands::newScarNow)))
+				.then(Commands.literal("signature")
+						.then(Commands.literal("status").executes(WorldCommands::signatureStatus))
+						.then(Commands.argument("name", StringArgumentType.word())
+								.suggests((ctx, b) -> SharedSuggestionProvider.suggest(SIGNATURES, b))
+								.then(Commands.literal("now").executes(WorldCommands::signatureNow))))
+				.then(Commands.literal("housecopy")
+						.then(Commands.literal("status").executes(WorldCommands::houseCopyStatus))
+						.then(Commands.literal("step")
+								.then(Commands.argument("n", IntegerArgumentType.integer(1, 64)).executes(WorldCommands::houseCopyStep))))));
+	}
+
+	private static final List<String> SIGNATURES = List.of("still_burning", "house_elsewhere", "cross_row");
+
+	/** Forces a signature now: gates skipped, but still once per world and only out of view. */
+	private static int signatureNow(CommandContext<CommandSourceStack> ctx) {
+		CommandSourceStack source = ctx.getSource();
+		String name = StringArgumentType.getString(ctx, "name");
+		MinecraftServer server = source.getServer();
+		Outcome outcome = switch (name) {
+			case "still_burning" -> StillBurning.start(server, true, message -> source.sendSuccess(() -> Component.literal("[a1016] " + message), false));
+			case "house_elsewhere" -> HouseCopier.start(server, true);
+			case "cross_row" -> CrossRow.start(server, true);
+			default -> null;
+		};
+		if (outcome == null) {
+			source.sendFailure(Component.literal("[a1016] unknown signature " + name + "; one of " + String.join(", ", SIGNATURES)));
+			return 0;
+		}
+		if (outcome.ok()) {
+			say(ctx, "[a1016] " + outcome.message());
+			return 1;
+		}
+		source.sendFailure(Component.literal("[a1016] " + outcome.message()));
+		return 0;
+	}
+
+	private static int signatureStatus(CommandContext<CommandSourceStack> ctx) {
+		MinecraftServer server = ctx.getSource().getServer();
+		say(ctx, "[a1016] signature " + HerobrineState.get(server).profile().signature() + ", F21 " + (StillBurning.withF21(HerobrineState.get(server)
+				.profile()) ? "rolled" : "not rolled") + ", F27 " + (HerobrineState.get(server).profile().fragments().contains("F27") ? "rolled" : "not rolled"));
+		say(ctx, StillBurning.status(server));
+		say(ctx, CrossRow.status(server));
+		say(ctx, LoneTorch.status(server));
+		HouseCopier.status(server).forEach(line -> say(ctx, line));
+		return 1;
+	}
+
+	private static int houseCopyStatus(CommandContext<CommandSourceStack> ctx) {
+		List<String> lines = HouseCopier.status(ctx.getSource().getServer());
+		lines.forEach(line -> say(ctx, "[a1016] " + line));
+		return lines.size();
+	}
+
+	private static int houseCopyStep(CommandContext<CommandSourceStack> ctx) {
+		String result = HouseCopier.debugStep(ctx.getSource().getServer(), IntegerArgumentType.getInteger(ctx, "n"));
+		for (String line : result.split("\n")) {
+			say(ctx, "[a1016] " + line.strip());
+		}
+		return 1;
 	}
 
 	private static void say(CommandContext<CommandSourceStack> ctx, String line) {
