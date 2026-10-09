@@ -190,7 +190,28 @@ public class EndingBeatTests extends EndingRuleTests {
 		helper.assertTrue(r.beat(B.class, EndingPath.B) == B.DONE && r.data.ended() && r.data.f20Placed(), "B did not end with F20 placed");
 		helper.assertTrue(DirectorHooks.pace(r.state).isEmpty() && DirectorHooks.silence(r.state).orElse(0L) == DirectorHooks.FOREVER,
 				"the end left the pace on or the director awake: " + r.state.flags());
+		helper.assertTrue(r.ports.copyCancels >= 1 && !r.ports.copyFinishPending, "the story ended and the copy's finish was not cancelled");
 		before.check(helper, r);
+		helper.succeed();
+	}
+
+	@GameTest
+	public void leavingBCancelsTheCopysFinish(GameTestHelper helper) {
+		Run r = new Run(helper);
+		r.ports.copyExists = true;
+		r.ports.copySite = r.at(0, 1, 40);
+		r.commit(EndingPath.B);
+		r.data.setHouse(r.at(0, 150, 0));
+		r.data.setProgress(EndingPath.B, B.FINISH_COPY.ordinal(), r.now);
+		r.tick();
+		helper.assertTrue(r.ports.copyFinishes == 1 && r.ports.copyFinishPending, "the copy was not asked to finish");
+		r.commit(EndingPath.NONE);
+		helper.assertTrue(r.ports.copyCancels == 1 && !r.ports.copyFinishPending, "leaving B did not cancel the copy's finish");
+		// A path that never asked for the copy leaves it alone.
+		Run c = new Run(helper);
+		c.commit(EndingPath.C);
+		c.commit(EndingPath.NONE);
+		helper.assertTrue(c.ports.copyCancels == 0, "a path that never asked for the finish cancelled it");
 		helper.succeed();
 	}
 

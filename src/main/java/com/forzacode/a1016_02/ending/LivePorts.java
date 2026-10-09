@@ -127,6 +127,11 @@ final class LivePorts implements EndingPorts {
 	}
 
 	@Override
+	public boolean cancelCopyFinish(MinecraftServer server) {
+		return HouseCopyApi.cancelFinish(server);
+	}
+
+	@Override
 	public boolean copyFinished(MinecraftServer server) {
 		return HouseCopyApi.finished(server);
 	}

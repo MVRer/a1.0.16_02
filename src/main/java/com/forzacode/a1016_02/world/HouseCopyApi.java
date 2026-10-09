@@ -38,6 +38,15 @@ public final class HouseCopyApi {
 		return HouseCopier.requestFinish(server);
 	}
 
+	/**
+	 * Ending B left, or the story ended: a finish asked for with {@link #finish} is cancelled (the copy goes back to
+	 * growing slowly). Once {@code ending:d_complete} or {@code ending:ended} is set the copy stops for good on its
+	 * own. True if a finish was pending.
+	 */
+	public static boolean cancelFinish(MinecraftServer server) {
+		return HouseCopier.cancelFinish(server);
+	}
+
 	/** True once nothing is left to move into the copy. */
 	public static boolean finished(MinecraftServer server) {
 		return WorldData.get(server).signatures().houseCopy().map(s -> s.phase() == HouseCopyState.Phase.FINISHED).orElse(false);

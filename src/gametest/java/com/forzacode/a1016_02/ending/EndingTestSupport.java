@@ -55,6 +55,9 @@ final class EndingTestSupport {
 		boolean copyExists;
 		boolean copyFinished;
 		int copyFinishes;
+		/** A finish was asked for and not cancelled since. */
+		boolean copyFinishPending;
+		int copyCancels;
 		@Nullable GlobalPos copySite;
 		boolean stopSign = true;
 		boolean signMoves = true;
@@ -138,7 +141,16 @@ final class EndingTestSupport {
 		@Override
 		public boolean finishCopy(MinecraftServer server) {
 			copyFinishes++;
+			copyFinishPending = copyExists;
 			return copyExists;
+		}
+
+		@Override
+		public boolean cancelCopyFinish(MinecraftServer server) {
+			copyCancels++;
+			boolean was = copyFinishPending;
+			copyFinishPending = false;
+			return was;
 		}
 
 		@Override

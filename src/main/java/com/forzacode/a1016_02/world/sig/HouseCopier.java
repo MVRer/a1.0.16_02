@@ -73,6 +73,12 @@ public final class HouseCopier {
 	private static final int SITE_CLEARANCE = 24;
 	/** Moves tried per finish pass (the rest follow next pass). */
 	private static final int FINISH_MOVES_PER_PASS = 96;
+	/**
+	 * {@code HerobrineState} flags that end the copy for good: Ending D is complete ({@code ending:d_complete}) or the
+	 * story is over ({@code ending:ended}). Once either is set nothing more leaves the house, and a pending finish is
+	 * cancelled.
+	 */
+	public static final List<String> STOP_FLAGS = List.of("ending:d_complete", "ending:ended");
 
 	/** What one step did. {@code refused} counts moves refused (in view). */
 	public record StepResult(HouseCopyState state, int moved, int refused, String note) {
@@ -428,12 +434,12 @@ public final class HouseCopier {
 
 	/**
 	 * Ending B: the copy gets finished, as soon as it is out of view. False if there is no copy in this world
-	 * (D-005: only when the signature or F27 asked for one, after day 20).
+	 * (D-005: only when the signature or F27 asked for one, after day 20) or the story is over ({@link #stopped}).
 	 */
 	public static boolean requestFinish(MinecraftServer server) {
 		SignatureData data = WorldData.get(server).signatures();
 		Optional<HouseCopyState> copy = data.houseCopy();
-		if (copy.isEmpty()) {
+		if (copy.isEmpty() || stopped(server)) {
 			return false;
 		}
 		if (copy.get().phase() != HouseCopyState.Phase.FINISHED && copy.get().phase() != HouseCopyState.Phase.FINISHING) {
@@ -443,12 +449,41 @@ public final class HouseCopier {
 		return true;
 	}
 
-	/** Called every second: finds the copy site, then runs the steps (or the finish) when due and loaded. */
+	/**
+	 * Ending B left or the story ended: a finish that was asked for is cancelled (the copy goes back to growing a
+	 * few blocks a day, or stops for good once a {@link #STOP_FLAGS} flag is set). True if a finish was pending.
+	 */
+	public static boolean cancelFinish(MinecraftServer server) {
+		SignatureData data = WorldData.get(server).signatures();
+		Optional<HouseCopyState> copy = data.houseCopy();
+		if (copy.isEmpty() || copy.get().phase() != HouseCopyState.Phase.FINISHING) {
+			return false;
+		}
+		data.setHouseCopy(copy.get().withPhase(copy.get().copyOrigin().isPresent() ? HouseCopyState.Phase.BUILDING : HouseCopyState.Phase.SITE));
+		A1016_02.LOGGER.info("[a1016] world: the house copy's finish is cancelled");
+		return true;
+	}
+
+	/** True once the story is over for the copy ({@link #STOP_FLAGS}): nothing more leaves the house. */
+	public static boolean stopped(MinecraftServer server) {
+		HerobrineState state = HerobrineState.get(server);
+		return STOP_FLAGS.stream().anyMatch(state::hasFlag);
+	}
+
+	/**
+	 * Called every second: finds the copy site, then runs the steps (or the finish) when due and loaded. Does nothing
+	 * once the story is over ({@link #stopped}), and cancels a finish still pending then.
+	 */
 	public static void tick(MinecraftServer server) {
 		SignatureData data = WorldData.get(server).signatures();
 		HouseCopyState s = data.houseCopy().orElse(null);
 		if (s == null || s.phase() == HouseCopyState.Phase.FINISHED) {
 			siteSearch = null;
+			return;
+		}
+		if (stopped(server)) {
+			siteSearch = null;
+			cancelFinish(server);
 			return;
 		}
 		ServerLevel level = server.getLevel(s.dimension());

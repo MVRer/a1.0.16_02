@@ -175,6 +175,7 @@ public final class EndingEngine {
 		}
 		if (old == EndingPath.B) {
 			releaseWaiters(c);
+			cancelCopy(c);
 		}
 		if (old == EndingPath.C && next != EndingPath.NONE && next != EndingPath.C) {
 			// Stage 4 stays, so atmosphere will not set its fog again: put back Stage 4's dusk fog.
@@ -237,8 +238,16 @@ public final class EndingEngine {
 			DirectorHooks.silenceForever(state);
 		}
 		releaseWaiters(c);
+		cancelCopy(c);
 		ports.disarmTraps();
 		data.log("the story ends: " + why);
+	}
+
+	/** B's request to finish the copy elsewhere ends with B (or with the story): nothing more leaves the house for it. */
+	private void cancelCopy(Ctx c) {
+		if (c.data().copyRequested() && ports.cancelCopyFinish(c.server())) {
+			c.data().log("B: the copy elsewhere is no longer being finished");
+		}
 	}
 
 	// --- events ---

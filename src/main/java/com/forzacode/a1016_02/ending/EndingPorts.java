@@ -56,6 +56,11 @@ public interface EndingPorts {
 	/** Asks for the copy elsewhere to be finished ({@code HouseCopyApi.finish}). */
 	boolean finishCopy(MinecraftServer server);
 
+	/** Cancels a finish asked for with {@link #finishCopy} ({@code HouseCopyApi.cancelFinish}): B left or the story ended. */
+	default boolean cancelCopyFinish(MinecraftServer server) {
+		return false;
+	}
+
 	boolean copyFinished(MinecraftServer server);
 
 	/** The middle of the copy, once its site is picked. */

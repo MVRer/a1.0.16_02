@@ -186,6 +186,62 @@ public class WorldSignatureTests {
 		return false;
 	}
 
+	/**
+	 * Once Ending D is complete (or the story is over), nothing more leaves the house: the live tick cancels a pending
+	 * finish and moves nothing, even with blocks due. The world's own copy state and flags are put back afterwards.
+	 */
+	@GameTest(structure = BIG, maxTicks = 40)
+	public void houseCopyStopsOnceTheStoryIsOver(GameTestHelper helper) {
+		ServerLevel level = helper.getLevel();
+		ServerPlayer builder = (ServerPlayer) helper.makeMockServerPlayer(GameType.SURVIVAL);
+		fill(helper, 0, 0, 0, 7, 1, 8, Blocks.STONE);
+		fill(helper, 10, 0, 10, 20, 4, 21, Blocks.STONE);
+		List<BlockPos> house = buildHouse(helper, builder);
+		List<BlockState> before = house.stream().map(level::getBlockState).toList();
+		WorldConfig config = new WorldConfig();
+		HouseShell.Capture capture = HouseShell.capture(level, List.of(helper.absolutePos(new BlockPos(3, 3, 3))), config);
+		helper.assertTrue(capture != null && capture.closed(), "the closed house was not captured");
+		HouseCopyState state = HouseCopyState.captured(level.dimension(), capture, 21, 0);
+		state = HouseCopier.placeSite(level, state, helper.absolutePos(new BlockPos(14, 5, 14)), SiteSink.collecting(new ArrayList<>()), 0);
+
+		net.minecraft.server.MinecraftServer server = level.getServer();
+		SignatureData data = WorldData.get(server).signatures();
+		Optional<HouseCopyState> worldCopy = data.houseCopy();
+		com.forzacode.a1016_02.core.HerobrineState flags = com.forzacode.a1016_02.core.HerobrineState.get(server);
+		Set<String> hadFlags = new HashSet<>(flags.flags());
+		try {
+			for (String flag : HouseCopier.STOP_FLAGS) {
+				HouseCopier.STOP_FLAGS.forEach(f -> flags.setFlag(f, false));
+				// Ending B asked for the finish, and a building step is due (nextStep 0): both would move blocks now.
+				data.setHouseCopy(state.withPhase(HouseCopyState.Phase.FINISHING));
+				flags.setFlag(flag, true);
+				helper.assertTrue(HouseCopier.stopped(server) && !HouseCopier.requestFinish(server), "a finish was taken after " + flag);
+				for (int i = 0; i < 3; i++) {
+					HouseCopier.tick(server);
+				}
+				HouseCopyState after = data.houseCopy().orElseThrow();
+				helper.assertTrue(after.phase() == HouseCopyState.Phase.BUILDING && after.moved().isEmpty(),
+						"after " + flag + " the copy is " + after.phase() + " with " + after.moved().size() + " moved");
+				for (int i = 0; i < house.size(); i++) {
+					helper.assertTrue(level.getBlockState(house.get(i)) == before.get(i), "a block left the house after " + flag + ": "
+							+ house.get(i).toShortString());
+				}
+				helper.assertTrue(ledger(helper, HouseCopier.CAUSE).isEmpty() && ledger(helper, HouseCopier.CAUSE_LOCAL).isEmpty(),
+						"the copy ledgered moves after " + flag);
+			}
+			// Without the flags, B's leaving cancels a pending finish too (the copy goes back to growing).
+			HouseCopier.STOP_FLAGS.forEach(f -> flags.setFlag(f, false));
+			data.setHouseCopy(state.withPhase(HouseCopyState.Phase.FINISHING));
+			helper.assertTrue(HouseCopyApi.cancelFinish(server) && data.houseCopy().orElseThrow().phase() == HouseCopyState.Phase.BUILDING,
+					"cancelFinish did not go back to building");
+			helper.assertFalse(HouseCopyApi.cancelFinish(server), "cancelled a finish that was not pending");
+		} finally {
+			data.setHouseCopy(worldCopy.orElse(null));
+			HouseCopier.STOP_FLAGS.forEach(f -> flags.setFlag(f, hadFlags.contains(f)));
+		}
+		helper.succeed();
+	}
+
 	@GameTest(structure = BIG, maxTicks = 80)
 	public void houseCopyOnlyMovesNeverTheRoofAndKeepsTheHouseClosed(GameTestHelper helper) {
 		ServerLevel level = helper.getLevel();
