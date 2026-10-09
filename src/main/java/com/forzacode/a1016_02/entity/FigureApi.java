@@ -11,13 +11,11 @@ import java.util.function.Predicate;
 import com.forzacode.a1016_02.A1016_02;
 import com.forzacode.a1016_02.core.FireResult;
 import com.forzacode.a1016_02.core.GameClock;
-import com.forzacode.a1016_02.core.HerobrineState;
 import com.forzacode.a1016_02.core.ModConfig;
 import com.forzacode.a1016_02.core.Pacing;
 import com.forzacode.a1016_02.core.PlayerWatch;
 import com.forzacode.a1016_02.core.Services;
 import com.forzacode.a1016_02.core.SiteType;
-import com.forzacode.a1016_02.core.Stage;
 
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.GlobalPos;
@@ -203,19 +201,13 @@ public final class FigureApi {
 	}
 
 	/**
-	 * Where the variant may stand around this player: just inside the fog edge. The cow (and everything in Alone)
-	 * keeps to the narrow band at the edge; the others, which need the right terrain or room to walk off, may stand
-	 * a little deeper in the fog band ({@code terrainBandFraction}).
+	 * Where the variant may stand around this player: {@code spawnDistanceFractionMin..Max} of the visible fog end
+	 * (see {@link FogEdge}), so he reads as a hazy but clear shape. The close variant stands 24 to 36 blocks out.
+	 * Never under {@code Pacing.sightingMinDistance}.
 	 */
 	public static Band band(ServerPlayer player, Variant variant) {
-		boolean alone = HerobrineState.get(player.level().getServer()).stage() == Stage.ALONE;
-		FogEdge edge = FogEdge.of(player, alone);
-		if (alone || variant == Variant.COW) {
-			return new Band(edge.inner(), edge.outer());
-		}
-		double min = ModConfig.pacing().sightingMinDistance;
-		double deeper = Math.max(min, edge.outer() * (1.0 - EntityConfig.get().terrainBandFraction));
-		return new Band(Math.min(edge.inner(), deeper), edge.outer());
+		FogEdge edge = FogEdge.of(player, variant == Variant.CLOSE);
+		return new Band(edge.inner(), edge.outer());
 	}
 
 	/**

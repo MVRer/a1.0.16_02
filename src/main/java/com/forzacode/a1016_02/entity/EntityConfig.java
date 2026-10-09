@@ -27,15 +27,14 @@ public final class EntityConfig {
 	/** Same settings as {@code ModConfig}'s writer. */
 	private static final Gson GSON = new GsonBuilder().setPrettyPrinting().disableHtmlEscaping().create();
 
-	// --- the fog edge ---
-	/** At dusk fog level 1 the spawn limit is pulled in to {@code 1 - duskFogPull} of the render limit. */
-	public double duskFogPull = 0.6;
-	/** Depth of the spawn band just inside the limit, as a fraction of the limit. */
-	public double fogBandFraction = 0.10;
-	public double fogBandMinBlocks = 6;
-	/** The ridge, the trunk, the shore and a known place need the right terrain, so their band is this deep. */
-	public double terrainBandFraction = 0.25;
-	/** He stands at least this far inside the limit. */
+	// --- where he stands (see FogEdge) ---
+	/** He spawns this share of the visible fog end away (dusk fog included): a hazy but clear shape. Tunable live. */
+	public double spawnDistanceFractionMin = 0.45;
+	public double spawnDistanceFractionMax = 0.70;
+	/** The close variant's band in blocks, never past the general band's far side. */
+	public double closeMinDistance = 24;
+	public double closeMaxDistance = 36;
+	/** He stands at least this far inside the visible fog end. */
 	public double edgeMarginBlocks = 2;
 	/** Hard cap on the spawn distance, whatever the render distance. */
 	public double maxSpawnDistance = 192;
@@ -61,12 +60,21 @@ public final class EntityConfig {
 	public double aloneChance = 0.3;
 	public double tellingChance = 0.2;
 
-	// --- behaviour ---
+	// --- behaviour (the tunable ones can be set live with /a1016 entity tune) ---
 	/** Half-angle of the cone around the crosshair that counts as looking at him. */
-	public double stareConeDegrees = 6;
-	/** Walking this many blocks toward him ends the sighting. */
-	public double approachBlocks = 6;
-	public double stareBackSeconds = 1.0;
+	public double stareConeDegrees = 8;
+	/** Looking straight at him this long (in total, see HimEntity) ends the sighting. Tunable live. */
+	public double stareSeconds = 3;
+	/** Closing this many blocks on him, counted since he was first seen ({@link Approach}), ends the sighting. Tunable live. */
+	public double approachBlocks = 10;
+	/** Closing less than this at a time is a step, not an approach, and does not count. */
+	public double approachStepBlocks = 1.5;
+	/** Coming this close (horizontal) ends the sighting at once, before {@link #minSeenSeconds} too. Tunable live. */
+	public double fleeDistance = 18;
+	/** Once first seen, nothing but {@link #fleeDistance} ends the sighting (or removes him) before this. Tunable live. */
+	public double minSeenSeconds = 3;
+	/** He stares back this long before he turns away. Tunable live. */
+	public double stareBackSeconds = 2;
 	public double riseSeconds = 0.75;
 	/** Once seen, he is gone after being out of view this long. */
 	public double goneAfterUnseenSeconds = 1.0;
@@ -104,8 +112,37 @@ public final class EntityConfig {
 	/** BRIGHT and GLOW: the eye pixels take fog at {@code 1 - this} strength. 0 = fogged like the body, 1 = never fogged. */
 	public volatile double eyeFogResistance = 0.5;
 
+	/** Section version, so changed defaults reach files written before the change ({@link #migrate}). */
+	public int version = 0;
+	private static final int CURRENT_VERSION = 2;
+
 	public static EntityConfig get() {
 		return ModConfig.section(SECTION, EntityConfig.class, EntityConfig::new);
+	}
+
+	/**
+	 * Brings an older section up to date and saves it. Version 2 (playtest): approach 10 blocks (was 6), stare cone 8
+	 * degrees (was 6), stare back 2 s (was 1). Values that only appeared now take their defaults by themselves.
+	 */
+	public void migrate() {
+		if (upgrade()) {
+			save();
+		}
+	}
+
+	/** {@link #migrate} without saving. Returns true if anything changed. */
+	boolean upgrade() {
+		if (version >= CURRENT_VERSION) {
+			return false;
+		}
+		if (version < 2) {
+			EntityConfig defaults = new EntityConfig();
+			approachBlocks = defaults.approachBlocks;
+			stareConeDegrees = defaults.stareConeDegrees;
+			stareBackSeconds = defaults.stareBackSeconds;
+		}
+		version = CURRENT_VERSION;
+		return true;
 	}
 
 	/** The eye style, BRIGHT if the file holds an unknown value. */

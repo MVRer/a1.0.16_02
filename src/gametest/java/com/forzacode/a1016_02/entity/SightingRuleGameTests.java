@@ -35,31 +35,103 @@ public class SightingRuleGameTests {
 	private static final double NEAR = 3;
 	private static final double CONE = 160;
 
+	/** Atmosphere's default: fog end at full dusk fog. */
+	private static final double DUSK_MIN = 24;
+
 	@GameTest
 	public void fogBandNeverCloserThanTheMinimum(GameTestHelper helper) {
 		EntityConfig config = new EntityConfig();
 		int min = ModConfig.pacing().sightingMinDistance;
 		for (int chunks = 2; chunks <= 32; chunks++) {
-			for (float fog : new float[] {0.0F, 0.5F, 1.0F}) {
+			for (double dusk : new double[] {0.0, 0.5, 1.0}) {
 				for (int sim : new int[] {0, 2, 6, 12}) {
-					for (boolean atMax : new boolean[] {false, true}) {
-						FogEdge edge = FogEdge.compute(chunks, 32, sim, fog, atMax, min, config);
-						String what = "chunks=" + chunks + " fog=" + fog + " sim=" + sim + " max=" + atMax + " -> " + edge;
+					for (boolean close : new boolean[] {false, true}) {
+						FogEdge edge = FogEdge.compute(chunks, 32, sim, dusk, DUSK_MIN, close, min, config);
+						String what = "chunks=" + chunks + " dusk=" + dusk + " sim=" + sim + " close=" + close + " -> " + edge;
 						helper.assertTrue(edge.inner() >= min, "band starts closer than " + min + ": " + what);
 						helper.assertTrue(edge.outer() >= edge.inner(), "empty band: " + what);
-						helper.assertTrue(edge.outer() <= Math.max(edge.limit(), min + 2.0) + 1.0E-6, "band past the pulled-in limit: " + what);
+						helper.assertTrue(edge.outer() <= Math.max(edge.limit(), min + 2.0) + 1.0E-6, "band past the visible fog end: " + what);
+						helper.assertTrue(edge.limit() <= edge.renderLimit() + 1.0E-6, "dusk fog pushed the fog out: " + what);
 						helper.assertTrue(sim <= 0 || edge.outer() <= Math.max(FogEdge.tickingReach(sim), min + 2.0) + 1.0E-6,
 								"band reaches the edge of the ticking range: " + what);
+						helper.assertTrue(!close || edge.outer() <= Math.max(config.closeMaxDistance, min + 2.0) + 1.0E-6, "close band too far: " + what);
 					}
 				}
 			}
 		}
-		FogEdge vanilla = FogEdge.compute(12, 12, 0, 0.0F, false, min, config);
-		helper.assertTrue(vanilla.outer() <= 192 && vanilla.outer() > 170 && vanilla.inner() > 150, "12 chunks should put him at the fog edge: " + vanilla);
-		FogEdge client = FogEdge.compute(6, 12, 0, 0.0F, false, min, config);
-		helper.assertTrue(client.chunks() == 6 && client.outer() <= 96, "the client's smaller view distance wins: " + client);
-		FogEdge dusk = FogEdge.compute(12, 12, 0, 1.0F, false, min, config);
-		helper.assertTrue(dusk.outer() < vanilla.outer() * 0.5, "dusk fog does not pull him in: " + dusk);
+		// 12 chunks, no dusk fog: 0.45 to 0.70 of the 192-block fog end, a clear shape and well inside the fog.
+		FogEdge vanilla = FogEdge.compute(12, 12, 0, 0.0, DUSK_MIN, false, min, config);
+		helper.assertTrue(Math.abs(vanilla.inner() - 0.45 * 192) < 1.0E-6 && Math.abs(vanilla.outer() - 0.70 * 192) < 1.0E-6,
+				"12 chunks should put him 86 to 134 blocks out: " + vanilla);
+		FogEdge client = FogEdge.compute(6, 12, 0, 0.0, DUSK_MIN, false, min, config);
+		helper.assertTrue(client.chunks() == 6 && client.outer() <= 0.70 * 96 + 1.0E-6, "the client's smaller view distance wins: " + client);
+		// Dusk fog, as atmosphere's client draws it: half of it closes 192 in to sqrt(192 * 24), all of it to 24.
+		FogEdge half = FogEdge.compute(12, 12, 0, 0.5, DUSK_MIN, false, min, config);
+		helper.assertTrue(Math.abs(half.limit() - Math.sqrt(192 * DUSK_MIN)) < 1.0E-6 && half.outer() < half.limit(), "half dusk fog: " + half);
+		FogEdge dusk = FogEdge.compute(12, 12, 0, 1.0, DUSK_MIN, false, min, config);
+		helper.assertTrue(Math.abs(dusk.limit() - DUSK_MIN) < 1.0E-6 && dusk.inner() == min, "full dusk fog: " + dusk);
+		// The close variant: 24 to 36 blocks whenever the fog allows it.
+		FogEdge close = FogEdge.compute(12, 12, 0, 0.0, DUSK_MIN, true, min, config);
+		helper.assertTrue(close.inner() == 24 && close.outer() == 36, "close band: " + close);
+		helper.succeed();
+	}
+
+	@GameTest
+	public void approachCountsOnlyRealApproaches(GameTestHelper helper) {
+		EntityConfig config = new EntityConfig();
+		double step = config.approachStepBlocks;
+		// One block forward, the bug that sent him running: nothing.
+		Approach one = new Approach();
+		one.update(30.0, step);
+		helper.assertTrue(one.update(29.0, step) == 0.0, "a single step counted");
+		// Shuffling forward and back for a long time: nothing.
+		Approach shuffle = new Approach();
+		for (int i = 0; i < 200; i++) {
+			shuffle.update(i % 2 == 0 ? 30.0 : 29.0, step);
+		}
+		helper.assertTrue(shuffle.closed() == 0.0, "shuffling counted " + shuffle.closed());
+		// Strafing in a straight line past him at 30 blocks: the distance only grows.
+		Approach strafe = new Approach();
+		for (int i = 0; i <= 100; i++) {
+			strafe.update(Math.hypot(30.0, i * 0.2), step);
+		}
+		helper.assertTrue(strafe.closed() == 0.0, "strafing counted " + strafe.closed());
+		// Walking straight at him, 0.2 blocks a tick: counts, and reaches 10 blocks after about 10 blocks.
+		Approach walk = new Approach();
+		double d = 40.0;
+		walk.update(d, step);
+		int ticks = 0;
+		while (walk.update(d -= 0.2, step) < config.approachBlocks && ticks < 1000) {
+			ticks++;
+		}
+		helper.assertTrue(walk.closed() >= config.approachBlocks && 40.0 - d <= config.approachBlocks + step + 1.0E-6, "walking in: " + (40.0 - d));
+		// Walk in 6, back off 6, walk in 6 again: 12 closed, both walks count.
+		Approach twice = new Approach();
+		for (double x : new double[] {40, 37, 34, 37, 40, 37, 34}) {
+			twice.update(x, step);
+		}
+		helper.assertTrue(Math.abs(twice.closed() - 12.0) < 1.0E-6, "in, back, in again: " + twice.closed());
+		helper.succeed();
+	}
+
+	@GameTest
+	public void nothingButFleeEndsASightingBeforeMinSeen(GameTestHelper helper) {
+		long minSeen = 60;
+		// Never seen: only the flee distance ends it.
+		helper.assertTrue(SightingRules.endCause(false, true, true, -1, minSeen) == SightingRules.EndCause.NONE, "ended unseen");
+		helper.assertTrue(SightingRules.endCause(true, false, false, -1, minSeen) == SightingRules.EndCause.FLEE, "no flee unseen");
+		// Seen for less than minSeen: a finished stare or approach waits, the flee distance does not.
+		helper.assertTrue(SightingRules.endCause(false, true, true, minSeen - 1, minSeen) == SightingRules.EndCause.NONE, "ended before minSeen");
+		helper.assertTrue(SightingRules.endCause(true, true, true, 0, minSeen) == SightingRules.EndCause.FLEE, "flee waited for minSeen");
+		// From minSeen on: the stare first, then the approach.
+		helper.assertTrue(SightingRules.endCause(false, true, true, minSeen, minSeen) == SightingRules.EndCause.STARE, "stare at minSeen");
+		helper.assertTrue(SightingRules.endCause(false, false, true, minSeen + 5, minSeen) == SightingRules.EndCause.APPROACH, "approach after minSeen");
+		helper.assertTrue(SightingRules.endCause(false, false, false, minSeen + 5, minSeen) == SightingRules.EndCause.NONE, "ended for nothing");
+		// The out-of-view removals wait for minSeen too, unless he fled.
+		helper.assertFalse(SightingRules.mayEndOutOfView(true, minSeen - 1, minSeen, false), "removed out of view before minSeen");
+		helper.assertTrue(SightingRules.mayEndOutOfView(true, minSeen - 1, minSeen, true), "kept after fleeing");
+		helper.assertTrue(SightingRules.mayEndOutOfView(true, minSeen, minSeen, false) && SightingRules.mayEndOutOfView(false, -1, minSeen, false),
+				"kept after minSeen, or never seen");
 		helper.succeed();
 	}
 
@@ -78,8 +150,9 @@ public class SightingRuleGameTests {
 		helper.assertFalse(hidden.test(HimEntity.viewBox(ahead)), "a figure straight ahead counts as hidden");
 
 		// A tiny render distance and full dusk fog: the band collapses to the minimum distance, never closer.
-		FogEdge tight = FogEdge.compute(2, 2, 0, 1.0F, false, min, new EntityConfig());
-		for (FogEdge edge : List.of(tight, FogEdge.compute(3, 3, 0, 0.0F, false, min, new EntityConfig()))) {
+		FogEdge tight = FogEdge.compute(2, 2, 0, 1.0, DUSK_MIN, false, min, new EntityConfig());
+		for (FogEdge edge : List.of(tight, FogEdge.compute(3, 3, 0, 0.0, DUSK_MIN, false, min, new EntityConfig()),
+				FogEdge.compute(12, 12, 0, 0.0, DUSK_MIN, true, min, new EntityConfig()))) {
 			for (long seed = 1; seed <= 4; seed++) {
 				SpotFinder.Query q = new SpotFinder.Query(level, viewer.position(), viewer.getEyePosition(), edge.inner(), edge.outer(), min,
 						ModEntities.HIM.getDimensions(), hidden, level::isLoaded, RandomSource.create(seed), 48);

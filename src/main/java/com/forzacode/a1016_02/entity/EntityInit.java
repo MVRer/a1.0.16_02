@@ -11,7 +11,7 @@ public final class EntityInit {
 
 	public static void init() {
 		ModEntities.register();
-		EntityConfig.get(); // writes the defaults into the config file
+		EntityConfig.get().migrate(); // writes the defaults into the config file, and new defaults over old ones
 		for (Variant variant : Variant.values()) {
 			Director.register(new SightingCard(variant));
 		}

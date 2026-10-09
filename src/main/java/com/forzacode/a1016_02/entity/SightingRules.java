@@ -48,4 +48,35 @@ public final class SightingRules {
 	public static boolean night(long timeOfDay, EntityConfig config) {
 		return inWindow(timeOfDay, config.nightFrom, config.nightTo);
 	}
+
+	/** Why a sighting ends this tick. */
+	public enum EndCause { NONE, FLEE, STARE, APPROACH }
+
+	/**
+	 * What ends the sighting this tick. Coming within the flee distance always does. Otherwise nothing does until he
+	 * has been seen for {@code minSeenTicks}; then a long enough stare, or enough distance closed.
+	 *
+	 * @param seenFor ticks since he was first seen, or -1 if nobody has seen him yet
+	 */
+	public static EndCause endCause(boolean withinFlee, boolean stareDone, boolean approached, long seenFor, long minSeenTicks) {
+		if (withinFlee) {
+			return EndCause.FLEE;
+		}
+		if (seenFor < 0 || seenFor < minSeenTicks) {
+			return EndCause.NONE;
+		}
+		if (stareDone) {
+			return EndCause.STARE;
+		}
+		return approached ? EndCause.APPROACH : EndCause.NONE;
+	}
+
+	/**
+	 * Whether his out-of-view rules (gone once unseen, gone once he has left, the lifetime) may act yet. Once seen,
+	 * not before {@code minSeenTicks}, unless he fled. The safety rules (past the render distance, the edge of the
+	 * ticking range) do not ask.
+	 */
+	public static boolean mayEndOutOfView(boolean everSeen, long seenFor, long minSeenTicks, boolean fled) {
+		return !everSeen || fled || seenFor >= minSeenTicks;
+	}
 }
