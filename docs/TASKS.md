@@ -25,7 +25,7 @@ Status values: queued, running, review, fix, merged, blocked. Only the orchestra
 | P1-4c | Fix the flaky dig test `networkChestNeverLoadsAChunkInTheTick` (2 of 5 runs fail on main) | dig | feat/dig-flaky | - | running | Priority: main must not flake |
 | P2-1 | Endings A, B, C, D (full D chain) | ending | feat/ending-endings | v0.8-endings | queued, phase 2 | |
 | P2-2 | Integration: wire all cards, close contract gaps, guardrail pass | (multi) | feat/integration-pass | v1.0 | queued, phase 2 | |
-| P2-3 | Playtest tooling: dev overlay and a 20 h scripted timewarp log | debug | feat/debug-playtest | v1.0 | queued, phase 2 | |
+| P2-3 | Playtest tooling: dev overlay and a 20 h scripted timewarp log | debug | feat/debug-playtest | v1.0 | running | Narrow exception: one public read-only DirectorApi |
 
 ## Milestones
 | Tag | Closes when | Status |
