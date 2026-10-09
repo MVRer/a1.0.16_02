@@ -29,6 +29,11 @@ fabricApi {
 
 loom {
 	runs {
+		// A fixed name keeps the same player (and so the same subject) across launches.
+		client {
+			programArgs("--username", "Dev")
+		}
+
 		gameTest {
 			property("fabric-api.gametest.report-file", file("build/gametest-report.xml").absolutePath)
 		}
@@ -40,8 +45,7 @@ loom {
 			configName = "Dev Client"
 			property("a1016_02.devWorld", "a1016_dev")
 			property("a1016_02.devSeed", "-4180345853331630785")
-			// A fixed name keeps the same player (and so the same subject) across launches.
-			programArgs("--username", "Dev")
+			// Inherits --username Dev from client.
 		}
 	}
 }
