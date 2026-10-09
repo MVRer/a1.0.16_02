@@ -43,8 +43,9 @@ public final class LoreInit {
 			CampSearch.reset();
 			Telling.reset();
 			UnbreakableSigns.load(server);
-			// Choose the untouched grove early, so it exists before any scar could be made in it.
+			// Choose the untouched grove early, so it exists before any scar could be made in it (and keep it protected).
 			UntouchedGrove.ensure(server.overworld(), server.overworld().getRespawnData().pos(), server.overworld().getRandom());
+			UntouchedGrove.center(server).ifPresent(center -> UntouchedGrove.protect(server, center));
 		});
 		ServerLifecycleEvents.SERVER_STOPPED.register(server -> {
 			ChunkGate.clear();
@@ -55,8 +56,9 @@ public final class LoreInit {
 			triggers.reset();
 			reads.clear();
 		});
-		// F30's signs: no player may break them (the rest is in lore's mixins).
+		// F30's signs: no player may break them (the rest is in lore's mixins), and not even he may change them.
 		PlayerBlockBreakEvents.BEFORE.register((level, player, pos, state, blockEntity) -> !UnbreakableSigns.isProtected(level, pos));
+		Services.traces().addVeto(UnbreakableSigns::isProtected);
 		// Telling: breaking your own sign about him; naming him in chat (signs and books come through lore's mixins).
 		PlayerBlockBreakEvents.AFTER.register((level, player, pos, state, blockEntity) -> {
 			if (player instanceof ServerPlayer serverPlayer && level instanceof ServerLevel serverLevel) {

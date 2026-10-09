@@ -13,13 +13,10 @@ import net.minecraft.world.level.block.entity.SignTextSlot;
 
 /**
  * Sign text changes "he" makes: blanking a sign, or showing a fragment's own lines on it ("Stop."). They only ever
- * go through {@code TraceService.editSign} (out of view, vetoed, ledgered with the old text). Until core's contract
- * batch (P1-9) lands, {@link #CORE_EDIT_SIGN} is false and nothing is edited: the cards that need it skip.
+ * go through {@link TraceService#editSign} (out of view, vetoed, ledgered with the old text, never a waxed sign;
+ * colour and glow stay).
  */
 final class SignEdits {
-	/** Flip to true once {@code TraceService.editSign} is on main (and wire {@link #edit} to it). */
-	static final boolean CORE_EDIT_SIGN = false;
-
 	/** One sign text change, both sides at once: an empty list blanks that side; at most 4 lines. */
 	@FunctionalInterface
 	interface Editor {
@@ -29,22 +26,10 @@ final class SignEdits {
 	private SignEdits() {
 	}
 
-	/** True when he can change sign text at all. */
-	static boolean available() {
-		return CORE_EDIT_SIGN;
-	}
-
 	/** The editor backed by core's trace service ({@code forced()} in tests and debug). */
 	static Editor editor(TraceService traces) {
-		return (level, pos, front, back, cause) -> edit(traces, level, pos, front, back, cause);
-	}
-
-	private static boolean edit(TraceService traces, ServerLevel level, BlockPos pos, List<String> front, List<String> back, String cause) {
-		if (!CORE_EDIT_SIGN || !(level.getBlockEntity(pos) instanceof SignBlockEntity)) {
-			return false;
-		}
-		// Wired to TraceService.editSign once core lands. Never set sign text here.
-		return false;
+		return (level, pos, front, back, cause) -> traces.editSign(level, pos, front.isEmpty() ? null : components(front),
+				back.isEmpty() ? null : components(back), cause);
 	}
 
 	/** Plain lines as sign components. */

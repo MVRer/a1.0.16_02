@@ -62,17 +62,14 @@ public class LoreTellingTests extends LorePlacementTests {
 	record Edit(BlockPos pos, List<String> front, List<String> back) {
 	}
 
-	/**
-	 * Core's editor (forced) once {@code TraceService.editSign} exists; until then a recorder that changes nothing,
-	 * so the rules are tested now and the text in the world once core lands.
-	 */
+	/** Core's sign editor (forced: the test level has no players), recording every edit it made. */
 	static final class TestEditor implements SignEdits.Editor {
 		final List<Edit> edits = new ArrayList<>();
 		private final SignEdits.Editor real = SignEdits.editor(Services.traces().forced());
 
 		@Override
 		public boolean edit(ServerLevel level, BlockPos pos, List<String> front, List<String> back, String cause) {
-			if (SignEdits.available() && !real.edit(level, pos, front, back, cause)) {
+			if (!real.edit(level, pos, front, back, cause)) {
 				return false;
 			}
 			edits.add(new Edit(pos.immutable(), front, back));
@@ -113,6 +110,10 @@ public class LoreTellingTests extends LorePlacementTests {
 
 	static List<String> frontOf(GameTestHelper helper, BlockPos abs) {
 		return SignEdits.front((SignBlockEntity) helper.getLevel().getBlockEntity(abs));
+	}
+
+	static List<String> backOf(GameTestHelper helper, BlockPos abs) {
+		return SignEdits.back((SignBlockEntity) helper.getLevel().getBlockEntity(abs));
 	}
 
 	static ItemStack writable(String... pages) {
@@ -259,10 +260,11 @@ public class LoreTellingTests extends LorePlacementTests {
 		List<String> stop = List.of("", "Stop.", "", "");
 		helper.assertTrue(editor.edits.getFirst().front().equals(stop) && fragment("F03").lines().equals(stop), "Stop. is not F03's text");
 		helper.assertTrue(editor.edits.getFirst().back().isEmpty(), "the back was not blanked");
-		if (SignEdits.available()) {
-			helper.assertTrue(frontOf(helper, first).equals(stop), "the sign reads " + frontOf(helper, first));
-		}
+		helper.assertTrue(frontOf(helper, first).equals(stop), "the sign reads " + frontOf(helper, first));
+		helper.assertTrue(backOf(helper, first).stream().allMatch(String::isEmpty), "the back still has text");
 
+		helper.assertTrue(TraceLedger.get(server).entries().stream().anyMatch(e -> e.kind() == TraceLedger.Kind.BLOCK_ENTITY
+				&& e.cause().equals("lore:his/F03") && e.pos().pos().equals(first)), "the Stop. edit is not in the ledger (Ending D could not undo it)");
 		helper.assertTrue(TellingCards.fireStop(server, state, data, editor, NAME) == FireResult.SKIPPED, "Stop. fired twice");
 		sign(helper, new BlockPos(6, 1, 2), player, "HEROBRINE", state, data, NO_TRACES);
 		helper.assertTrue(data.stopCandidate().isEmpty(), "a new Stop. candidate after it fired");
@@ -297,11 +299,9 @@ public class LoreTellingTests extends LorePlacementTests {
 		helper.assertTrue(editor.edits.size() == 1 && editor.edits.getFirst().pos().equals(after), "edits " + editor.edits);
 		helper.assertTrue(editor.edits.getFirst().front().isEmpty() && editor.edits.getFirst().back().isEmpty(), "the sign was not blanked");
 		helper.assertTrue(TellingCards.fireBlank(server, player, data, editor, RandomSource.create(5)) == FireResult.SKIPPED, "blanked twice");
-		if (SignEdits.available()) {
-			helper.assertTrue(frontOf(helper, after).stream().allMatch(String::isEmpty), "the sign still reads " + frontOf(helper, after));
-			for (BlockPos kept : List.of(before, telling, others)) {
-				helper.assertFalse(frontOf(helper, kept).stream().allMatch(String::isEmpty), "a sign it may not take was blanked: " + kept);
-			}
+		helper.assertTrue(frontOf(helper, after).stream().allMatch(String::isEmpty), "the sign still reads " + frontOf(helper, after));
+		for (BlockPos kept : List.of(before, telling, others)) {
+			helper.assertFalse(frontOf(helper, kept).stream().allMatch(String::isEmpty), "a sign it may not take was blanked: " + kept);
 		}
 
 		// The sign that will say "Stop." is never blanked.
@@ -355,13 +355,13 @@ public class LoreTellingTests extends LorePlacementTests {
 				RandomSource.create(3)).isEmpty(), "a place the Ending D chain needs is right beside it, yet it would go");
 		helper.assertTrue(PlaceNotFound.plan(level, anchor, anchor, config, p -> true, List.of(), RandomSource.create(3)).isEmpty(),
 				"the player's own blocks counted as the site");
-		helper.assertTrue(PlaceNotFound.fire(server, state, data, Services.traces().forced(), editor, true, Optional.empty(), RandomSource.create(3),
+		helper.assertTrue(PlaceNotFound.fire(server, state, data, Services.traces().forced(), editor, Optional.empty(), RandomSource.create(3),
 				config) == FireResult.SKIPPED, "place not found before Stop.");
 		helper.assertTrue(helper.getLevel().getBlockState(helper.absolutePos(new BlockPos(1, 1, 1))).is(Blocks.COBBLESTONE), "the hut changed early");
 		state.setStopFired(true);
 		helper.succeedWhen(() -> {
 			if (data.notFound().isEmpty()) {
-				FireResult result = PlaceNotFound.fire(server, state, data, Services.traces().forced(), editor, true, Optional.empty(),
+				FireResult result = PlaceNotFound.fire(server, state, data, Services.traces().forced(), editor, Optional.empty(),
 						RandomSource.create(3), config);
 				helper.assertTrue(result != FireResult.SKIPPED, "place not found skipped after Stop.");
 				helper.assertTrue(result == FireResult.FIRED, "waiting: " + result);
@@ -379,12 +379,10 @@ public class LoreTellingTests extends LorePlacementTests {
 			helper.assertTrue(helper.getBlockState(new BlockPos(3, 1, 3)).getBlock() instanceof StandingSignBlock, "the sign does not stand");
 			helper.assertTrue(state.fragmentsPlaced().get("F04").pos().equals(helper.absolutePos(new BlockPos(3, 1, 3))), "F04 not recorded at the sign");
 			helper.assertTrue(editor.edits.size() == 1 && editor.edits.getFirst().front().isEmpty(), "the moved sign was not blanked");
-			if (SignEdits.available()) {
-				helper.assertTrue(frontOf(helper, helper.absolutePos(new BlockPos(3, 1, 3))).stream().allMatch(String::isEmpty), "the sign has text");
-			}
+			helper.assertTrue(frontOf(helper, helper.absolutePos(new BlockPos(3, 1, 3))).stream().allMatch(String::isEmpty), "the sign has text");
 			helper.assertBlockPresent(Blocks.COBBLESTONE, new BlockPos(7, 1, 7));
 			helper.assertBlockPresent(Blocks.CHEST, new BlockPos(7, 2, 7));
-			helper.assertTrue(PlaceNotFound.fire(server, state, data, Services.traces().forced(), editor, true, Optional.empty(),
+			helper.assertTrue(PlaceNotFound.fire(server, state, data, Services.traces().forced(), editor, Optional.empty(),
 					RandomSource.create(3), config) == FireResult.SKIPPED, "place not found fired twice");
 		});
 	}
@@ -493,6 +491,23 @@ public class LoreTellingTests extends LorePlacementTests {
 		item.hurtServer(level, level.damageSources().lava(), 10.0F);
 		helper.assertTrue(item.isRemoved(), "the book did not burn");
 		helper.assertTrue(data.book(id).isEmpty(), "the burnt book about him is still remembered");
+		helper.succeed();
+	}
+
+	/** The untouched grove is one of core's protected areas, so world's new scars skip it. */
+	@GameTest
+	public void theUntouchedGroveIsProtected(GameTestHelper helper) {
+		MinecraftServer server = helper.getLevel().getServer();
+		boolean hadGrove = Services.protectedAreas().get(UntouchedGrove.AREA_ID).isPresent();
+		BlockPos center = helper.absolutePos(new BlockPos(3, 1, 3));
+		if (!hadGrove) {
+			UntouchedGrove.protect(server, GlobalPos.of(helper.getLevel().dimension(), center));
+			helper.assertTrue(Services.protectedAreas().isProtected(helper.getLevel().dimension(), center.offset(UntouchedGrove.RADIUS, 40, 0)),
+					"the grove is not protected to its edge and full height");
+			helper.assertFalse(Services.protectedAreas().isProtected(helper.getLevel().dimension(), center.offset(UntouchedGrove.RADIUS + 1, 0, 0)),
+					"the protection reaches past the grove");
+			Services.protectedAreas().unprotect(UntouchedGrove.AREA_ID);
+		}
 		helper.succeed();
 	}
 

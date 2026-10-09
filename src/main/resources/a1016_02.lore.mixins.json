@@ -8,8 +8,7 @@
 		"PistonBaseBlockMixin",
 		"ServerExplosionMixin",
 		"ServerGamePacketListenerImplMixin",
-		"SignBlockEntityMixin",
-		"TraceEditMixin"
+		"SignBlockEntityMixin"
 	],
 	"client": [],
 	"server": [],

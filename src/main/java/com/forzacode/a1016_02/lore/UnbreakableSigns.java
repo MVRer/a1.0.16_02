@@ -17,7 +17,7 @@ import net.minecraft.world.level.Level;
 /**
  * F30's twin signs: placed, never removable, not by the player and not by him. A protected sign cannot be mined,
  * exploded, pushed, replaced or destroyed (lore's mixins on {@code Level}, explosions and pistons), cannot be
- * edited (it is waxed), and {@code TraceService} refuses any edit that would touch it. Positions come from
+ * edited (it is waxed), and {@code TraceService} refuses any edit that would touch it (lore's veto). Positions come from
  * {@link LoreData} anchors {@code F30/grove} and {@code F30/bedrock}.
  */
 public final class UnbreakableSigns {

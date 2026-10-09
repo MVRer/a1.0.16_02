@@ -88,7 +88,7 @@ final class PlaceNotFound {
 	 * visited site has a structure; {@code NO_SPOT} while one is in view or its chunks load.
 	 */
 	static FireResult fire(MinecraftServer server, HerobrineState state, TellingData data, TraceService traces, SignEdits.Editor editor,
-			boolean canBlank, Optional<BlockPos> base, RandomSource random, LoreConfig config) {
+			Optional<BlockPos> base, RandomSource random, LoreConfig config) {
 		if (!state.stopFired() || state.hasFlag(DONE_FLAG) || data.notFound().isPresent()) {
 			return FireResult.SKIPPED;
 		}
@@ -115,8 +115,7 @@ final class PlaceNotFound {
 			List<BlockPos> keep = NEVER.stream().map(state.fragmentsPlaced()::get).filter(p -> p != null && p.dimension().equals(placed.dimension()))
 					.map(GlobalPos::pos).toList();
 			Optional<Plan> plan = plan(level, placed.pos(), center, config, pos -> Services.watch().wasPlacedByPlayer(level, pos), keep, random);
-			if (plan.isEmpty() || plan.get().needsBlank() && !canBlank) {
-				// No structure here; or its sign could not be blanked yet (core's editSign): never leave a sign with text.
+			if (plan.isEmpty()) {
 				continue;
 			}
 			if (!commit(level, plan.get(), traces)) {

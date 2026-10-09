@@ -257,7 +257,7 @@ final class Placers {
 			}
 			Optional<BlockPos> container = containerIn(req.level(), site.pos(), site.size());
 			if (container.isPresent()) {
-				return Build.insert(req.traces(), req.level(), container.get(), book(req))
+				return Build.insert(req.traces(), req.level(), container.get(), book(req), req.id())
 						? Optional.of(claim(new Result(container.get()), site, req.id())) : Optional.empty();
 			}
 			return chestNear(req, site, Math.max(2, site.size()));
@@ -290,7 +290,7 @@ final class Placers {
 				return Optional.empty();
 			}
 			if (req.level().getBlockEntity(pos) instanceof Container) {
-				return Build.insert(req.traces(), req.level(), pos, book(req)) ? Optional.of(new Result(pos)) : Optional.empty();
+				return Build.insert(req.traces(), req.level(), pos, book(req), req.id()) ? Optional.of(new Result(pos)) : Optional.empty();
 			}
 			Optional<BlockPos> spot = Terrain.floorNear(req.level(), pos, 3, 2, List.of());
 			if (spot.isPresent() && left(req).chest(spot.get(), Terrain.openSide(req.level(), spot.get(), Direction.NORTH), contents(req)).commit()) {
@@ -873,14 +873,8 @@ final class Placers {
 
 	/** A lit furnace with a little left to smelt; it lights again from its fuel when the player comes near. */
 	private static void stillBurning(Build build, BlockPos furnace, Direction facing) {
-		build.leave(furnace, Blocks.FURNACE.defaultBlockState().setValue(AbstractFurnaceBlock.FACING, facing).setValue(AbstractFurnaceBlock.LIT, true));
-		build.then(level -> {
-			if (level.getBlockEntity(furnace) instanceof Container container) {
-				container.setItem(0, new ItemStack(Items.COBBLESTONE, 8));
-				container.setItem(1, new ItemStack(Items.COAL, 1));
-				container.setChanged();
-			}
-		});
+		build.furnace(furnace, Blocks.FURNACE.defaultBlockState().setValue(AbstractFurnaceBlock.FACING, facing).setValue(AbstractFurnaceBlock.LIT, true),
+				List.of(new ItemStack(Items.COBBLESTONE, 8), new ItemStack(Items.COAL, 1)));
 	}
 
 	// --- F23 top of a panic tower ---
@@ -1082,7 +1076,7 @@ final class Placers {
 			}
 			Optional<BlockPos> container = containerIn(req.level(), site.pos(), site.size());
 			if (container.isPresent()) {
-				return Build.insert(req.traces(), req.level(), container.get(), book(req))
+				return Build.insert(req.traces(), req.level(), container.get(), book(req), req.id())
 						? Optional.of(claim(new Result(container.get()), site, req.id())) : Optional.empty();
 			}
 			return chestNear(req, site, Math.max(2, site.size()));
@@ -1124,7 +1118,7 @@ final class Placers {
 			return Optional.empty();
 		}
 		ItemStack map = FragmentItems.map(req.fragment(), level, grove.get().pos());
-		if (!Build.insert(req.traces(), level, chest.get(), map)) {
+		if (!Build.insert(req.traces(), level, chest.get(), map, req.id())) {
 			return Optional.empty();
 		}
 		return Optional.of(new Result(chest.get()));
@@ -1167,7 +1161,7 @@ final class Placers {
 			BlockPos at = spot.get().getFirst();
 			BlockState state = level.getBlockState(at.relative(spot.get().getSecond().getOpposite())).is(BlockTags.LOGS)
 					? wallSign(spot.get().getSecond()) : standingSign(spot.get().getSecond());
-			if (!left(req).sign(at, state, FragmentItems.signText(req.fragment(), req.playerName())).then(l -> seal(l, at)).commit()) {
+			if (!left(req).sign(at, state, FragmentItems.signText(req.fragment(), req.playerName()), true).then(l -> seal(l, at)).commit()) {
 				return Optional.empty();
 			}
 			facts.remember("F30/grove", GlobalPos.of(level.dimension(), at));
@@ -1189,7 +1183,7 @@ final class Placers {
 			if (!level.getBlockState(at).canBeReplaced()) {
 				build.remove(at);
 			}
-			build.sign(at, standingSign(Direction.NORTH), FragmentItems.signText(req.fragment(), req.playerName())).then(l -> seal(l, at));
+			build.sign(at, standingSign(Direction.NORTH), FragmentItems.signText(req.fragment(), req.playerName()), true).then(l -> seal(l, at));
 			if (!build.commit()) {
 				return Optional.empty();
 			}
@@ -1200,11 +1194,8 @@ final class Placers {
 		return Optional.of(new Result(groveSign).read(groveSign).read(bedrockSign));
 	}
 
-	/** Makes a placed F30 sign permanent: waxed (no editing) and protected (see {@link UnbreakableSigns}). */
+	/** Makes a placed F30 sign (left waxed: no editing) permanent: protected, see {@link UnbreakableSigns}. */
 	private static void seal(ServerLevel level, BlockPos pos) {
-		if (level.getBlockEntity(pos) instanceof SignBlockEntity sign) {
-			sign.setWaxed(true);
-		}
 		UnbreakableSigns.protect(level, pos);
 	}
 

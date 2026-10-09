@@ -93,7 +93,7 @@ public final class Telling {
 		}
 		if (now >= nextBlankRetry) {
 			nextBlankRetry = now + Math.max(20, ModConfig.realTicks(config.pendingBlankRetrySeconds));
-			if (!data.pendingBlanks().isEmpty() && SignEdits.available()) {
+			if (!data.pendingBlanks().isEmpty()) {
 				retryBlanks(server, data, SignEdits.editor(Services.traces()));
 			}
 		}

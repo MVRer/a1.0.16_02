@@ -49,9 +49,8 @@ final class TellingCommands {
 		TellingData data = TellingData.get(server);
 		say(ctx, String.format(Locale.ROOT, "[a1016] telling: count %d (flag %d), tellingStarted %s, stage %s, first telling %s", data.count(),
 				Telling.countFromFlags(state), state.tellingStarted(), state.stage(), data.told() ? "day " + data.firstTellingDay() : "never"));
-		say(ctx, String.format(Locale.ROOT, "[a1016] stopFired %s | Stop. candidate %s | Stop. sign %s | sign edits %s", state.stopFired(),
-				data.stopCandidate().map(TellingCommands::at).orElse("none"), data.stopSign().map(TellingCommands::at).orElse("none"),
-				SignEdits.available() ? "available" : "waiting for core's TraceService.editSign (stop/blank cards skip)"));
+		say(ctx, String.format(Locale.ROOT, "[a1016] stopFired %s | Stop. candidate %s | Stop. sign %s", state.stopFired(),
+				data.stopCandidate().map(TellingCommands::at).orElse("none"), data.stopSign().map(TellingCommands::at).orElse("none")));
 		List<WrittenSign> signs = data.signs();
 		say(ctx, "[a1016] signs written (" + signs.size() + "):");
 		for (WrittenSign sign : signs.subList(Math.max(0, signs.size() - SHOWN), signs.size())) {

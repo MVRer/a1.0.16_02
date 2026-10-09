@@ -85,14 +85,11 @@ final class TellingCards {
 		@Override
 		public boolean contextFits(ServerPlayer player, ServerLevel world) {
 			MinecraftServer server = world.getServer();
-			return SignEdits.available() && !HerobrineState.get(server).stopFired() && TellingData.get(server).stopCandidate().isPresent();
+			return !HerobrineState.get(server).stopFired() && TellingData.get(server).stopCandidate().isPresent();
 		}
 
 		@Override
 		public FireResult fire(FireContext ctx) {
-			if (!SignEdits.available()) {
-				return FireResult.SKIPPED;
-			}
 			MinecraftServer server = ctx.level().getServer();
 			return fireStop(server, HerobrineState.get(server), TellingData.get(server), SignEdits.editor(Services.traces()),
 					LiveBooks.name(server, ctx.player()));
@@ -161,14 +158,11 @@ final class TellingCards {
 		@Override
 		public boolean contextFits(ServerPlayer player, ServerLevel world) {
 			MinecraftServer server = world.getServer();
-			return SignEdits.available() && !blankPool(player, TellingData.get(server)).isEmpty();
+			return !blankPool(player, TellingData.get(server)).isEmpty();
 		}
 
 		@Override
 		public FireResult fire(FireContext ctx) {
-			if (!SignEdits.available()) {
-				return FireResult.SKIPPED;
-			}
 			MinecraftServer server = ctx.level().getServer();
 			return fireBlank(server, ctx.player(), TellingData.get(server), SignEdits.editor(Services.traces()), ctx.random());
 		}
@@ -269,7 +263,7 @@ final class TellingCards {
 			// A debug fire may take a site near the base (it never skips the out-of-view rule).
 			Optional<net.minecraft.core.BlockPos> base = ctx.forced() ? Optional.empty() : Services.watch().base(ctx.player()).map(GlobalPos::pos);
 			return PlaceNotFound.fire(server, HerobrineState.get(server), TellingData.get(server), Services.traces(),
-					SignEdits.editor(Services.traces()), SignEdits.available(), base, ctx.random(), LoreConfig.get());
+					SignEdits.editor(Services.traces()), base, ctx.random(), LoreConfig.get());
 		}
 	}
 }
