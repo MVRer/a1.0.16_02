@@ -2,6 +2,19 @@
 
 One entry per merge, newest first. Run the game from the main checkout (this folder, on `main`).
 
+## READY TO TRY: Your missing stacks are under you  (merged feat/dig-followups, commit 4ab44bf)
+```
+Restart needed: full game restart (Java code)
+See it now:
+  1. Launch "Dev Client", /a1016 stage 2. Place a bed, sleep, then /a1016 dig network grow 8.
+  2. Put some items in a chest at your base, walk away, then /a1016 fire under_you_stack (a stack goes missing).
+  3. /a1016 dig network grow 2, then /a1016 dig network chest   (prints the dark chest's position and contents).
+  4. /a1016 dig network reveal, dig down, break into the tunnel.
+What to look for: the stack that vanished from your chest is sitting in a chest in the dark under your base.
+  The tunnel that grows toward you keeps its end current, so a fragment placed there stays at the very end.
+Known rough edges: the dark chest only arrives once a far abandoned build or hut exists to take it from.
+```
+
 ## READY TO TRY: He uses your real fog, and you can't outrun him  (merged feat/entity-fogdistance, commit ae5c20f)
 ```
 Restart needed: full game restart (new client-to-server fog report and Java code)
