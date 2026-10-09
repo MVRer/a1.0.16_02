@@ -2,6 +2,24 @@
 
 One entry per merge, newest first. Run the game from the main checkout (this folder, on `main`).
 
+## READY TO TRY: The world is wrong (old scars and new scars)  (merged feat/world-scars, commit 11ce61a)
+```
+Restart needed: full game restart (new worldgen feature and Java code)
+See it now:
+  1. Launch "Dev Client". Old scars only generate in NEW chunks at least 300 blocks from spawn. In a1016_dev,
+     travel out past 300 blocks, or delete run/saves/a1016_dev for a fresh world.
+  2. /a1016 world locate <scar>   (dead_mountain, bare_forest, cut, stair, abandoned_build, panic_tower,
+     emptied_house, cross, lone_light, ocean_pyramid), then /tp to it. /a1016 world sites lists what's recorded.
+  3. /a1016 world place <scar>   builds one behind you (out of view) so you can see it without travelling.
+  4. New scar: walk through an area, leave it, /a1016 timewarp 2, then /a1016 world newscar now (it reports where).
+  5. Cards: /a1016 fire light_on_mountain (at night, look for one far torch on a hilltop) | lone_light_near_base |
+     emptied_house | new_scar
+What to look for: everything should first read as odd worldgen: a hill gone grey-brown with a hard edge, a
+  forest of bare trunks, a tunnel that's too straight. The horror is on the second look.
+Known rough edges: no fragments in the builds yet (lore, v0.5). "Debug place" builds pyramids and crosses
+  directly instead of from moved material. Dead mountains aren't silent and animal-free yet.
+```
+
 ## READY TO TRY: Diggers and "Under you"  (merged feat/dig-diggers, commit dc44d5c)
 ```
 Restart needed: full game restart (new Java code)
