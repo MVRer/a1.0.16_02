@@ -16,12 +16,15 @@ import com.forzacode.a1016_02.core.Pacing;
  * card fires at all, real or fake, any tier. {@code n = -1}, or the flag {@code director:silence_forever}, silences
  * the director for good (Ending C, and after Ending D). Removing the flag restores normal pacing. Debug forced fires
  * ({@code /a1016 fire}) skip this like every other gate.</li>
- * <li>{@code director:pace_multiplier=<x>}, 0.25 to 4 (1 when absent): the minor gap, the major gap and the
- * scheduled gap between majors are divided by {@code x}, and tension decays {@code x} times as fast (Ending B:
- * "accidents come closer together"). The join grace and "no major on day 0" are never scaled.</li>
+ * <li>{@code director:pace_multiplier=<x>}, 0.25 to 4 (1 when absent; values outside are clamped): the typical
+ * schedule runs {@code x} times as fast (the 2 to 4 h gap between majors divided by {@code x}, minors rolled at
+ * {@code x} times their per-hour rate) and tension decays {@code x} times as fast (Ending B: "accidents come closer
+ * together"). It never goes below 4b's hard floors (D-045): at least 1 real hour between majors and 15 real minutes
+ * between minors, whatever {@code x}; a slower pace ({@code x < 1}) lengthens those gaps too. The join grace and "no
+ * major on day 0" are never scaled.</li>
  * </ul>
- * Bad values (not a number, out of range) are ignored and logged once per flag. If a flag is set more than once,
- * the strongest wins: the latest silence, the largest multiplier.
+ * Values that are not numbers are ignored, multipliers out of range are clamped; both are logged once per flag. If
+ * a flag is set more than once, the strongest wins: the latest silence, the largest multiplier.
  */
 public final class DirectorFlags {
 	public static final String SILENCE_UNTIL_DAY = "director:silence_until_day=";
@@ -72,13 +75,13 @@ public final class DirectorFlags {
 				try {
 					day = Long.parseLong(flag.substring(SILENCE_UNTIL_DAY.length()).trim());
 				} catch (NumberFormatException e) {
-					bad(flag, "not a whole day number");
+					bad(flag, "ignored: not a whole day number");
 					continue;
 				}
 				if (day == -1 || day >= Long.MAX_VALUE / DirectorBrain.DAY_TICKS) {
 					silence = FOREVER;
 				} else if (day < 0) {
-					bad(flag, "a day below -1");
+					bad(flag, "ignored: a day below -1");
 				} else {
 					silence = Math.max(silence, day);
 				}
@@ -87,32 +90,37 @@ public final class DirectorFlags {
 				try {
 					x = Double.parseDouble(flag.substring(PACE_MULTIPLIER.length()).trim());
 				} catch (NumberFormatException e) {
-					bad(flag, "not a number");
+					x = Double.NaN;
+				}
+				if (Double.isNaN(x)) {
+					bad(flag, "ignored: not a number");
 					continue;
 				}
-				if (!(x >= PACE_MIN && x <= PACE_MAX)) {
-					bad(flag, String.format(Locale.ROOT, "outside %.2f to %.0f", PACE_MIN, PACE_MAX));
-				} else {
-					pace = Double.isNaN(pace) ? x : Math.max(pace, x);
+				if (x < PACE_MIN || x > PACE_MAX) {
+					x = Math.max(PACE_MIN, Math.min(PACE_MAX, x));
+					bad(flag, String.format(Locale.ROOT, "outside %.2f to %.0f, clamped to %.2f", PACE_MIN, PACE_MAX, x));
 				}
+				pace = Double.isNaN(pace) ? x : Math.max(pace, x);
 			}
 		}
 		return new Values(silence, Double.isNaN(pace) ? 1 : pace);
 	}
 
 	/**
-	 * Applies the flags to freshly built rules: the silence, and the pace multiplier on the minor gap, the major gap,
-	 * the scheduled major gap and tension decay. Join grace and the first-day rule stay as they are.
+	 * Applies the flags to freshly built rules: the silence, and the pace multiplier on the typical major schedule and
+	 * tension decay (the brain scales the minor rate by {@link DirectorRules#paceMultiplier}). The hard gaps between
+	 * minors and between majors never get shorter than the config's (4b, D-045); a slower pace lengthens them. Join
+	 * grace and the first-day rule stay as they are.
 	 */
 	public static DirectorRules apply(DirectorRules rules, Values values) {
 		rules.silenceUntilDay = values.silenceUntilDay();
 		double x = values.paceMultiplier();
 		rules.paceMultiplier = x;
 		if (x != 1) {
-			rules.minorGap = Math.round(rules.minorGap / x);
-			rules.majorGap = Math.round(rules.majorGap / x);
-			rules.majorEvery = new Pacing.TickRange(Math.max(1, Math.round(rules.majorEvery.min() / x)),
-					Math.max(1, Math.round(rules.majorEvery.max() / x)));
+			rules.minorGap = Math.max(rules.minorGap, Math.round(rules.minorGap / x));
+			rules.majorGap = Math.max(rules.majorGap, Math.round(rules.majorGap / x));
+			long min = Math.max(rules.majorGap, Math.round(rules.majorEvery.min() / x));
+			rules.majorEvery = new Pacing.TickRange(min, Math.max(min, Math.round(rules.majorEvery.max() / x)));
 			rules.tensionDecayPerTick *= x;
 		}
 		return rules;
@@ -121,7 +129,7 @@ public final class DirectorFlags {
 	private static void bad(String flag, String why) {
 		synchronized (REPORTED) {
 			if (REPORTED.add(flag)) {
-				A1016_02.LOGGER.warn("[a1016] director: ignoring flag '{}' ({})", flag, why);
+				A1016_02.LOGGER.warn("[a1016] director: bad flag '{}' ({})", flag, why);
 			}
 		}
 	}

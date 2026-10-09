@@ -84,7 +84,10 @@ public final class DirectorRules {
 	// flags set by other workstreams ({@link DirectorFlags}); defaults when no flag is set
 	/** No fire at all while the in-game day is below this ({@link DirectorFlags#FOREVER} for good). */
 	public long silenceUntilDay = DirectorFlags.NO_SILENCE;
-	/** Already applied to the gaps and decay above; kept for the debug lines. */
+	/**
+	 * Already applied to the major schedule, the gaps (never below their floors) and decay above; the brain also
+	 * multiplies the minor rate by it.
+	 */
 	public double paceMultiplier = 1;
 
 	private DirectorRules() {

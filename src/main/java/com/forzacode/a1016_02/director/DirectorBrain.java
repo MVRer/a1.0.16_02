@@ -37,7 +37,7 @@ import net.minecraft.util.RandomSource;
  * <li>A drawn card is held until its context fits; {@code NO_SPOT} and {@code SKIPPED} keep it held. A card held
  * too long goes back into its deck.</li>
  * <li>Gates: the silence flag ({@link DirectorFlags}: nothing at all fires), join grace, forced quiet, empty
- * sessions, a small gap between any two fires, the minor and major gaps (divided by the pace multiplier flag),
+ * sessions, a small gap between any two fires, the minor and major gaps (never shortened by the pace multiplier flag),
  * no major (or signature) before {@code noMajorBeforeDay}, no ACCIDENT card before {@code firstAccident}, at most
  * {@code aloneMaxAmbient} ambients in Alone, sightings per day. Every card waits for its own earliest stage and its
  * tier's first stage ({@code minorMinStage}, {@code majorMinStage}, {@code signatureMinStage}).</li>
@@ -426,9 +426,10 @@ public final class DirectorBrain {
 				case PROXIMITY -> rules.proximityAmbientPerHour;
 				default -> rules.tellingAmbientPerHour;
 			};
-			case MINOR -> stage.atLeast(Stage.PROXIMITY)
+			// The pace multiplier flag runs the typical minor schedule faster or slower; the minor gap still holds.
+			case MINOR -> rules.paceMultiplier * (stage.atLeast(Stage.PROXIMITY)
 					? (m.sessionMinorRate >= 0 ? m.sessionMinorRate : (rules.minorsPerHourMin + rules.minorsPerHourMax) / 2)
-					: rules.tracesMinorsPerHour;
+					: rules.tracesMinorsPerHour);
 			default -> -1;
 		};
 	}

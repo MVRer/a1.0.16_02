@@ -772,27 +772,38 @@ public class DirectorGameTests {
 		DirectorFlags.Values day3 = DirectorFlags.parse(Set.of("director:silence_until_day=3"));
 		helper.assertTrue(day3.silenced(2) && !day3.silenced(3) && !DirectorFlags.Values.NONE.silenced(0), "silenced(day)");
 
-		// Pace multiplier: 0.25 to 4, the largest wins, anything else is ignored.
+		// Pace multiplier: 0.25 to 4, the largest wins; out of range is clamped, not a number is ignored.
 		helper.assertTrue(DirectorFlags.parse(Set.of("director:pace_multiplier=2")).paceMultiplier() == 2, "pace x2");
 		helper.assertTrue(DirectorFlags.parse(Set.of("director:pace_multiplier=0.25")).paceMultiplier() == 0.25, "pace x0.25 (the floor)");
 		helper.assertTrue(DirectorFlags.parse(Set.of("director:pace_multiplier=4")).paceMultiplier() == 4, "pace x4 (the cap)");
 		helper.assertTrue(DirectorFlags.parse(Set.of("director:pace_multiplier=0.5", "director:pace_multiplier=1.5")).paceMultiplier() == 1.5,
 				"two multipliers: the larger should win");
-		for (String bad : List.of("director:pace_multiplier=0.1", "director:pace_multiplier=5", "director:pace_multiplier=NaN",
-				"director:pace_multiplier=Infinity", "director:pace_multiplier=fast", "director:pace_multiplier=")) {
+		Map<String, Double> clamped = Map.of("director:pace_multiplier=5", 4.0, "director:pace_multiplier=Infinity", 4.0,
+				"director:pace_multiplier=0.1", 0.25, "director:pace_multiplier=-2", 0.25, "director:pace_multiplier=0", 0.25);
+		clamped.forEach((flag, expected) -> helper.assertTrue(DirectorFlags.parse(Set.of(flag)).paceMultiplier() == expected,
+				"'" + flag + "' should clamp to " + expected + ", got " + DirectorFlags.parse(Set.of(flag)).paceMultiplier()));
+		for (String bad : List.of("director:pace_multiplier=NaN", "director:pace_multiplier=fast", "director:pace_multiplier=")) {
 			helper.assertTrue(DirectorFlags.parse(Set.of(bad)).paceMultiplier() == 1, "bad flag '" + bad + "' was not ignored");
 		}
 
-		// Applied: gaps divided, decay multiplied; join grace, the first-day rule and the first accident never scaled.
+		// Applied (D-045): the typical major schedule divided down to the 1 h floor, decay multiplied; the minor and
+		// major gaps never shorter (a slower pace lengthens them); join grace, day 0 and the first accident untouched.
 		DirectorRules plain = rules(Tempo.SLOW_BURN, Signature.CROSS_ROW);
-		for (double x : new double[] {2, 0.5, 4}) {
+		long hour = plain.hourTicks;
+		helper.assertTrue(plain.majorGap == hour && plain.minorGap == hour / 4, "default floors: major gap " + plain.majorGap + ", minor gap "
+				+ plain.minorGap);
+		for (double x : new double[] {1.6, 4, 0.5}) {
 			DirectorRules paced = DirectorFlags.apply(rules(Tempo.SLOW_BURN, Signature.CROSS_ROW),
 					DirectorFlags.parse(Set.of("director:pace_multiplier=" + x)));
 			String at = "pace x" + x + ": ";
-			helper.assertTrue(Math.abs(paced.minorGap - plain.minorGap / x) <= 1, at + "minor gap " + paced.minorGap);
-			helper.assertTrue(Math.abs(paced.majorGap - plain.majorGap / x) <= 1, at + "major gap " + paced.majorGap);
-			helper.assertTrue(Math.abs(paced.majorEvery.min() - plain.majorEvery.min() / x) <= 1
-					&& Math.abs(paced.majorEvery.max() - plain.majorEvery.max() / x) <= 1, at + "majors every " + paced.majorEvery);
+			long minorGap = Math.max(plain.minorGap, Math.round(plain.minorGap / x));
+			long majorGap = Math.max(plain.majorGap, Math.round(plain.majorGap / x));
+			helper.assertTrue(paced.minorGap == minorGap && paced.minorGap >= hour / 4, at + "minor gap " + paced.minorGap);
+			helper.assertTrue(paced.majorGap == majorGap && paced.majorGap >= hour, at + "major gap " + paced.majorGap);
+			long everyMin = Math.max(majorGap, Math.round(plain.majorEvery.min() / x));
+			long everyMax = Math.max(everyMin, Math.round(plain.majorEvery.max() / x));
+			helper.assertTrue(paced.majorEvery.min() == everyMin && paced.majorEvery.max() == everyMax && paced.majorEvery.min() >= hour,
+					at + "majors every " + paced.majorEvery);
 			helper.assertTrue(Math.abs(paced.tensionDecayPerTick - plain.tensionDecayPerTick * x) < 1e-12, at + "decay " + paced.tensionDecayPerTick);
 			helper.assertTrue(paced.joinGrace == plain.joinGrace && paced.noMajorBeforeDay == plain.noMajorBeforeDay
 					&& paced.firstAccident == plain.firstAccident && paced.minAnyGap == plain.minAnyGap, at + "a protecting limit was scaled");
@@ -830,23 +841,37 @@ public class DirectorGameTests {
 	}
 
 	@GameTest
-	public void paceMultiplierBringsMajorsCloser(GameTestHelper helper) {
+	public void paceMultiplierKeepsTheHardFloors(GameTestHelper helper) {
 		DirectorSim.Result normal = flagged(Set.of(), 30);
-		DirectorSim.Result fast = flagged(Set.of("director:pace_multiplier=4"), 30);
 		long normalMajors = fires(normal, e -> e.tier() == Tier.MAJOR).size();
-		long fastMajors = fires(fast, e -> e.tier() == Tier.MAJOR).size();
-		helper.assertTrue(fastMajors >= 2 * normalMajors && normalMajors > 0, "majors: x1 " + normalMajors + ", x4 " + fastMajors);
-		DirectorRules fastRules = fast.rules;
-		long closest = Long.MAX_VALUE;
-		long previous = Long.MIN_VALUE / 4;
-		for (Event e : fires(fast, e -> e.tier() == Tier.MAJOR || e.tier() == Tier.SIGNATURE)) {
-			closest = Math.min(closest, e.play() - previous);
-			previous = e.play();
+		long normalMinors = fires(normal, e -> e.tier() == Tier.MINOR).size();
+		helper.assertTrue(normalMajors > 0 && normalMinors > 0, "x1: majors " + normalMajors + ", minors " + normalMinors);
+		long hour = normal.rules.hourTicks;
+		for (String x : List.of("1.6", "4")) {
+			DirectorSim.Result fast = flagged(Set.of("director:pace_multiplier=" + x), 30);
+			String at = "pace x" + x + ": ";
+			long majors = fires(fast, e -> e.tier() == Tier.MAJOR).size();
+			long minors = fires(fast, e -> e.tier() == Tier.MINOR).size();
+			// Accidents come closer together: more majors and minors than at x1 ...
+			helper.assertTrue(majors > normalMajors && minors > normalMinors, at + "majors " + majors + " (x1 " + normalMajors + "), minors " + minors
+					+ " (x1 " + normalMinors + ")");
+			// ... but never closer than 4b's floors: 1 real hour between majors, 15 real minutes between minors.
+			long closestMajor = closest(fires(fast, e -> e.tier() == Tier.MAJOR || e.tier() == Tier.SIGNATURE));
+			long closestMinor = closest(fires(fast, e -> e.tier() == Tier.MINOR));
+			helper.assertTrue(closestMajor >= hour, at + "majors only " + closestMajor + " ticks apart");
+			helper.assertTrue(closestMinor >= hour / 4, at + "minors only " + closestMinor + " ticks apart");
+			// Join grace and no major on day 0 are replayed by the sim's own check with the unscaled numbers.
+			helper.assertTrue(fast.violations.isEmpty() && fast.rules.joinGrace == normal.rules.joinGrace, at + "limits " + fast.violations);
 		}
-		helper.assertTrue(closest >= fastRules.majorGap && closest < normal.rules.majorGap, "x4: closest majors " + closest + " ticks apart");
-		// Join grace and no major on day 0 are replayed by the sim's own check with the unscaled numbers.
-		helper.assertTrue(fast.violations.isEmpty() && fastRules.joinGrace == normal.rules.joinGrace, "x4 limits: " + fast.violations);
 		helper.succeed();
+	}
+
+	private static long closest(List<Event> fires) {
+		long closest = Long.MAX_VALUE;
+		for (int i = 1; i < fires.size(); i++) {
+			closest = Math.min(closest, fires.get(i).play() - fires.get(i - 1).play());
+		}
+		return closest;
 	}
 
 	@GameTest
