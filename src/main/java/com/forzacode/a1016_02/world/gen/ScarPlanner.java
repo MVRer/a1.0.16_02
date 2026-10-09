@@ -336,7 +336,8 @@ public final class ScarPlanner {
 
 	/**
 	 * Works out the one-off answers (the hut, the core pyramid: about 290 cells) on a background thread, so the
-	 * worldgen thread that first needs them usually finds them ready. Nothing waits on it.
+	 * worldgen thread that first needs them usually finds them ready, and records their sites right away
+	 * ({@link #recordOneOffSites}). Nothing waits on it.
 	 */
 	public void warmUp() {
 		if (!warming.compareAndSet(false, true)) {
@@ -346,10 +347,32 @@ public final class ScarPlanner {
 			try {
 				ruinedHut();
 				corePyramid();
+				recordOneOffSites();
 			} catch (RuntimeException e) {
 				A1016_02.LOGGER.error("[a1016] world: scar warm-up failed", e);
 			}
 		}, Util.backgroundExecutor());
+	}
+
+	/**
+	 * Records the hut's and the core pyramid's sites as soon as they are planned (server start), not only when
+	 * their chunks generate, so lore can plan around them early. Generating the chunk later records nothing twice
+	 * ({@link WorldSites#record} skips a site it already has). Any thread.
+	 */
+	public void recordOneOffSites() {
+		ruinedHut().ifPresent(this::recordSites);
+		corePyramid()
+				.flatMap(anchor -> plansNear(ScarKind.OCEAN_PYRAMID, anchor.getX(), anchor.getZ(), 1).stream().filter(p -> p.anchor().equals(anchor)).findFirst())
+				.filter(plan -> farFromSpawn(plan.footprint()))
+				.ifPresent(this::recordSites);
+	}
+
+	private void recordSites(ScarPlan plan) {
+		for (ScarPlan.SiteMark mark : plan.sites()) {
+			if (!mark.nearestTree()) {
+				WorldSites.record(mark.type(), level.dimension(), mark.pos(), mark.size(), mark.interior());
+			}
+		}
 	}
 
 	private Optional<BlockPos> computeCorePyramid() {

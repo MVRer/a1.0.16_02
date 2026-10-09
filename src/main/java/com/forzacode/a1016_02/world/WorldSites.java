@@ -30,8 +30,11 @@ public final class WorldSites {
 	private WorldSites() {
 	}
 
-	/** Records a site once (a chunk generated twice after a crash must not record it twice). Any thread. */
-	public static SiteRegistry.@Nullable Site record(SiteType type, ResourceKey<Level> dimension, BlockPos pos, int size, @Nullable BoundingBox interior) {
+	/**
+	 * Records a site once (a chunk generated twice after a crash, or a site recorded early at server start, must not
+	 * record it twice). Any thread; synchronized so the check and the record are one step.
+	 */
+	public static synchronized SiteRegistry.@Nullable Site record(SiteType type, ResourceKey<Level> dimension, BlockPos pos, int size, @Nullable BoundingBox interior) {
 		GlobalPos global = GlobalPos.of(dimension, pos.immutable());
 		if (!Services.sites().find(type, global, 0).isEmpty()) {
 			return null;
