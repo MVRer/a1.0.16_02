@@ -95,7 +95,7 @@ public final class Chain {
 		boolean complete = data.stair().map(StairPlan::complete).orElse(false);
 		if (!complete && state.fragmentsRead().contains("F28") && now >= nextStairTry) {
 			lastStair = Stair.build(server, data, Services.traces(), cfg);
-			nextStairTry = now + (lastStair.status() == Stair.Status.BUILT_SEGMENT ? 20 : EndingDConfig.ticks(cfg.stairRetrySeconds));
+			nextStairTry = now + EndingDConfig.ticks(lastStair.status() == Stair.Status.BUILT_SEGMENT ? cfg.stairSegmentSeconds : cfg.stairRetrySeconds);
 		}
 		if (complete && now >= nextF25 && !state.fragmentsPlaced().containsKey("F25")) {
 			nextF25 = now + EndingDConfig.ticks(cfg.stairRetrySeconds);

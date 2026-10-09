@@ -34,12 +34,15 @@ public final class Afterward {
 	/** Far entries waiting for their chunk, grouped by chunk (each cluster holds its chunk loaded while it is worked). */
 	private static @Nullable ChunkClusters clusters;
 
+	/** Cost cadence: how often the afterward's lasting effects (no fog, music on) are checked again (never divided). */
+	private static final int KEEP_EFFECTS_TICKS = 100;
+
 	private Afterward() {
 	}
 
 	static void tick(MinecraftServer server, EndingDState data, EndingDConfig cfg) {
 		long now = server.getTickCount();
-		if (now % 100 == 0) {
+		if (now % KEEP_EFFECTS_TICKS == 0) {
 			keepEffects(server);
 		}
 		if (!data.undoFinished()) {

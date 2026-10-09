@@ -58,6 +58,7 @@ public final class Stair {
 
 	/** The spiral's eight cells round the axis, in walking order (each one orthogonally next to the one before). */
 	static final int[][] RING = {{0, -1}, {1, -1}, {1, 0}, {1, 1}, {0, 1}, {-1, 1}, {-1, 0}, {-1, -1}};
+	/** Chunk-load ticket while a segment is built: a chunk-load timeout in plain ticks, never divided. */
 	static final TicketType TICKET = new TicketType(600L, TicketType.FLAG_LOADING);
 
 	/** Why a build attempt stopped. */

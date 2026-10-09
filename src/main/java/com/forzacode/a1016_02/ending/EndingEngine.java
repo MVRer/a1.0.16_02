@@ -55,6 +55,12 @@ public final class EndingEngine {
 	/** Set once the story is over. */
 	public static final String ENDED_FLAG = "ending:ended";
 
+	/**
+	 * A doorway mob's hold lasts three checks plus this slack, so it never lapses between two renewals (a renewal
+	 * margin, not pacing; the hold ends sooner whenever the player comes close or its time is up).
+	 */
+	private static final int HOLD_SLACK_TICKS = 40;
+
 	private final EndingPorts ports;
 	/** Not saved: when each kind of attempt last ran ({@code dayTicks}), so trap scans stay cheap. */
 	private final Map<String, Long> lastTry = new HashMap<>();
@@ -583,7 +589,7 @@ public final class EndingEngine {
 	}
 
 	private void hold(Mob mob, BlockPos door, EndingConfig cfg) {
-		int ticks = (int) Math.min(Integer.MAX_VALUE, cfg.checkTicks() * 3 + 40);
+		int ticks = (int) Math.min(Integer.MAX_VALUE, cfg.checkTicks() * 3 + HOLD_SLACK_TICKS);
 		MobTamper mobs = ports.mobs();
 		mobs.freeze(mob, ticks);
 		mobs.silence(mob, ticks);

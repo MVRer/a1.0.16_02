@@ -69,6 +69,14 @@ public final class LastMinute {
 	public static final String FLAG = TraceService.LAST_MINUTE_FLAG;
 	/** The cause of what the last minute gives back (a neighbour that breaks is ledgered under it). */
 	public static final String CAUSE = "ending:d/last_minute";
+	/** Cost cadence: how often a figure that found no spot yet tries again (not pacing; never divided). */
+	private static final int SPAWN_RETRY_TICKS = 20;
+	/** The game's ticks per real second at normal speed (world-clock arithmetic only). */
+	private static final double TICKS_PER_SECOND = 20.0;
+	/** {@link #toDawn} never jumps more than a quarter day. */
+	private static final long MAX_DAWN_LEAD_TICKS = GameClock.TICKS_PER_DAY / 4;
+	/** Within this long after sunrise it is already dawn: the clock is left alone. */
+	private static final long DAWN_WINDOW_TICKS = 1000;
 
 	/** One item of the leaf wave: a taken leaf, or a crown. */
 	private record WaveItem(BlockPos pos, TraceLedger.@Nullable Entry entry, Regrow.@Nullable Crown crown) {
@@ -206,7 +214,7 @@ public final class LastMinute {
 						previewSteps.add(player.blockPosition().above(i * 2).relative(player.getDirection(), i));
 					}
 				}
-				nextFootstep = now + EndingDConfig.ticks(1.5);
+				nextFootstep = now + EndingDConfig.ticks(cfg.footstepLeadSeconds);
 				enter(server, data, Phase.FOOTSTEPS);
 			}
 			case FOOTSTEPS -> {
@@ -262,7 +270,7 @@ public final class LastMinute {
 			}
 			case FIGURE -> {
 				if (figure == null) {
-					if (now % 20 == 0) {
+					if (now % SPAWN_RETRY_TICKS == 0) {
 						trySpawn(player, data, cfg);
 					}
 				} else if (figure.isRemoved()) {
@@ -349,12 +357,15 @@ public final class LastMinute {
 		A1016_02.LOGGER.info("[a1016] ending d: complete (no longer with us)");
 	}
 
-	/** Moves the clock forward (never back) so dawn breaks about {@code dawnLeadSeconds} from now. */
+	/**
+	 * Moves the clock forward (never back) so dawn breaks about {@code dawnLeadSeconds} from now. World-clock ticks, on
+	 * purpose not divided by {@code devFastMode}: the sun has to rise while they climb, at the game's own speed.
+	 */
 	static void toDawn(MinecraftServer server, EndingDConfig cfg) {
-		long lead = Math.min(6000, Math.max(0, Math.round(cfg.dawnLeadSeconds * 20.0)));
-		long target = 24000 - lead;
-		long time = Math.floorMod(server.overworld().getOverworldClockTime(), 24000L);
-		if (time >= target || time < 1000) {
+		long lead = Math.min(MAX_DAWN_LEAD_TICKS, Math.max(0, Math.round(cfg.dawnLeadSeconds * TICKS_PER_SECOND)));
+		long target = GameClock.TICKS_PER_DAY - lead;
+		long time = Math.floorMod(server.overworld().getOverworldClockTime(), GameClock.TICKS_PER_DAY);
+		if (time >= target || time < DAWN_WINDOW_TICKS) {
 			return;
 		}
 		Optional<Holder.Reference<WorldClock>> clock = server.registryAccess().get(WorldClocks.OVERWORLD);

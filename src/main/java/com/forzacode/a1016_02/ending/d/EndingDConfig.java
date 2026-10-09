@@ -50,6 +50,8 @@ public final class EndingDConfig {
 
 	// --- the team's stair ---
 	public double stairRetrySeconds = 20;
+	/** Once a segment of the stair is built, the next one is tried this soon (each is its own out-of-view batch). */
+	public double stairSegmentSeconds = 1;
 	/** Shaft levels built per batch (each batch is one view check, all or nothing). */
 	public int stairSegmentLevels = 16;
 	/** Half width of the bedrock chamber around the stair's axis (3: a 7x7 room). */
@@ -58,6 +60,8 @@ public final class EndingDConfig {
 	public int chamberHeadroom = 3;
 
 	// --- the last minute ---
+	/** The silence before the first stair block comes back. */
+	public double footstepLeadSeconds = 1.5;
 	public int footstepTicks = 8;
 	/** A stair block that stays in view this long is left for the afterward. */
 	public double footstepGiveUpSeconds = 10;
