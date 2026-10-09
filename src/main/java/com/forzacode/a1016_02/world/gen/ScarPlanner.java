@@ -71,7 +71,8 @@ public final class ScarPlanner {
 		for (int dx = -1; dx <= 1; dx++) {
 			for (int dz = -1; dz <= 1; dz++) {
 				ChunkPos target = new ChunkPos(chunk.x() + dx, chunk.z() + dz);
-				areaPlanAt(target.getMiddleBlockX(), target.getMiddleBlockZ()).filter(p -> !areas.contains(p)).ifPresent(areas::add);
+				areaPlanAt(target.getMiddleBlockX(), target.getMiddleBlockZ()).filter(p -> !areas.contains(p) && farFromSpawn(p.footprint()))
+						.ifPresent(areas::add);
 			}
 		}
 		if (!areas.isEmpty()) {
@@ -100,8 +101,11 @@ public final class ScarPlanner {
 			}
 		}
 		for (ScarPlan plan : pointPlansTouching(chunk)) {
-			applyPlan(genLevel, plan, chunk);
-			changed = true;
+			// Checked again here: a plan cached before the real spawn was set only knew the spawn search origin.
+			if (farFromSpawn(plan.footprint())) {
+				applyPlan(genLevel, plan, chunk);
+				changed = true;
+			}
 		}
 		Optional<ScarPlan> ruinedHut = ruinedHut();
 		if (ruinedHut.isPresent() && ruinedHut.get().touches(chunk)) {
@@ -331,9 +335,19 @@ public final class ScarPlanner {
 
 	// --- small scars ---
 
+	/** True if the small-scar cell passes the density roll (it may still hold nothing if the terrain does not fit). */
+	public boolean pointCellRolled(int cx, int cz) {
+		return Hash.unit(Hash.of(ctx.base(), 1, cx, cz)) < config.pointChance(ctx.density().ordinal());
+	}
+
+	/** True if the large-scar cell passes the density roll. */
+	public boolean areaCellRolled(int ax, int az) {
+		return Hash.unit(Hash.of(ctx.base(), 2, ax, az)) < config.areaChance(ctx.density().ordinal());
+	}
+
 	private Optional<ScarPlan> computePoint(int cx, int cz) {
 		long h = Hash.of(ctx.base(), 1, cx, cz);
-		if (Hash.unit(h) >= config.pointChance(ctx.density().ordinal())) {
+		if (!pointCellRolled(cx, cz)) {
 			return Optional.empty();
 		}
 		int cell = config.pointCellBlocks;
@@ -533,7 +547,7 @@ public final class ScarPlanner {
 
 	private Optional<ScarPlan> computeArea(int ax, int az) {
 		long h = Hash.of(ctx.base(), 2, ax, az);
-		if (Hash.unit(h) >= config.areaChance(ctx.density().ordinal())) {
+		if (!areaCellRolled(ax, az)) {
 			return Optional.empty();
 		}
 		int cell = config.areaCellBlocks;

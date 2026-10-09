@@ -17,6 +17,7 @@ import com.forzacode.a1016_02.core.Tier;
 import com.forzacode.a1016_02.core.TraceLedger;
 import com.forzacode.a1016_02.core.TraceService;
 import com.forzacode.a1016_02.world.WorldData;
+import com.forzacode.a1016_02.world.gen.Vegetation;
 
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
@@ -132,7 +133,8 @@ public final class LightOnMountainCard implements EventCard {
 		BlockState below = level.getBlockState(spot.below());
 		BlockState at = level.getBlockState(spot);
 		return (at.isAir() || at.canBeReplaced() && at.getFluidState().isEmpty()) && below.isFaceSturdy(level, spot.below(), Direction.UP)
-				&& below.getFluidState().isEmpty() && !below.is(net.minecraft.tags.BlockTags.LEAVES) && Blocks.TORCH.defaultBlockState().canSurvive(level, spot);
+				&& below.getFluidState().isEmpty() && !Vegetation.isTreePart(below) && !Services.watch().wasPlacedByPlayer(level, spot.below())
+				&& Blocks.TORCH.defaultBlockState().canSurvive(level, spot);
 	}
 
 	private static boolean isHilltop(ServerLevel level, int x, int y, int z) {

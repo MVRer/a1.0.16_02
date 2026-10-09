@@ -169,6 +169,13 @@ public final class Blueprint {
 		}
 	}
 
+	/** Applies the whole blueprint, chunk by chunk (tests, and worldgen tools that own every chunk it touches). */
+	public void applyAll(WorldGenLevel level) {
+		if (box != null) {
+			box.intersectingChunks().forEach(chunk -> applyInChunk(level, chunk));
+		}
+	}
+
 	/** Worldgen may write only in the chunks around the one being decorated. */
 	public static boolean canWrite(WorldGenLevel level, BlockPos pos) {
 		return !(level instanceof WorldGenRegion region) || region.isWithinWriteZone(pos);

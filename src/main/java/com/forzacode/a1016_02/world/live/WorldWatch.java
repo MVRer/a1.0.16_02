@@ -66,7 +66,7 @@ public final class WorldWatch {
 	}
 
 	/** True if {@code pos} is one of the pyramid's blocks (layers of half-width size-1 down to 0 above its floor). */
-	static boolean insidePyramid(SiteRegistry.Site site, BlockPos pos) {
+	public static boolean insidePyramid(SiteRegistry.Site site, BlockPos pos) {
 		int size = site.size();
 		int floorY = site.pos().getY() - 1 - (size - 1) / 2;
 		int layer = pos.getY() - floorY - 1;
