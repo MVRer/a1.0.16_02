@@ -43,7 +43,14 @@ public class DebugGameTests {
 			helper.assertTrue(reports.size() == Tempo.values().length, "one report per tempo, got " + reports.size());
 			for (Playthrough.Report report : reports) {
 				String at = report.tempo() + "/seed " + seed + ": ";
+				// The real deck: every workstream's cards are registered (only debug_ping is left out).
+				for (String id : List.of("fog_drift", "sighting_across_water", "tunnel_that_grows", "signature_house_elsewhere", "stop_sign",
+						"accident_lava_floor", "missing_first_block")) {
+					helper.assertTrue(report.cards().containsKey(id), at + "the playthrough's deck lacks the real card " + id);
+				}
+				helper.assertTrue(report.leftOut() == 1, at + report.leftOut() + " registered cards left out of the deck (only debug_ping should be)");
 				if (seed == Playthrough.DEFAULT_SEED) {
+					A1016_02.LOGGER.info("[a1016] playthrough 20h seed {}: {} real cards {}", seed, report.cards().size(), Playthrough.deckByTier(report.cards()));
 					// Soft targets are rates: reported in the test log, never asserted.
 					A1016_02.LOGGER.info("[a1016] playthrough 20h seed {}: {}", seed, report.summary());
 					for (PlaythroughCheck.Check check : report.soft()) {
