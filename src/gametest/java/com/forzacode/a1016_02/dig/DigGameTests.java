@@ -119,7 +119,7 @@ public class DigGameTests extends TunnelGameTests {
 		helper.succeed();
 	}
 
-	@GameTest(maxTicks = 1200)
+	@GameTest(maxTicks = 12_000)
 	public void torchesGoneFromACaveThePlayerLeft(GameTestHelper helper) {
 		DigGround g = DigGround.of(helper, 10, 24, 8, 96, Blocks.STONE);
 		g.keepLoaded(true);
@@ -136,7 +136,8 @@ public class DigGameTests extends TunnelGameTests {
 		BlockPos houseTorch = builtWall.above();
 		g.place(houseTorch, Blocks.TORCH.defaultBlockState());
 		g.stand(g.at(11, 8, 4));
-		// Sky light in the new cave settles over some ticks: poll until it reads as underground, then run the card once.
+		// Sky light in the new cave settles in the background, and the test server ticks back to back: poll (with a
+		// generous timeout) until it reads as underground, then run the card once.
 		boolean[] fired = {false};
 		int[] removed = {0};
 		helper.succeedWhen(() -> {

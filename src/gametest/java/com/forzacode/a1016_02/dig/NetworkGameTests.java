@@ -18,10 +18,13 @@ import net.fabricmc.fabric.api.gametest.v1.GameTest;
 
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
+import net.minecraft.core.GlobalPos;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.gametest.framework.GameTestHelper;
+import net.minecraft.network.chat.Component;
 import net.minecraft.util.RandomSource;
 import net.minecraft.world.level.ChunkPos;
+import net.minecraft.world.level.TicketStorage;
 import net.minecraft.world.Container;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
@@ -37,7 +40,7 @@ public class NetworkGameTests {
 	 * Tests run side by side and share the site registry and the loaded chunks, so by default a test network takes
 	 * no chest from anywhere (no site lookup, and the nearby-chunk scan starts beyond any view distance): it could
 	 * grab another test's chest or load another test's site chunk. The chest tests open a thin shell that only
-	 * reaches their own site ({@link #onlyOwnSite}).
+	 * reaches their own site ({@link #onlyOwnSite}), placed where no other test's site falls in it ({@link #ownFarSpot}).
 	 */
 	static DigConfig testConfig() {
 		DigConfig config = new DigConfig();
@@ -55,6 +58,42 @@ public class NetworkGameTests {
 		double dz = site.getZ() - base.getZ();
 		config.chestSourceSiteRadius = (int) Math.ceil(Math.sqrt(dx * dx + dz * dz));
 		config.chestSourceMinDistance = (int) Math.floor(Math.sqrt(site.distSqr(base)));
+	}
+
+	/** Unit steps of the eight compass directions, east first. */
+	private static final int[][] COMPASS = {{1, 0}, {0, -1}, {-1, 0}, {0, 1}, {1, -1}, {-1, -1}, {-1, 1}, {1, 1}};
+
+	/**
+	 * A chest source spot no other test can touch, about {@code distance} blocks from the base in the middle of its
+	 * chunk: the first compass direction where no other test's site falls in the shell {@link #onlyOwnSite} opens for
+	 * it and, with {@code unloaded}, whose chunk nobody has loaded. Opens that shell in the config.
+	 */
+	static BlockPos ownFarSpot(DigGround g, DigConfig config, BlockPos base, int distance, int y, boolean unloaded) {
+		for (int[] step : COMPASS) {
+			double scale = distance / Math.sqrt(step[0] * step[0] + step[1] * step[1]);
+			ChunkPos chunk = ChunkPos.containing(base.offset((int) Math.round(step[0] * scale), 0, (int) Math.round(step[1] * scale)));
+			BlockPos spot = new BlockPos(chunk.getMiddleBlockX(), y, chunk.getMiddleBlockZ());
+			onlyOwnSite(config, base, spot);
+			if ((!unloaded || !chunkLoaded(g, chunk)) && chestSites(g, config, base).isEmpty()) {
+				return spot;
+			}
+		}
+		throw g.helper.assertionException(Component.literal("no far spot of its own around " + base.toShortString()));
+	}
+
+	/** The sites {@link NetworkChest} would look in for a chest with this config (the same filter). */
+	static List<SiteRegistry.Site> chestSites(DigGround g, DigConfig config, BlockPos base) {
+		GlobalPos near = GlobalPos.of(g.level.dimension(), base);
+		long min = (long) config.chestSourceMinDistance * config.chestSourceMinDistance;
+		List<SiteRegistry.Site> sites = new ArrayList<>();
+		for (SiteType type : List.of(SiteType.ABANDONED_BUILD, SiteType.RUINED_HUT)) {
+			Services.sites().findUnclaimed(type, near, config.chestSourceSiteRadius).stream().filter(s -> s.pos().distSqr(base) >= min).forEach(sites::add);
+		}
+		return sites;
+	}
+
+	static boolean chunkLoaded(DigGround g, ChunkPos chunk) {
+		return g.level.getChunkSource().getChunkNow(chunk.x(), chunk.z()) != null;
 	}
 
 	static NetworkGrower.Ctx ctx(DigGround g, Network net, PosSet explored, DigConfig config, RandomSource random, long night) {
@@ -313,12 +352,11 @@ public class NetworkGameTests {
 		net.alcove = g.at(3, 3, 3);
 
 		// An abandoned build far away with a chest nobody placed.
-		BlockPos far = g.at(8, 2, 8).east(300);
+		BlockPos far = ownFarSpot(g, config, net.base, 300, g.at(0, 2, 0).getY(), false);
 		g.level.setBlock(far.below(), Blocks.STONE.defaultBlockState(), Block.UPDATE_CLIENTS);
 		g.level.setBlock(far, Blocks.CHEST.defaultBlockState(), Block.UPDATE_CLIENTS);
 		((Container) g.level.getBlockEntity(far)).setItem(4, new ItemStack(Items.BONE, 5));
 		Services.sites().record(SiteType.ABANDONED_BUILD, g.level.dimension(), far, 4);
-		onlyOwnSite(config, net.base, far);
 
 		helper.assertTrue(NetworkChest.tryFetch(ctx(g, net, new PosSet(), config, RandomSource.create(1L), 0)), "no chest moved in");
 		helper.assertTrue(net.alcove.equals(net.chest) && g.level.getBlockState(net.alcove).is(Blocks.CHEST), "chest not in the dead end");
@@ -327,26 +365,41 @@ public class NetworkGameTests {
 		helper.succeed();
 	}
 
-	@GameTest(maxTicks = 1200)
+	/**
+	 * The test server ticks back to back, so a chunk loading in the background takes hundreds to over a thousand ticks
+	 * (it only comes at once when another test's synchronous load drives the chunk system in the same tick). So the
+	 * ticket is checked at once, and the wait makes the later tries {@link UnderYou} makes, with a generous timeout.
+	 */
+	@GameTest(maxTicks = 12_000)
 	public void networkChestNeverLoadsAChunkInTheTick(GameTestHelper helper) {
 		DigConfig config = testConfig();
 		DigGround g = DigGround.of(helper, 14, 16, 10, 16, Blocks.STONE);
+		// A try needs the dead end loaded, and nothing else keeps it loaded while the test waits.
+		g.keepLoaded(true);
 		Network net = new Network(g.level.dimension(), g.at(8, 10, 8));
 		g.hollow(3, 3, 3, 4, 4, 4);
 		net.addAnchor(g.at(3, 3, 3), false);
 		net.alcove = g.at(3, 3, 3);
 		// A hut 700 blocks away in a chunk nobody has loaded.
-		BlockPos spot = g.at(8, 2, 8).east(700);
-		ChunkPos chunk = ChunkPos.containing(spot);
-		BlockPos far = new BlockPos(chunk.getMiddleBlockX(), spot.getY(), chunk.getMiddleBlockZ());
-		helper.assertTrue(g.level.getChunkSource().getChunkNow(chunk.x(), chunk.z()) == null, "the far chunk is already loaded");
+		BlockPos far = ownFarSpot(g, config, net.base, 700, g.at(0, 2, 0).getY(), true);
+		ChunkPos chunk = ChunkPos.containing(far);
 		Services.sites().record(SiteType.RUINED_HUT, g.level.dimension(), far, 4);
-		onlyOwnSite(config, net.base, far);
+		NetworkGrower.Ctx ctx = ctx(g, net, new PosSet(), config, RandomSource.create(1L), 0);
 
-		helper.assertFalse(NetworkChest.tryFetch(ctx(g, net, new PosSet(), config, RandomSource.create(1L), 0)), "a chest from an unloaded chunk");
-		helper.assertTrue(g.level.getChunkSource().getChunkNow(chunk.x(), chunk.z()) == null, "the far chunk was loaded in the same tick");
+		helper.assertFalse(NetworkChest.tryFetch(ctx), "a chest from an unloaded chunk");
+		helper.assertFalse(chunkLoaded(g, chunk), "the far chunk was loaded in the same tick");
 		helper.assertTrue(net.chestRetryTick != Long.MAX_VALUE, "no later try planned");
-		helper.succeedWhen(() -> helper.assertTrue(g.level.getChunkSource().getChunkNow(chunk.x(), chunk.z()) != null, "the far chunk never loaded"));
+		helper.assertTrue(g.level.getDataStorage().computeIfAbsent(TicketStorage.TYPE).getTickets(chunk.pack()).stream()
+				.anyMatch(ticket -> ticket.getType() == NetworkChest.TICKET), "no loading ticket on the far chunk");
+		helper.succeedWhen(() -> {
+			if (!chunkLoaded(g, chunk) && g.level.getServer().getTickCount() >= net.chestRetryTick) {
+				helper.assertFalse(NetworkChest.tryFetch(ctx), "a later try took a chest from an unloaded chunk");
+				helper.assertFalse(chunkLoaded(g, chunk), "a later try loaded the far chunk in the tick");
+				helper.assertTrue(net.chestRetryTick != Long.MAX_VALUE, "no try planned after a later one");
+			}
+			helper.assertTrue(chunkLoaded(g, chunk), "the far chunk never loaded");
+			g.keepLoaded(false);
+		});
 	}
 
 	@GameTest
