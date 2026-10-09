@@ -4,7 +4,9 @@
 	"compatibilityLevel": "JAVA_25",
 	"mixins": [
 		"FragmentBurnMixin",
-		"FragmentPickupMixin"
+		"FragmentPickupMixin",
+		"d.CraftingMenuMixin",
+		"d.NoiseBasedChunkGeneratorMixin"
 	],
 	"client": [],
 	"server": [],
