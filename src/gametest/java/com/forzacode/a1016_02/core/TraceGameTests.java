@@ -29,8 +29,11 @@ import net.minecraft.world.level.block.state.properties.DoubleBlockHalf;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
 
-/** TraceService game tests; {@link CoreGameTests} extends this so they run under core's registered entrypoint. */
-public class TraceGameTests {
+/**
+ * TraceService game tests; {@link CoreGameTests} extends this so they run under core's registered entrypoint. The
+ * contract batch's tests are in the superclasses {@link TraceContractTests} and {@link CoreContractTests}.
+ */
+public class TraceGameTests extends TraceContractTests {
 	private static final double NEAR = 3;
 	private static final double CONE = 160;
 
