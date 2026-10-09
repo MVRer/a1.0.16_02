@@ -58,7 +58,8 @@ final class SoundCards {
 
 		@Override
 		public boolean contextFits(ServerPlayer player, ServerLevel world) {
-			return !data(world).hasOnce(onceKey(world)) && player.onGround() && Services.watch().ticksSinceCombat(player) > 600
+			return !data(world).hasOnce(onceKey(world)) && player.onGround()
+					&& Services.watch().ticksSinceCombat(player) > ModConfig.realTicks(DigConfig.get().miningNoCombatSeconds)
 					&& (DigTicker.underground(world, player.blockPosition()) || world.isDarkOutside());
 		}
 
@@ -136,7 +137,8 @@ final class SoundCards {
 
 		@Override
 		public boolean contextFits(ServerPlayer player, ServerLevel world) {
-			return atHome(player) && Services.watch().stillTicks(player) > 60 && networkCellBelow(player).isPresent();
+			return atHome(player) && Services.watch().stillTicks(player) > ModConfig.realTicks(DigConfig.get().underYouStepStillSeconds)
+					&& networkCellBelow(player).isPresent();
 		}
 
 		@Override

@@ -76,7 +76,7 @@ public final class StillBurning {
 	/** One coal block: the burn the furnace's lit time stands for. */
 	private static final int COAL_BLOCK_TICKS = 16000;
 	private static final int COOK_TICKS = 200;
-	/** A candidate whose chunks do not load within this many ticks is skipped. */
+	/** A candidate whose chunks do not load within this many ticks is skipped (a chunk-load limit, not pacing: never divided). */
 	private static final long LOAD_TIMEOUT_TICKS = 1200;
 	/** Recorded sites this close to a camp candidate rule it out (blocks). */
 	private static final int SITE_CLEARANCE = 24;

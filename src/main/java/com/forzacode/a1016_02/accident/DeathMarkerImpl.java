@@ -24,9 +24,6 @@ import net.minecraft.world.level.ChunkPos;
  * the spot. Ordinary deaths never reach here.
  */
 public final class DeathMarkerImpl implements DeathMarker {
-	/** After this many tries without any buildable spot (not just "in view"), the cross is given up. */
-	static final int MAX_PLAN_FAILURES = 720;
-
 	private final Function<MinecraftServer, AccidentData> data;
 	private final ViewGate view;
 
@@ -104,7 +101,7 @@ public final class DeathMarkerImpl implements DeathMarker {
 		CrossBuilder.Plan plan = CrossBuilder.plan(level, pos, cross.height(), AccidentConfig.get()).orElse(null);
 		if (plan == null) {
 			AccidentData.PendingCross next = new AccidentData.PendingCross(cross.pos(), cross.cause(), cross.height(), cross.attempts() + 1);
-			if (next.attempts() >= MAX_PLAN_FAILURES) {
+			if (next.attempts() >= AccidentConfig.get().crossMaxPlanFailures()) {
 				d.log("cross at " + Candidate.at(pos) + " given up: nowhere to stand it");
 				d.replaceCross(cross, null);
 			} else {

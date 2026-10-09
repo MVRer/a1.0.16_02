@@ -34,7 +34,8 @@ public final class PatientSkeletonCard extends AtmosphereCard {
 	private static final int SLACK = 8;
 	private static final int CLOSE = 6;
 	private static final int GONE_DISTANCE = 72;
-	private static final int GONE_TRIES_TICKS = 600;
+	/** Ticks between two renewals of the hold (see {@link AtmosphereConfig#skeletonHoldTicks}). */
+	private static final int RENEW_TICKS = 10;
 
 	public PatientSkeletonCard() {
 		super(ID, Tier.MINOR, Stage.PROXIMITY, Set.of(Habit.WATCHER), Set.of(CardTag.MOB), false);
@@ -61,14 +62,17 @@ public final class PatientSkeletonCard extends AtmosphereCard {
 			return FireResult.NO_SPOT;
 		}
 		double keep = Math.sqrt(skeleton.distanceToSqr(player));
-		if (!hold(skeleton, player, 40)) {
+		if (!hold(skeleton, player)) {
 			return FireResult.SKIPPED;
 		}
-		Tasks.start(new Follow(player.getUUID(), skeleton, keep, AtmosphereConfig.ticks(cfg().skeletonFollowSeconds)));
+		AtmosphereConfig cfg = cfg();
+		Tasks.start(new Follow(player.getUUID(), skeleton, keep, AtmosphereConfig.ticks(cfg.skeletonFollowSeconds),
+				AtmosphereConfig.ticks(cfg.skeletonGoneTriesSeconds)));
 		return FireResult.FIRED;
 	}
 
-	private static boolean hold(Skeleton skeleton, ServerPlayer player, int ticks) {
+	private static boolean hold(Skeleton skeleton, ServerPlayer player) {
+		int ticks = Math.max(2 * RENEW_TICKS, cfg().skeletonHoldTicks);
 		return mobs().freeze(skeleton, ticks) && mobs().face(skeleton, player.getEyePosition(), ticks) && mobs().silence(skeleton, ticks);
 	}
 
@@ -77,13 +81,15 @@ public final class PatientSkeletonCard extends AtmosphereCard {
 		private final Skeleton skeleton;
 		private final double keep;
 		private final int length;
+		private final int goneTries;
 		private int age;
 
-		Follow(UUID player, Skeleton skeleton, double keep, int length) {
+		Follow(UUID player, Skeleton skeleton, double keep, int length, int goneTries) {
 			this.player = player;
 			this.skeleton = skeleton;
 			this.keep = keep;
 			this.length = length;
+			this.goneTries = goneTries;
 		}
 
 		@Override
@@ -96,8 +102,8 @@ public final class PatientSkeletonCard extends AtmosphereCard {
 				return false;
 			}
 			ServerLevel level = (ServerLevel) skeleton.level();
-			if (age % 10 == 0) {
-				hold(skeleton, subject, 40);
+			if (age % RENEW_TICKS == 0) {
+				hold(skeleton, subject);
 			}
 			if (age <= length) {
 				if (age % 10 == 5 && Math.abs(Math.sqrt(skeleton.distanceToSqr(subject)) - keep) > SLACK) {
@@ -110,7 +116,7 @@ public final class PatientSkeletonCard extends AtmosphereCard {
 				mobs().release(skeleton);
 				return false;
 			}
-			if (age > length + GONE_TRIES_TICKS) {
+			if (age > length + goneTries) {
 				mobs().release(skeleton);
 				return false;
 			}

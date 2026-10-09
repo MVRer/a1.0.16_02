@@ -73,11 +73,15 @@ public final class DigConfig {
 	public double torchesBehindSessionMinutes = 10;
 	public double torchesBehindGapSeconds = 6;
 	public int torchesBehindMinTorches = 3;
+	/** Torches gone: only after this long without combat (seconds). */
+	public double torchesGoneNoCombatSeconds = 10;
 
 	// --- mining that moves ---
 	public int miningStartDistance = 24;
 	public int miningSteps = 10;
 	public double miningStepSeconds = 1.6;
+	/** Mining that moves: only after this long without combat (seconds). */
+	public double miningNoCombatSeconds = 30;
 
 	// --- trees ---
 	public int treesAwayDistance = 64;
@@ -92,6 +96,8 @@ public final class DigConfig {
 	public int homeCueReach = 20;
 	public float underYouSoundVolume = 0.5F;
 	public float underYouStepVolume = 0.35F;
+	/** The footstep under you: only once the player has stood still this long (seconds). */
+	public double underYouStepStillSeconds = 3;
 
 	// --- trigger and sampling ---
 	/** ENTERED_TUNNEL fires at most once per this many real minutes. */

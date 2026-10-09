@@ -74,6 +74,8 @@ public final class LoreConfig {
 	public double listPyramidRetrySeconds = 60;
 	/** The list in lava: how far from where it burned the ocean is searched (blocks). */
 	public int listPyramidOceanRadius = 1500;
+	/** The list in lava: after a search found no ocean, the next one waits this long. */
+	public double listPyramidNoOceanRetryMinutes = 20;
 	/** Signs remembered (about him, or written after the first telling); past this the oldest are forgotten. */
 	public int tellingMaxSigns = 256;
 	/** Books about him remembered; past this the oldest are forgotten. */

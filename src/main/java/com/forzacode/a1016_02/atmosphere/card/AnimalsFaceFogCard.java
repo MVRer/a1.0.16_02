@@ -63,7 +63,8 @@ public final class AnimalsFaceFogCard extends AtmosphereCard {
 		RandomSource random = ctx.random();
 		if (ctx.fake()) {
 			Animal one = animals.get(random.nextInt(animals.size()));
-			mobs().face(one, point, 60 + random.nextInt(60));
+			int min = AtmosphereConfig.ticks(cfg.animalsFakeMinSeconds);
+			mobs().face(one, point, min + random.nextInt(Math.max(1, AtmosphereConfig.ticks(cfg.animalsFakeMaxSeconds) - min)));
 			return FireResult.FIRED;
 		}
 		Tasks.start(new Facing(player.getUUID(), level, point, horizontalDistance(player.position(), point), animals, random, cfg));

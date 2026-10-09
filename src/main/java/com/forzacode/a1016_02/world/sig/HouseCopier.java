@@ -67,7 +67,7 @@ public final class HouseCopier {
 	public static final String CAUSE_LOCAL = "world:house_copy/local";
 	/** Plants removed inside the copy (it is emptied inside). */
 	public static final String CAUSE_CLEAR = "world:house_copy/clear";
-	/** A copy site candidate whose chunks do not load within this many ticks is skipped. */
+	/** A copy site candidate whose chunks do not load within this many ticks is skipped (a chunk-load limit, not pacing: never divided). */
 	private static final long LOAD_TIMEOUT_TICKS = 1200;
 	/** Recorded sites this close to a copy site rule it out. */
 	private static final int SITE_CLEARANCE = 24;

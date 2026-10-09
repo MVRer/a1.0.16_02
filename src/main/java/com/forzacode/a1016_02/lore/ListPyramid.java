@@ -32,8 +32,6 @@ import net.minecraft.world.level.biome.Biome;
 final class ListPyramid {
 	static final String CAUSE = "list_in_lava";
 	private static final AtomicBoolean SEARCHING = new AtomicBoolean();
-	/** After a search found no ocean, the next one waits this long. */
-	private static final double NO_OCEAN_RETRY_SECONDS = 20 * 60;
 	private static long nextTry;
 
 	private ListPyramid() {
@@ -111,7 +109,7 @@ final class ListPyramid {
 			}
 			if (found == null) {
 				A1016_02.LOGGER.warn("[a1016] lore: no ocean within {} blocks of {} for the burnt list's pyramid", radius, from.toShortString());
-				server.execute(() -> nextTry = server.getTickCount() + ModConfig.realTicks(NO_OCEAN_RETRY_SECONDS));
+				server.execute(() -> nextTry = server.getTickCount() + ModConfig.realTicks(LoreConfig.get().listPyramidNoOceanRetryMinutes * 60));
 				return;
 			}
 			server.execute(() -> {

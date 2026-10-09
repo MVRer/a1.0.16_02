@@ -43,6 +43,9 @@ public final class AtmosphereConfig {
 	/** Walking this many blocks toward the point releases them. */
 	public double animalsReleaseBlocks = 6;
 	public int animalsStaggerTicks = 30;
+	/** The false positive: one animal looks off into the fog for this long (a random length in between). */
+	public double animalsFakeMinSeconds = 3;
+	public double animalsFakeMaxSeconds = 6;
 
 	// --- distant cave sound ---
 	public double caveSoundStillSeconds = 8;
@@ -99,6 +102,13 @@ public final class AtmosphereConfig {
 	public int skeletonMinDistance = 20;
 	public int skeletonRadius = 48;
 	public double skeletonFollowSeconds = 75;
+	/** After following, it keeps trying this long to be gone (moved far off, out of view) before it is simply released. */
+	public double skeletonGoneTriesSeconds = 30;
+	/**
+	 * The skeleton's freeze, face and silence lease, renewed every 10 ticks while it follows. A tamper lease, not
+	 * pacing: never divided by devFastMode, and at least 20 so it outlasts the renewal.
+	 */
+	public int skeletonHoldTicks = 40;
 	public int waterRadius = 32;
 	public int waterMoveMinBlocks = 64;
 	public int waterMoveMaxBlocks = 112;
@@ -108,6 +118,8 @@ public final class AtmosphereConfig {
 	public int zombieMinDistance = 16;
 	public int zombieRadius = 48;
 	public double zombieStillSeconds = 20;
+	/** The false positive (a zombie only looking at you) lasts a quarter of {@code zombieStillSeconds}, at least this long. */
+	public double zombieFakeMinSeconds = 2;
 
 	// --- dead mountains: quieter than anywhere else, and no animals ---
 	/** Dead mountains whose edge is within this many blocks of a player are sent to their client (on every chunk change). */

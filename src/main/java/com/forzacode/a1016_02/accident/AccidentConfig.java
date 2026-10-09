@@ -144,6 +144,8 @@ public final class AccidentConfig {
 	public int crossSourceRadius = 6;
 	/** How often a waiting cross is tried again (cost setting, seconds). */
 	public double crossRetrySeconds = 5;
+	/** A waiting cross with no buildable spot at all (not just "in view") is given up after this long of retries (minutes). */
+	public double crossGiveUpMinutes = 60;
 
 	public static AccidentConfig get() {
 		return ModConfig.section("accident", AccidentConfig.class, AccidentConfig::new);
@@ -191,6 +193,11 @@ public final class AccidentConfig {
 
 	public long groveRecentTicks() {
 		return ModConfig.realTicks(groveRecentSeconds);
+	}
+
+	/** Failed plans before a waiting cross is given up: {@code crossGiveUpMinutes} of retries every {@code crossRetrySeconds}. */
+	public int crossMaxPlanFailures() {
+		return (int) Math.max(1, Math.min(Integer.MAX_VALUE, ModConfig.realTicks(crossGiveUpMinutes * 60) / cadenceTicks(crossRetrySeconds)));
 	}
 
 	public long whiteEyesTrackTicks() {

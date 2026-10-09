@@ -50,7 +50,8 @@ public final class ZombieAtDuskCard extends AtmosphereCard {
 		}
 		int ticks = AtmosphereConfig.ticks(cfg().zombieStillSeconds);
 		if (ctx.fake()) {
-			return mobs().face(zombie, player.getEyePosition(), Math.max(40, ticks / 4)) ? FireResult.FIRED : FireResult.SKIPPED;
+			int look = Math.max(AtmosphereConfig.ticks(cfg().zombieFakeMinSeconds), ticks / 4);
+			return mobs().face(zombie, player.getEyePosition(), look) ? FireResult.FIRED : FireResult.SKIPPED;
 		}
 		boolean ok = mobs().freeze(zombie, ticks) && mobs().face(zombie, player.getEyePosition(), ticks) && mobs().silence(zombie, ticks);
 		return ok ? FireResult.FIRED : FireResult.SKIPPED;

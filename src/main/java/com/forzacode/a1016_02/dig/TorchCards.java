@@ -8,6 +8,7 @@ import com.forzacode.a1016_02.core.CardTag;
 import com.forzacode.a1016_02.core.FireContext;
 import com.forzacode.a1016_02.core.FireResult;
 import com.forzacode.a1016_02.core.Habit;
+import com.forzacode.a1016_02.core.ModConfig;
 import com.forzacode.a1016_02.core.Services;
 import com.forzacode.a1016_02.core.Stage;
 import com.forzacode.a1016_02.core.Tier;
@@ -37,7 +38,8 @@ final class TorchCards {
 
 		@Override
 		public boolean contextFits(ServerPlayer player, ServerLevel world) {
-			return !data(world).explored(world.dimension()).isEmpty() && Services.watch().ticksSinceCombat(player) > 200;
+			return !data(world).explored(world.dimension()).isEmpty()
+					&& Services.watch().ticksSinceCombat(player) > ModConfig.realTicks(DigConfig.get().torchesGoneNoCombatSeconds);
 		}
 
 		@Override

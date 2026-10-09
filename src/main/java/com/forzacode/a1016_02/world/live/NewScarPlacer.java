@@ -61,7 +61,7 @@ public final class NewScarPlacer {
 	private static final int BASE_CLEARANCE = 64;
 	/** Loading tickets asked for per tick while a new scar waits for its chunks. */
 	private static final int LOADS_PER_TICK = 2;
-	/** A waiting new scar gives up after this long (its chunks did not load, or it stayed in view). */
+	/** A waiting new scar gives up after this many ticks (chunks not loaded, or in view). A job limit, not pacing: never divided. */
 	private static final long JOB_TIMEOUT_TICKS = 1200;
 	/** Ticks between commit tries once its chunks are loaded (it may be in view). */
 	private static final long RETRY_TICKS = 20;
