@@ -21,6 +21,9 @@ final class EntityTuning {
 	static final List<Key> KEYS = List.of(
 			new Key("spawnDistanceFractionMin", 0.05, 1.0, c -> c.spawnDistanceFractionMin, (c, v) -> c.spawnDistanceFractionMin = v),
 			new Key("spawnDistanceFractionMax", 0.05, 1.0, c -> c.spawnDistanceFractionMax, (c, v) -> c.spawnDistanceFractionMax = v),
+			// The close variant's band; never under the 24-block minimum (FogEdge also holds Pacing.sightingMinDistance).
+			new Key("closeMinDistance", 24.0, 64.0, c -> c.closeMinDistance, (c, v) -> c.closeMinDistance = v),
+			new Key("closeMaxDistance", 26.0, 96.0, c -> c.closeMaxDistance, (c, v) -> c.closeMaxDistance = v),
 			new Key("approachBlocks", 1.0, 64.0, c -> c.approachBlocks, (c, v) -> c.approachBlocks = v),
 			// Below the 24-block spawn minimum, so he never flees the moment he appears.
 			new Key("fleeDistance", 0.0, 22.0, c -> c.fleeDistance, (c, v) -> c.fleeDistance = v),

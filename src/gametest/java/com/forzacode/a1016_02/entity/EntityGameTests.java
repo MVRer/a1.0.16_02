@@ -216,6 +216,7 @@ public class EntityGameTests extends SightingRuleGameTests {
 		double oldApproach = config.approachBlocks;
 		double oldFlee = config.fleeDistance;
 		double oldMin = config.spawnDistanceFractionMin;
+		double oldCloseMin = config.closeMinDistance;
 		try {
 			for (EntityTuning.Key key : EntityTuning.KEYS) {
 				String command = "a1016 entity tune " + key.name() + " " + EntityTuning.format(key.get().applyAsDouble(config));
@@ -229,10 +230,13 @@ public class EntityGameTests extends SightingRuleGameTests {
 			JsonObject saved = savedEntitySection();
 			helper.assertTrue(saved.get("approachBlocks").getAsDouble() == 12.5 && saved.get("spawnDistanceFractionMin").getAsDouble() == 0.5,
 					"not saved: " + saved);
-			// Out of range (he would flee the moment he appears) and unknown keys change nothing.
+			// Out of range (he would flee the moment he appears, or stand closer than 24) and unknown keys change nothing.
 			server.getCommands().performPrefixedCommand(source, "a1016 entity tune fleeDistance 30");
+			server.getCommands().performPrefixedCommand(source, "a1016 entity tune closeMinDistance 20");
 			server.getCommands().performPrefixedCommand(source, "a1016 entity tune runSpeed 3");
 			helper.assertTrue(config.fleeDistance == oldFlee, "an out-of-range flee distance was taken: " + config.fleeDistance);
+			helper.assertTrue(config.closeMinDistance == oldCloseMin, "a close band under 24 blocks was taken: " + config.closeMinDistance);
+			helper.assertTrue(EntityTuning.byName("closeMaxDistance").isPresent(), "the close band is not tunable");
 			helper.assertTrue(EntityTuning.describe(config).contains("approachBlocks=12.50"), EntityTuning.describe(config));
 		} finally {
 			config.approachBlocks = oldApproach;
