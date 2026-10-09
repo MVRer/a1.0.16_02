@@ -2,6 +2,25 @@
 
 One entry per merge, newest first. Run the game from the main checkout (this folder, on `main`).
 
+## READY TO TRY: Accidents (every trap, the death marker)  (merged feat/accident-traps, commit 4c40376)
+```
+Restart needed: full game restart (new Java code and a spawn-observer mixin)
+See it now (walk, don't fly; survival is best for the real thing, creative for setup):
+  1. Launch "Dev Client". /a1016 stage 2. /a1016 accident status and /a1016 accident candidates (trap spots near you).
+  2. Safe preview of a death: /a1016 accident mark fell   builds a cross behind you and prints the list line it WOULD
+     add. It records nothing. Only "/a1016 accident mark fell record" counts toward Ending B.
+  3. Missing rung: build a ladder 8+ high, then /a1016 accident arm missing_rung and climb.
+  4. Dark corner: sleep in a bed, place 6+ torches around, /a1016 accident arm dark_corner, /time set 12000, then
+     wait through the night. One corner goes dark, and in the morning one torch is back a block off.
+  5. Others: arm lava_floor | lava_in_the_wall | house_fire | short_bridge | flooded_tunnel | moved_mob | no_bed |
+     powder_snow | bare_wool (each needs its setting nearby; "candidates" tells you what's possible).
+What to look for: nothing changes while you look. Every death should first feel like your fault, and every trap
+  leaves exactly one clue (a too-clean 1x1 gap, a torch a block off, a ladder gone with no item).
+Known rough edges: gravel ceiling and falling dripstone are switched off until the next accident task turns on
+  the new core call. A missing rung rarely kills when ladders below catch you. The zombie with your sword and
+  the void and lava bridges come in the next accident task.
+```
+
 ## READY TO TRY: Telling (naming him, "Stop.", blank signs, place not found)  (merged feat/lore-telling + feat/director-fixes, commit 65a96dd)
 ```
 Restart needed: full game restart (new mixins for signs, books and chat)

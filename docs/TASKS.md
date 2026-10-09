@@ -15,7 +15,7 @@ Status values: queued, running, review, fix, merged, blocked. Only the orchestra
 | P1-5 | Dread layer: fog, silence, music off, sound director, mobs acting wrong (client and server) | atmosphere | feat/atmosphere-dread | v0.4-dread | merged | Real MobTamper is on main. Follow-up: dead mountain silence and no animals | Also builds the real MobTamper (D-017) |
 | P1-6 | Fragments: all 30 as data, placement by stage and profile, sites | lore | feat/lore-fragments | v0.5-fragments | merged | Text verified word for word on all 30. Fixing: idempotent place, chunk loads, F19 vs F07, unbreakable F30 | Contract gap to expect: a protected "untouched grove" so new scars avoid it |
 | P1-7 | Telling: sign and book watcher, blank signs, "Stop.", place not found, list updates (F30 unbreakable moved to P1-6) | lore | feat/lore-telling | v0.6-telling | merged | Uses editSign, veto and ProtectedAreas. Contract asks: an int telling count in HerobrineState, a ledgered book-text edit |
-| P1-8 | Accidents: planner, every trap, death marker (uses atmosphere's MobTamper) | accident | feat/accident-traps | v0.7-accidents | ready | Fixing false-positive kills (dark corner, house fire, no bed), unloaded window, debug mark preview, torch undo | Gravel ceiling and dripstone are written, but spring only after P1-9 lands `removeLettingFall`. Debug `mark` counts toward Ending B |
+| P1-8 | Accidents: planner, every trap, death marker (uses atmosphere's MobTamper) | accident | feat/accident-traps | v0.7-accidents | merged | Fixing false-positive kills (dark corner, house fire, no bed), unloaded window, debug mark preview, torch undo | Gravel ceiling and dripstone are written, but spring only after P1-9 lands `removeLettingFall`. Debug `mark` counts toward Ending B |
 | P1-3b | World signatures: still burning, your house elsewhere, row of crosses with a fresh one. Plus the rare redstone torch card (D-033) | world | feat/world-signatures | v0.8 | running | Follows D-004 and D-005 |
 | P1-9 | Core contract batch (see list below) plus D-022 fog defaults | core (narrow edits in director, atmosphere, world) | feat/core-contracts | (all) | merged | Added: figureDig/figureFill (D-030), restoreBlock (accident), veto hook (lore F30, replaces the lore mixin into TraceEdit) |
 | P1-8b | "The zombie has your sword" (D-032), plus void and lava bridge accidents and the enderman on your bridge (D-034) | accident | feat/accident-sword | v0.7 | queued | Needs P1-9 (`equipFromLedger`) and P1-8 merged |
@@ -36,7 +36,7 @@ Status values: queued, running, review, fix, merged, blocked. Only the orchestra
 | v0.4-dread | P1-5 merged | tagged (pacing check: director 20 h game tests green) |
 | v0.5-fragments | P1-6 merged | tagged (pacing check: director 20 h game tests green) |
 | v0.6-telling | P1-7 merged | tagged (pacing check: director 20 h game tests green) |
-| v0.7-accidents | P1-8 merged | |
+| v0.7-accidents | P1-8 merged | tagged (pacing check: director 20 h game tests green) |
 | v0.8-endings | P2-1 merged | |
 | v1.0 | P2-2 and P2-3 merged, 20 h simulation passes | |
 
