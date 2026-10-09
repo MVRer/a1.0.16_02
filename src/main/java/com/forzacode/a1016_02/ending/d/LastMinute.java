@@ -409,6 +409,8 @@ public final class LastMinute {
 			figure = him.get();
 			grove = spot.get().grove();
 			lastSeenAt = figure.position();
+			A1016_02.LOGGER.info("[a1016] ending d: he stands on the far shore at {}, {} blocks out{}", BlockPos.containing(spot.get().feet()).toShortString(),
+					Math.round(Math.sqrt(spot.get().feet().distanceToSqr(Vec3.atCenterOf(from)))), grove != null ? ", a bare grove behind him" : "");
 		}
 	}
 
@@ -504,6 +506,8 @@ public final class LastMinute {
 			wave.add(new WaveItem(crown.top(), null, crown));
 		}
 		wave.sort(Comparator.comparingDouble(item -> Vec3.atCenterOf(item.pos()).distanceToSqr(from)));
+		A1016_02.LOGGER.info("[a1016] ending d: the leaves come back in the grove at {}: {} of his, {} bare trees", target.pos().toShortString(),
+				wave.stream().filter(i -> i.entry() != null).count(), wave.stream().filter(i -> i.crown() != null).count());
 	}
 
 	/** Status line. */

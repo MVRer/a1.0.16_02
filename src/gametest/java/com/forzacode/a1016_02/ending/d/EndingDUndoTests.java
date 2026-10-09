@@ -6,6 +6,7 @@ import java.util.Optional;
 import com.forzacode.a1016_02.core.Services;
 import com.forzacode.a1016_02.core.TraceLedger;
 import com.forzacode.a1016_02.core.TraceService;
+import com.forzacode.a1016_02.world.HouseCopyApi;
 
 import net.fabricmc.fabric.api.gametest.v1.GameTest;
 
@@ -63,7 +64,8 @@ public class EndingDUndoTests extends EndingDStingTests {
 		helper.assertTrue(Undo.skipReason(server, entry(level, at, "world:still_burning", TraceLedger.Kind.REMOVE_STACK)).isEmpty(),
 				"still burning's other edits stay too (only its REMOVE entries are kept)");
 		helper.assertTrue(Undo.skipReason(server, entry(level, at, "accident:lava_floor", TraceLedger.Kind.EQUIP)).isPresent(), "a worn stack would be undone");
-		for (String cause : new String[] {"dig:tunnel", "dig:under_you", "world:house_copy", "world:new_scar/bare", "accident:lava_floor",
+		// His removals are undone: the tunnels, the network under the house, the house copy (moved back), new scars, traps.
+		for (String cause : new String[] {"dig:tunnel", "dig:under_you", HouseCopyApi.CAUSE, HouseCopyApi.CAUSE_LOCAL, "world:new_scar/bare", "accident:lava_floor",
 				"lore:his/blank_sign", Grove.LEAF_CAUSE, Stair.LOSS_CAUSE, Stair.FLOOD_CAUSE, Chamber.NAMED_CAUSE}) {
 			helper.assertTrue(Undo.skipReason(server, entry(level, at, cause, TraceLedger.Kind.REMOVE)).isEmpty(), cause + " would stay");
 		}
