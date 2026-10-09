@@ -59,6 +59,14 @@ dependencies {
 	implementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_api_version}"
 }
 
+// Every game test run starts from a fresh test world, so no test can depend on leftovers from an earlier run.
+def gameTestWorld = layout.buildDirectory.dir("run/gameTest/world")
+tasks.named("runGameTest") {
+	doFirst {
+		gameTestWorld.get().asFile.deleteDir()
+	}
+}
+
 processResources {
 	def version = project.version
 	inputs.property "version", version
