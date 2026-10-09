@@ -1,3 +1,5 @@
 {
-	"entity.a1016_02.him": "Him"
+	"entity.a1016_02.him": "Him",
+	"a1016_02.debug.ping": "[a1016] debug_ping fired",
+	"a1016_02.debug.ping.fake": "[a1016] debug_ping fired (fake)"
 }

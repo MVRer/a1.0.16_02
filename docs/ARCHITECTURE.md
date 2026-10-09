@@ -42,7 +42,7 @@ Workstreams: `core director entity atmosphere world dig lore accident ending deb
 | `TraceService` | core (real) | Every world edit "he" makes, plus the out-of-view check |
 | `PlayerWatch` | core (real) | What the subject player is doing and has done |
 | `SiteRegistry` | core (real) | Places where world and dig built things that lore can fill |
-| `MobTamper` | accident | Freeze, face, silence or move existing mobs |
+| `MobTamper` | atmosphere (D-017) | Freeze, face, silence or move existing mobs |
 | `FragmentService` | lore | Fragment placement and read tracking |
 | `AccidentPlanner` | accident | One armed trap at a time |
 | `DeathMarker` | accident | Marked deaths: cross, list cause, events |
