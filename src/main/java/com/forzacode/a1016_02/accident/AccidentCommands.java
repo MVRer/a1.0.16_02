@@ -6,6 +6,7 @@ import java.util.List;
 import com.forzacode.a1016_02.core.CommandHooks;
 import com.forzacode.a1016_02.core.GameClock;
 import com.forzacode.a1016_02.core.MobTamper;
+import com.forzacode.a1016_02.core.ModConfig;
 import com.forzacode.a1016_02.core.Services;
 import com.mojang.brigadier.arguments.StringArgumentType;
 import com.mojang.brigadier.context.CommandContext;
@@ -23,13 +24,16 @@ import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.phys.Vec3;
 
 /**
- * {@code /a1016 accident status | candidates [trap] | arm <trap> | disarm | mark <cause>}. Arming skips the session cap
- * but never the one-at-a-time or out-of-view rules.
+ * {@code /a1016 accident status | candidates [trap] | arm <trap> | disarm | mark <cause> [record]}. Arming skips the
+ * session cap but never the one-at-a-time or out-of-view rules. {@code mark} only previews the cross unless told to
+ * {@code record}, because a recorded marked death counts toward Ending B.
  */
 final class AccidentCommands {
 	/** How far behind the player {@code mark} puts the cross, so it can be built out of view and then looked at. */
 	private static final double MARK_BEHIND = 7;
 	private static final SimpleCommandExceptionType UNKNOWN_TRAP = new SimpleCommandExceptionType(Component.literal("unknown trap"));
+	private static final SimpleCommandExceptionType UNKNOWN_CAUSE = new SimpleCommandExceptionType(
+			Component.literal("unknown cause; use one of " + String.join(", ", DeathCauses.KNOWN)));
 
 	private AccidentCommands() {
 	}
@@ -53,7 +57,10 @@ final class AccidentCommands {
 					return send(ctx, List.of(was == null ? "[a1016] accident: nothing was armed" : "[a1016] accident: disarmed " + was));
 				}))
 				.then(Commands.literal("mark")
-						.then(Commands.argument("cause", StringArgumentType.word()).executes(ctx -> mark(ctx, marker))))));
+						.then(Commands.argument("cause", StringArgumentType.word())
+								.suggests((ctx, builder) -> SharedSuggestionProvider.suggest(DeathCauses.KNOWN, builder))
+								.executes(ctx -> mark(ctx, marker, false))
+								.then(Commands.literal("record").executes(ctx -> mark(ctx, marker, true)))))));
 	}
 
 	private static TrapKind trap(CommandContext<CommandSourceStack> ctx) throws CommandSyntaxException {
@@ -139,19 +146,39 @@ final class AccidentCommands {
 		return send(ctx, lines);
 	}
 
-	private static int mark(CommandContext<CommandSourceStack> ctx, DeathMarkerImpl marker) throws CommandSyntaxException {
+	/**
+	 * Builds a cross 7 blocks behind the player. By default a preview: nothing is recorded and no event fires. With
+	 * {@code record} it is a real marked death (state, event, Ending B count).
+	 */
+	private static int mark(CommandContext<CommandSourceStack> ctx, DeathMarkerImpl marker, boolean record) throws CommandSyntaxException {
 		ServerPlayer player = ctx.getSource().getPlayerOrException();
 		String cause = StringArgumentType.getString(ctx, "cause");
+		if (!DeathCauses.KNOWN.contains(cause)) {
+			throw UNKNOWN_CAUSE.create();
+		}
+		MinecraftServer server = ctx.getSource().getServer();
 		Vec3 look = player.getViewVector(1.0F);
 		Vec3 flat = new Vec3(look.x, 0, look.z);
 		flat = flat.lengthSqr() < 1.0E-4 ? new Vec3(0, 0, 1) : flat.normalize();
 		BlockPos spot = BlockPos.containing(player.position().subtract(flat.scale(MARK_BEHIND)));
-		int before = waitingCrosses(ctx.getSource().getServer());
-		marker.mark(player, cause, spot);
-		boolean built = waitingCrosses(ctx.getSource().getServer()) <= before;
-		GlobalPos at = GlobalPos.of(player.level().dimension(), spot);
-		return send(ctx, List.of("[a1016] accident: marked death (" + cause + ") recorded at " + Candidate.at(at.pos()) + ", behind you",
-				built ? "  the cross stands there now: turn around" : "  the cross waits until that spot is out of view: look away or walk off, then come back"));
+		List<String> lines = new ArrayList<>();
+		String line = DeathMarkerImpl.listLine(player, cause, GameClock.day(server));
+		boolean built;
+		if (record) {
+			int before = waitingCrosses(server);
+			marker.mark(player, cause, spot);
+			built = waitingCrosses(server) <= before;
+			lines.add("[a1016] accident: RECORDED a marked death (" + cause + ") at " + Candidate.at(spot) + ". It fired MARKED_DEATH and counts toward Ending B ("
+					+ Services.deaths().count(server) + "/" + ModConfig.pacing().endingBMarkedDeaths + ").");
+			lines.add("  list line added: " + line);
+		} else {
+			built = marker.preview(player, cause, spot);
+			lines.add("[a1016] accident: preview only, nothing recorded and no event fired. Add 'record' to make it count (it counts toward Ending B).");
+			lines.add("  list line it would add: " + line);
+		}
+		lines.add(built ? "  the cross stands at " + Candidate.at(spot) + ", behind you: turn around"
+				: "  the cross waits until " + Candidate.at(spot) + " is out of view: look away or walk off, then come back");
+		return send(ctx, lines);
 	}
 
 	/** Crosses still waiting. */

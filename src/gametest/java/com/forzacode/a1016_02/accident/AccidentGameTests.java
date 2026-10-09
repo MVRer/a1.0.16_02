@@ -215,8 +215,9 @@ public class AccidentGameTests extends TrapGameTests {
 		data.routes().record(level.dimension(), pos, 4, RouteBook.WATER, 500, 100, 10);
 		data.routes().record(level.dimension(), pos.east(), 4, 0, 500, 100, 10);
 		data.setArmed(new ArmedTrap("dark_corner", level.dimension(), pos, List.of(pos.north()),
-				List.of(new ArmedTrap.SavedBlock(pos.north(), Blocks.TORCH.defaultBlockState())), Optional.of(pos.east()), Optional.empty(),
-				ArmedTrap.Phase.SET, 5, 6, 700, pos.offset(-3, -3, -3), pos.offset(3, 3, 3), "one torch a block off", 2));
+				List.of(new ArmedTrap.SavedBlock(pos.north(), Blocks.TORCH.defaultBlockState())), Optional.of(pos.east()),
+				List.of(java.util.UUID.fromString("00000000-0000-0000-0000-00000000a016")), ArmedTrap.Phase.SET, 5, 6, 700, 22500, pos.offset(-3, -3, -3),
+				pos.offset(3, 3, 3), "one torch a block off", 2));
 		data.addCross(new AccidentData.PendingCross(net.minecraft.core.GlobalPos.of(level.dimension(), pos), "fell", 4, 1));
 		data.setCairn(net.minecraft.core.GlobalPos.of(level.dimension(), pos.south(40)));
 		data.addCairnVisit();

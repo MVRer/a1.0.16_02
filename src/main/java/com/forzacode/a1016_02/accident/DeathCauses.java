@@ -1,6 +1,7 @@
 package com.forzacode.a1016_02.accident;
 
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 
 import net.minecraft.resources.ResourceKey;
@@ -31,6 +32,10 @@ public final class DeathCauses {
 		put("heard", DamageTypes.SONIC_BOOM);
 		put("exploded", DamageTypes.EXPLOSION, DamageTypes.PLAYER_EXPLOSION);
 	}
+
+	/** Every word the list can show, in a fixed order. */
+	public static final List<String> KNOWN = List.of("fell", "lava", "burned", "drowned", "suffocated", "froze", "crushed", "heard", "exploded",
+			"sleepless", "bitten", "dark", "killed");
 
 	private DeathCauses() {
 	}

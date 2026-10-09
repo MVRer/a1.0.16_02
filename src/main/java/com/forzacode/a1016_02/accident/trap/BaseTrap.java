@@ -15,7 +15,6 @@ import net.minecraft.resources.ResourceKey;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.damagesource.DamageSource;
 import net.minecraft.world.damagesource.DamageType;
-import net.minecraft.world.entity.monster.Enemy;
 
 /** Shared parts of a trap: id, habits, the list word and the damage types it kills with. */
 abstract class BaseTrap implements TrapKind {
@@ -62,11 +61,6 @@ abstract class BaseTrap implements TrapKind {
 			}
 		}
 		return false;
-	}
-
-	/** Damage dealt by a monster (the dark does the rest). */
-	static boolean byMonster(DamageSource source) {
-		return source.getEntity() instanceof Enemy;
 	}
 
 	/** The player's base in this level: their respawn point or first block, else the search center. */

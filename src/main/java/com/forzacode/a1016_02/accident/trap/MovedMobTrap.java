@@ -53,7 +53,7 @@ public final class MovedMobTrap extends BaseTrap {
 	@Override
 	public boolean matches(DamageSource source, ArmedTrap armed) {
 		Entity attacker = source.getEntity();
-		return attacker != null && armed.mob().map(id -> id.equals(attacker.getUUID())).orElse(false);
+		return attacker != null && armed.blames(attacker.getUUID());
 	}
 
 	@Override

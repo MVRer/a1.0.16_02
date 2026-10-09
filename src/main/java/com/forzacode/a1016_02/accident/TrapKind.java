@@ -9,6 +9,7 @@ import com.forzacode.a1016_02.core.TrapType;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.damagesource.DamageSource;
+import net.minecraft.world.entity.Entity;
 
 import org.jspecify.annotations.Nullable;
 
@@ -65,9 +66,32 @@ public interface TrapKind {
 	/** True if this damage is the way this trap kills. */
 	boolean matches(DamageSource source, ArmedTrap armed);
 
+	/**
+	 * True if this death is this trap's doing, given what the planner saw (place and window are already checked).
+	 * Defaults to {@link #matches}. False positives are worse than misses: a marked death ends a hardcore run.
+	 */
+	default boolean claims(ServerPlayer player, DamageSource source, ArmedTrap armed, AccidentData data, long now) {
+		return matches(source, armed);
+	}
+
+	/** A mob was just added to the world (spawned, not loaded) while this trap is armed. Returns the updated trap. */
+	default ArmedTrap onSpawned(TrapContext ctx, Entity entity, ArmedTrap armed) {
+		return armed;
+	}
+
 	/** How long a death still counts once the world has changed. */
 	default long window(AccidentConfig cfg) {
 		return cfg.deathWindowTicks();
+	}
+
+	/** Overworld clock time at which the change is undone (the dark corner's morning), or {@link ArmedTrap#NO_CLOCK}. */
+	default long clockUntil(ServerLevel level, AccidentConfig cfg) {
+		return ArmedTrap.NO_CLOCK;
+	}
+
+	/** True once the trap is over: its play-time window, or its game-clock deadline, has passed (loaded or not). */
+	default boolean expired(ArmedTrap armed, long now, long clock, AccidentConfig cfg) {
+		return now > armed.until() || armed.hasClock() && clock > armed.clockUntil();
 	}
 
 	/** True if a death anywhere counts (the bed), not only in the trap's zone. */

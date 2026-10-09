@@ -9,6 +9,7 @@ import java.util.function.Function;
 import com.forzacode.a1016_02.A1016_02;
 import com.forzacode.a1016_02.accident.trap.DarkCornerTrap;
 import com.forzacode.a1016_02.accident.trap.GroveLureTrap;
+import com.forzacode.a1016_02.accident.trap.HouseFireTrap;
 import com.forzacode.a1016_02.core.AccidentPlanner;
 import com.forzacode.a1016_02.core.GameClock;
 import com.forzacode.a1016_02.core.Services;
@@ -22,6 +23,7 @@ import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.damagesource.DamageSource;
 import net.minecraft.world.entity.Entity;
+import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.Level;
 
 import org.jspecify.annotations.Nullable;
@@ -49,6 +51,8 @@ public final class AccidentPlannerImpl implements AccidentPlanner {
 	private final Map<String, Integer> cachedCandidates = new HashMap<>();
 	private @Nullable MinecraftServer server;
 	private int sessionArms;
+	/** Set by a chunk load that holds torches due back; the next tick handles it. */
+	private boolean restoreDue;
 	private int refreshIndex;
 
 	public AccidentPlannerImpl(Function<MinecraftServer, AccidentData> data, ViewGate view) {
@@ -117,14 +121,19 @@ public final class AccidentPlannerImpl implements AccidentPlanner {
 		}
 		TrapKind kind = Traps.byId(trap.type()).orElse(null);
 		long now = GameClock.playTicks(forServer);
-		if (kind == null || now < trap.setAt() || now > trap.until()) {
+		AccidentConfig cfg = AccidentConfig.get();
+		if (kind == null || now < trap.setAt() || kind.expired(trap, now, clock(forServer), cfg)) {
 			return false;
 		}
-		if (!kind.anywhere() && (!player.level().dimension().equals(trap.dimension())
-				|| !trap.zone(AccidentConfig.get().zoneSlack).contains(player.position()))) {
+		if (!kind.anywhere() && (!player.level().dimension().equals(trap.dimension()) || !trap.zone(cfg.zoneSlack).contains(player.position()))) {
 			return false;
 		}
-		return kind.matches(source, trap);
+		return kind.claims(player, source, trap, data(forServer), now);
+	}
+
+	/** The overworld clock (day time), which the dark corner's morning is measured on. */
+	static long clock(MinecraftServer forServer) {
+		return forServer.overworld().getOverworldClockTime();
 	}
 
 	// --- arming ---
@@ -198,8 +207,9 @@ public final class AccidentPlannerImpl implements AccidentPlanner {
 		boolean live = kind.live();
 		ResourceKey<Level> dimension = candidate.dimension != null ? candidate.dimension : ctx.level().dimension();
 		return new ArmedTrap(kind.id(), dimension, candidate.pos, live ? List.of() : candidate.taken(), candidate.saved, candidate.off(),
-				Optional.ofNullable(candidate.mob).map(Entity::getUUID), live ? ArmedTrap.Phase.WATCHING : ArmedTrap.Phase.SET, now, live ? -1 : now,
-				now + (live ? cfg.liveWatchTicks() : kind.window(cfg)), candidate.zoneMin, candidate.zoneMax, candidate.clue, 0);
+				Optional.ofNullable(candidate.mob).map(Entity::getUUID).stream().toList(), live ? ArmedTrap.Phase.WATCHING : ArmedTrap.Phase.SET, now,
+				live ? -1 : now, now + (live ? cfg.liveWatchTicks() : kind.window(cfg)), kind.clockUntil(ctx.level(), cfg), candidate.zoneMin,
+				candidate.zoneMax, candidate.clue, 0);
 	}
 
 	// --- events ---
@@ -224,6 +234,45 @@ public final class AccidentPlannerImpl implements AccidentPlanner {
 		disarm(forServer, "killed (" + word + ")");
 	}
 
+	/**
+	 * A mob was just added to a level (spawned, summoned or bred; never loaded from disk). The armed trap may now
+	 * blame it: a monster born in the dark corner's darkened cells, a phantom of the bed's sleepless nights.
+	 */
+	public void onSpawned(ServerLevel level, Entity entity) {
+		onSpawned(level, entity, Services.watch().subject(level.getServer()).orElse(null));
+	}
+
+	/** The same, for the player the armed trap was set against (the subject in play). */
+	public void onSpawned(ServerLevel level, Entity entity, @Nullable ServerPlayer subject) {
+		MinecraftServer forServer = level.getServer();
+		AccidentData d = data(forServer);
+		ArmedTrap trap = d.armed().orElse(null);
+		if (trap == null || !trap.isSet()) {
+			return;
+		}
+		TrapKind kind = Traps.byId(trap.type()).orElse(null);
+		if (kind == null) {
+			return;
+		}
+		TrapContext ctx = new TrapContext(level, subject, trap.pos(), d, view, AccidentConfig.get(), GameClock.playTicks(forServer), GameClock.day(forServer));
+		ArmedTrap next = kind.onSpawned(ctx, entity, trap);
+		if (next != trap) {
+			d.setArmed(next);
+		}
+	}
+
+	/** A chunk loaded: if it holds torches that are due back, they go back on this tick, before anyone can see in. */
+	public void onChunkLoad(ServerLevel level, ChunkPos chunk) {
+		MinecraftServer forServer = level.getServer();
+		AccidentData d = data(forServer);
+		for (ArmedTrap trap : new ArmedTrap[] {d.restoring().orElse(null), d.armed().filter(t -> t.type().equals(Traps.DARK_CORNER.id())).orElse(null)}) {
+			if (trap != null && trap.dimension().equals(level.dimension())
+					&& trap.saved().stream().anyMatch(s -> ChunkPos.containing(s.pos()).equals(chunk))) {
+				restoreDue = true;
+			}
+		}
+	}
+
 	// --- ticking ---
 
 	public void tick(MinecraftServer forServer) {
@@ -235,7 +284,11 @@ public final class AccidentPlannerImpl implements AccidentPlanner {
 		if (subject != null && tick % AccidentConfig.cadenceTicks(cfg.routeSampleSeconds) == 0) {
 			sampler.sample(subject, d, cfg, now, GameClock.day(forServer));
 		}
-		if (tick % AccidentConfig.cadenceTicks(cfg.plannerTickSeconds) == 0) {
+		if (subject != null) {
+			watchBurns(subject, d, cfg, now);
+		}
+		if (restoreDue || tick % AccidentConfig.cadenceTicks(cfg.plannerTickSeconds) == 0) {
+			restoreDue = false;
 			step(forServer, d, subject, cfg, now);
 		}
 		if (subject != null && tick % AccidentConfig.cadenceTicks(cfg.candidateRefreshSeconds) == 0) {
@@ -252,8 +305,7 @@ public final class AccidentPlannerImpl implements AccidentPlanner {
 		ArmedTrap out = d.restoring().orElse(null);
 		if (out != null) {
 			ServerLevel level = forServer.getLevel(out.dimension());
-			if (level == null || level.isLoaded(out.pos())
-					&& DarkCornerTrap.restore(level, new TrapContext(level, subject, out.pos(), d, view, cfg, now, day), out)) {
+			if (level == null || out.saved().stream().allMatch(s -> level.isLoaded(s.pos())) && DarkCornerTrap.restore(level, view, out)) {
 				d.setRestoring(null);
 				d.log("day " + day + ": dark corner torches back");
 			}
@@ -268,7 +320,7 @@ public final class AccidentPlannerImpl implements AccidentPlanner {
 			disarm(forServer, "unknown trap or level");
 			return;
 		}
-		if (level.isLoaded(trap.pos())) {
+		if (level.isLoaded(trap.pos()) && trap.saved().stream().allMatch(s -> level.isLoaded(s.pos()))) {
 			ArmedTrap next = kind.tick(new TrapContext(level, subject, trap.pos(), d, view, cfg, now, day), trap);
 			if (next == null) {
 				disarm(forServer, "spot gone");
@@ -284,8 +336,20 @@ public final class AccidentPlannerImpl implements AccidentPlanner {
 				trap = next;
 			}
 		}
-		if (now > trap.until()) {
+		if (kind.expired(trap, now, clock(forServer), cfg)) {
 			disarm(forServer, trap.isSet() ? "window over" : "watch over");
+		}
+	}
+
+	/** House fire: every tick, notes when the subject touches lava or fire that traces back to the gap. */
+	void watchBurns(ServerPlayer subject, AccidentData d, AccidentConfig cfg, long now) {
+		ArmedTrap trap = d.armed().orElse(null);
+		if (trap == null || trap.phase() != ArmedTrap.Phase.SET || !trap.type().equals(Traps.HOUSE_FIRE.id())
+				|| !subject.level().dimension().equals(trap.dimension()) || !trap.zone(cfg.zoneSlack).contains(subject.position())) {
+			return;
+		}
+		if (HouseFireTrap.touchesTraced(subject.level(), trap, subject.getBoundingBox(), cfg)) {
+			d.tracedBurnTick = now;
 		}
 	}
 

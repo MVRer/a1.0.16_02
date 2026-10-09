@@ -64,6 +64,14 @@ public final class AccidentConfig {
 	/** The base keeps at least this many torches lit while the corner is dark. */
 	public int darkCornerKeepLit = 3;
 	public int noBedAwayBlocks = 48;
+	/** The bed is only taken from a player who slept within this many in-game days (TIME_SINCE_REST). */
+	public double noBedRestedWithinDays = 1;
+	/** A phantom counts if it appeared this close to the player during the sleepless nights after the bed went. */
+	public int phantomNearBlocks = 64;
+	/** House fire: fire this close to the gap (or to lava that came through it) is traced to it. */
+	public int fireTraceRadius = 4;
+	/** House fire: a burn counts this long after touching traced fire (seconds of play). */
+	public double fireBurnMemorySeconds = 16;
 	public int powderSourceRadius = 12;
 	public int woolMinLine = 3;
 	public int sculkSearchRadius = 8;
@@ -92,6 +100,8 @@ public final class AccidentConfig {
 	public int sleepFloorMaxColumns = 6;
 
 	// --- night (time of day, 0 to 24000) ---
+	/** The dark corner is set from this time (around sunset) until night starts. */
+	public int darkCornerArmFrom = 11500;
 	public int nightStart = 13000;
 	/** The dark corner's torches go back between this time and sunrise. */
 	public int restoreFrom = 22500;
@@ -128,6 +138,16 @@ public final class AccidentConfig {
 
 	public long darkCornerGraceTicks() {
 		return ModConfig.realTicks(darkCornerGraceMinutes * 60);
+	}
+
+	/** Game ticks (burning is game physics, not pacing, so never divided by devFastMode). */
+	public long fireBurnMemoryTicks() {
+		return Math.round(fireBurnMemorySeconds * 20.0);
+	}
+
+	/** TIME_SINCE_REST counts game ticks. */
+	public long noBedRestedWithinTicks() {
+		return Math.round(noBedRestedWithinDays * 24000.0);
 	}
 
 	public long routePassGapTicks() {

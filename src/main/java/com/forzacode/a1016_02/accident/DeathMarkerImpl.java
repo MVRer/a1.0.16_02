@@ -54,6 +54,24 @@ public final class DeathMarkerImpl implements DeathMarker {
 		build(server, cross);
 	}
 
+	/**
+	 * Debug preview: builds the cross for {@code cause} at {@code pos} (or queues it until the spot is out of view)
+	 * without recording a marked death or firing {@link HerobrineEvents#MARKED_DEATH}. True if it stands now.
+	 */
+	public boolean preview(ServerPlayer player, String cause, BlockPos pos) {
+		AccidentConfig cfg = AccidentConfig.get();
+		int span = Math.max(0, cfg.crossMaxHeight - cfg.crossMinHeight);
+		int height = cfg.crossMinHeight + (span == 0 ? 0 : player.level().getRandom().nextInt(span + 1));
+		AccidentData.PendingCross cross = new AccidentData.PendingCross(GlobalPos.of(player.level().dimension(), pos.immutable()), cause, height, 0);
+		data.apply(player.level().getServer()).addCross(cross);
+		return build(player.level().getServer(), cross);
+	}
+
+	/** The line the list would get for this death. */
+	public static String listLine(ServerPlayer player, String cause, long day) {
+		return player.getName().getString() + " - " + cause + " (day " + day + ")";
+	}
+
 	@Override
 	public int count(MinecraftServer server) {
 		return HerobrineState.get(server).markedDeaths().size();

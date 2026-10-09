@@ -39,7 +39,7 @@ import net.minecraft.world.phys.AABB;
  * One game test per trap: build the setup the world would already have, find the spot, check that nothing changes
  * while it is in view, then set it out of view and check the single removal or move, the ledger and the clue.
  */
-public class TrapGameTests {
+public class TrapGameTests extends AttributionGameTests {
 	/** A stone mass with a 2-high tunnel along x at y 5..6, z 8, walked underground. */
 	private static void tunnel(Yard y) {
 		y.fill(0, 0, 4, 20, 9, 12, Blocks.STONE);
@@ -235,11 +235,11 @@ public class TrapGameTests {
 				Yard.NOBODY, base);
 		ArmedTrap armed = AccidentPlannerImpl.build(Traps.DARK_CORNER, y.ctx(Yard.NOBODY, base), spot, y.cfg);
 
-		helper.assertFalse(DarkCornerTrap.restore(y.level, y.ctx(Yard.EVERYONE, base), armed), "put back while in view");
+		helper.assertFalse(DarkCornerTrap.restore(y.level, Yard.EVERYONE, armed), "put back while in view");
 		for (ArmedTrap.SavedBlock torch : armed.saved()) {
 			helper.assertTrue(y.level.getBlockState(torch.pos()).isAir(), "a torch came back in view");
 		}
-		helper.assertTrue(DarkCornerTrap.restore(y.level, y.ctx(Yard.NOBODY, base), armed), "not put back out of view");
+		helper.assertTrue(DarkCornerTrap.restore(y.level, Yard.NOBODY, armed), "not put back out of view");
 		ArmedTrap.SavedBlock moved = armed.saved().get(0);
 		BlockPos off = armed.offPos().orElseThrow();
 		helper.assertTrue(y.level.getBlockState(off).is(moved.state().getBlock()), "the moved torch is not a block off");
@@ -247,9 +247,9 @@ public class TrapGameTests {
 		for (ArmedTrap.SavedBlock torch : armed.saved().subList(1, armed.saved().size())) {
 			helper.assertTrue(y.level.getBlockState(torch.pos()) == torch.state(), "torch at " + torch.pos() + " not back");
 		}
-		helper.assertTrue(y.ledgered("accident:dark_corner", Set.of(moved.pos())) == 1, "the moved torch should stay in the ledger");
-		List<BlockPos> exact = armed.saved().subList(1, armed.saved().size()).stream().map(ArmedTrap.SavedBlock::pos).toList();
-		helper.assertTrue(exact.isEmpty() || y.ledgered("accident:dark_corner", Set.copyOf(exact)) == 0, "torches put back exactly are still in the ledger");
+		// Every torch that came back left the ledger, the moved one too: Ending D must not make a second torch.
+		List<BlockPos> all = armed.saved().stream().map(ArmedTrap.SavedBlock::pos).toList();
+		helper.assertTrue(CoreGaps.RESTORE_BLOCK || y.ledgered("accident:dark_corner", Set.copyOf(all)) == 0, "restored torches are still in the ledger");
 		y.succeedWithoutDrops();
 	}
 
@@ -289,7 +289,7 @@ public class TrapGameTests {
 		helper.assertFalse(level.getBlockState(y.abs(11, 1, 6)).getValue(DoorBlock.OPEN), "the door was opened");
 		helper.assertTrue(level.getEntitiesOfClass(Creeper.class, new AABB(y.abs(0, 0, 0)).inflate(80)).size() == creepers, "a creeper was spawned");
 		ArmedTrap armed = AccidentPlannerImpl.build(Traps.MOVED_MOB, y.ctx(Yard.NOBODY, owner.blockPosition(), owner), spot, y.cfg);
-		helper.assertTrue(armed.mob().filter(id -> id.equals(creeper.getUUID())).isPresent(), "the moved mob is not remembered");
+		helper.assertTrue(armed.blames(creeper.getUUID()) && armed.mobs().size() == 1, "the moved mob is not remembered");
 		helper.assertTrue(Traps.MOVED_MOB.matches(level.damageSources().explosion(creeper, creeper), armed), "its explosion does not count");
 		creeper.discard();
 		helper.succeed();

@@ -56,6 +56,8 @@ public final class AccidentData extends SavedData {
 	public boolean atCairn;
 	/** Not saved: lure tracking for this session. */
 	public final LureWatch lure = new LureWatch();
+	/** Not saved: the last play tick the subject touched fire or lava that traces back to the house fire's gap. */
+	public long tracedBurnTick = Long.MIN_VALUE;
 
 	/** What the planner sees the player doing at the lures this session. */
 	public static final class LureWatch {

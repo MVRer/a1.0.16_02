@@ -1,11 +1,13 @@
 package com.forzacode.a1016_02.accident;
 
+import com.forzacode.a1016_02.core.TraceLedger;
+
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
 
 /**
  * Local stand-ins for core contracts that do not exist yet. Each names the core change the accident workstream
- * asked for; when core ships it, only this class changes.
+ * asked for; when core ships it, flip the flag and swap the one line in the method.
  */
 public final class CoreGaps {
 	/**
@@ -18,6 +20,13 @@ public final class CoreGaps {
 	 */
 	public static final boolean FALLING_OPT_IN = false;
 
+	/**
+	 * Core is adding {@code TraceService.restoreBlock(level, ledgerEntry, toPos)} (feat/core-contracts): it puts a
+	 * ledgered removed block back, at its own spot or another, out of view, and settles the ledger so Ending D does not
+	 * put it back a second time. The dark corner uses it for its torches once this flag is true.
+	 */
+	public static final boolean RESTORE_BLOCK = false;
+
 	private CoreGaps() {
 	}
 
@@ -26,6 +35,14 @@ public final class CoreGaps {
 	 * (then: {@code return Services.traces().removeLettingFall(level, support, cause);}). Never bypasses the refusal.
 	 */
 	public static boolean removeLettingFall(ServerLevel level, BlockPos support, String cause) {
+		return false;
+	}
+
+	/**
+	 * Puts a ledgered removal back at {@code to}. Always false until core has it (then:
+	 * {@code return Services.traces().restoreBlock(level, entry, to);}); callers keep their fallback for that case.
+	 */
+	public static boolean restoreBlock(ServerLevel level, TraceLedger.Entry entry, BlockPos to) {
 		return false;
 	}
 }

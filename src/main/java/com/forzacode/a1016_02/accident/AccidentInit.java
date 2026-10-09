@@ -6,6 +6,7 @@ import com.forzacode.a1016_02.core.Director;
 import com.forzacode.a1016_02.core.Services;
 
 import net.fabricmc.fabric.api.entity.event.v1.ServerLivingEntityEvents;
+import net.fabricmc.fabric.api.event.lifecycle.v1.ServerChunkEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayConnectionEvents;
@@ -46,6 +47,7 @@ public final class AccidentInit {
 		});
 		ServerLifecycleEvents.SERVER_STOPPED.register(server -> PLANNER.attach(null));
 		ServerPlayConnectionEvents.JOIN.register((handler, sender, server) -> PLANNER.onJoin(handler.player));
+		ServerChunkEvents.CHUNK_LOAD.register((level, chunk, generated) -> PLANNER.onChunkLoad(level, chunk.getPos()));
 		ServerTickEvents.END_SERVER_TICK.register(server -> {
 			PLANNER.tick(server);
 			if (server.getTickCount() % AccidentConfig.cadenceTicks(AccidentConfig.get().crossRetrySeconds) == 0) {

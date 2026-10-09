@@ -19,7 +19,10 @@ import net.minecraft.core.GlobalPos;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.damagesource.DamageSource;
+import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.monster.Enemy;
 import net.minecraft.world.item.Items;
+import net.minecraft.world.level.LightLayer;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.entity.JukeboxBlockEntity;
 
@@ -35,9 +38,25 @@ public final class WhiteEyesLureTrap extends BaseTrap {
 		super("lure_white_eyes", true, "dark", EnumSet.of(Habit.WATCHER));
 	}
 
+	/** Only a monster that spawned in the cells the taken torches used to light, while the room was going dark. */
 	@Override
 	public boolean matches(DamageSource source, ArmedTrap armed) {
-		return byMonster(source);
+		Entity attacker = source.getEntity();
+		return attacker != null && armed.blames(attacker.getUUID());
+	}
+
+	@Override
+	public ArmedTrap onSpawned(TrapContext ctx, Entity entity, ArmedTrap armed) {
+		if (!(entity instanceof Enemy) || entity.level() != ctx.level() || !armed.zone(0).contains(entity.position())
+				|| ctx.level().getBrightness(LightLayer.BLOCK, entity.blockPosition()) > 0) {
+			return armed;
+		}
+		for (BlockPos torch : armed.targets()) {
+			if (torch.distManhattan(entity.blockPosition()) <= DarkCornerTrap.TORCH_REACH) {
+				return armed.blame(entity.getUUID());
+			}
+		}
+		return armed;
 	}
 
 	@Override
