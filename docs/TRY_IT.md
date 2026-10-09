@@ -2,6 +2,24 @@
 
 One entry per merge, newest first. Run the game from the main checkout (this folder, on `main`).
 
+## READY TO TRY: Endings A, B and C  (merged feat/ending-abc, commit 34b526a)
+```
+Restart needed: full game restart (Java code and mixins)
+See it now (use a throwaway copy of a1016_dev or a fresh world: endings change the world for good):
+  1. /a1016 ending status   (which path you're on, and what each path is still waiting for)
+  2. Ending A, the false peace: /a1016 ending path A, then /a1016 ending step repeatedly. He's seen once, walking
+     away. Then days of real quiet, then one ordinary accident on your own mine route. The "Stop." sign ends up in
+     front of your cross.
+  3. Ending B, removed: /a1016 ending path B, then step. Your house is emptied, the copy elsewhere is finished, mobs
+     wait in your doorway, and the final trap is inside the copy. F10 gains "* removed [your name]".
+  4. Ending C, for the record: burn every fragment you ever held in lava, take your house apart, stay away. The world
+     goes quiet forever. Type his name once and it all starts again.
+  5. A third marked death always means Ending B. In hardcore, one marked death ends the story.
+What to look for: every ending is earned by what you did, never announced. Nothing says "Ending A".
+Known rough edges: Ending D lands next (v0.8 is tagged after it). Naming him during C also resets which fragments
+  count as "held".
+```
+
 ## READY TO TRY: Integration cleanup  (merged feat/integration-cleanup, commit fb2b57e)
 ```
 Restart needed: full game restart (Java code; old config keys are dropped quietly)
