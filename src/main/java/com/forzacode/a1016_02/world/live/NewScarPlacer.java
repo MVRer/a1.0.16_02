@@ -24,6 +24,7 @@ import com.forzacode.a1016_02.world.gen.Terrain;
 import com.forzacode.a1016_02.world.gen.Vegetation;
 
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.GlobalPos;
 import net.minecraft.core.Holder;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
@@ -49,6 +50,8 @@ public final class NewScarPlacer {
 	public static final String CAUSE = "world:new_scar";
 	/** At most this many stale chunks are looked at per try. */
 	private static final int MAX_LOOKS = 64;
+	/** New scars keep this far (plus their radius) from the player's base. */
+	private static final int BASE_CLEARANCE = 64;
 
 	/** Where a chunk was last visited (seeded in tests). */
 	@FunctionalInterface
@@ -111,6 +114,12 @@ public final class NewScarPlacer {
 		}
 		if (stale.isEmpty()) {
 			return new Outcome(false, "no chunk the player left " + ModConfig.pacing().newScarAwayDays + "+ in-game days ago within " + range + " chunks");
+		}
+		// Never at the player's base: their own trees are another card's ("Your trees stripped").
+		Optional<BlockPos> base = Services.watch().base(player).filter(b -> b.dimension().equals(level.dimension())).map(GlobalPos::pos);
+		int baseClearance = BASE_CLEARANCE + config.newScarRadius;
+		if (base.isPresent()) {
+			stale.removeIf(c -> base.get().distToCenterSqr(c.getMiddleBlockX(), base.get().getY(), c.getMiddleBlockZ()) < (double) baseClearance * baseClearance);
 		}
 		if (fake) {
 			return bareOneTree(level, stale, allowed, random);
@@ -261,7 +270,7 @@ public final class NewScarPlacer {
 				if (state.isAir()) {
 					continue;
 				}
-				if (Vegetation.dies(state) || Vegetation.isSnowLayer(state) && y > ground + 1) {
+				if ((Vegetation.dies(state) || Vegetation.isSnowLayer(state) && y > ground + 1) && !playerMade(level, pos)) {
 					edits.put(pos, new Edit(pos, null));
 					if (Vegetation.isLog(state)) {
 						logs.add(pos);
@@ -269,7 +278,7 @@ public final class NewScarPlacer {
 				}
 			}
 			BlockPos groundPos = new BlockPos(x, ground, z);
-			if (Vegetation.isGrassGround(level.getBlockState(groundPos))) {
+			if (Vegetation.isGrassGround(level.getBlockState(groundPos)) && !playerMade(level, groundPos)) {
 				edits.put(groundPos, new Edit(groundPos, Blocks.DIRT.defaultBlockState()));
 			}
 		});
@@ -279,7 +288,8 @@ public final class NewScarPlacer {
 					continue;
 				}
 				BlockState state = level.getBlockState(pos);
-				if (Vegetation.isLeafy(state) || Vegetation.isSnowLayer(state) && Vegetation.isLeafy(level.getBlockState(pos.below()))) {
+				if ((Vegetation.isLeafy(state) || Vegetation.isSnowLayer(state) && Vegetation.isLeafy(level.getBlockState(pos.below())))
+						&& !playerMade(level, pos)) {
 					BlockPos at = pos.immutable();
 					edits.put(at, new Edit(at, null));
 				}
@@ -295,12 +305,18 @@ public final class NewScarPlacer {
 			for (int y = top; y > ground; y--) {
 				BlockPos pos = new BlockPos(x, y, z);
 				BlockState state = level.getBlockState(pos);
-				if (Vegetation.isLeafy(state) || Vegetation.isSnowLayer(state) && Vegetation.isLeafy(level.getBlockState(pos.below()))) {
+				if ((Vegetation.isLeafy(state) || Vegetation.isSnowLayer(state) && Vegetation.isLeafy(level.getBlockState(pos.below())))
+						&& !playerMade(level, pos)) {
 					edits.add(new Edit(pos, null));
 				}
 			}
 		});
 		return edits;
+	}
+
+	/** Blocks a player placed are never part of a new scar (replanted leaves stay; their own trees are another card's). */
+	private static boolean playerMade(ServerLevel level, BlockPos pos) {
+		return Services.watch().wasPlacedByPlayer(level, pos);
 	}
 
 	@FunctionalInterface
