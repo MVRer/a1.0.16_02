@@ -13,6 +13,7 @@ import com.forzacode.a1016_02.core.SiteRegistry;
 import com.forzacode.a1016_02.core.SiteType;
 import com.forzacode.a1016_02.core.Stage;
 import com.forzacode.a1016_02.core.TraceLedger;
+import com.forzacode.a1016_02.world.CrossApi;
 
 import net.fabricmc.fabric.api.gametest.v1.GameTest;
 
@@ -254,6 +255,34 @@ public class LoreTellingTests extends LorePlacementTests {
 		helper.assertTrue(Telling.writeBook(player, writable("we built a hut"), false, state, data, nearTunnel).nearTraces(),
 				"a book written near his traces did not tell");
 		helper.assertTrue(Telling.chat(player, "herobrine", state, data).told() && state.tellingStarted() && data.told(), "naming him did not start it");
+		helper.succeed();
+	}
+
+	/** D-051: a glass memorial cross was left by people, so writing by one is not writing near his traces (D-041). */
+	@GameTest
+	public void glassMemorialsAreNotHisTraces(GameTestHelper helper) {
+		floor(helper);
+		ServerLevel level = helper.getLevel();
+		ServerPlayer player = mock(helper);
+		BlockPos here = helper.absolutePos(new BlockPos(2, 1, 2));
+		GlobalPos at = GlobalPos.of(level.dimension(), here);
+		SiteRegistry.Site memorial = new SiteRegistry.Site(-1, SiteType.CROSS, level.dimension(), here.offset(4, 0, 0), CrossApi.siteSize(6, true),
+				Optional.empty());
+		SiteRegistry.Site cross = new SiteRegistry.Site(-2, SiteType.CROSS, level.dimension(), here.offset(4, 0, 0), CrossApi.siteSize(6, false),
+				Optional.empty());
+		helper.assertFalse(TraceIndex.isHis(memorial, id -> false) || Telling.near(at, 32, List.of(memorial), List.of()),
+				"a glass memorial counted as his trace");
+		helper.assertTrue(TraceIndex.isHis(cross, id -> false) && Telling.near(at, 32, List.of(cross), List.of()), "his cross is no longer his trace");
+
+		HerobrineState state = new HerobrineState();
+		TellingData data = new TellingData();
+		Telling.Told byMemorial = sign(helper, new BlockPos(2, 1, 2), player, "rest well", state, data,
+				(pos, r) -> Telling.near(pos, r, List.of(memorial), List.of()));
+		helper.assertFalse(byMemorial.told() || byMemorial.nearTraces() || byMemorial.recorded(), "a sign by a glass memorial told");
+		helper.assertTrue(state.tellingCount() == 0, "count " + state.tellingCount());
+		Telling.Told byCross = sign(helper, new BlockPos(3, 1, 2), player, "rest well", state, data,
+				(pos, r) -> Telling.near(pos, r, List.of(cross), List.of()));
+		helper.assertTrue(byCross.told() && byCross.nearTraces(), "a sign by his cross did not tell");
 		helper.succeed();
 	}
 

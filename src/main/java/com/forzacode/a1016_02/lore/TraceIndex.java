@@ -11,6 +11,7 @@ import java.util.function.IntPredicate;
 import com.forzacode.a1016_02.core.SiteRegistry;
 import com.forzacode.a1016_02.core.SiteType;
 import com.forzacode.a1016_02.core.TraceLedger;
+import com.forzacode.a1016_02.world.CrossApi;
 
 import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
 import it.unimi.dsi.fastutil.longs.LongArrayList;
@@ -26,7 +27,7 @@ import org.jspecify.annotations.Nullable;
 /**
  * Where his traces are, for "written near his traces" (D-041): only what he removed or moved. His site kinds
  * (tunnels and cuts, ocean pyramids, bare groves, dead mountains, emptied houses, the Under-you network, crosses,
- * the house copy), never one lore built itself (left by people), plus every ledgered edit except what others left
+ * the house copy), never one lore built itself or a glass memorial cross (both left by people, D-051), plus every ledgered edit except what others left
  * (any cause containing {@code :left/}, such as {@code lore:left/F07} or the team's stair). Ledger positions are kept per chunk and brought up to date incrementally: only entries
  * added since the last look are read; a ledger that shrank or changed under the index is read again.
  */
@@ -47,9 +48,9 @@ final class TraceIndex {
 		return !TraceLedger.isLeftByOthers(entry.cause());
 	}
 
-	/** True if the site is his: one of his kinds, and not one lore built itself. */
+	/** True if the site is his: one of his kinds, not a glass memorial (D-051) and not one lore built itself. */
 	static boolean isHis(SiteRegistry.Site site, IntPredicate loreBuilt) {
-		return HIS_SITES.contains(site.type()) && !loreBuilt.test(site.id());
+		return HIS_SITES.contains(site.type()) && !CrossApi.isGlassMemorial(site) && !loreBuilt.test(site.id());
 	}
 
 	/** An index of these entries (tests). */

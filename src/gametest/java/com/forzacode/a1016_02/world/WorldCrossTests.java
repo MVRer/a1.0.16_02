@@ -190,7 +190,8 @@ public class WorldCrossTests {
 		helper.assertTrue(ScarPlanner.hilltopCross(hill, 500, 500, 7L, 1.0).anchor().equals(new BlockPos(500, 121, 500)),
 				"the memorial is not on the top of the hill");
 
-		// The site tells them apart: lore's "his traces" (D-041) skip glass memorials.
+		// The site tells them apart, so lore's "his traces" (D-041) and accident's "his places" can skip glass memorials
+		// (LoreTellingTests#glassMemorialsAreNotHisTraces, TrapGameTests#sleepLureSkipsGlassMemorials).
 		SiteRegistry.Site glass = new SiteRegistry.Site(1, SiteType.CROSS, Level.OVERWORLD, BlockPos.ZERO, CrossApi.siteSize(6, true), Optional.empty());
 		SiteRegistry.Site row = new SiteRegistry.Site(2, SiteType.CROSS, Level.OVERWORLD, BlockPos.ZERO, CrossApi.siteSize(5, false),
 				Optional.of(CrossRow.CLAIM));

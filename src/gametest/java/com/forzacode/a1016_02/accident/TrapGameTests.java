@@ -7,7 +7,10 @@ import com.forzacode.a1016_02.accident.trap.DarkCornerTrap;
 import com.forzacode.a1016_02.accident.trap.MovedMobTrap;
 import com.forzacode.a1016_02.core.MobTamper;
 import com.forzacode.a1016_02.core.Services;
+import com.forzacode.a1016_02.core.SiteRegistry;
+import com.forzacode.a1016_02.core.SiteType;
 import com.forzacode.a1016_02.core.TraceLedger;
+import com.forzacode.a1016_02.world.CrossApi;
 
 import net.fabricmc.fabric.api.gametest.v1.GameTest;
 
@@ -561,6 +564,32 @@ public class TrapGameTests extends AttributionGameTests {
 		}
 		if (Lures.hisPlaces(y.level.getServer(), near, y.cfg.sleepSiteRadius).isEmpty()) {
 			helper.assertTrue(Traps.LURE_SLEEP.candidates(y.ctx(Yard.NOBODY, here)).isEmpty(), "a sleep trap with none of his places");
+		}
+		helper.succeed();
+	}
+
+	/**
+	 * D-051: a glass memorial cross was left by people, so it is not one of his places to sleep near; his own cross
+	 * still is. Both sites leave the registry (moved far off) in the same tick, so no other test sees them.
+	 */
+	@GameTest(structure = Yard.STRUCTURE, maxTicks = 20)
+	public void sleepLureSkipsGlassMemorials(GameTestHelper helper) {
+		Yard y = new Yard(helper);
+		BlockPos here = y.abs(5, 1, 5);
+		net.minecraft.core.GlobalPos near = net.minecraft.core.GlobalPos.of(y.level.dimension(), here);
+		SiteRegistry.Site memorial = Services.sites().record(SiteType.CROSS, y.level.dimension(), y.abs(8, 1, 5), CrossApi.siteSize(6, true));
+		SiteRegistry.Site cross = Services.sites().record(SiteType.CROSS, y.level.dimension(), y.abs(15, 1, 15), CrossApi.siteSize(6, false));
+		try {
+			List<net.minecraft.core.GlobalPos> places = Lures.hisPlaces(y.level.getServer(), near, y.cfg.sleepSiteRadius);
+			helper.assertFalse(places.contains(memorial.globalPos()), "a glass memorial is one of his places: " + places);
+			helper.assertTrue(places.contains(cross.globalPos()), "his cross is not one of his places: " + places);
+			List<Candidate> spots = Traps.LURE_SLEEP.candidates(y.ctx(Yard.NOBODY, here));
+			helper.assertFalse(spots.stream().anyMatch(c -> c.pos.equals(memorial.pos())), "the sleep lure uses a glass memorial");
+			helper.assertTrue(spots.stream().anyMatch(c -> c.pos.equals(cross.pos())), "the sleep lure skips his cross");
+		} finally {
+			BlockPos gone = new BlockPos(29_000_000, -64, 29_000_000);
+			Services.sites().update(memorial, gone, memorial.size());
+			Services.sites().update(cross, gone, cross.size());
 		}
 		helper.succeed();
 	}

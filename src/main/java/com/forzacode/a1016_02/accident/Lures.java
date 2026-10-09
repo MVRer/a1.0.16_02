@@ -8,6 +8,7 @@ import java.util.Optional;
 import com.forzacode.a1016_02.core.Services;
 import com.forzacode.a1016_02.core.SiteRegistry;
 import com.forzacode.a1016_02.core.SiteType;
+import com.forzacode.a1016_02.world.CrossApi;
 
 import net.minecraft.core.GlobalPos;
 import net.minecraft.server.MinecraftServer;
@@ -44,12 +45,17 @@ public final class Lures {
 		return Services.fragments().placed(server, ROOM_FRAGMENT);
 	}
 
-	/** His places a player might sleep near ("the pyramids feel like monuments"): cairns, pyramids, crosses. Nearest first. */
+	/**
+	 * His places a player might sleep near ("the pyramids feel like monuments"): cairns, pyramids, his crosses (never a
+	 * glass memorial, which people left, D-051). Nearest first.
+	 */
 	public static List<GlobalPos> hisPlaces(MinecraftServer server, GlobalPos near, int radius) {
 		List<GlobalPos> places = new ArrayList<>();
 		for (SiteType type : new SiteType[] {SiteType.OCEAN_PYRAMID, SiteType.CROSS}) {
 			for (SiteRegistry.Site site : Services.sites().find(type, near, radius)) {
-				places.add(site.globalPos());
+				if (!CrossApi.isGlassMemorial(site)) {
+					places.add(site.globalPos());
+				}
 			}
 		}
 		Services.fragments().placed(server, CAIRN_FRAGMENT).filter(p -> p.dimension().equals(near.dimension())
