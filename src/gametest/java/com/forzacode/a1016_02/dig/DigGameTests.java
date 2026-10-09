@@ -12,10 +12,13 @@ import com.forzacode.a1016_02.core.Stage;
 import com.forzacode.a1016_02.core.Tier;
 import com.forzacode.a1016_02.core.TraceLedger;
 
+import com.mojang.brigadier.ParseResults;
+
 import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 
 import net.fabricmc.fabric.api.gametest.v1.GameTest;
 
+import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.core.GlobalPos;
@@ -23,6 +26,7 @@ import net.minecraft.gametest.framework.GameTestHelper;
 import net.minecraft.nbt.NbtOps;
 import net.minecraft.nbt.Tag;
 import net.minecraft.resources.RegistryOps;
+import net.minecraft.server.MinecraftServer;
 import net.minecraft.util.RandomSource;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.LeavesBlock;
@@ -168,6 +172,19 @@ public class DigGameTests extends TunnelGameTests {
 		helper.assertTrue(net.budget == budget && net.nights == 1, "the same night was credited twice");
 		net.creditNights(6, config);
 		helper.assertTrue(net.nights == 3 && net.budget == budget + 2 * config.networkBlocksPerNight, "missed nights not credited");
+		helper.succeed();
+	}
+
+	@GameTest
+	public void debugCommandsParseAndRun(GameTestHelper helper) {
+		MinecraftServer server = helper.getLevel().getServer();
+		CommandSourceStack source = server.createCommandSourceStack().withSuppressedOutput();
+		for (String command : List.of("a1016 dig network grow 3", "a1016 dig network info", "a1016 dig network reveal", "a1016 dig tunnel plain",
+				"a1016 dig tunnel tunnel_that_grows", "a1016 dig tunnel tunnel_into_mine")) {
+			ParseResults<CommandSourceStack> parsed = server.getCommands().getDispatcher().parse(command, source);
+			helper.assertTrue(!parsed.getReader().canRead() && parsed.getExceptions().isEmpty(), "does not parse: " + command);
+		}
+		server.getCommands().performPrefixedCommand(source, "a1016 dig network info");
 		helper.succeed();
 	}
 
