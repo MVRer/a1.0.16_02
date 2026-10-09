@@ -15,6 +15,7 @@ import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.level.Level;
+import net.minecraft.world.level.levelgen.Heightmap;
 
 /**
  * The context gates of a sighting (DESIGN.md "Sightings"): fog or dusk, never in clear daylight, never during
@@ -64,7 +65,7 @@ public final class SightingGates {
 		if (Services.watch().ticksSinceCombat(player) < ModConfig.realTicks(config.combatCooldownSeconds)) {
 			return Optional.of("combat");
 		}
-		if (!level.canSeeSky(BlockPos.containing(player.getEyePosition()))) {
+		if (indoors(level, player)) {
 			return Optional.of("indoors");
 		}
 		if (nearBase(player, player.blockPosition(), config.baseRadius)) {
@@ -86,6 +87,12 @@ public final class SightingGates {
 			return Optional.of("no lone light in range");
 		}
 		return Optional.empty();
+	}
+
+	/** Something solid over the player's head (leaves don't count: a tree is not a roof). */
+	public static boolean indoors(ServerLevel level, ServerPlayer player) {
+		BlockPos eye = BlockPos.containing(player.getEyePosition());
+		return level.getHeight(Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, eye.getX(), eye.getZ()) > eye.getY();
 	}
 
 	/** Time of day, 0 (sunrise) to 23999. */

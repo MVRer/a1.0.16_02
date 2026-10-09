@@ -152,6 +152,9 @@ public class HimEntity extends PathfinderMob {
 	@Override
 	protected void customServerAiStep(ServerLevel level) {
 		super.customServerAiStep(level);
+		if (age == 0 && bornTick < 0) {
+			holdYaw = getYRot(); // made without setup (/summon): keep the facing he was given
+		}
 		age++;
 		phaseTicks++;
 		EntityConfig config = EntityConfig.get();

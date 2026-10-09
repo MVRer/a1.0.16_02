@@ -41,7 +41,6 @@ final class Fakes {
 			return FireResult.SKIPPED;
 		}
 		Services.mobs().face(mob.get(), player.getEyePosition(), ticks);
-		Services.mobs().silence(mob.get(), ticks);
 		ServerLevel level = player.level();
 		EntityData.get(level.getServer()).recordFake(GlobalPos.of(level.dimension(), mob.get().blockPosition()), GameClock.day(level.getServer()));
 		return FireResult.FIRED;

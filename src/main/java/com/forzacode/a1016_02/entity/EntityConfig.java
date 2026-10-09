@@ -44,7 +44,7 @@ public final class EntityConfig {
 
 	// --- behaviour ---
 	/** Half-angle of the cone around the crosshair that counts as looking at him. */
-	public double stareConeDegrees = 8;
+	public double stareConeDegrees = 6;
 	/** Walking this many blocks toward him ends the sighting. */
 	public double approachBlocks = 6;
 	public double stareBackSeconds = 1.0;
