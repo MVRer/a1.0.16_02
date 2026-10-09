@@ -118,11 +118,17 @@ public final class DirectorApi {
 	}
 
 	/**
-	 * Seeds for multi-seed dry runs (tuning and the soft-rate floors test): the playthrough's default seed first.
-	 * One seed is one world's dice; rates only mean something averaged over several.
+	 * Seeds for multi-seed dry runs (tuning and the soft-rate floors test): the playthrough's default seed first, then
+	 * 1 to 191. One seed is one world's dice: pooled over 32 seeds a rate still swings about 5% from one set to the
+	 * next, over 192 about 1 to 2%. A 20 h dry run takes a few milliseconds, so the wide set is cheap.
 	 */
 	public static List<Long> tuningSeeds() {
-		return List.of(1016L, 1L, 2L, 3L, 7L, 42L, 99_991L, 0xA1016L);
+		List<Long> seeds = new ArrayList<>();
+		seeds.add(1016L);
+		for (long seed = 1; seed < 192; seed++) {
+			seeds.add(seed);
+		}
+		return List.copyOf(seeds);
 	}
 
 	/**
