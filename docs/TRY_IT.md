@@ -2,6 +2,24 @@
 
 One entry per merge, newest first. Run the game from the main checkout (this folder, on `main`).
 
+## READY TO TRY: Bright eyes and sightings you can actually see  (merged feat/entity-eyes, commit 3f33a8e)
+```
+Restart needed: full game restart (new renderer, shader and Java code)
+See it now:
+  1. Launch "Dev Client". Render Distance 6. /a1016 stage 2, /time set 13000, /a1016 atmosphere fog dusk 0.45
+  2. /a1016 fire sighting_walks_away   (or sighting_cow, sighting_ridge, sighting_close). Turn slowly; he's behind you.
+  3. Eyes, live: /a1016 entity eyes bright 0.5  |  /a1016 entity eyes bright 0.8 (pierces more fog)  |
+     /a1016 entity eyes flat  |  /a1016 entity eyes glow.  Bare /a1016 entity eyes prints the current style.
+  4. Tuning, live: /a1016 entity tune shows every value. For example /a1016 entity tune approachBlocks 14,
+     /a1016 entity tune stareSeconds 4, /a1016 entity tune spawnDistanceFractionMax 0.6,
+     /a1016 entity tune closeMaxDistance 30
+What to look for: a hazy but clear shape at about half the fog distance. At night his body fades into the fog
+  but two pale points stay. Walking a few steps no longer scares him off: he leaves after 10 blocks of real
+  approach, within 18 blocks, or after 3 s of staring, then stares back 2 s before turning.
+Known rough edges: the fog distance uses atmosphere's curve directly until the shared core helper lands.
+  The "goes under" exit (D-030) is next.
+```
+
 ## READY TO TRY: Fragments (all 30, placed by stage)  (merged feat/lore-fragments, commit 3ea390a)
 ```
 Restart needed: full game restart (new Java code and mixins). Later fragment text edits only need /reload.
