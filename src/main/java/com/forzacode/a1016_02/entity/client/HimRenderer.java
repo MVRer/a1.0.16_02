@@ -2,52 +2,51 @@ package com.forzacode.a1016_02.entity.client;
 
 import com.forzacode.a1016_02.A1016_02;
 import com.forzacode.a1016_02.entity.HimEntity;
+import com.mojang.blaze3d.vertex.PoseStack;
 
-import net.minecraft.client.model.HumanoidModel;
 import net.minecraft.client.model.geom.ModelLayers;
 import net.minecraft.client.renderer.entity.EntityRendererProvider;
 import net.minecraft.client.renderer.entity.HumanoidMobRenderer;
-import net.minecraft.client.renderer.entity.RenderLayerParent;
-import net.minecraft.client.renderer.entity.layers.EyesLayer;
-import net.minecraft.client.renderer.entity.state.HumanoidRenderState;
-import net.minecraft.client.renderer.rendertype.RenderType;
-import net.minecraft.client.renderer.rendertype.RenderTypes;
 import net.minecraft.resources.Identifier;
 
-public class HimRenderer extends HumanoidMobRenderer<HimEntity, HumanoidRenderState, HumanoidModel<HumanoidRenderState>> {
+/**
+ * The figure: the player model with the default Steve skin and pure white eyes painted into the base texture.
+ * Nothing glows (no eyes layer, no emissive render type), so he is lit and fogged like the terrain around him.
+ * He never shows a name.
+ */
+public class HimRenderer extends HumanoidMobRenderer<HimEntity, HimRenderState, HimModel> {
 	private static final Identifier TEXTURE = A1016_02.id("textures/entity/him.png");
+	/** The player renderer's scale: a player is 1.875 blocks tall, not the 2 of the raw humanoid model. */
+	private static final float PLAYER_SCALE = 0.9375F;
 
 	public HimRenderer(EntityRendererProvider.Context context) {
 		// Player model layer so the skin (including the outer layer) maps exactly like a player's
-		super(context, new HumanoidModel<>(context.bakeLayer(ModelLayers.PLAYER)), 0.5F);
-		this.addLayer(new GlowingEyesLayer(this));
+		super(context, new HimModel(context.bakeLayer(ModelLayers.PLAYER)), 0.5F);
 	}
 
 	@Override
-	public HumanoidRenderState createRenderState() {
-		return new HumanoidRenderState();
+	public HimRenderState createRenderState() {
+		return new HimRenderState();
 	}
 
 	@Override
-	public Identifier getTextureLocation(HumanoidRenderState state) {
+	public void extractRenderState(HimEntity entity, HimRenderState state, float partialTick) {
+		super.extractRenderState(entity, state, partialTick);
+		state.lowAmount = entity.lowAmount(partialTick);
+	}
+
+	@Override
+	public Identifier getTextureLocation(HimRenderState state) {
 		return TEXTURE;
+	}
+
+	@Override
+	protected void scale(HimRenderState state, PoseStack poseStack) {
+		poseStack.scale(PLAYER_SCALE, PLAYER_SCALE, PLAYER_SCALE);
 	}
 
 	@Override
 	protected boolean shouldShowName(HimEntity entity, double distanceToCameraSq) {
 		return false;
-	}
-
-	private static class GlowingEyesLayer extends EyesLayer<HumanoidRenderState, HumanoidModel<HumanoidRenderState>> {
-		private static final RenderType EYES = RenderTypes.eyes(A1016_02.id("textures/entity/him_eyes.png"));
-
-		GlowingEyesLayer(RenderLayerParent<HumanoidRenderState, HumanoidModel<HumanoidRenderState>> parent) {
-			super(parent);
-		}
-
-		@Override
-		public RenderType renderType() {
-			return EYES;
-		}
 	}
 }

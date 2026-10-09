@@ -14,15 +14,20 @@ import net.minecraft.world.entity.MobCategory;
 public final class ModEntities {
 	private static final ResourceKey<EntityType<?>> HIM_KEY = ResourceKey.create(Registries.ENTITY_TYPE, A1016_02.id("him"));
 
-	// noSave: a fresh one is spawned on every join, so old ones shouldn't pile up in the world
+	/**
+	 * MISC: never counted toward mob caps and never spawned naturally. noSave: never written to disk, so he is gone
+	 * when his chunk unloads. Tracked out to the server view distance, since he lives at the fog edge.
+	 */
 	public static final EntityType<HimEntity> HIM = Registry.register(
 			BuiltInRegistries.ENTITY_TYPE,
 			HIM_KEY,
 			EntityType.Builder.of(HimEntity::new, MobCategory.MISC)
 					.sized(0.6F, 1.8F)
 					.eyeHeight(1.62F)
-					.clientTrackingRange(10)
+					.clientTrackingRange(32)
 					.noSave()
+					.noLootTable()
+					.fireImmune()
 					.build(HIM_KEY)
 	);
 
