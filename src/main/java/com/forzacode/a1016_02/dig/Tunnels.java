@@ -188,6 +188,14 @@ public final class Tunnels {
 		}
 		int r = rules.clearance();
 		if (r > 0) {
+			// placedNear reads block states: never let it load a chunk.
+			for (int cx = (anchor.getX() - r - 1) >> 4; cx <= (anchor.getX() + r + 2) >> 4; cx++) {
+				for (int cz = (anchor.getZ() - r - 1) >> 4; cz <= (anchor.getZ() + r + 2) >> 4; cz++) {
+					if (!level.getChunkSource().hasChunk(cx, cz)) {
+						return UNLOADED;
+					}
+				}
+			}
 			for (BlockPos dug : watch.dugNear(level, anchor, r + 1)) {
 				if (!rules.ignored().test(dug) && within(fresh, dug, r)) {
 					return "near a player dig";

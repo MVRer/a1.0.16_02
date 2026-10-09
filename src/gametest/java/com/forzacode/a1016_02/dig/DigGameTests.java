@@ -12,10 +12,13 @@ import com.forzacode.a1016_02.core.Stage;
 import com.forzacode.a1016_02.core.Tier;
 import com.forzacode.a1016_02.core.TraceLedger;
 
+import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
+
 import net.fabricmc.fabric.api.gametest.v1.GameTest;
 
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
+import net.minecraft.core.GlobalPos;
 import net.minecraft.gametest.framework.GameTestHelper;
 import net.minecraft.nbt.NbtOps;
 import net.minecraft.nbt.Tag;
@@ -129,6 +132,42 @@ public class DigGameTests extends TunnelGameTests {
 		helper.assertTrue(g.level.getBlockState(wallTorch).isAir() && g.level.getBlockState(floorTorch).isAir(), "torches still there");
 		helper.assertTrue(g.level.getBlockState(wallTorch.west()).is(Blocks.STONE) && g.level.getBlockState(floorTorch.below()).is(Blocks.STONE),
 				"a support block went");
+		helper.succeed();
+	}
+
+	@GameTest
+	public void enteringHisTunnelIsNoticed(GameTestHelper helper) {
+		DigGround g = DigGround.of(helper, 11, 16, 6, 16, Blocks.STONE);
+		List<BlockPos> anchors = List.of(g.at(4, 1, 4), g.at(5, 1, 4), g.at(6, 1, 4), g.at(7, 1, 4));
+		helper.assertTrue(Tunnels.carve(g.level, Services.traces(), anchors, new LongOpenHashSet(), "test:dig"), "carve refused");
+		DigData data = DigData.get(g.level.getServer());
+		data.addTunnel(new DigData.CardTunnel(g.level.dimension(), anchors, "plain", -1));
+		g.stand(g.at(6, 1, 5));
+		helper.assertTrue(DigTicker.insideHisTunnel(g.mock, data), "inside the tunnel, not noticed");
+		g.stand(g.at(12, 6, 12));
+		helper.assertFalse(DigTicker.insideHisTunnel(g.mock, data), "outside the tunnel, noticed");
+		helper.succeed();
+	}
+
+	@GameTest
+	public void networkWaitsForTheFirstNightsInABase(GameTestHelper helper) {
+		DigConfig config = new DigConfig();
+		DigData data = new DigData();
+		GlobalPos base = GlobalPos.of(helper.getLevel().dimension(), new BlockPos(100, 70, 100));
+		helper.assertTrue(UnderYou.active(data, base, 3, config, false) == null, "started on the night the base was first seen");
+		Network net = UnderYou.active(data, base, 3 + config.networkStartAfterNights, config, false);
+		helper.assertTrue(net != null && net.base.equals(base.pos()), "did not start after " + config.networkStartAfterNights + " nights");
+		helper.assertTrue(UnderYou.active(data, GlobalPos.of(base.dimension(), base.pos().east(10)), 9, config, false) == net, "a nearby base got a new network");
+		GlobalPos moved = GlobalPos.of(base.dimension(), base.pos().east(config.networkBaseMoveDistance + 50));
+		helper.assertTrue(UnderYou.active(data, moved, 9, config, false) == null && data.networks.size() == 1, "a moved base started at once");
+		helper.assertTrue(UnderYou.active(data, moved, 9 + config.networkStartAfterNights, config, false) != null && data.networks.size() == 2,
+				"a moved base never got its own network");
+		net.creditNights(4, config);
+		int budget = net.budget;
+		net.creditNights(4, config);
+		helper.assertTrue(net.budget == budget && net.nights == 1, "the same night was credited twice");
+		net.creditNights(6, config);
+		helper.assertTrue(net.nights == 3 && net.budget == budget + 2 * config.networkBlocksPerNight, "missed nights not credited");
 		helper.succeed();
 	}
 
