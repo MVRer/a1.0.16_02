@@ -27,7 +27,7 @@ Status values: queued, running, review, fix, merged, blocked. Only the orchestra
 | P1-6b | Lore: F21 only in world's still-burning camp (D-004); never a second furnace | lore | feat/lore-stillburning | v0.8 | merged | Follow-up for P2-2: raise `WorldConfig.stillBurningF21MaxFromBase` (1450) and `stillBurningF21MinBlocks` (900) to about 2000 |
 | P1-5c | Fix the flaky atmosphere tamper test (released cow doesn't always walk) | atmosphere | feat/atmosphere-flaky | - | merged | Test-only. 6/6 on the branch, 2/2 with --rerun-tasks on main |
 | P2-1a | Endings A, B, C, Stage 4 entry, the third-death rule | ending | feat/ending-abc | v0.8-endings | running | Uses the director flags `director:silence_until_day` and `director:pace_multiplier` (coming in P1-1c) |
-| P2-1b | Ending D: the full chain, the last minute, the afterward, the sting | ending (ending/d/**) | feat/ending-d | v0.8-endings | queued (spawn next) | |
+| P2-1b | Ending D: the full chain, the last minute, the afterward, the sting | ending (ending/d/**) | feat/ending-d | v0.8-endings | running | Owns ending/d/** only; builds the team's stair under F07 if missing |
 | P2-2 | Integration: wire all cards, close contract gaps, guardrail pass | (multi) | feat/integration-pass | v1.0 | queued, phase 2 | |
 | P2-3 | Playtest tooling: dev overlay and a 20 h scripted timewarp log | debug | feat/debug-playtest | v1.0 | merged | Narrow exception: one public read-only DirectorApi |
 
