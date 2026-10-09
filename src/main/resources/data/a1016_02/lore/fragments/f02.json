@@ -15,6 +15,7 @@
 		"rule": "hut_or_tunnel",
 		"site": "TUNNEL_END",
 		"same_as": "F01",
+		"not_with": "F06",
 		"origin": "base",
 		"min_distance": 80,
 		"max_distance": 1000,

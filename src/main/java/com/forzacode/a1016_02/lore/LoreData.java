@@ -68,6 +68,12 @@ public final class LoreData extends SavedData {
 		setDirty();
 	}
 
+	public void removeAnchor(String key) {
+		if (anchors.remove(key) != null) {
+			setDirty();
+		}
+	}
+
 	public Map<String, List<GlobalPos>> readTargets() {
 		return Collections.unmodifiableMap(readTargets);
 	}

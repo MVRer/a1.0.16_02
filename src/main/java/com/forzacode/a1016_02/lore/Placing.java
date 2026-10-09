@@ -58,9 +58,10 @@ final class Placing {
 	 * @param traces      the trace service (forced in tests)
 	 * @param playerName  replaces {@code [PLAYER NAME]}
 	 * @param ownBuilds   may build its own site when world or dig recorded none ({@link LoreConfig#ownBuildDelayMinutes})
+	 * @param loads       set when the attempt stopped to wait for chunks ({@link ChunkGate})
 	 */
 	record Request(ServerLevel level, Fragment fragment, BlockPos origin, int minDistance, int maxDistance, int tries,
-			TraceService traces, String playerName, Facts facts, RandomSource random, boolean ownBuilds) {
+			TraceService traces, String playerName, Facts facts, RandomSource random, boolean ownBuilds, Loads loads) {
 		String id() {
 			return fragment.id();
 		}
@@ -70,7 +71,16 @@ final class Placing {
 		}
 
 		Request withBand(BlockPos newOrigin, int min, int max) {
-			return new Request(level, fragment, newOrigin, min, max, tries, traces, playerName, facts, random, ownBuilds);
+			return new Request(level, fragment, newOrigin, min, max, tries, traces, playerName, facts, random, ownBuilds, loads);
+		}
+	}
+
+	/** Whether an attempt is waiting for chunks to load (try again in a moment, with the same candidates). */
+	static final class Loads {
+		boolean waiting;
+
+		boolean waiting() {
+			return waiting;
 		}
 	}
 

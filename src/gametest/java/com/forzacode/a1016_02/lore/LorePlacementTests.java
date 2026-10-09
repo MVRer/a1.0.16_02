@@ -11,10 +11,12 @@ import com.forzacode.a1016_02.core.SiteRegistry.Site;
 import com.forzacode.a1016_02.core.SiteType;
 import com.forzacode.a1016_02.core.Stage;
 import com.forzacode.a1016_02.core.TraceLedger;
+import com.forzacode.a1016_02.core.WorldProfile;
 
 import net.fabricmc.fabric.api.gametest.v1.GameTest;
 
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
 import net.minecraft.core.GlobalPos;
 import net.minecraft.core.component.DataComponents;
 import net.minecraft.gametest.framework.GameTestHelper;
@@ -25,10 +27,12 @@ import net.minecraft.world.Container;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.item.component.WrittenBookContent;
+import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.AbstractFurnaceBlock;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.WallSignBlock;
+import net.minecraft.world.level.block.piston.PistonBaseBlock;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.entity.ChestBlockEntity;
 import net.minecraft.world.level.block.entity.JukeboxBlockEntity;
@@ -45,7 +49,8 @@ public class LorePlacementTests extends LoreTextTests {
 
 	static Placing.Request request(GameTestHelper helper, String id, BlockPos absOrigin, int min, int max, TestFacts facts) {
 		ServerLevel level = helper.getLevel();
-		return new Placing.Request(level, fragment(id), absOrigin, min, max, 1, Services.traces().forced(), NAME, facts, level.getRandom(), true);
+		return new Placing.Request(level, fragment(id), absOrigin, min, max, 1, Services.traces().forced(), NAME, facts, level.getRandom(), true,
+				new Placing.Loads());
 	}
 
 	static Placing.Result place(GameTestHelper helper, String id, BlockPos absOrigin, TestFacts facts) {
@@ -168,10 +173,10 @@ public class LorePlacementTests extends LoreTextTests {
 		ServerLevel level = helper.getLevel();
 		BlockPos center = abs(helper, 3, 1, 3);
 		Placing.Request waiting = new Placing.Request(level, fragment("F23"), center, 0, 2, 4, Services.traces().forced(), NAME,
-				new TestFacts(helper), level.getRandom(), false);
+				new TestFacts(helper), level.getRandom(), false, new Placing.Loads());
 		helper.assertTrue(Placers.place(waiting).isEmpty(), "F23 built its own tower before the wait");
 		Placing.Request building = new Placing.Request(level, fragment("F23"), center, 0, 2, 4, Services.traces().forced(), NAME,
-				new TestFacts(helper), level.getRandom(), true);
+				new TestFacts(helper), level.getRandom(), true, new Placing.Loads());
 		Placing.Result result = Placers.place(building).orElseThrow(() -> helper.assertionException(Component.literal("no own panic tower")));
 		assertHolds(helper, result.pos, "F23");
 		helper.assertTrue(level.getBlockState(result.pos.below()).is(Blocks.DIRT), "the chest is not on a dirt pillar");
@@ -180,6 +185,57 @@ public class LorePlacementTests extends LoreTextTests {
 		for (BlockPos pos : BlockPos.betweenClosed(ground.offset(0, 1, 0), ground.offset(7, 20, 7))) {
 			level.setBlock(pos, Blocks.AIR.defaultBlockState(), Block.UPDATE_CLIENTS | Block.UPDATE_SKIP_BLOCK_ENTITY_SIDEEFFECTS);
 		}
+		helper.succeed();
+	}
+
+	@GameTest
+	public void placeIsIdempotentAndGatedOnTheProfile(GameTestHelper helper) {
+		HerobrineState state = new HerobrineState();
+		state.reroll(42L, 7L);
+		String enabled = state.profile().fragments().iterator().next();
+		String disabled = WorldProfile.allFragmentIds().stream().filter(id -> !state.profile().fragments().contains(id)).findFirst().orElseThrow();
+		int[] calls = new int[1];
+		helper.assertFalse(FragmentServiceImpl.placeOnce(state, disabled, () -> ++calls[0] > 0), "a fragment this world did not roll was placed");
+		helper.assertTrue(FragmentServiceImpl.placeOnce(state, enabled, () -> ++calls[0] > 0) && calls[0] == 1, "the first place did not place");
+		state.setFragmentPlaced(enabled, GlobalPos.of(helper.getLevel().dimension(), BlockPos.ZERO));
+		helper.assertTrue(FragmentServiceImpl.placeOnce(state, enabled, () -> ++calls[0] > 0) && calls[0] == 1, "a second place placed again");
+		helper.succeed();
+	}
+
+	/** Far, unloaded chunks are never read: the attempt waits and the chunks are only queued for a ticket. */
+	@GameTest
+	public void farChunksAreQueuedNotLoaded(GameTestHelper helper) {
+		ServerLevel level = helper.getLevel();
+		BlockPos far = abs(helper, 3, 1, 3).offset(48_000, 0, 48_000);
+		helper.assertTrue(level.getChunkSource().getChunkNow(far.getX() >> 4, far.getZ() >> 4) == null, "the far chunk is already loaded");
+		Placing.Request request = new Placing.Request(level, fragment("F05"), far, 0, 0, 3, Services.traces().forced(), NAME,
+				new TestFacts(helper), level.getRandom(), true, new Placing.Loads());
+		helper.assertTrue(Placers.place(request).isEmpty(), "F05 was placed in an unloaded chunk");
+		helper.assertTrue(request.loads().waiting(), "the attempt does not wait for its chunks");
+		helper.assertTrue(level.getChunkSource().getChunkNow(far.getX() >> 4, far.getZ() >> 4) == null, "placement loaded a chunk synchronously");
+		helper.succeed();
+	}
+
+	/** F19 (not_with F07) leaves the largest pyramid to the seed while F07 is not placed. */
+	@GameTest
+	public void theLargestPyramidIsKeptForTheSeed(GameTestHelper helper) {
+		floor(helper);
+		for (BlockPos core : List.of(new BlockPos(2, 1, 2), new BlockPos(5, 1, 5))) {
+			for (BlockPos pos : BlockPos.betweenClosed(core.offset(-1, 0, -1), core.offset(1, 1, 1))) {
+				if (!pos.equals(core)) {
+					helper.setBlock(pos, Blocks.SANDSTONE);
+				}
+			}
+		}
+		seed(helper, SiteType.OCEAN_PYRAMID, new BlockPos(2, 1, 2), 9);
+		seed(helper, SiteType.OCEAN_PYRAMID, new BlockPos(5, 1, 5), 2);
+		TestFacts facts = new TestFacts(helper);
+		facts.enabled.addAll(List.of("F07", "F19"));
+		facts.base = abs(helper, 2, 1, 2);
+		Placing.Result result = place(helper, "F19", abs(helper, 2, 1, 2), 6, facts);
+		helper.assertTrue(result.pos.equals(abs(helper, 5, 1, 5)), "F19 took the seed's pyramid: " + result.pos.toShortString());
+		assertHolds(helper, result.pos, "F19");
+		helper.assertTrue(place(helper, "F07", abs(helper, 2, 1, 2), 6, facts).pos.equals(abs(helper, 2, 1, 2)), "F07 did not get the largest");
 		helper.succeed();
 	}
 
@@ -398,25 +454,57 @@ public class LorePlacementTests extends LoreTextTests {
 		helper.succeed();
 	}
 
-	@GameTest(skyAccess = true)
-	public void theTwinSigns(GameTestHelper helper) {
+	/**
+	 * F30: one sign on the oldest poplar, its twin on bedrock under the seed pyramid. The grove scan needs chunks
+	 * around the test, which load by ticket, so the placement is retried each tick until they are there. Then
+	 * nothing can break the twins: not destroying, removing, exploding, pistons, nor TraceService.
+	 */
+	@GameTest(skyAccess = true, maxTicks = 400)
+	public void theTwinSignsCannotBeBroken(GameTestHelper helper) {
+		ServerLevel level = helper.getLevel();
 		helper.setBlock(2, 0, 2, Blocks.DIRT);
 		for (int y = 1; y <= 4; y++) {
 			helper.setBlock(2, y, 2, Blocks.POPLAR_LOG);
 		}
 		TestFacts facts = new TestFacts(helper);
-		facts.grove = GlobalPos.of(helper.getLevel().dimension(), abs(helper, 2, 1, 2));
-		facts.placed.put("F07", GlobalPos.of(helper.getLevel().dimension(), abs(helper, 5, 1, 5)));
-		Placing.Result result = place(helper, "F30", abs(helper, 2, 1, 2), facts);
-		BlockPos grove = facts.anchors.get("F30/grove").pos();
-		BlockPos bedrock = facts.anchors.get("F30/bedrock").pos();
-		helper.assertTrue(helper.getLevel().getBlockState(grove).getBlock() instanceof WallSignBlock, "the grove sign is not on the poplar");
-		assertSign(helper, grove, "F30");
-		assertSign(helper, bedrock, "F30");
-		helper.assertTrue(helper.getLevel().getBlockState(bedrock.below()).is(Blocks.BEDROCK), "the twin is not on bedrock");
-		helper.assertTrue(result.readTargets.containsAll(List.of(grove, bedrock)), "both twins are read targets");
-		helper.getLevel().setBlock(bedrock, Blocks.DIRT.defaultBlockState(), Block.UPDATE_CLIENTS | Block.UPDATE_SKIP_BLOCK_ENTITY_SIDEEFFECTS);
-		helper.succeed();
+		facts.grove = GlobalPos.of(level.dimension(), abs(helper, 2, 1, 2));
+		facts.placed.put("F07", GlobalPos.of(level.dimension(), abs(helper, 5, 1, 5)));
+		Placing.Result[] placed = new Placing.Result[1];
+		helper.startSequence().thenWaitUntil(() -> {
+			if (placed[0] == null) {
+				Placing.Request request = request(helper, "F30", abs(helper, 2, 1, 2), 0, 3, facts);
+				placed[0] = Placers.place(request).orElseThrow(() -> helper.assertionException(Component.literal(
+						request.loads().waiting() ? "F30 waits for its chunks" : "F30 was not placed")));
+			}
+		}).thenExecute(() -> {
+			BlockPos grove = facts.anchors.get("F30/grove").pos();
+			BlockPos bedrock = facts.anchors.get("F30/bedrock").pos();
+			try {
+				helper.assertTrue(level.getBlockState(grove).getBlock() instanceof WallSignBlock, "the grove sign is not on the poplar");
+				assertSign(helper, grove, "F30");
+				assertSign(helper, bedrock, "F30");
+				helper.assertTrue(level.getBlockState(bedrock.below()).is(Blocks.BEDROCK), "the twin is not on bedrock");
+				helper.assertTrue(placed[0].readTargets.containsAll(List.of(grove, bedrock)), "both twins are read targets");
+				for (BlockPos sign : List.of(grove, bedrock)) {
+					helper.assertTrue(UnbreakableSigns.isProtected(level, sign), "a twin is not protected");
+					helper.assertTrue(level.getBlockEntity(sign) instanceof SignBlockEntity entity && entity.isWaxed(), "a twin can be edited");
+					helper.assertFalse(level.destroyBlock(sign, true), "destroyBlock broke a twin");
+					helper.assertFalse(level.removeBlock(sign, false), "removeBlock broke a twin");
+					helper.assertFalse(Services.traces().forced().remove(level, sign, "test:twin"), "TraceService removed a twin");
+					helper.assertFalse(PistonBaseBlock.isPushable(level.getBlockState(sign), level, sign, Direction.NORTH, true, Direction.NORTH),
+							"a piston could move a twin");
+				}
+				helper.assertFalse(Services.traces().forced().remove(level, grove.relative(
+						level.getBlockState(grove).getValue(WallSignBlock.FACING).getOpposite()), "test:twin"), "TraceService took the log under a twin");
+				level.explode(null, grove.getX() + 0.5, grove.getY() + 0.5, grove.getZ() + 1.5, 2.0F, Level.ExplosionInteraction.TNT);
+				helper.assertTrue(level.getBlockEntity(grove) instanceof SignBlockEntity entity
+						&& entity.getText(SignTextSlot.FRONT).getMessages(false).getFirst().getString().equals("i did, but"), "an explosion broke the grove twin");
+			} finally {
+				UnbreakableSigns.release(level, grove);
+				UnbreakableSigns.release(level, bedrock);
+				level.setBlock(bedrock, Blocks.DIRT.defaultBlockState(), Block.UPDATE_CLIENTS | Block.UPDATE_SKIP_BLOCK_ENTITY_SIDEEFFECTS);
+			}
+		}).thenSucceed();
 	}
 
 	/** The F15 room is built at Y 12 to 20, right above this test's area, then F16, F22 and F29 go in it. */

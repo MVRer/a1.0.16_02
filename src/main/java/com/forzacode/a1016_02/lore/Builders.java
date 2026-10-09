@@ -85,20 +85,33 @@ final class Builders {
 		return Optional.of(new Tunnel(cells, end, dir, length));
 	}
 
-	/** A tunnel near this column: from a cave wall if there is a cave below, otherwise sealed in the rock. */
-	static Optional<Tunnel> findTunnel(ServerLevel level, BlockPos column, int length, RandomSource random) {
-		Optional<BlockPos> cave = Terrain.caveFloor(level, column.getX(), column.getZ(), 40, -40);
-		if (cave.isPresent()) {
-			for (Direction dir : Terrain.shuffledHorizontal(random)) {
-				Optional<Tunnel> tunnel = planTunnel(level, cave.get().relative(dir), dir, length);
-				if (tunnel.isPresent()) {
-					return tunnel;
-				}
-			}
+	/** Whether the chunks under a box are loaded (and, if not, asks for them): planning reads nothing else. */
+	@FunctionalInterface
+	interface Area {
+		boolean ready(BlockPos a, BlockPos b);
+	}
+
+	/**
+	 * A tunnel near this column: from a cave wall if there is a cave below, otherwise sealed in the rock. Stops
+	 * (empty) as soon as an area it needs is not loaded yet.
+	 */
+	static Optional<Tunnel> findTunnel(ServerLevel level, BlockPos column, int length, RandomSource random, Area area) {
+		if (!area.ready(column, column)) {
+			return Optional.empty();
 		}
+		List<Direction> dirs = Terrain.shuffledHorizontal(random);
+		Optional<BlockPos> cave = Terrain.caveFloor(level, column.getX(), column.getZ(), 40, -40);
 		int y = Math.max(-40, Math.min(40, Terrain.ground(level, column.getX(), column.getZ()).getY() - 20));
-		for (Direction dir : Terrain.shuffledHorizontal(random)) {
-			Optional<Tunnel> tunnel = planTunnel(level, new BlockPos(column.getX(), y, column.getZ()), dir, length);
+		List<BlockPos> starts = new ArrayList<>();
+		cave.ifPresent(floor -> dirs.forEach(dir -> starts.add(floor.relative(dir))));
+		dirs.forEach(dir -> starts.add(new BlockPos(column.getX(), y, column.getZ()).relative(dir, 0)));
+		for (int n = 0; n < starts.size(); n++) {
+			Direction dir = dirs.get(n % dirs.size());
+			BlockPos start = starts.get(n);
+			if (!area.ready(start, start.relative(dir, length).relative(dir.getClockWise(), 1))) {
+				return Optional.empty();
+			}
+			Optional<Tunnel> tunnel = planTunnel(level, start, dir, length);
 			if (tunnel.isPresent()) {
 				return tunnel;
 			}

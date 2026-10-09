@@ -80,7 +80,7 @@ final class LoreCommands {
 				config.debugMaxDistance, 8, true, Optional.of(player));
 		if (result.isEmpty()) {
 			ctx.getSource().sendFailure(Component.literal("[a1016] could not place " + fragment.get().id()
-					+ " out of view right now (turn around, or move somewhere with ground behind you)"));
+					+ " out of view right now (far chunks it needs may be loading: try again in a few seconds; or turn around)"));
 			return 0;
 		}
 		BlockPos pos = result.get().pos;

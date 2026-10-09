@@ -8,6 +8,7 @@
 		"rule": "cairn",
 		"site": "OCEAN_PYRAMID",
 		"pick": "nearest",
+		"not_with": "F07",
 		"origin": "base",
 		"min_distance": 0,
 		"max_distance": 1500

@@ -33,7 +33,6 @@ import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.tags.BiomeTags;
 import net.minecraft.tags.BlockTags;
-import net.minecraft.tags.TagKey;
 import net.minecraft.world.Container;
 import net.minecraft.world.RandomizableContainer;
 import net.minecraft.world.item.ItemStack;
@@ -47,12 +46,12 @@ import net.minecraft.world.level.block.StandingSignBlock;
 import net.minecraft.world.level.block.WallSignBlock;
 import net.minecraft.world.level.block.WallTorchBlock;
 import net.minecraft.world.level.block.entity.BlockEntity;
+import net.minecraft.world.level.block.entity.SignBlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.state.properties.ChestType;
 import net.minecraft.world.level.block.state.properties.RotationSegment;
 import net.minecraft.world.level.chunk.LevelChunk;
 import net.minecraft.world.level.levelgen.structure.BoundingBox;
-import net.minecraft.world.level.levelgen.structure.Structure;
 import net.minecraft.world.level.levelgen.structure.StructureStart;
 import net.minecraft.world.level.storage.loot.LootTable;
 import net.minecraft.world.phys.Vec3;
@@ -60,8 +59,10 @@ import net.minecraft.world.phys.Vec3;
 /**
  * The placement rules named in the fragment data ({@code placement.rule}). Each one fills a site that world or
  * dig recorded when there is one, and otherwise builds a minimal place of its own (recorded in the
- * {@code SiteRegistry} too), always through {@link Build} so every change is out of view. Returns empty when
- * nothing could be placed right now; the engine tries again later.
+ * {@code SiteRegistry} too), always through {@link Build} so every change is out of view. Rules read only loaded
+ * chunks: before probing an area they ask {@link ChunkGate}, which queues the missing chunks for loading by
+ * ticket and marks the request as waiting. Returns empty when nothing could be placed right now; the engine tries
+ * again later (soon, with the same candidates, when it was waiting for chunks).
  */
 final class Placers {
 	/** Rules the fragment engine does not place (telling and Ending B, the next task). */
@@ -72,7 +73,6 @@ final class Placers {
 			"under_base_chest", "below_spawn", "test_room", "test_room_chest", "test_room_loft", "test_room_below", "emptied_house",
 			"panic_tower", "cross_sign", "stair_bottom", "restored_tree", "house_copy", "camp_map", "twin_signs", "telling", "ending_b");
 
-	private static final TagKey<Structure> CAMPS = TagKey.create(Registries.STRUCTURE, Identifier.withDefaultNamespace("abandoned_camp"));
 	private static final ResourceKey<LootTable> CAMP_SECRET_CHEST = ResourceKey.create(Registries.LOOT_TABLE,
 			Identifier.withDefaultNamespace("chests/abandoned_camp_secret_chest"));
 
@@ -146,23 +146,45 @@ final class Placers {
 		return Build.his(req.traces(), req.level(), req.id());
 	}
 
-	/** Unclaimed sites of this type in the request's distance band, picked by the placement's {@code pick}. */
+	/** True if the chunks within {@code radius} of {@code center} are loaded; otherwise asks for them (see {@link ChunkGate}). */
+	private static boolean ready(Request req, BlockPos center, int radius) {
+		return ChunkGate.ready(req, center, radius);
+	}
+
+	private static Builders.Area area(Request req) {
+		return (a, b) -> ChunkGate.ready(req, a, b, 2);
+	}
+
+	/**
+	 * Unclaimed sites of this type in the request's distance band, picked by the placement's {@code pick}, without
+	 * the one reserved for the placement's {@code not_with} fragment (F06's longest tunnel, F07's largest pyramid).
+	 */
 	static List<Site> sites(Request req, SiteType type) {
-		GlobalPos origin = GlobalPos.of(req.level().dimension(), req.origin());
-		int min = Math.min(req.minDistance(), req.placement().siteMinDistance());
+		List<Site> found = new ArrayList<>(pick(type, req.origin(), req.level(), Math.min(req.minDistance(), req.placement().siteMinDistance()),
+				req.maxDistance(), req.placement().pick()));
+		req.placement().notWith().flatMap(other -> reservedFor(req, other, type)).ifPresent(reserved -> found.removeIf(s -> s.id() == reserved.id()));
+		return found;
+	}
+
+	private static List<Site> pick(SiteType type, BlockPos origin, ServerLevel level, int min, int max, String pick) {
 		double minSqr = (double) min * min;
-		List<Site> found = new ArrayList<>(Services.sites().findUnclaimed(type, origin, req.maxDistance()).stream()
-				.filter(s -> Builders.horizontalDistSqr(s.pos(), req.origin()) >= minSqr).toList());
-		String pick = req.placement().pick();
+		List<Site> found = new ArrayList<>(Services.sites().findUnclaimed(type, GlobalPos.of(level.dimension(), origin), max).stream()
+				.filter(s -> Builders.horizontalDistSqr(s.pos(), origin) >= minSqr).toList());
 		if (pick.equals("longest") || pick.equals("largest")) {
 			found.sort(Comparator.comparingInt(Site::size).reversed());
-		} else if (type == SiteType.TUNNEL_END && !req.id().equals("F06") && req.facts().enabled("F06") && req.facts().placed("F06").isEmpty()
-				&& found.size() > 1) {
-			// Keep the longest tunnel for the list (F06).
-			Site longest = found.stream().max(Comparator.comparingInt(Site::size)).orElseThrow();
-			found.remove(longest);
 		}
 		return found;
+	}
+
+	/** The site another fragment would take, while it is enabled and not placed yet. */
+	static Optional<Site> reservedFor(Request req, String otherId, SiteType type) {
+		if (!req.facts().enabled(otherId) || req.facts().placed(otherId).isPresent()) {
+			return Optional.empty();
+		}
+		return FragmentData.get(otherId).map(Fragment::placement).filter(p -> p.site().equals(Optional.of(type))).flatMap(p -> {
+			BlockPos origin = p.fromSpawn() ? req.facts().spawn() : req.facts().base();
+			return pick(type, origin, req.level(), Math.min(p.minDistance(), p.siteMinDistance()), p.maxDistance(), p.pick()).stream().findFirst();
+		});
 	}
 
 	private static Result claim(Result result, Site site, String id) {
@@ -210,8 +232,11 @@ final class Placers {
 		return Optional.empty();
 	}
 
-	/** Leaves the fragment's chest on a free floor spot near a site. */
+	/** Leaves the fragment's chest on a free floor spot near a site (whose chunks are loaded). */
 	private static Optional<Result> chestNear(Request req, Site site, int radius) {
+		if (!ready(req, site.pos(), radius + 1)) {
+			return Optional.empty();
+		}
 		Optional<BlockPos> spot = Terrain.floorNear(req.level(), site.pos(), radius, 2, List.of());
 		if (spot.isEmpty()) {
 			return Optional.empty();
@@ -227,6 +252,9 @@ final class Placers {
 
 	private static Optional<Result> ruinedHut(Request req) {
 		for (Site site : sites(req, SiteType.RUINED_HUT)) {
+			if (!ready(req, site.pos(), Math.max(2, site.size()) + 1)) {
+				return Optional.empty();
+			}
 			Optional<BlockPos> container = containerIn(req.level(), site.pos(), site.size());
 			if (container.isPresent()) {
 				return Build.insert(req.traces(), req.level(), container.get(), book(req))
@@ -235,6 +263,9 @@ final class Placers {
 			return chestNear(req, site, Math.max(2, site.size()));
 		}
 		for (BlockPos column : candidates(req)) {
+			if (!ready(req, column, 3)) {
+				return Optional.empty();
+			}
 			Optional<House> hut = Builders.planRuinedHut(req.level(), column, req.random());
 			if (hut.isEmpty() || hut.get().inside().isEmpty()) {
 				continue;
@@ -255,6 +286,9 @@ final class Placers {
 				.filter(p -> p.dimension().equals(req.level().dimension()));
 		if (hut.isPresent()) {
 			BlockPos pos = hut.get().pos();
+			if (!ready(req, pos, 4)) {
+				return Optional.empty();
+			}
 			if (req.level().getBlockEntity(pos) instanceof Container) {
 				return Build.insert(req.traces(), req.level(), pos, book(req)) ? Optional.of(new Result(pos)) : Optional.empty();
 			}
@@ -272,6 +306,9 @@ final class Placers {
 	private static Optional<Result> caveChest(Request req) {
 		ServerLevel level = req.level();
 		for (BlockPos column : candidates(req)) {
+			if (!ready(req, column, 10)) {
+				return Optional.empty();
+			}
 			for (int n = 0; n < 4; n++) {
 				int x = column.getX() + req.random().nextInt(16) - 8;
 				int z = column.getZ() + req.random().nextInt(16) - 8;
@@ -287,8 +324,7 @@ final class Placers {
 							|| !level.getBlockState(chest.relative(wallSide)).isSolidRender()) {
 						continue;
 					}
-					BlockState torchState = Blocks.WALL_TORCH.defaultBlockState()
-							.setValue(WallTorchBlock.FACING, wallSide.getOpposite());
+					BlockState torchState = Blocks.WALL_TORCH.defaultBlockState().setValue(WallTorchBlock.FACING, wallSide.getOpposite());
 					if (left(req).chest(chest, wallSide.getOpposite(), contents(req)).leave(torch, torchState).commit()) {
 						return Optional.of(new Result(chest));
 					}
@@ -311,7 +347,10 @@ final class Placers {
 			return chestNear(req, site, 2);
 		}
 		for (BlockPos column : candidates(req)) {
-			Optional<Tunnel> tunnel = Builders.findTunnel(req.level(), column, length(req), req.random());
+			Optional<Tunnel> tunnel = Builders.findTunnel(req.level(), column, length(req), req.random(), area(req));
+			if (req.loads().waiting()) {
+				return Optional.empty();
+			}
 			if (tunnel.isEmpty()) {
 				continue;
 			}
@@ -329,6 +368,9 @@ final class Placers {
 	private static Optional<Result> tunnelEndSign(Request req) {
 		ServerLevel level = req.level();
 		for (Site site : sites(req, SiteType.TUNNEL_END)) {
+			if (!ready(req, site.pos(), 3)) {
+				return Optional.empty();
+			}
 			Optional<Pair<BlockPos, Direction>> face = stoneFace(level, site.pos());
 			if (face.isEmpty()) {
 				continue;
@@ -340,7 +382,10 @@ final class Placers {
 			return Optional.of(claim(new Result(at).read(at), site, req.id()));
 		}
 		for (BlockPos column : candidates(req)) {
-			Optional<Tunnel> tunnel = Builders.findTunnel(level, column, length(req), req.random());
+			Optional<Tunnel> tunnel = Builders.findTunnel(level, column, length(req), req.random(), area(req));
+			if (req.loads().waiting()) {
+				return Optional.empty();
+			}
 			if (tunnel.isEmpty()) {
 				continue;
 			}
@@ -383,13 +428,16 @@ final class Placers {
 		ServerLevel level = req.level();
 		Optional<PlacedBlock> first = Optional.empty();
 		if (content == Content.FIRST_BLOCK) {
-			first = firstBlock(level, req.facts().firstBlocks());
+			first = firstBlock(req);
 			if (first.isEmpty()) {
 				return Optional.empty();
 			}
 		}
 		for (Site site : sites(req, SiteType.OCEAN_PYRAMID)) {
 			BlockPos core = site.pos();
+			if (!ready(req, core, 1)) {
+				return Optional.empty();
+			}
 			BlockState state = level.getBlockState(core);
 			boolean solid = !state.canBeReplaced();
 			if (level.getBlockEntity(core) != null || solid && !Terrain.isNaturalSolid(state)) {
@@ -400,7 +448,7 @@ final class Placers {
 				// Only the largest pyramid has an air pocket; in the others the core sand is taken out for it.
 				build.remove(core);
 			}
-			fillCore(req, build, core, content, first, false);
+			fillCore(req, build, core, content, first);
 			if (!build.commit()) {
 				return Optional.empty();
 			}
@@ -414,6 +462,9 @@ final class Placers {
 			return Optional.empty();
 		}
 		for (BlockPos column : Terrain.candidates(level, ocean.get(), 0, 48, Math.max(1, req.tries()), req.random())) {
+			if (!ready(req, column, 14)) {
+				return Optional.empty();
+			}
 			Optional<Pyramid> pyramid = Builders.planPyramid(level, column);
 			if (pyramid.isEmpty()) {
 				continue;
@@ -423,7 +474,7 @@ final class Placers {
 			Builders.raise(build, pyramid.get());
 			BlockPos core = pyramid.get().core();
 			build.convert(core, Blocks.AIR.defaultBlockState());
-			fillCore(req, build, core, content, first, true);
+			fillCore(req, build, core, content, first);
 			if (build.commit()) {
 				Site site = ownSite(req, SiteType.OCEAN_PYRAMID, core, 2, true);
 				return Optional.of(coreResult(core, content, first).site(site));
@@ -432,7 +483,7 @@ final class Placers {
 		return Optional.empty();
 	}
 
-	private static void fillCore(Request req, Build build, BlockPos core, Content content, Optional<PlacedBlock> first, boolean emptied) {
+	private static void fillCore(Request req, Build build, BlockPos core, Content content, Optional<PlacedBlock> first) {
 		switch (content) {
 			case SIGN -> build.sign(core, standingSign(Direction.Plane.HORIZONTAL.getRandomDirection(req.random())),
 					FragmentItems.signText(req.fragment(), req.playerName()));
@@ -458,21 +509,41 @@ final class Placers {
 		return result;
 	}
 
-	/** The subject's first crafting table, else first chest, else first block, if it is still where it was put. */
-	static Optional<PlacedBlock> firstBlock(ServerLevel level, HerobrineState.FirstBlocks blocks) {
+	/**
+	 * The subject's first crafting table, else first chest, else first block, if it is still where it was put.
+	 * Empty (and waiting) while the base's chunk is not loaded.
+	 */
+	static Optional<PlacedBlock> firstBlock(Request req) {
+		ServerLevel level = req.level();
+		HerobrineState.FirstBlocks blocks = req.facts().firstBlocks();
 		for (PlacedBlock block : new PlacedBlock[] {blocks.craftingTable(), blocks.chest(), blocks.block()}) {
-			if (block != null && block.pos().dimension().equals(level.dimension())
-					&& level.getBlockState(block.pos().pos()).is(block.state().getBlock())) {
+			if (block == null || !block.pos().dimension().equals(level.dimension())) {
+				continue;
+			}
+			if (!ready(req, block.pos().pos(), 1)) {
+				return Optional.empty();
+			}
+			if (level.getBlockState(block.pos().pos()).is(block.state().getBlock())) {
 				return Optional.of(block);
 			}
 		}
 		return Optional.empty();
 	}
 
+	/** The ocean nearest the origin (a biome search, no chunk loads), searched once per fragment and remembered. */
 	private static Optional<BlockPos> nearestOcean(Request req) {
+		String key = req.id() + "/ocean";
+		Optional<GlobalPos> known = req.facts().anchor(key).filter(p -> p.dimension().equals(req.level().dimension()));
+		if (known.isPresent()) {
+			return known.map(GlobalPos::pos);
+		}
 		Pair<BlockPos, Holder<Biome>> found = req.level().findClosestBiome3d(biome -> biome.is(BiomeTags.IS_OCEAN), req.origin(),
 				Math.max(64, req.maxDistance()), 32, 64);
-		return found == null ? Optional.empty() : Optional.of(found.getFirst());
+		if (found == null) {
+			return Optional.empty();
+		}
+		req.facts().remember(key, GlobalPos.of(req.level().dimension(), found.getFirst()));
+		return Optional.of(found.getFirst());
 	}
 
 	// --- groves: F09 under the center tree, F17 under the first grove visited ---
@@ -491,7 +562,11 @@ final class Placers {
 	private static Optional<Result> groveBurial(Request req) {
 		ServerLevel level = req.level();
 		for (Site site : sites(req, SiteType.BARE_GROVE)) {
-			for (BlockPos trunk : Builders.trunks(level, site.pos(), Math.max(3, Math.min(site.size(), 8)))) {
+			int radius = Math.max(3, Math.min(site.size(), 8));
+			if (!ready(req, site.pos(), radius + 1)) {
+				return Optional.empty();
+			}
+			for (BlockPos trunk : Builders.trunks(level, site.pos(), radius)) {
 				Optional<Result> result = burial(req, trunk);
 				if (result.isPresent()) {
 					return Optional.of(claim(result.get(), site, req.id()));
@@ -499,6 +574,9 @@ final class Placers {
 			}
 		}
 		for (BlockPos column : candidates(req)) {
+			if (!ready(req, column, 12)) {
+				return Optional.empty();
+			}
 			List<BlockPos> trunks = Builders.trunks(level, column, 6);
 			if (trunks.size() < 3 || Builders.burialUnder(level, trunks.getFirst()).isEmpty()) {
 				continue;
@@ -529,7 +607,11 @@ final class Placers {
 		visited.sort(Comparator.comparingLong(s -> Services.watch().lastVisitDay(level, ChunkPos.containing(s.pos()))));
 		Optional<BlockPos> taken = req.facts().placed("F09").map(GlobalPos::pos);
 		for (Site site : visited) {
-			List<BlockPos> trunks = new ArrayList<>(Builders.trunks(level, site.pos(), Math.max(3, site.size())));
+			int radius = Math.max(3, Math.min(site.size(), 16));
+			if (!ready(req, site.pos(), radius + 1)) {
+				return Optional.empty();
+			}
+			List<BlockPos> trunks = new ArrayList<>(Builders.trunks(level, site.pos(), radius));
 			trunks.sort(Comparator.comparingDouble(t -> -Builders.horizontalDistSqr(t, site.pos())));
 			for (BlockPos trunk : trunks) {
 				if (taken.isPresent() && taken.get().equals(trunk.below(2))) {
@@ -556,6 +638,9 @@ final class Placers {
 				break;
 			}
 		}
+		if (!ready(req, target, 3)) {
+			return Optional.empty();
+		}
 		BlockPos spot = Terrain.isFloor(level, target) ? target : Terrain.floorNear(level, target, 2, 1, List.of()).orElse(null);
 		if (spot == null || !left(req).chest(spot, Terrain.openSide(level, spot, Direction.SOUTH), contents(req)).commit()) {
 			return Optional.empty();
@@ -569,6 +654,9 @@ final class Placers {
 		ServerLevel level = req.level();
 		int below = req.placement().y().orElse(40);
 		for (BlockPos column : candidates(req)) {
+			if (!ready(req, column, 11)) {
+				return Optional.empty();
+			}
 			for (int n = 0; n < 6; n++) {
 				int x = column.getX() + req.random().nextInt(16) - 8;
 				int z = column.getZ() + req.random().nextInt(16) - 8;
@@ -619,7 +707,11 @@ final class Placers {
 		int length = length(req);
 		BlockPos end = new BlockPos(base.getX(), base.getY() - 12, base.getZ());
 		for (Direction dir : Terrain.shuffledHorizontal(req.random())) {
-			Optional<Tunnel> tunnel = Builders.planTunnel(level, end.relative(dir.getOpposite(), length - 1), dir, length);
+			BlockPos start = end.relative(dir.getOpposite(), length - 1);
+			if (!ChunkGate.ready(req, start, end.relative(dir).relative(dir.getClockWise()), 2)) {
+				return Optional.empty();
+			}
+			Optional<Tunnel> tunnel = Builders.planTunnel(level, start, dir, length);
 			if (tunnel.isEmpty()) {
 				continue;
 			}
@@ -640,6 +732,9 @@ final class Placers {
 	private static Optional<Result> belowSpawn(Request req) {
 		ServerLevel level = req.level();
 		BlockPos target = req.facts().spawn().below(req.placement().y().orElse(10));
+		if (!ready(req, target, 1)) {
+			return Optional.empty();
+		}
 		BlockState state = level.getBlockState(target);
 		if (level.getBlockEntity(target) != null) {
 			return Optional.empty();
@@ -658,6 +753,9 @@ final class Placers {
 		int floorY = req.placement().y().orElse(12);
 		for (BlockPos column : candidates(req)) {
 			BlockPos corner = new BlockPos(column.getX() - 3, floorY, column.getZ() - 3);
+			if (!ChunkGate.ready(req, corner, corner.offset(6, 0, 6), 2)) {
+				return Optional.empty();
+			}
 			Room room = new Room(corner);
 			if (!Builders.roomFits(req.level(), corner)) {
 				continue;
@@ -675,7 +773,7 @@ final class Placers {
 	private static Optional<Result> roomPart(Request req, Function<Room, BlockPos> spot, boolean below) {
 		ServerLevel level = req.level();
 		Optional<GlobalPos> corner = req.facts().anchor("F15/room").filter(p -> p.dimension().equals(level.dimension()));
-		if (corner.isEmpty()) {
+		if (corner.isEmpty() || !ChunkGate.ready(req, corner.get().pos(), corner.get().pos().offset(6, 0, 6), 1)) {
 			return Optional.empty();
 		}
 		Room room = new Room(corner.get().pos());
@@ -705,10 +803,16 @@ final class Placers {
 
 	// --- F21 the emptied house with the still-burning furnace ---
 
+	/** Set when lore left F21's still-burning furnace: the world's one "still burning" moment (D-004). */
+	static final String STILL_BURNING = "lore:still_burning";
+
 	private static Optional<Result> emptiedHouse(Request req) {
 		ServerLevel level = req.level();
 		for (Site site : sites(req, SiteType.EMPTIED_HOUSE)) {
 			int r = Math.max(3, site.size());
+			if (!ready(req, site.pos(), r + 1)) {
+				return Optional.empty();
+			}
 			for (BlockPos pos : BlockPos.betweenClosed(site.pos().offset(-r, -2, -r), site.pos().offset(r, 3, r))) {
 				BlockState state = level.getBlockState(pos);
 				if (state.getBlock() instanceof AbstractFurnaceBlock && state.getValue(AbstractFurnaceBlock.LIT)) {
@@ -743,6 +847,9 @@ final class Placers {
 			}
 		}
 		for (BlockPos column : candidates(req)) {
+			if (!ready(req, column, 3)) {
+				return Optional.empty();
+			}
 			Direction door = Direction.Plane.HORIZONTAL.getRandomDirection(req.random());
 			Optional<House> house = Builders.planHouse(level, column, door, false);
 			if (house.isEmpty()) {
@@ -764,9 +871,6 @@ final class Placers {
 		return Optional.empty();
 	}
 
-	/** Set when lore left F21's still-burning furnace: the world's one "still burning" moment (D-004). */
-	static final String STILL_BURNING = "lore:still_burning";
-
 	/** A lit furnace with a little left to smelt; it lights again from its fuel when the player comes near. */
 	private static void stillBurning(Build build, BlockPos furnace, Direction facing) {
 		build.leave(furnace, Blocks.FURNACE.defaultBlockState().setValue(AbstractFurnaceBlock.FACING, facing).setValue(AbstractFurnaceBlock.LIT, true));
@@ -784,6 +888,9 @@ final class Placers {
 	private static Optional<Result> panicTower(Request req) {
 		ServerLevel level = req.level();
 		for (Site site : sites(req, SiteType.PANIC_TOWER)) {
+			if (!ready(req, site.pos(), 1)) {
+				return Optional.empty();
+			}
 			BlockPos top = Terrain.isAirOrReplaceable(level.getBlockState(site.pos())) && level.getBlockEntity(site.pos()) == null
 					? site.pos() : Terrain.ground(level, site.pos().getX(), site.pos().getZ()).above();
 			if (!Terrain.isAirOrReplaceable(level.getBlockState(top))) {
@@ -795,6 +902,9 @@ final class Placers {
 			return Optional.of(claim(new Result(top), site, req.id()));
 		}
 		for (BlockPos column : candidates(req)) {
+			if (!ready(req, column, 1)) {
+				return Optional.empty();
+			}
 			int height = 12 + req.random().nextInt(5);
 			Optional<List<Builders.Piece>> tower = Builders.planPanicTower(level, column, height);
 			if (tower.isEmpty()) {
@@ -817,6 +927,9 @@ final class Placers {
 	private static Optional<Result> crossSign(Request req) {
 		ServerLevel level = req.level();
 		for (Site site : sites(req, SiteType.CROSS)) {
+			if (!ready(req, site.pos(), 3)) {
+				return Optional.empty();
+			}
 			Optional<BlockPos> spot = Terrain.floorNear(level, site.pos(), 2, 1, List.of(site.pos()));
 			if (spot.isEmpty()) {
 				continue;
@@ -828,6 +941,9 @@ final class Placers {
 			return Optional.of(claim(new Result(spot.get()).read(spot.get()), site, req.id()));
 		}
 		for (BlockPos column : candidates(req)) {
+			if (!ready(req, column, 13)) {
+				return Optional.empty();
+			}
 			Direction door = Direction.Plane.HORIZONTAL.getRandomDirection(req.random());
 			Optional<House> house = Builders.planHouse(level, column, door, true);
 			if (house.isEmpty()) {
@@ -862,6 +978,9 @@ final class Placers {
 	private static Optional<Result> restoredTree(Request req) {
 		ServerLevel level = req.level();
 		for (BlockPos column : candidates(req)) {
+			if (!ready(req, column, 14)) {
+				return Optional.empty();
+			}
 			for (BlockPos trunk : Builders.trunks(level, column, 6)) {
 				if (Builders.leavesOf(level, trunk, 12).size() < 10) {
 					continue;
@@ -902,11 +1021,17 @@ final class Placers {
 			return chestNear(req, site, 2);
 		}
 		for (BlockPos column : candidates(req)) {
+			if (!ready(req, column, 1)) {
+				return Optional.empty();
+			}
 			Optional<BlockPos> floor = Terrain.caveFloor(level, column.getX(), column.getZ(), level.getMinY() + 30, level.getMinY() + 6);
 			if (floor.isEmpty()) {
 				continue;
 			}
 			for (Direction dir : Terrain.shuffledHorizontal(req.random())) {
+				if (!ChunkGate.ready(req, floor.get(), floor.get().relative(dir, 30), 2)) {
+					return Optional.empty();
+				}
 				List<BlockPos> carve = new ArrayList<>();
 				BlockPos step = null;
 				boolean ok = false;
@@ -952,6 +1077,9 @@ final class Placers {
 
 	private static Optional<Result> houseCopy(Request req) {
 		for (Site site : sites(req, SiteType.HOUSE_COPY)) {
+			if (!ready(req, site.pos(), Math.max(2, site.size()) + 1)) {
+				return Optional.empty();
+			}
 			Optional<BlockPos> container = containerIn(req.level(), site.pos(), site.size());
 			if (container.isPresent()) {
 				return Build.insert(req.traces(), req.level(), container.get(), book(req))
@@ -970,12 +1098,29 @@ final class Placers {
 		if (grove.isEmpty()) {
 			return Optional.empty();
 		}
-		BlockPos found = level.findNearestMapStructure(CAMPS, req.origin(), Math.max(1, req.maxDistance() / 16), false);
-		if (found == null) {
+		Optional<BlockPos> camp = CampSearch.camp(level, req.origin());
+		if (camp.isEmpty()) {
+			req.loads().waiting = true; // the search runs in the background; look again in a moment
 			return Optional.empty();
 		}
-		Optional<BlockPos> chest = secretChest(level, found);
+		if (!ready(req, camp.get(), 0)) {
+			return Optional.empty();
+		}
+		LevelChunk startChunk = level.getChunkSource().getChunkNow(camp.get().getX() >> 4, camp.get().getZ() >> 4);
+		var structures = level.registryAccess().lookupOrThrow(Registries.STRUCTURE);
+		Optional<StructureStart> start = startChunk == null ? Optional.empty() : startChunk.getAllStarts().values().stream()
+				.filter(s -> s.isValid() && structures.wrapAsHolder(s.getStructure()).is(CampSearch.CAMPS)).findFirst();
+		if (start.isEmpty()) {
+			CampSearch.forget(level);
+			return Optional.empty();
+		}
+		BoundingBox box = start.get().getBoundingBox();
+		if (!ChunkGate.ready(req, box.minX(), box.minZ(), box.maxX(), box.maxZ())) {
+			return Optional.empty();
+		}
+		Optional<BlockPos> chest = secretChest(level, box);
 		if (chest.isEmpty()) {
+			CampSearch.reject(level, start.get());
 			return Optional.empty();
 		}
 		ItemStack map = FragmentItems.map(req.fragment(), level, grove.get().pos());
@@ -985,22 +1130,17 @@ final class Placers {
 		return Optional.of(new Result(chest.get()));
 	}
 
-	/** The still-unopened secret chest of the camp that starts in this chunk. */
-	static Optional<BlockPos> secretChest(ServerLevel level, BlockPos structurePos) {
-		LevelChunk startChunk = level.getChunk(structurePos.getX() >> 4, structurePos.getZ() >> 4);
-		var structures = level.registryAccess().lookupOrThrow(Registries.STRUCTURE);
-		for (StructureStart start : startChunk.getAllStarts().values()) {
-			if (!start.isValid() || !structures.wrapAsHolder(start.getStructure()).is(CAMPS)) {
+	/** The still-unopened secret chest inside a camp's (loaded) bounding box. */
+	static Optional<BlockPos> secretChest(ServerLevel level, BoundingBox box) {
+		for (ChunkPos chunkPos : box.intersectingChunks().toList()) {
+			LevelChunk chunk = level.getChunkSource().getChunkNow(chunkPos.x(), chunkPos.z());
+			if (chunk == null) {
 				continue;
 			}
-			BoundingBox box = start.getBoundingBox();
-			for (ChunkPos chunkPos : box.intersectingChunks().toList()) {
-				LevelChunk chunk = level.getChunk(chunkPos.x(), chunkPos.z());
-				for (BlockEntity blockEntity : chunk.getBlockEntities().values()) {
-					if (box.isInside(blockEntity.getBlockPos()) && blockEntity instanceof RandomizableContainer container
-							&& CAMP_SECRET_CHEST.equals(container.getLootTable())) {
-						return Optional.of(blockEntity.getBlockPos());
-					}
+			for (BlockEntity blockEntity : chunk.getBlockEntities().values()) {
+				if (box.isInside(blockEntity.getBlockPos()) && blockEntity instanceof RandomizableContainer container
+						&& CAMP_SECRET_CHEST.equals(container.getLootTable())) {
+					return Optional.of(blockEntity.getBlockPos());
 				}
 			}
 		}
@@ -1009,12 +1149,15 @@ final class Placers {
 
 	// --- F30 the twin signs: the oldest poplar in the untouched grove, and bedrock under the seed pyramid ---
 
+	/** Radius around the grove center searched for its oldest poplar. */
+	static final int GROVE_SCAN = 24;
+
 	private static Optional<Result> twinSigns(Request req) {
 		ServerLevel level = req.level();
 		Placing.Facts facts = req.facts();
 		if (facts.anchor("F30/grove").isEmpty()) {
 			Optional<GlobalPos> grove = facts.grove().filter(g -> g.dimension().equals(level.dimension()));
-			if (grove.isEmpty()) {
+			if (grove.isEmpty() || !ready(req, grove.get().pos(), GROVE_SCAN + 1)) {
 				return Optional.empty();
 			}
 			Optional<Pair<BlockPos, Direction>> spot = oldestPoplarSide(level, grove.get().pos());
@@ -1024,14 +1167,14 @@ final class Placers {
 			BlockPos at = spot.get().getFirst();
 			BlockState state = level.getBlockState(at.relative(spot.get().getSecond().getOpposite())).is(BlockTags.LOGS)
 					? wallSign(spot.get().getSecond()) : standingSign(spot.get().getSecond());
-			if (!left(req).sign(at, state, FragmentItems.signText(req.fragment(), req.playerName())).commit()) {
+			if (!left(req).sign(at, state, FragmentItems.signText(req.fragment(), req.playerName())).then(l -> seal(l, at)).commit()) {
 				return Optional.empty();
 			}
 			facts.remember("F30/grove", GlobalPos.of(level.dimension(), at));
 		}
 		if (facts.anchor("F30/bedrock").isEmpty()) {
 			Optional<GlobalPos> seed = facts.placed("F07").filter(p -> p.dimension().equals(level.dimension()));
-			if (seed.isEmpty()) {
+			if (seed.isEmpty() || !ready(req, seed.get().pos(), 1)) {
 				return Optional.empty();
 			}
 			Optional<BlockPos> top = bedrockTop(level, seed.get().pos());
@@ -1039,14 +1182,14 @@ final class Placers {
 				return Optional.empty();
 			}
 			BlockPos at = top.get().above();
-			Build build = left(req);
 			if (level.getBlockEntity(at) != null) {
 				return Optional.empty();
 			}
+			Build build = left(req);
 			if (!level.getBlockState(at).canBeReplaced()) {
 				build.remove(at);
 			}
-			build.sign(at, standingSign(Direction.NORTH), FragmentItems.signText(req.fragment(), req.playerName()));
+			build.sign(at, standingSign(Direction.NORTH), FragmentItems.signText(req.fragment(), req.playerName())).then(l -> seal(l, at));
 			if (!build.commit()) {
 				return Optional.empty();
 			}
@@ -1057,12 +1200,20 @@ final class Placers {
 		return Optional.of(new Result(groveSign).read(groveSign).read(bedrockSign));
 	}
 
+	/** Makes a placed F30 sign permanent: waxed (no editing) and protected (see {@link UnbreakableSigns}). */
+	private static void seal(ServerLevel level, BlockPos pos) {
+		if (level.getBlockEntity(pos) instanceof SignBlockEntity sign) {
+			sign.setWaxed(true);
+		}
+		UnbreakableSigns.protect(level, pos);
+	}
+
 	/** The tallest poplar trunk near the grove center and a free side of it (any tree if there is no poplar). */
 	private static Optional<Pair<BlockPos, Direction>> oldestPoplarSide(ServerLevel level, BlockPos center) {
 		BlockPos best = null;
 		int bestHeight = 0;
 		boolean bestPoplar = false;
-		for (BlockPos trunk : Builders.trunks(level, center, 24)) {
+		for (BlockPos trunk : Builders.trunks(level, center, GROVE_SCAN)) {
 			boolean poplar = level.getBlockState(trunk).is(Blocks.POPLAR_LOG);
 			int height = 0;
 			while (level.getBlockState(trunk.above(height)).is(BlockTags.LOGS)) {
@@ -1096,17 +1247,21 @@ final class Placers {
 		}
 		return Optional.empty();
 	}
+
 	// --- debug fallback ---
 
 	/**
 	 * {@code /a1016 lore place} when the rule finds nothing near: the fragment left plainly on the ground near the
 	 * request's origin, behind the viewer (still out of view): books and items in a chest, signs standing, F11's
-	 * jukebox and sign, F13's first block moved there.
+	 * jukebox and sign, F13's first block moved there. Only loaded chunks are used.
 	 */
 	static Optional<Result> plain(Request req, Optional<ServerPlayer> viewer) {
 		ServerLevel level = req.level();
 		Fragment fragment = req.fragment();
 		for (BlockPos column : Terrain.candidates(level, req.origin(), req.minDistance(), req.maxDistance(), 24, req.random())) {
+			if (!ChunkGate.loaded(level, column) || !ChunkGate.loaded(level, column.offset(1, 0, 1)) || !ChunkGate.loaded(level, column.offset(-1, 0, -1))) {
+				continue;
+			}
 			BlockPos spot = Terrain.ground(level, column.getX(), column.getZ()).above();
 			Vec3 toSpot = Vec3.atCenterOf(spot).subtract(viewer.map(ServerPlayer::position).orElse(Vec3.atCenterOf(req.origin())));
 			if (viewer.isPresent() && toSpot.dot(viewer.get().getLookAngle()) > 0 || !Terrain.isFloor(level, spot)
@@ -1133,7 +1288,7 @@ final class Placers {
 						build.jukebox(spot, FragmentItems.item(fragment)).sign(sign, standingSign(facing), FragmentItems.signText(fragment, req.playerName()));
 						result.read(sign);
 					} else {
-						Optional<PlacedBlock> first = firstBlock(level, req.facts().firstBlocks());
+						Optional<PlacedBlock> first = firstBlock(req);
 						if (first.isEmpty()) {
 							return Optional.empty();
 						}

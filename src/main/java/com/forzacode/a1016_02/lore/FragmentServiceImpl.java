@@ -1,6 +1,7 @@
 package com.forzacode.a1016_02.lore;
 
 import java.util.Optional;
+import java.util.function.BooleanSupplier;
 
 import com.forzacode.a1016_02.A1016_02;
 import com.forzacode.a1016_02.core.FragmentService;
@@ -30,12 +31,24 @@ final class FragmentServiceImpl implements FragmentService {
 		return HerobrineState.get(server).profile().fragments().contains(id);
 	}
 
+	/**
+	 * Places an enabled fragment near {@code hint} once. Idempotent: true without placing anything if it is
+	 * already placed; false for a fragment this world did not roll.
+	 */
 	@Override
 	public boolean place(String id, ServerLevel level, BlockPos hint) {
-		return FragmentData.get(id)
+		return placeOnce(HerobrineState.get(level.getServer()), id, () -> FragmentData.get(id)
 				.flatMap(fragment -> engine.placeNear(level, fragment, hint, NEAR_MIN, NEAR_MAX, LoreConfig.get().candidatesPerAttempt, false,
 						Optional.empty()))
-				.isPresent();
+				.isPresent());
+	}
+
+	/** The gate of {@link #place}: disabled fragments are never placed, placed ones never again. */
+	static boolean placeOnce(HerobrineState state, String id, BooleanSupplier placer) {
+		if (!state.profile().fragments().contains(id)) {
+			return false;
+		}
+		return state.fragmentsPlaced().containsKey(id) || placer.getAsBoolean();
 	}
 
 	@Override

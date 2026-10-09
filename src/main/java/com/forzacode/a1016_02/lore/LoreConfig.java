@@ -21,6 +21,14 @@ public final class LoreConfig {
 	 * its chunk generates.
 	 */
 	public double ownBuildDelayMinutes = 60;
+	/** Chunks placement may ask to load, by ticket, per server tick. Placement never loads a chunk itself. */
+	public int chunkLoadsPerTick = 2;
+	/** A fragment waiting for its chunks (or for the camp search) is tried again after this long. */
+	public double loadWaitSeconds = 2;
+	/** F28: how far (in chunks, from the base) the background search looks for an abandoned camp. */
+	public int campSearchRadiusChunks = 48;
+	/** F28: after a search found no camp, wait this long before searching again. */
+	public double campRetryMinutes = 20;
 
 	/** Reading a sign: the player stands this close (eye to the block's center, blocks)... */
 	public double readDistance = 4.5;

@@ -13,6 +13,7 @@
 	"placement": {
 		"rule": "tunnel_end_sign",
 		"site": "TUNNEL_END",
+		"not_with": "F06",
 		"origin": "base",
 		"min_distance": 60,
 		"max_distance": 1000,

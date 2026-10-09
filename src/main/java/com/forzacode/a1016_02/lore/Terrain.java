@@ -29,8 +29,9 @@ final class Terrain {
 	}
 
 	/**
-	 * Random columns (y = 0) between {@code min} and {@code max} blocks (horizontal) from {@code origin}, unloaded
-	 * chunks first, then chunks no player has visited, then the rest. That keeps placement where nobody looks.
+	 * Random columns (y = 0) between {@code min} and {@code max} blocks (horizontal) from {@code origin}, chunks no
+	 * player has visited first (loaded or not), in a stable order so a retry after loading finds the same ones. That
+	 * keeps placement where nobody looks. Reading them is up to the caller, through {@link ChunkGate}.
 	 */
 	static List<BlockPos> candidates(ServerLevel level, BlockPos origin, int min, int max, int count, RandomSource random) {
 		List<BlockPos> list = new ArrayList<>(count);
@@ -43,13 +44,9 @@ final class Terrain {
 		return list;
 	}
 
-	/** 0: chunk not loaded, 1: loaded but never visited, 2: visited. */
+	/** 0: no player has been in or next to this chunk, 1: visited. Reads no chunk. */
 	static int seenRank(ServerLevel level, BlockPos pos) {
-		ChunkPos chunk = ChunkPos.containing(pos);
-		if (!level.hasChunk(chunk.x(), chunk.z())) {
-			return 0;
-		}
-		return Services.watch().lastVisitDay(level, chunk) < 0 ? 1 : 2;
+		return Services.watch().lastVisitDay(level, ChunkPos.containing(pos)) < 0 ? 0 : 1;
 	}
 
 	/** The topmost solid, non-leaf block of a column (loads the chunk). */
