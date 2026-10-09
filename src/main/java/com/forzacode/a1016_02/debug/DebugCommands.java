@@ -100,8 +100,11 @@ final class DebugCommands {
 	private static int timewarp(CommandContext<CommandSourceStack> ctx) {
 		MinecraftServer server = ctx.getSource().getServer();
 		int days = IntegerArgumentType.getInteger(ctx, "days");
-		Services.director().timewarp(server, days);
+		List<String> summary = Services.director().timewarp(server, days);
 		ctx.getSource().sendSuccess(() -> Component.literal("[a1016] timewarp +" + days + "d -> day " + GameClock.day(server)), true);
+		for (String line : summary) {
+			ctx.getSource().sendSuccess(() -> Component.literal(line), false);
+		}
 		return 1;
 	}
 

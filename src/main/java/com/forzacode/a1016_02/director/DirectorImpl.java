@@ -79,8 +79,8 @@ public final class DirectorImpl implements Director {
 	}
 
 	@Override
-	public void timewarp(MinecraftServer server, int days) {
-		timewarpReport(server, days);
+	public List<String> timewarp(MinecraftServer server, int days) {
+		return timewarpReport(server, days).summary();
 	}
 
 	@Override
@@ -233,8 +233,7 @@ public final class DirectorImpl implements Director {
 
 	/** Play ticks and in-game day ticks (day including timewarp, plus the overworld time of day). */
 	static DirectorBrain.Clock clock(MinecraftServer server) {
-		long timeOfDay = Math.floorMod(server.overworld().getOverworldClockTime(), DirectorBrain.DAY_TICKS);
-		return new DirectorBrain.Clock(GameClock.playTicks(server), GameClock.day(server) * DirectorBrain.DAY_TICKS + timeOfDay);
+		return new DirectorBrain.Clock(GameClock.playTicks(server), GameClock.dayTicks(server));
 	}
 
 	/** The live world behind the brain. Cards fire for the subject only. */

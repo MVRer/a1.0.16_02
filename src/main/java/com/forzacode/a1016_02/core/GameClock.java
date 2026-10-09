@@ -22,6 +22,14 @@ public final class GameClock {
 		return server.overworld().getOverworldClockTime() / TICKS_PER_DAY + HerobrineState.get(server).warpDays();
 	}
 
+	/**
+	 * In-game time in ticks: {@link #day} times 24000 plus the overworld time of day (0 is sunrise), so it counts
+	 * timewarp days and sleeping. Use it for "in-game days since" math.
+	 */
+	public static long dayTicks(MinecraftServer server) {
+		return day(server) * TICKS_PER_DAY + Math.floorMod(server.overworld().getOverworldClockTime(), TICKS_PER_DAY);
+	}
+
 	/** Advances the clock by whole in-game days: adds the days and one day's worth of play ticks per day. */
 	public static void warp(MinecraftServer server, int days) {
 		HerobrineState state = HerobrineState.get(server);

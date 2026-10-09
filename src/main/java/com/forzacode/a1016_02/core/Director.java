@@ -28,8 +28,12 @@ public interface Director {
 	 */
 	FireResult fire(MinecraftServer server, String cardId, boolean fake);
 
-	/** Moves time forward by whole in-game days (see {@link GameClock#warp}). */
-	void timewarp(MinecraftServer server, int days);
+	/**
+	 * Moves time forward by whole in-game days (see {@link GameClock#warp}) and applies what time alone does.
+	 *
+	 * @return summary lines for the command output (what the skipped time would have held); never empty
+	 */
+	List<String> timewarp(MinecraftServer server, int days);
 
 	/** Play ticks since a card with this tag fired, or {@link Long#MAX_VALUE} if none ever did. */
 	long ticksSinceTag(MinecraftServer server, CardTag tag);
@@ -67,8 +71,9 @@ public interface Director {
 		}
 
 		@Override
-		public void timewarp(MinecraftServer server, int days) {
+		public List<String> timewarp(MinecraftServer server, int days) {
 			GameClock.warp(server, days);
+			return List.of("director: stub, only the clock moved (day " + GameClock.day(server) + ")");
 		}
 
 		@Override
