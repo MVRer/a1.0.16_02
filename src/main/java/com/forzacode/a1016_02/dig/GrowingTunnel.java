@@ -130,9 +130,12 @@ public final class GrowingTunnel {
 			BlockPos front = Tunnels.anchorInFront(mouth, dir);
 			Direction side = dir.getClockWise();
 			for (BlockPos anchor : List.of(front, front.relative(side, -1))) {
+				if (Tunnels.check(level, anchor, new LongOpenHashSet(), rules) != null) {
+					continue;
+				}
 				// It has to start in a wall, not in the open.
 				long solid = Tunnels.cube(anchor).stream().filter(cell -> Tunnels.carvable(level.getBlockState(cell))).count();
-				if (solid < 6 || Tunnels.check(level, anchor, new LongOpenHashSet(), rules) != null) {
+				if (solid < 6) {
 					continue;
 				}
 				GrowingTunnel tunnel = new GrowingTunnel(level.dimension(), base, anchor, dir);

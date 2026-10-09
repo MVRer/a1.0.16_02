@@ -209,10 +209,17 @@ public final class Tunnels {
 		}
 		PosSet explored = rules.explored();
 		if (explored != null && rules.exploredClearance() > 0) {
-			for (BlockPos cell : fresh) {
-				if (explored.anyWithin(cell, rules.exploredClearance())) {
-					return "explored cave";
+			// Points in the player's own digs are their mine, already kept at the dig clearance.
+			int e = rules.exploredClearance();
+			boolean[] near = {false};
+			explored.forEachNear(anchor, e + 1, packed -> {
+				if (!near[0]) {
+					BlockPos point = BlockPos.of(packed);
+					near[0] = within(fresh, point, e) && !watch.wasDugByPlayer(level, point);
 				}
+			});
+			if (near[0]) {
+				return "explored cave";
 			}
 		}
 		return null;

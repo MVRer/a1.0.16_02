@@ -163,6 +163,9 @@ public final class CardTunnels {
 	}
 
 	private static boolean wallBlock(ServerLevel level, BlockPos pos) {
+		if (!level.isLoaded(pos)) {
+			return false;
+		}
 		BlockState state = level.getBlockState(pos);
 		return Tunnels.carvable(state) && !Services.watch().wasPlacedByPlayer(level, pos);
 	}
