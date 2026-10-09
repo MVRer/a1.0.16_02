@@ -204,7 +204,11 @@ public final class DarkCornerTrap extends BaseTrap {
 
 	/** A spot one block from {@code torch} where the same torch would hold, not used by another torch of the group. */
 	static @Nullable BlockPos offSpot(ServerLevel level, BlockPos torch, List<BlockPos> group) {
-		BlockState state = level.getBlockState(torch);
+		return offSpot(level, torch, level.getBlockState(torch), group);
+	}
+
+	/** The same for a torch that is not there now (taken): where {@code state} would hold one block from {@code torch}. */
+	static @Nullable BlockPos offSpot(ServerLevel level, BlockPos torch, BlockState state, List<BlockPos> group) {
 		List<BlockPos> tries = new ArrayList<>();
 		if (state.getBlock() instanceof WallTorchBlock) {
 			Direction facing = state.getValue(WallTorchBlock.FACING);
@@ -243,9 +247,10 @@ public final class DarkCornerTrap extends BaseTrap {
 	/**
 	 * Puts the torches back, the first one a block off, all out of view, each from its own ledger entry through
 	 * {@code TraceService.restoreBlock}: the ones back in place close their entries, the one a block off becomes a MOVE,
-	 * so Ending D never makes a second torch. Spots the player filled in the meantime, and torches whose removal is no
-	 * longer in the ledger (Ending D took it back), are skipped. True once every torch that can come back is back; a
-	 * partial restore (one refused) is finished on a later call.
+	 * so Ending D never makes a second torch. If the player blocked the planned spot a block off in the meantime, the
+	 * torch goes to another spot a block off, or (none left) back to its own: never left missing. Other spots the player
+	 * filled, and torches whose removal is no longer in the ledger (Ending D took it back), are skipped. True once every
+	 * torch that can come back is back; a partial restore (one refused) is finished on a later call.
 	 */
 	public static boolean restore(ServerLevel level, ViewGate view, ArmedTrap armed) {
 		TraceLedger ledger = TraceLedger.get(level.getServer());
@@ -253,9 +258,9 @@ public final class DarkCornerTrap extends BaseTrap {
 		List<BlockPos> spots = new ArrayList<>();
 		for (int i = 0; i < armed.saved().size(); i++) {
 			ArmedTrap.SavedBlock torch = armed.saved().get(i);
-			BlockPos spot = i == 0 && armed.offPos().isPresent() ? armed.offPos().get() : torch.pos();
+			BlockPos spot = i == 0 && armed.offPos().isPresent() ? backSpot(level, armed, torch) : torch.pos();
 			TraceLedger.Entry entry = removal(ledger, level, torch.pos());
-			if (entry != null && level.getBlockState(spot).isAir() && torch.state().canSurvive(level, spot)) {
+			if (entry != null && spot != null && free(level, spot, torch.state())) {
 				entries.add(entry);
 				spots.add(spot);
 			}
@@ -271,6 +276,34 @@ public final class DarkCornerTrap extends BaseTrap {
 			all &= Services.traces().restoreBlock(level, entries.get(i), spots.get(i));
 		}
 		return all;
+	}
+
+	/** Air, and the torch would hold there. */
+	private static boolean free(ServerLevel level, BlockPos spot, BlockState state) {
+		return level.getBlockState(spot).isAir() && state.canSurvive(level, spot);
+	}
+
+	/**
+	 * Where the torch that goes back a block off goes: its planned spot, else another spot a block off (not another
+	 * taken torch's), else its own spot. Null if none is free.
+	 */
+	static @Nullable BlockPos backSpot(ServerLevel level, ArmedTrap armed, ArmedTrap.SavedBlock torch) {
+		BlockPos planned = armed.offPos().orElse(null);
+		if (planned != null && free(level, planned, torch.state())) {
+			return planned;
+		}
+		List<BlockPos> taken = new ArrayList<>();
+		for (ArmedTrap.SavedBlock saved : armed.saved()) {
+			taken.add(saved.pos());
+		}
+		if (planned != null) {
+			taken.add(planned);
+		}
+		BlockPos other = offSpot(level, torch.pos(), torch.state(), taken);
+		if (other != null) {
+			return other;
+		}
+		return free(level, torch.pos(), torch.state()) ? torch.pos() : null;
 	}
 
 	/** The newest ledgered removal of a dark corner torch at {@code pos}. */

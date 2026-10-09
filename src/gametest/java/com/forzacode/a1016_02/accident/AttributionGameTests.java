@@ -3,9 +3,11 @@ package com.forzacode.a1016_02.accident;
 import java.util.Arrays;
 import java.util.List;
 
+import com.forzacode.a1016_02.accident.trap.DarkCornerTrap;
 import com.forzacode.a1016_02.accident.trap.HouseFireTrap;
 import com.forzacode.a1016_02.accident.trap.NoBedTrap;
 import com.forzacode.a1016_02.core.HerobrineState;
+import com.forzacode.a1016_02.core.TraceLedger;
 
 import net.fabricmc.fabric.api.gametest.v1.GameTest;
 
@@ -134,6 +136,63 @@ public class AttributionGameTests extends BridgeGameTests {
 		helper.assertTrue(y.data.restoring().isEmpty() && torchesBack(y, trap), "the torches did not come back once loaded");
 		helper.assertFalse(planner.causedBy(y.player, level.damageSources().generic()), "a death after the window was claimed");
 		y.succeedWithoutDrops();
+	}
+
+	@GameTest(structure = Yard.STRUCTURE, maxTicks = 40, padding = Yard.BASE_PADDING)
+	public void darkCornerTorchFindsAnotherSpotWhenItsOffSpotIsBlocked(GameTestHelper helper) {
+		Yard y = darkBase(helper);
+		AccidentPlannerImpl planner = new AccidentPlannerImpl(server -> y.data, Yard.NOBODY);
+		ArmedTrap trap = planner.arm(y.player, Traps.DARK_CORNER, true).trap();
+		helper.assertTrue(trap != null && trap.offPos().isPresent(), "not armed");
+		ArmedTrap.SavedBlock moved = trap.saved().get(0);
+		BlockPos off = trap.offPos().orElseThrow();
+		List<BlockPos> taken = trap.saved().stream().map(ArmedTrap.SavedBlock::pos).toList();
+		// The player put a block where the torch was to come back.
+		y.level.setBlockAndUpdate(off, Blocks.COBBLESTONE.defaultBlockState());
+		helper.assertTrue(DarkCornerTrap.restore(y.level, Yard.NOBODY, trap), "not put back");
+		BlockPos at = null;
+		for (Direction dir : Direction.Plane.HORIZONTAL) {
+			BlockPos spot = moved.pos().relative(dir);
+			if (!spot.equals(off) && !taken.contains(spot) && Scan.torch(y.level.getBlockState(spot))) {
+				at = spot;
+			}
+		}
+		helper.assertTrue(at != null && y.level.getBlockState(moved.pos()).isAir() && y.level.getBlockState(off).is(Blocks.COBBLESTONE),
+				"the torch did not go to another spot a block off");
+		BlockPos landed = at;
+		List<TraceLedger.Entry> left = ledgered(y, moved.pos());
+		helper.assertTrue(left.size() == 1 && left.getFirst().kind() == TraceLedger.Kind.MOVE && left.getFirst().to().orElseThrow().equals(landed),
+				"the ledger does not say where it went: " + left);
+		for (ArmedTrap.SavedBlock torch : trap.saved().subList(1, trap.saved().size())) {
+			helper.assertTrue(Scan.torch(y.level.getBlockState(torch.pos())), "torch at " + torch.pos() + " not back");
+		}
+		y.succeedWithoutDrops();
+	}
+
+	@GameTest(structure = Yard.STRUCTURE, maxTicks = 40, padding = Yard.BASE_PADDING)
+	public void darkCornerTorchComesBackInPlaceWhenNoSpotABlockOffIsLeft(GameTestHelper helper) {
+		Yard y = darkBase(helper);
+		AccidentPlannerImpl planner = new AccidentPlannerImpl(server -> y.data, Yard.NOBODY);
+		ArmedTrap trap = planner.arm(y.player, Traps.DARK_CORNER, true).trap();
+		helper.assertTrue(trap != null && trap.offPos().isPresent(), "not armed");
+		ArmedTrap.SavedBlock moved = trap.saved().get(0);
+		List<BlockPos> taken = trap.saved().stream().map(ArmedTrap.SavedBlock::pos).toList();
+		for (Direction dir : Direction.Plane.HORIZONTAL) {
+			BlockPos spot = moved.pos().relative(dir);
+			if (!taken.contains(spot) && y.level.getBlockState(spot).isAir()) {
+				y.level.setBlockAndUpdate(spot, Blocks.COBBLESTONE.defaultBlockState());
+			}
+		}
+		helper.assertTrue(DarkCornerTrap.restore(y.level, Yard.NOBODY, trap), "not put back");
+		helper.assertTrue(y.level.getBlockState(moved.pos()) == moved.state(), "the torch is missing instead of back in its own spot");
+		helper.assertTrue(ledgered(y, moved.pos()).isEmpty(), "its removal is still open in the ledger");
+		y.succeedWithoutDrops();
+	}
+
+	/** The dark corner's ledger entries that start at {@code pos}. */
+	private static List<TraceLedger.Entry> ledgered(Yard y, BlockPos pos) {
+		return TraceLedger.get(y.level.getServer()).entries().stream()
+				.filter(e -> e.cause().equals("accident:dark_corner") && e.pos().dimension().equals(y.level.dimension()) && e.pos().pos().equals(pos)).toList();
 	}
 
 	private static boolean torchesBack(Yard y, ArmedTrap trap) {

@@ -3,6 +3,7 @@ package com.forzacode.a1016_02.accident;
 import java.util.List;
 
 import com.forzacode.a1016_02.accident.trap.Bridges;
+import com.forzacode.a1016_02.accident.trap.EndermanBridgeTrap;
 import com.forzacode.a1016_02.core.MobTamper;
 import com.forzacode.a1016_02.core.Services;
 import com.forzacode.a1016_02.core.TraceLedger;
@@ -214,6 +215,14 @@ public class BridgeGameTests extends SwordGameTests {
 		ServerLevel level = a.level;
 		a.openToTheBottom(-2, -2, 22, 2);
 		a.bridge(0, 20);
+		// Vanilla's random teleport reaches a box, 32 on x and on z separately, and drops from up to 32 above.
+		int reach = a.cfg.endermanTeleportReach;
+		BlockPos on = a.at(10, 1, 0);
+		Vec3 feet = Vec3.atBottomCenterOf(on);
+		helper.assertTrue(EndermanBridgeTrap.canTeleportTo(feet.add(reach - 1, 0, reach - 1), on, reach), "a diagonal one, 43 blocks off in a line, is out of reach");
+		helper.assertFalse(EndermanBridgeTrap.canTeleportTo(feet.add(reach + 2, 0, 0), on, reach), "beyond the reach on x is in reach");
+		helper.assertTrue(EndermanBridgeTrap.canTeleportTo(feet.add(0, 100, 0), on, reach), "one far above cannot drop onto it");
+		helper.assertFalse(EndermanBridgeTrap.canTeleportTo(feet.add(0, -(reach + 2), 0), on, reach), "one far below can reach up to it");
 		// Forced End chunks take a few ticks before the entities in them can be found: the rest waits for that.
 		a.whenReady(() -> {
 			// The test puts an enderman on the End stone far east of the bridge, as the End would. The mod never spawns one.
@@ -231,11 +240,19 @@ public class BridgeGameTests extends SwordGameTests {
 
 			a.walking(new Vec3(1, 0, 0));
 			a.stand(2.5, 1, 0.5, 90, 0);
+			// One standing off the bridge's end on a diagonal, about 42 blocks away in a straight line but within the box:
+			// it could have teleported onto any of the spots, so none is offered (the clue would be false).
+			Enderman diagonal = EntityTypes.ENDERMAN.create(level, EntitySpawnReason.MOB_SUMMONED);
+			diagonal.setNoAi(true);
+			diagonal.snapTo(Vec3.atBottomCenterOf(a.at(40, 1, 30)), 0, 0);
+			level.addFreshEntity(diagonal);
+			helper.assertTrue(Traps.ENDERMAN_ON_BRIDGE.candidates(a.ctx(Yard.NOBODY)).isEmpty(), "a spot within a diagonal enderman's teleport reach was offered");
+			diagonal.discard();
 			List<Candidate> found = Traps.ENDERMAN_ON_BRIDGE.candidates(a.ctx(Yard.NOBODY));
 			Candidate spot = found.stream().filter(c -> c.mob == enderman).findFirst().orElse(null);
 			helper.assertTrue(spot != null, "the enderman out east was not picked: " + found.size() + " spots");
 			helper.assertTrue(spot.mobTo != null && spot.mobTo.getY() == a.origin.getY() + 1 && spot.mobTo.getX() > a.player.getX(), "not onto the bridge ahead");
-			helper.assertTrue(spot.clue.contains("teleport"), "the clue: " + spot.clue);
+			helper.assertTrue(spot.clue.contains(a.cfg.endermanTeleportReach + "-block teleport"), "the clue: " + spot.clue);
 			if (Services.mobs() instanceof MobTamper.Stub) {
 				helper.assertTrue(Traps.ENDERMAN_ON_BRIDGE.blocked() != null, "must be skipped while MobTamper is a stub");
 				a.done(enderman, bystander);

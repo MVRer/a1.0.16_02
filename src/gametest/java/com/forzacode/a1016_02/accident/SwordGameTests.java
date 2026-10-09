@@ -120,6 +120,13 @@ public class SwordGameTests {
 		helper.assertTrue(spot.stolen == ash && spot.slot == EquipmentSlot.MAINHAND, "the renamed, enchanted sword is not picked first");
 		helper.assertTrue(found.stream().noneMatch(c -> c.stolen.pos().pos().equals(s.other)), "a stack from a chest the player never placed");
 		helper.assertTrue(s.mine(Traps.ZOMBIE_SWORD.candidates(s.later(Yard.NOBODY)), s.tooNear).isEmpty(), "a zombie nearer than 24 blocks was picked");
+		// The far edge: just inside the maximum it is offered, just beyond it is not.
+		double max = y.cfg.swordZombieMaxDistance;
+		y.player.snapTo(y.absVec(20.5 - (max - 0.5), 1, 20.5), 0, 0);
+		helper.assertFalse(s.mine(Traps.ZOMBIE_SWORD.candidates(s.later(Yard.NOBODY)), s.zombie).isEmpty(), "a zombie just inside the maximum was not offered");
+		y.player.snapTo(y.absVec(20.5 - (max + 1), 1, 20.5), 0, 0);
+		helper.assertTrue(s.mine(Traps.ZOMBIE_SWORD.candidates(s.later(Yard.NOBODY)), s.zombie).isEmpty(), "a zombie farther than the maximum was offered");
+		y.player.snapTo(y.absVec(-9.5, 1, 20.5), 0, 0);
 		// A persistent zombie (someone's pet, or one that already wears something) is never picked.
 		Zombie kept = helper.spawnWithNoFreeWill(EntityTypes.ZOMBIE, new BlockPos(20, 1, 16));
 		kept.setItemSlot(EquipmentSlot.MAINHAND, ItemStack.EMPTY);

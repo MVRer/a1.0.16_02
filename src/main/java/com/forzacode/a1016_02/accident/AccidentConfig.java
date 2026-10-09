@@ -100,8 +100,12 @@ public final class AccidentConfig {
 	public int bridgeZoneRadius = 16;
 	/** A death by the void, a fall or lava counts this long after dropping through the gap (seconds of game time). */
 	public double bridgeFallMemorySeconds = 30;
-	/** Enderman: the one moved comes from at least this far (beyond its 32-block teleport), and none is nearer. */
-	public int endermanMinMove = 33;
+	/**
+	 * Enderman: how far a vanilla random teleport reaches, on x and on z separately (a box, so about 45 blocks on a
+	 * diagonal), and upward (it may land any distance lower, since it drops to the ground). The moved one comes from
+	 * beyond it, and no other enderman is within it, so the clue holds.
+	 */
+	public int endermanTeleportReach = 32;
 	/** Enderman: looked for this far from the bridge. */
 	public int endermanSearchRadius = 96;
 
