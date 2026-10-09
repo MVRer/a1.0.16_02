@@ -2,6 +2,19 @@
 
 One entry per merge, newest first. Run the game from the main checkout (this folder, on `main`).
 
+## READY TO TRY: Dead mountains are silent and empty  (merged feat/atmosphere-followups, commit 9ada3a8)
+```
+Restart needed: full game restart (client sound filter and a spawn mixin)
+See it now:
+  1. Launch "Dev Client". /a1016 world locate dead_mountain, then /tp there (or travel 300+ blocks out in new chunks).
+  2. Walk onto the dead ground: ambient sound and music fade out over about 4 s. Step back onto living grass and
+     they return over about 10 s. Footsteps and block sounds stay. /a1016 atmosphere status shows it.
+  3. Animals never spawn on the dead ground. The rare "cow where nothing spawns" card is the exception, by design.
+What to look for: it is quieter than anywhere else, with a hard edge exactly where the grass dies.
+Known rough edges: animals generated with the world before the mountain is recorded can still be there (world's
+  part of D-042 is coming in the world signatures task).
+```
+
 ## READY TO TRY: Accidents (every trap, the death marker)  (merged feat/accident-traps, commit 4c40376)
 ```
 Restart needed: full game restart (new Java code and a spawn-observer mixin)
