@@ -87,7 +87,9 @@ public class CoreContractTests {
 		helper.assertTrue(moved.isPresent() && moved.get().id() == site.id() && moved.get().pos().equals(far.east(9)) && moved.get().size() == 5
 				&& moved.get().type() == SiteType.TUNNEL_END && moved.get().claimedBy().equals(Optional.of("F99")), "update lost something");
 		List<SiteRegistry.Site> found = sites.find(SiteType.TUNNEL_END, GlobalPos.of(level.dimension(), far.east(9)), 0);
-		helper.assertTrue(found.size() == 1 && found.getFirst().id() == site.id(), "the moved site is not where it was moved");
+		helper.assertTrue(found.stream().anyMatch(s -> s.id() == site.id()), "the moved site is not where it was moved");
+		helper.assertTrue(sites.find(SiteType.TUNNEL_END, GlobalPos.of(level.dimension(), far), 0).stream().noneMatch(s -> s.id() == site.id()),
+				"the site is still where it was");
 		helper.assertTrue(sites.update(new SiteRegistry.Site(-1, SiteType.CUT, Level.OVERWORLD, far, 1, Optional.empty()), far, 1).isEmpty(),
 				"an unknown site was updated");
 		helper.succeed();

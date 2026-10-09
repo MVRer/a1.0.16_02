@@ -19,6 +19,9 @@ import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.util.Mth;
 import net.minecraft.world.Container;
+import net.minecraft.world.entity.DropChances;
+import net.minecraft.world.entity.EquipmentSlot;
+import net.minecraft.world.entity.Mob;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.BlockGetter;
@@ -607,6 +610,52 @@ public final class TraceService {
 		target.setChanged();
 		ledger.remove(entry);
 		A1016_02.LOGGER.debug("[a1016] trace restored a stack from {} to {}", entry.pos(), toPos);
+		return true;
+	}
+
+	/**
+	 * Puts a stack he took from a container earlier into an existing mob's empty equipment slot ("the zombie has
+	 * your sword"). {@code entry} is a REMOVE_STACK entry (the ledger holds the stack) or a MOVE_STACK entry (the
+	 * stack is taken back out of the slot it was moved to, which must still hold exactly that stack, in this level).
+	 * The mob must be alive, in this level, out of view, with that slot empty; the container it leaves must be out of
+	 * view and not vetoed. The mob drops it, undamaged, however it dies (the game's guaranteed "preserved" drop
+	 * chance, which is above 1) and no longer despawns. Silent (no equip
+	 * sound). Never creates items: the entry is rewritten in place as EQUIP (taken from the original container, now
+	 * worn by the mob) under {@code cause}, so Ending D never returns it twice.
+	 */
+	public boolean equipFromLedger(ServerLevel level, TraceLedger.Entry entry, Mob mob, EquipmentSlot slot, String cause) {
+		TraceLedger ledger = TraceLedger.get(level.getServer());
+		ItemStack wanted = entry.stack().orElse(ItemStack.EMPTY);
+		if (wanted.isEmpty() || mob.level() != level || !mob.isAlive() || mob.isRemoved() || !mob.getItemBySlot(slot).isEmpty()
+				|| !ledger.entries().contains(entry) || !(force || isOutOfView(level, mob.getBoundingBox()))) {
+			return false;
+		}
+		ItemStack stack;
+		if (entry.kind() == TraceLedger.Kind.REMOVE_STACK) {
+			stack = wanted.copy();
+		} else if (entry.kind() == TraceLedger.Kind.MOVE_STACK && entry.to().isPresent() && entry.pos().dimension().equals(level.dimension())) {
+			BlockPos at = entry.to().get();
+			int toSlot = entry.toSlot();
+			if (!(level.getBlockEntity(at) instanceof Container container) || toSlot < 0 || toSlot >= container.getContainerSize()
+					|| !ItemStack.matches(container.getItem(toSlot), wanted) || !allowedAndNotVetoed(level, List.of(at))) {
+				return false;
+			}
+			stack = container.getItem(toSlot).copy();
+			container.setItem(toSlot, ItemStack.EMPTY);
+			container.setChanged();
+		} else {
+			return false;
+		}
+		boolean silent = mob.isSilent();
+		mob.setSilent(true);
+		mob.setItemSlot(slot, stack);
+		mob.setSilent(silent);
+		// Guaranteed and preserved: it drops whole whatever kills the mob (a plain 1.0 drops only on a player kill, damaged).
+		mob.setDropChance(slot, DropChances.PRESERVE_ITEM_DROP_CHANCE);
+		mob.setPersistenceRequired();
+		ledger.replace(entry, new TraceLedger.Entry(TraceLedger.Kind.EQUIP, cause, entry.day(), entry.pos(), Optional.of(mob.blockPosition()),
+				Optional.empty(), Optional.empty(), Optional.of(stack.copy()), entry.slot(), slot.ordinal(), Optional.of(mob.getUUID())));
+		A1016_02.LOGGER.debug("[a1016] trace equipped {} on {} ({})", stack, mob, cause);
 		return true;
 	}
 

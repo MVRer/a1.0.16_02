@@ -14,6 +14,8 @@ import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.Container;
 import net.minecraft.world.entity.EntityTypes;
+import net.minecraft.world.entity.EquipmentSlot;
+import net.minecraft.world.entity.monster.zombie.Zombie;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.DyeColor;
 import net.minecraft.world.item.ItemStack;
@@ -326,6 +328,58 @@ public class TraceContractTests extends CoreContractTests {
 			helper.assertEntityNotPresent(EntityTypes.ITEM);
 			helper.succeed();
 		});
+	}
+
+	@GameTest
+	public void equipFromLedgerGivesTheMobWhatHeTook(GameTestHelper helper) {
+		ServerLevel level = helper.getLevel();
+		floor(helper, Blocks.STONE);
+		TraceService traces = Services.traces();
+		String cause = "test:zombie_sword/" + helper.absolutePos(BlockPos.ZERO).toShortString();
+		BlockPos chest = helper.absolutePos(new BlockPos(1, 1, 1));
+		BlockPos network = helper.absolutePos(new BlockPos(6, 1, 6));
+		helper.setBlock(1, 1, 1, Blocks.CHEST);
+		helper.setBlock(6, 1, 6, Blocks.CHEST);
+		Container own = (Container) level.getBlockEntity(chest);
+		own.setItem(0, new ItemStack(Items.IRON_SWORD));
+		own.setItem(1, new ItemStack(Items.GOLDEN_SWORD));
+		Zombie zombie = helper.spawn(EntityTypes.ZOMBIE, new BlockPos(4, 1, 4));
+		zombie.setItemSlot(EquipmentSlot.MAINHAND, ItemStack.EMPTY); // a spawn may roll a weapon
+		zombie.setItemSlot(EquipmentSlot.OFFHAND, ItemStack.EMPTY);
+
+		helper.assertTrue(traces.removeStack(level, chest, 0, 1, cause + "/taken"), "removeStack failed");
+		TraceLedger.Entry taken = entries(level, cause + "/taken").getFirst();
+		TraceService.Viewer near = viewerAt(helper, new Vec3(2.5, 1.0, 4.5), -90.0F, 0.0F);
+		helper.assertFalse(traces.watchedBy(List.of(near)).equipFromLedger(level, taken, zombie, EquipmentSlot.MAINHAND, cause), "equipped in view");
+		helper.assertTrue(traces.equipFromLedger(level, taken, zombie, EquipmentSlot.MAINHAND, cause), "equipping the taken sword failed");
+		helper.assertTrue(zombie.getItemBySlot(EquipmentSlot.MAINHAND).is(Items.IRON_SWORD) && zombie.getDropChances().isPreserved(EquipmentSlot.MAINHAND)
+				&& zombie.isPersistenceRequired(), "the zombie does not hold the sword for good");
+		List<TraceLedger.Entry> equipped = entries(level, cause);
+		helper.assertTrue(entries(level, cause + "/taken").isEmpty() && equipped.size() == 1 && equipped.getFirst().kind() == TraceLedger.Kind.EQUIP
+				&& equipped.getFirst().entity().orElseThrow().equals(zombie.getUUID()) && equipped.getFirst().pos().pos().equals(chest),
+				"the entry was not rewritten as worn by the zombie: " + equipped);
+		helper.assertFalse(traces.equipFromLedger(level, taken, zombie, EquipmentSlot.OFFHAND, cause), "the same stack was equipped twice");
+
+		// Moved into the network chest first: it comes out of that chest.
+		helper.assertTrue(traces.moveStack(level, chest, 1, network, cause + "/moved"), "moveStack failed");
+		TraceLedger.Entry moved = entries(level, cause + "/moved").getFirst();
+		helper.assertFalse(traces.equipFromLedger(level, moved, zombie, EquipmentSlot.MAINHAND, cause), "replaced what the zombie holds");
+		helper.assertTrue(traces.equipFromLedger(level, moved, zombie, EquipmentSlot.OFFHAND, cause), "equipping from the network chest failed");
+		helper.assertTrue(zombie.getItemBySlot(EquipmentSlot.OFFHAND).is(Items.GOLDEN_SWORD)
+				&& ((Container) level.getBlockEntity(network)).getItem(0).isEmpty(), "the sword did not leave the network chest");
+
+		// Gone from where it was moved to: nothing to give, nothing created.
+		own.setItem(2, new ItemStack(Items.BOW));
+		helper.assertTrue(traces.moveStack(level, chest, 2, network, cause + "/gone"), "second moveStack failed");
+		((Container) level.getBlockEntity(network)).setItem(0, ItemStack.EMPTY);
+		Zombie other = helper.spawn(EntityTypes.ZOMBIE, new BlockPos(5, 1, 2));
+		other.setItemSlot(EquipmentSlot.MAINHAND, ItemStack.EMPTY);
+		helper.assertFalse(traces.equipFromLedger(level, entries(level, cause + "/gone").getFirst(), other, EquipmentSlot.MAINHAND, cause),
+				"equipped a stack that is no longer there");
+		helper.assertTrue(other.getItemBySlot(EquipmentSlot.MAINHAND).isEmpty(), "an item was created");
+		zombie.discard();
+		other.discard();
+		helper.succeed();
 	}
 
 	@GameTest
