@@ -6,6 +6,9 @@ import java.util.Optional;
 import com.forzacode.a1016_02.core.Stage;
 import com.forzacode.a1016_02.core.Tier;
 
+import net.minecraft.resources.ResourceKey;
+import net.minecraft.world.level.Level;
+
 /**
  * The sighting variants (DESIGN.md "Sightings"), one event card each. Each one says where he stands, how he
  * stands, and how the sighting ends.
@@ -26,10 +29,14 @@ public enum Variant {
 	/** Near a place you know, still at the fog edge, watching. */
 	CLOSE("close", Tier.MAJOR, Stage.PROXIMITY, Spot.KNOWN, Pose.STAND, Facing.PLAYER, true, Ending.STARE_LEAVE, Gait.RUN, Fake.NONE),
 	/** Ending A only: he walks away and doesn't run. */
-	LAST_ONE("last_one", Tier.MAJOR, Stage.TELLING, Spot.OPEN, Pose.STAND, Facing.AWAY, false, Ending.NONE, Gait.SLOW, Fake.NONE);
+	LAST_ONE("last_one", Tier.MAJOR, Stage.TELLING, Spot.OPEN, Pose.STAND, Facing.AWAY, false, Ending.NONE, Gait.SLOW, Fake.NONE),
+	/** The End (D-034): perfectly still among the endermen at the edge of what you can see, white eyes among purple ones. */
+	AMONG_ENDERMEN("among_endermen", Tier.MINOR, Stage.TRACES, Spot.ENDERMEN, Pose.STAND, Facing.PLAYER, false, Ending.STARE_LEAVE, Gait.WALK, Fake.NONE),
+	/** The Nether (D-034): still among the zombified piglins at the edge of the Nether fog. */
+	AMONG_PIGLINS("among_piglins", Tier.MINOR, Stage.TRACES, Spot.PIGLINS, Pose.STAND, Facing.PLAYER, false, Ending.STARE_LEAVE, Gait.WALK, Fake.NONE);
 
-	/** Where the spot finder looks. */
-	public enum Spot { OPEN, RIDGE, TRUNK, LIGHT, SHORE, KNOWN }
+	/** Where the spot finder looks. ENDERMEN and PIGLINS: beside existing mobs of that kind, never spawning one. */
+	public enum Spot { OPEN, RIDGE, TRUNK, LIGHT, SHORE, KNOWN, ENDERMEN, PIGLINS }
 
 	public enum Pose { STAND, LOW }
 
@@ -113,6 +120,29 @@ public enum Variant {
 
 	public Fake fake() {
 		return fake;
+	}
+
+	/** The one dimension this variant runs in (D-034): the End among endermen, the Nether among piglins, else the overworld. */
+	public ResourceKey<Level> dimension() {
+		return switch (spot) {
+			case ENDERMEN -> Level.END;
+			case PIGLINS -> Level.NETHER;
+			default -> Level.OVERWORLD;
+		};
+	}
+
+	/**
+	 * True if the sighting may end with him going under (D-030) instead of walking or running off: the overworld
+	 * variants that end with a stare back. Never the last one, never one that walks off from the start or hides, never
+	 * in the End (the void) or the Nether (netherrack, and no shrine imagery).
+	 */
+	public boolean mayGoUnder() {
+		return dimension() == Level.OVERWORLD && (ending == Ending.STARE_LEAVE || ending == Ending.RISE_STARE_LEAVE);
+	}
+
+	/** True if a chaser he cannot outrun may make him rush past them (D-037). Never Ending A's last one. */
+	public boolean mayRush() {
+		return this != LAST_ONE;
 	}
 
 	/** True if he stands with his back to you and walks off, slowly, once you have seen him. */

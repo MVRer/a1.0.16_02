@@ -3,6 +3,7 @@ package com.forzacode.a1016_02.entity;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 
 import com.forzacode.a1016_02.A1016_02;
@@ -34,6 +35,7 @@ import net.minecraft.world.entity.ai.attributes.AttributeSupplier;
 import net.minecraft.world.entity.ai.attributes.Attributes;
 import net.minecraft.world.entity.ai.navigation.PathNavigation;
 import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.item.component.SwingAnimation;
 import net.minecraft.world.level.ClipContext;
 import net.minecraft.world.level.Explosion;
 import net.minecraft.world.level.Level;
@@ -60,6 +62,11 @@ import org.jspecify.annotations.Nullable;
  * <p>Leaving at a run he always outpaces whoever chases him (D-036): {@code outrunFactor} times the chaser's speed, at
  * least {@code baseRunSpeed}, at most {@code maxRunSpeed}. Walking away, he breaks into that run when a player closes
  * in fast or comes within the flee distance. He steps up full blocks without jumping, so he never stalls on a step.
+ *
+ * <p>Two more ways out. Going under (D-030, {@link GoUnder}): instead of walking or running off after the stare
+ * back, he may dig straight down where he stands, cover the hole over himself and be gone once out of view. The
+ * rush (D-037, {@link Rush}): a chaser he cannot outrun who closes in fast makes him turn and run straight past them,
+ * never touching, and he is gone the instant they cannot see him; once per sighting.
  *
  * <p>All behaviour runs in {@link #customServerAiStep} from plain look and move controls; spawn him through
  * {@link FigureApi}.
@@ -91,7 +98,11 @@ public class HimEntity extends PathfinderMob {
 	/** Closer than this to the edge of the entity-ticking range, he is gone (he would freeze past it). */
 	public static final int EDGE_TICK_MARGIN = 16;
 
-	public enum Phase { IDLE, RISING, STARE_BACK, HIDING, LEAVING }
+	/**
+	 * GOING_UNDER: digging down and covering the hole over himself (D-030). UNDER: covered, gone once out of view.
+	 * RUSH: running past a chaser (D-037), gone the instant out of view.
+	 */
+	public enum Phase { IDLE, RISING, STARE_BACK, HIDING, LEAVING, GOING_UNDER, UNDER, RUSH }
 
 	private Variant variant = Variant.RIDGE;
 	private Phase phase = Phase.IDLE;
@@ -127,6 +138,18 @@ public class HimEntity extends PathfinderMob {
 	private double moveSpeed;
 	/** Running: the speed he holds through the air, blocks per tick (0 = a plain mob's air control). */
 	private double airSpeedPerTick;
+	/** His dig once he goes under (D-030), or null. */
+	private @Nullable GoUnder goUnder;
+	/** The chance to go under is rolled once per sighting. */
+	private boolean goUnderRolled;
+	/** The close-chase rush (D-037) while it runs, the player it is for, and whether this sighting had one. */
+	private @Nullable Rush rush;
+	private @Nullable UUID rushTarget;
+	private boolean rushed;
+	/** Whether a player could see him when his own rules removed him (they never should). */
+	private boolean seenWhenRemoved;
+	/** Why his own rules removed him, or null while he is out. */
+	private @Nullable String goneWhy;
 
 	// client: the low pose, blended
 	private float low;
@@ -218,7 +241,7 @@ public class HimEntity extends PathfinderMob {
 	protected void customServerAiStep(ServerLevel level) {
 		super.customServerAiStep(level);
 		EntityConfig config = EntityConfig.get();
-		List<ServerPlayer> players = level.players().stream().filter(p -> p.isAlive() && !p.isSpectator()).toList();
+		List<ServerPlayer> players = observers(level);
 		if (age == 0) {
 			FigureApi.track(this);
 			if (bornTick < 0) {
@@ -232,7 +255,7 @@ public class HimEntity extends PathfinderMob {
 		phaseTicks++;
 
 		// One rule for every removal below: never while in view, unless past everyone's full render distance.
-		Watchers watchers = Watchers.of(level);
+		Watchers watchers = watchers(level);
 		boolean seen = watchers.sees(level, viewBox());
 		if (seen) {
 			if (!everSeen) {
@@ -248,12 +271,37 @@ public class HimEntity extends PathfinderMob {
 			gone(level, "past the render distance");
 			return;
 		}
-		if (!players.isEmpty() && leavesAtTickingEdge(tickingAround(level, position(), EDGE_TICK_MARGIN), watchers)) {
+		if (!players.isEmpty() && leavesAtTickingEdge(tickingAroundHim(level), watchers)) {
 			gone(level, "at the edge of the ticking range, out of view");
 			return;
 		}
 
+		if (phase == Phase.GOING_UNDER || phase == Phase.UNDER) {
+			goingUnder(level, watchers, config); // nothing else ends it: he is gone once covered and out of view
+			return;
+		}
+
 		watch(level, players, config);
+
+		ServerPlayer nearest = nearest(players);
+		double nearestDistance = nearest == null ? Double.MAX_VALUE : SpotFinder.horizontal(nearest.position(), position());
+		Chase nearestChase = nearest == null ? null : chases.get(nearest.getUUID());
+		double closing = nearestChase == null ? 0.0 : nearestChase.closingSpeed();
+		if (phase == Phase.RUSH) {
+			if (!seen) {
+				gone(level, "rushed past, out of view"); // the instant nobody can see him
+				return;
+			}
+			rushStep(level, players, config);
+			return;
+		}
+		if (!rushed && variant.mayRush() && nearest != null && nearestChase != null
+				&& SightingRules.rushes(nearest.position().distanceTo(position()), config.rushTriggerDistance, nearestChase.speed(), closing,
+						config.outrunFactor, config.maxRunSpeed, config.closeInFastSpeed)
+				&& startRush(level, nearest, nearestChase, config)) {
+			rushStep(level, players, config);
+			return;
+		}
 
 		// Once seen, he stays for minSeenSeconds whatever happens, unless he fled.
 		boolean mayEnd = SightingRules.mayEndOutOfView(everSeen, seenFor(), ModConfig.realTicks(config.minSeenSeconds), fled);
@@ -277,10 +325,6 @@ public class HimEntity extends PathfinderMob {
 			walkAway(variant.gait() == Variant.Gait.SLOW ? Variant.Gait.SLOW : Variant.Gait.WALK);
 		}
 
-		ServerPlayer nearest = nearest(players);
-		double nearestDistance = nearest == null ? Double.MAX_VALUE : SpotFinder.horizontal(nearest.position(), position());
-		Chase nearestChase = nearest == null ? null : chases.get(nearest.getUUID());
-		double closing = nearestChase == null ? 0.0 : nearestChase.closingSpeed();
 		switch (phase) {
 			case IDLE -> idle(nearest);
 			case RISING -> {
@@ -296,7 +340,7 @@ public class HimEntity extends PathfinderMob {
 				if (SightingRules.wouldBeReached(nearestDistance, closing, Math.max(0, stareBackTicks - phaseTicks) / 20.0)) {
 					breakIntoRun(); // the stare back never lets anyone reach him
 				} else if (phaseTicks >= stareBackTicks) {
-					setPhase(Phase.LEAVING);
+					leaveOrGoUnder(level, nearestDistance, closing, config);
 				}
 			}
 			case HIDING -> {
@@ -316,7 +360,240 @@ public class HimEntity extends PathfinderMob {
 				holdSpeedInAir(gait == Variant.Gait.RUN ? blocksPerSecond : 0.0);
 				steerAway(level, nearest, modifier, blocksPerSecond);
 			}
+			default -> {
+			}
 		}
+	}
+
+	/** The players his rules watch: everyone alive and not spectating in his level. Game tests override it. */
+	protected List<ServerPlayer> observers(ServerLevel level) {
+		return level.players().stream().filter(p -> p.isAlive() && !p.isSpectator()).toList();
+	}
+
+	/** Everyone who could see him, for the one despawn rule ({@link Watchers}). Game tests override it. */
+	protected Watchers watchers(ServerLevel level) {
+		return Watchers.of(level);
+	}
+
+	/**
+	 * {@link #tickingAround} his position with {@link #EDGE_TICK_MARGIN}. Game tests override it: only their own
+	 * chunks are loaded there, so every figure would be at the edge.
+	 */
+	protected boolean tickingAroundHim(ServerLevel level) {
+		return tickingAround(level, position(), EDGE_TICK_MARGIN);
+	}
+
+	// --- goes under (D-030) ---
+
+	/**
+	 * The stare back is over and he would walk or run off. Once per sighting, with {@code goUnderChance}, he goes
+	 * under instead where he may: a variant that ends this way, not fled or run down, nobody near enough to reach him
+	 * before he is covered, and diggable ground under him ({@link GoUnder#plan}).
+	 */
+	private void leaveOrGoUnder(ServerLevel level, double nearestDistance, double closing, EntityConfig config) {
+		if (!goUnderRolled) {
+			goUnderRolled = true;
+			if (variant.mayGoUnder() && !fled && !outrunning && onGround() && getRandom().nextDouble() < config.goUnderChance()) {
+				int[] depths = config.goUnderDepths();
+				double seconds = (depths[1] + GoUnder.COVER + 1) * Math.max(0.05, config.goUnderDigSeconds);
+				Optional<GoUnder.Plan> plan = SightingRules.wouldBeReached(nearestDistance, closing, seconds) ? Optional.empty()
+						: GoUnder.plan(level, groundUnder(), depths, getRandom());
+				if (plan.isPresent()) {
+					startGoUnder(level, plan.get());
+					return;
+				}
+			}
+		}
+		setPhase(Phase.LEAVING);
+	}
+
+	/**
+	 * Debug ({@code /a1016 entity goesunder}) and tests: he ends the sighting by going under now, whatever the chance
+	 * and the variant, if the ground under him allows it. Returns why not, or empty if he started.
+	 */
+	public Optional<String> forceGoUnder() {
+		if (!(level() instanceof ServerLevel level)) {
+			return Optional.of("not on the server");
+		}
+		if (phase == Phase.GOING_UNDER || phase == Phase.UNDER) {
+			return Optional.of("already going under");
+		}
+		if (phase == Phase.RUSH) {
+			return Optional.of("rushing past a player");
+		}
+		if (!onGround()) {
+			return Optional.of("not on the ground");
+		}
+		int[] depths = EntityConfig.get().goUnderDepths();
+		GoUnder.Check check = GoUnder.check(level, groundUnder(), depths[0], depths[1]);
+		if (!check.ok()) {
+			return check.refusal();
+		}
+		Optional<GoUnder.Plan> plan = GoUnder.plan(level, groundUnder(), depths, getRandom());
+		if (plan.isEmpty()) {
+			return Optional.of("no shaft fits");
+		}
+		goUnderRolled = true;
+		startGoUnder(level, plan.get());
+		return Optional.empty();
+	}
+
+	/** The ground block under the middle of his feet. */
+	BlockPos groundUnder() {
+		return BlockPos.containing(getX(), getY() - 0.2, getZ());
+	}
+
+	private void startGoUnder(ServerLevel level, GoUnder.Plan plan) {
+		goUnder = GoUnder.begin(level, plan);
+		triggered = true;
+		setLow(false);
+		setPhase(Phase.GOING_UNDER);
+		A1016_02.LOGGER.debug("[a1016] figure ({}) goes under at {}, {} deep", variant.shortName(), plan.top().toShortString(), plan.depth());
+	}
+
+	/** Digging, covering, then waiting under the ground until nobody can see him. */
+	private void goingUnder(ServerLevel level, Watchers watchers, EntityConfig config) {
+		GoUnder.Status status = goUnder.tick(this, level, config);
+		switch (status) {
+			case COVERED -> {
+				if (phase != Phase.UNDER) {
+					setPhase(Phase.UNDER);
+				}
+				if (watchers.mayRemove(level, viewBox(), position())) {
+					gone(level, "went under, covered and out of view");
+				}
+			}
+			case STUCK -> {
+				// A block of the shaft changed under him: he waits in the hole, and once nobody can see him the shaft
+				// is put back as it was (remove).
+				if (watchers.mayRemove(level, viewBox(), position())) {
+					gone(level, "could not finish going under, out of view");
+				}
+			}
+			case ABANDONED -> {
+				goUnder = null; // nothing was dug: he leaves the ordinary way
+				setPhase(Phase.LEAVING);
+			}
+			default -> {
+			}
+		}
+	}
+
+	/**
+	 * Going under: stands over {@code center} (his column's), nudged onto it, facing down at the ground he digs (or
+	 * up at the blocks he puts back). Returns how far (horizontally) he still is from it.
+	 */
+	double holdInShaft(Vec3 center, boolean lookUp) {
+		getNavigation().stop();
+		getMoveControl().setWait();
+		airSpeedPerTick = 0.0;
+		double dx = center.x - getX();
+		double dz = center.z - getZ();
+		double off = Math.sqrt(dx * dx + dz * dz);
+		double y = getDeltaMovement().y;
+		if (off > 1.0E-4) {
+			double step = Math.min(off, 0.08);
+			setDeltaMovement(dx / off * step, y, dz / off * step);
+		} else {
+			setDeltaMovement(0.0, y, 0.0);
+		}
+		holdBody();
+		Vec3 ahead = Entity.calculateViewVector(0.0F, holdYaw).scale(0.3);
+		getLookControl().setLookAt(getX() + ahead.x, getEyeY() + (lookUp ? 10.0 : -10.0), getZ() + ahead.z, 10.0F, 80.0F);
+		return off;
+	}
+
+	/** Puts him exactly over the column once he is within a hair of it (no visible jump). */
+	void snapToColumn(Vec3 center) {
+		setPos(center.x, getY(), center.z);
+		setDeltaMovement(0.0, getDeltaMovement().y, 0.0);
+	}
+
+	/** The arm swing of a player digging; nothing else (no sound, no particles). */
+	void swingArm() {
+		swing(InteractionHand.MAIN_HAND, SwingAnimation.DEFAULT, false);
+	}
+
+	// --- the close-chase rush (D-037) ---
+
+	/**
+	 * A chaser he cannot outrun came within {@code rushTriggerDistance}: plans a pass beside them. Once per sighting.
+	 * If no side gives a safe, walkable pass, he just runs off. True if the rush started.
+	 */
+	private boolean startRush(ServerLevel level, ServerPlayer chaser, Chase chase, EntityConfig config) {
+		rushed = true;
+		double step = config.maxRunSpeed / 20.0;
+		Optional<Rush> plan = Rush.plan(position(), chaser.position(), chase.velocity(), config.rushPassOffset(), step, path -> walkable(level, path));
+		if (plan.isEmpty()) {
+			A1016_02.LOGGER.debug("[a1016] figure ({}): no safe pass by the chaser, he runs", variant.shortName());
+			if (phase != Phase.LEAVING || gait != Variant.Gait.RUN) {
+				breakIntoRun();
+			}
+			return false;
+		}
+		rush = plan.get();
+		rushTarget = chaser.getUUID();
+		triggered = true;
+		fled = true;
+		outrunning = true;
+		gait = Variant.Gait.RUN;
+		setLow(false);
+		setPhase(Phase.RUSH);
+		A1016_02.LOGGER.debug("[a1016] figure ({}) rushes past {}", variant.shortName(), chaser.getName().getString());
+		return true;
+	}
+
+	/** Every point of the path has ground he can run on, within a step up or a short drop of the one before. */
+	private boolean walkable(ServerLevel level, List<Vec3> path) {
+		double y = getY();
+		for (Vec3 point : path) {
+			Vec3 feet = SpotFinder.standNear(level, point.x, point.z, y, 1, 2, getDimensions(getPose()));
+			if (feet == null) {
+				return false;
+			}
+			y = feet.y;
+		}
+		return true;
+	}
+
+	/**
+	 * One tick of the rush: straight at the player, past them on the planned side, never within the pass offset of
+	 * them ({@link Rush#step}). He is moved directly (no navigation), so the pass is exactly what was planned. Out of
+	 * time, out of ground, or the player gone: he runs off the ordinary way.
+	 */
+	private void rushStep(ServerLevel level, List<ServerPlayer> players, EntityConfig config) {
+		ServerPlayer target = players.stream().filter(p -> p.getUUID().equals(rushTarget)).findFirst().orElse(null);
+		Chase chase = target == null ? null : chases.get(target.getUUID());
+		if (rush == null || target == null || chase == null || phaseTicks > ModConfig.realTicks(config.rushMaxSeconds)) {
+			endRush();
+			return;
+		}
+		double step = config.maxRunSpeed / 20.0;
+		Vec3 next = rush.step(position(), target.position(), chase.velocity(), step);
+		if (SpotFinder.standNear(level, next.x, next.z, getY(), 1, 3, getDimensions(getPose())) == null) {
+			endRush(); // a wall, water or a drop ahead
+			return;
+		}
+		getNavigation().stop();
+		getMoveControl().setWait();
+		airSpeedPerTick = 0.0;
+		Vec3 move = next.subtract(position());
+		setDeltaMovement(move.x, getDeltaMovement().y, move.z);
+		if (move.horizontalDistanceSqr() > 1.0E-6) {
+			holdYaw = yawToward(position(), next);
+			holdBody();
+		}
+		if (!rush.passed()) {
+			getLookControl().setLookAt(target.getX(), target.getEyeY(), target.getZ(), 30.0F, 40.0F);
+		} else {
+			setYHeadRot(holdYaw);
+		}
+		moveSpeed = config.maxRunSpeed;
+	}
+
+	private void endRush() {
+		rush = null;
+		breakIntoRun();
 	}
 
 	/** The flee distance for him: the configured one, scaled down if he appeared close (D-035). */
@@ -445,8 +722,14 @@ public class HimEntity extends PathfinderMob {
 		}
 	}
 
-	/** Makes him turn and walk (or run) away into the fog now. He despawns once out of view or past the fog. */
+	/**
+	 * Makes him turn and walk (or run) away into the fog now. He despawns once out of view or past the fog. Going
+	 * under or rushing past someone, he is already on his way out: nothing changes.
+	 */
 	public void walkAway(Variant.Gait leaveGait) {
+		if (phase == Phase.GOING_UNDER || phase == Phase.UNDER || phase == Phase.RUSH) {
+			return;
+		}
 		triggered = true;
 		gait = leaveGait;
 		setLow(false);
@@ -595,7 +878,8 @@ public class HimEntity extends PathfinderMob {
 			}
 			int x = Mth.floor(target.x);
 			int z = Mth.floor(target.z);
-			int y = level.getHeight(Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, x, z);
+			// Under a ceiling (the Nether) the heightmap is the roof: aim at his own height instead.
+			int y = level.dimensionType().hasCeiling() ? Mth.floor(getY()) : level.getHeight(Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, x, z);
 			Path path = getNavigation().createPath(x + 0.5, y, z + 0.5, 1);
 			Node end = path == null ? null : path.getEndNode();
 			if (end != null && path.getNodeCount() > 1 && horizontalTo(end) >= 2.0 && getNavigation().moveTo(path, modifier)) {
@@ -630,6 +914,9 @@ public class HimEntity extends PathfinderMob {
 	}
 
 	private void gone(ServerLevel level, String why) {
+		Watchers now = watchers(level);
+		seenWhenRemoved = !now.beyondRenderDistance(position()) && now.sees(level, viewBox());
+		goneWhy = why;
 		if (variant == Variant.LAST_ONE && everSeen) {
 			HerobrineState.get(level.getServer()).setFlag(LAST_SIGHTING_SEEN_FLAG, true);
 		}
@@ -734,6 +1021,31 @@ public class HimEntity extends PathfinderMob {
 
 	public @Nullable BlockPos anchor() {
 		return anchor;
+	}
+
+	/** His dig while he goes under (or after), null if he never did. */
+	public @Nullable GoUnder goUnder() {
+		return goUnder;
+	}
+
+	/** True once this sighting had its rush (or tried to). */
+	public boolean rushed() {
+		return rushed;
+	}
+
+	/** The rush while it runs, else null. */
+	public @Nullable Rush rush() {
+		return phase == Phase.RUSH ? rush : null;
+	}
+
+	/** True if a player could see him when his own rules removed him. Never, by the rules; the tests check it. */
+	public boolean seenWhenRemoved() {
+		return seenWhenRemoved;
+	}
+
+	/** Why his own rules removed him ({@code "went under, covered and out of view"}...), or null. */
+	public @Nullable String goneWhy() {
+		return goneWhy;
 	}
 
 	/** Goals in both selectors. Always 0. */
@@ -902,6 +1214,18 @@ public class HimEntity extends PathfinderMob {
 	@Override
 	public boolean canBeAffected(MobEffectInstance effect) {
 		return false;
+	}
+
+	/**
+	 * Removed while going under with the shaft open (past the render distance, a debug clear, or a dig he could not
+	 * finish): the blocks he dug go back where they were first ({@link GoUnder#putBack}). Never on a chunk unload.
+	 */
+	@Override
+	public void remove(RemovalReason reason) {
+		if (goUnder != null && (reason == RemovalReason.DISCARDED || reason == RemovalReason.KILLED) && level() instanceof ServerLevel serverLevel) {
+			goUnder.putBack(serverLevel);
+		}
+		super.remove(reason);
 	}
 
 	@Override

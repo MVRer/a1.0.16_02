@@ -41,7 +41,11 @@ final class EntityTuning {
 			new Key("baseRunSpeed", 2.0, 12.0, c -> c.baseRunSpeed, (c, v) -> c.baseRunSpeed = v),
 			new Key("outrunFactor", 1.0, 2.0, c -> c.outrunFactor, (c, v) -> c.outrunFactor = v),
 			new Key("maxRunSpeed", 4.0, 20.0, c -> c.maxRunSpeed, (c, v) -> c.maxRunSpeed = v),
-			new Key("closeInFastSpeed", 0.5, 10.0, c -> c.closeInFastSpeed, (c, v) -> c.closeInFastSpeed = v));
+			new Key("closeInFastSpeed", 0.5, 10.0, c -> c.closeInFastSpeed, (c, v) -> c.closeInFastSpeed = v),
+			// Goes under (D-030): the share of leaving sightings that dig down instead, where the ground allows.
+			new Key("goUnderChance", 0.0, 1.0, c -> c.goUnderChance, (c, v) -> c.goUnderChance = v),
+			// The close-chase rush (D-037): how close a chaser he cannot outrun gets before he turns and runs past them.
+			new Key("rushTriggerDistance", 2.0, 32.0, c -> c.rushTriggerDistance, (c, v) -> c.rushTriggerDistance = v));
 
 	private EntityTuning() {
 	}

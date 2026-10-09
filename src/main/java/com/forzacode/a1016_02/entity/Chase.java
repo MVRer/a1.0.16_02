@@ -1,5 +1,7 @@
 package com.forzacode.a1016_02.entity;
 
+import net.minecraft.world.phys.Vec3;
+
 /**
  * How fast one player moves, and how fast they close on him, over the last {@link #WINDOW} ticks. Fed the player's
  * horizontal position and distance to him every tick.
@@ -53,6 +55,15 @@ public final class Chase {
 			return 0.0;
 		}
 		return (distances[oldest()] - distances[head]) / (count - 1) * 20.0;
+	}
+
+	/** Horizontal velocity in blocks per tick over the window (y is 0), zero until two ticks are known. */
+	public Vec3 velocity() {
+		if (count < 2) {
+			return Vec3.ZERO;
+		}
+		int oldest = oldest();
+		return new Vec3((xs[head] - xs[oldest]) / (count - 1), 0.0, (zs[head] - zs[oldest]) / (count - 1));
 	}
 
 	private int oldest() {

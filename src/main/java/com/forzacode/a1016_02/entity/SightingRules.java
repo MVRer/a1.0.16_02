@@ -137,6 +137,19 @@ public final class SightingRules {
 		return withinFlee || !Double.isNaN(closingSpeed) && closingSpeed > fastSpeed;
 	}
 
+	/**
+	 * The close-chase rush (D-037): a player he cannot outrun ({@code outrunFactor} times their speed is past his
+	 * {@code maxRunSpeed}: elytra, flight, a horse), closing in faster than {@code fastSpeed}, within
+	 * {@code triggerDistance}. On foot nobody qualifies (sprint-jumping is about 7.1 blocks per second).
+	 */
+	public static boolean rushes(double distance, double triggerDistance, double chaserSpeed, double closingSpeed, double outrunFactor,
+			double maxRunSpeed, double fastSpeed) {
+		if (Double.isNaN(distance) || Double.isNaN(chaserSpeed) || Double.isNaN(closingSpeed)) {
+			return false;
+		}
+		return distance < triggerDistance && closingSpeed > fastSpeed && chaserSpeed * Math.max(1.0, outrunFactor) > maxRunSpeed;
+	}
+
 	/** Nobody gets closer than this to him: standing still (staring back, hiding), he runs before that. */
 	public static final double REACH_BLOCKS = 4.0;
 

@@ -23,7 +23,8 @@ import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.util.RandomSource;
 
 /**
- * {@code /a1016 entity spawn <variant> | clear | info | eyes [<flat|bright|glow> [fogResistance]] | tune [<key> <value>]}.
+ * {@code /a1016 entity spawn <variant> | clear | info | goesunder | eyes [<flat|bright|glow> [fogResistance]] | tune [<key> <value>]}.
+ * {@code goesunder} makes the figure that is out end the sighting by going under (D-030) now, if the ground lets him.
  * Debug only (op level 2, like the whole /a1016 tree). {@code eyes} and {@code tune} save to the config file.
  */
 final class EntityCommands {
@@ -37,6 +38,7 @@ final class EntityCommands {
 								.suggests((ctx, builder) -> SharedSuggestionProvider.suggest(Arrays.stream(Variant.values()).map(Variant::shortName), builder))
 								.executes(EntityCommands::spawn)))
 				.then(Commands.literal("clear").executes(EntityCommands::clear))
+				.then(Commands.literal("goesunder").executes(EntityCommands::goesUnder))
 				.then(Commands.literal("info").executes(EntityCommands::info))
 				.then(Commands.literal("eyes").executes(EntityCommands::eyes)
 						.then(Commands.argument("style", StringArgumentType.word())
@@ -138,6 +140,31 @@ final class EntityCommands {
 		return spawned.figure() != null ? 1 : 0;
 	}
 
+	/** The figure that is out goes under now (D-030): digs down, covers the hole over himself, gone once out of view. */
+	private static int goesUnder(CommandContext<CommandSourceStack> ctx) {
+		List<HimEntity> out = FigureApi.active(ctx.getSource().getServer());
+		if (out.isEmpty()) {
+			ctx.getSource().sendFailure(Component.literal("[a1016] entity goesunder: no figure is out (spawn one with /a1016 entity spawn <variant>)"));
+			return 0;
+		}
+		int started = 0;
+		for (HimEntity him : out) {
+			Optional<String> refusal = him.forceGoUnder();
+			GoUnder dig = him.goUnder();
+			if (refusal.isEmpty() && dig != null) {
+				started++;
+				String line = String.format(Locale.ROOT, "[a1016] entity goesunder -> %s digs down at %s, %d blocks deep", him.variant().shortName(),
+						dig.plan().top().toShortString(), dig.plan().depth());
+				ctx.getSource().sendSuccess(() -> Component.literal(line), true);
+			} else {
+				String why = refusal.orElse("no dig");
+				ctx.getSource().sendFailure(Component.literal("[a1016] entity goesunder -> " + him.variant().shortName() + " at "
+						+ him.blockPosition().toShortString() + " can't: " + why));
+			}
+		}
+		return started;
+	}
+
 	private static int clear(CommandContext<CommandSourceStack> ctx) {
 		int removed = FigureApi.clear(ctx.getSource().getServer());
 		ctx.getSource().sendSuccess(() -> Component.literal("[a1016] entity clear -> removed " + removed), true);
@@ -159,6 +186,14 @@ final class EntityCommands {
 					him.variant().shortName(), him.phase(), him.blockPosition().toShortString(), dist, him.spawnDistance(), him.fleeDistance(config),
 					him.approachBlocks(config), him.age() / 20, him.seenFor() < 0 ? -1 : him.seenFor() / 20, him.unseenTicks(), him.stareTicks(), closed,
 					him.triggered(), him.fled(), him.isLow(), him.moveSpeed(), him.outrunning()));
+			GoUnder dig = him.goUnder();
+			if (dig != null) {
+				lines.add(String.format(Locale.ROOT, "  under: %s at %s, %d deep, dug %d, covered %d of %d", dig.status(), dig.plan().top().toShortString(),
+						dig.plan().depth(), dig.dugCount(), dig.filledCount(), GoUnder.COVER));
+			}
+			if (him.rushed()) {
+				lines.add("  rushed: " + (him.rush() != null ? "passing" + (him.rush().passed() ? " (passed)" : "") : "done"));
+			}
 		}
 		FigureApi.LastSpawn lastSpawn = FigureApi.lastSpawn();
 		if (lastSpawn != null) {

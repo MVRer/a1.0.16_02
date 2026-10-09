@@ -27,9 +27,13 @@ public record Watchers(List<Watcher> all) {
 	}
 
 	public static Watchers of(ServerLevel level) {
-		int serverChunks = level.getServer().getPlayerList().getViewDistance();
+		return of(level.players(), level.getServer().getPlayerList().getViewDistance());
+	}
+
+	/** These players as watchers, with the server's view distance in chunks (game tests use mock players). */
+	public static Watchers of(List<? extends ServerPlayer> players, int serverChunks) {
 		List<Watcher> list = new ArrayList<>();
-		for (ServerPlayer player : level.players()) {
+		for (ServerPlayer player : players) {
 			list.add(new Watcher(TraceService.Viewer.of(player, serverChunks), FogEdge.of(player, false).renderLimit()));
 		}
 		return new Watchers(list);

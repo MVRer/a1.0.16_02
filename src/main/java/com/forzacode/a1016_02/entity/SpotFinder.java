@@ -202,7 +202,90 @@ public final class SpotFinder {
 		return best(found);
 	}
 
+	/**
+	 * Among existing mobs (D-034: the endermen in the End, the zombified piglins in the Nether): ground beside at least
+	 * one of them, within {@code radius} blocks, never closer than {@code minGap} to any (he never stands inside one).
+	 * More of them around scores higher. Ground is looked for near each mob's own height, so a ceiling (the Nether's
+	 * bedrock roof) is never taken for the ground.
+	 *
+	 * @param mobs feet of the mobs, in or near the band
+	 */
+	public static Optional<Spot> among(Query q, List<Vec3> mobs, double radius, double minGap) {
+		List<Spot> found = new ArrayList<>();
+		double reach = Math.max(minGap + 0.5, radius);
+		for (Vec3 mob : mobs) {
+			double d = horizontal(q.feet(), mob);
+			if (d < q.inner() - reach || d > q.outer() + reach) {
+				continue;
+			}
+			for (int i = 0; i < 12; i++) {
+				double angle = q.random().nextDouble() * Math.PI * 2;
+				double r = minGap + q.random().nextDouble() * (reach - minGap);
+				Vec3 feet = standNear(q.level(), mob.x + Math.cos(angle) * r, mob.z + Math.sin(angle) * r, mob.y, 2, 3, q.dims());
+				if (feet == null || !valid(q, feet, q.inner(), q.outer())) {
+					continue;
+				}
+				int around = 0;
+				boolean clear = true;
+				for (Vec3 other : mobs) {
+					double h = horizontal(other, feet);
+					if (h < minGap && Math.abs(other.y - feet.y) < 3.0) {
+						clear = false;
+						break;
+					}
+					if (h <= radius) {
+						around++;
+					}
+				}
+				if (clear && around > 0) {
+					found.add(new Spot(feet, horizontal(q.feet(), feet), around + q.random().nextDouble(), null));
+				}
+			}
+			if (found.size() >= OPEN_ENOUGH) {
+				break;
+			}
+		}
+		return best(found);
+	}
+
 	// --- geometry and terrain ---
+
+	/**
+	 * Feet position on the ground at this column near {@code aroundY} (from {@code up} blocks above it to {@code down}
+	 * below), or null: dry, sturdy, not unsafe, and his box fits. Unlike {@link #standAt} it never looks at the
+	 * heightmap, so it works under a ceiling and on narrow End islands.
+	 */
+	public static @Nullable Vec3 standNear(ServerLevel level, double x, double z, double aroundY, int up, int down, EntityDimensions dims) {
+		int bx = Mth.floor(x);
+		int bz = Mth.floor(z);
+		if (!level.hasChunkAt(bx, bz)) {
+			return null;
+		}
+		int base = Mth.floor(aroundY + 1.0E-6);
+		BlockPos.MutableBlockPos m = new BlockPos.MutableBlockPos();
+		// Nearest height first: as it is, a block up, a block down, two up, two down...
+		for (int k = 0; k <= 2 * Math.max(up, down); k++) {
+			int dy = k % 2 == 1 ? (k + 1) / 2 : -(k / 2);
+			if (dy > up || dy < -down) {
+				continue;
+			}
+			int feetY = base + dy;
+			m.set(bx, feetY - 1, bz);
+			if (feetY - 1 < level.getMinY()) {
+				continue;
+			}
+			BlockState ground = level.getBlockState(m);
+			if (!ground.getFluidState().isEmpty() || !ground.isFaceSturdy(level, m, Direction.UP) || unsafe(ground)) {
+				continue;
+			}
+			Vec3 feet = new Vec3(x, feetY, z);
+			AABB box = dims.makeBoundingBox(feet);
+			if (level.noCollision(box) && !level.containsAnyLiquid(box.inflate(0.1))) {
+				return feet;
+			}
+		}
+		return null;
+	}
 
 	/** Feet position on the ground at this column, or null if the column is unloaded, wet, unsafe or too tight. */
 	public static @Nullable Vec3 standAt(ServerLevel level, double x, double z, EntityDimensions dims) {

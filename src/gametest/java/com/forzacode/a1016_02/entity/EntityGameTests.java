@@ -32,9 +32,10 @@ import net.minecraft.world.phys.Vec3;
 
 /**
  * Game tests of the entity workstream, registered in the gametest fabric.mod.json. The figure's physics here; the
- * sighting gates and spawn spots in {@link SightingRuleGameTests}.
+ * sighting gates and spawn spots in {@link SightingRuleGameTests}; goes under in {@link GoUnderGameTests}; the rush and the
+ * End and Nether cards in {@link RushAndDimensionGameTests}.
  */
-public class EntityGameTests extends SightingRuleGameTests {
+public class EntityGameTests extends GoUnderGameTests {
 	private static void floor(GameTestHelper helper) {
 		for (int x = 0; x < 8; x++) {
 			for (int z = 0; z < 8; z++) {

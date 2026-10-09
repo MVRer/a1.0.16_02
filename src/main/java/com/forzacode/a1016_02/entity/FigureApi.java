@@ -64,6 +64,8 @@ public final class FigureApi {
 
 	private static volatile @Nullable LastSpawn lastSpawn;
 
+	/** Among endermen or piglins he never stands closer than this (horizontally) to one of them. */
+	static final double AMONG_MIN_GAP = 1.5;
 	private static final int SWEEP_INTERVAL = 5;
 	private static final int FULL_SWEEP_INTERVAL = 100;
 	/** Every figure seen alive (spawned here or by /summon), for the cheap gate and the sweep. Pruned on read. */
@@ -124,6 +126,9 @@ public final class FigureApi {
 	public static Spawned spawnAtFogEdge(ServerPlayer player, Variant variant, RandomSource random, boolean forced) {
 		ServerLevel level = player.level();
 		MinecraftServer server = level.getServer();
+		if (level.dimension() != variant.dimension()) {
+			return new Spawned(FireResult.SKIPPED, null); // each variant only in its own dimension (D-034), even forced
+		}
 		List<HimEntity> out = active(server);
 		if (!out.isEmpty()) {
 			if (!forced) {
@@ -225,6 +230,8 @@ public final class FigureApi {
 				// Debug in a fresh world: nowhere at the fog edge is known yet, so any spot there will do.
 				yield known.isEmpty() && forced ? SpotFinder.open(q) : known;
 			}
+			case ENDERMEN, PIGLINS -> SpotFinder.among(q, SightingGates.mobsAtEdge(player, variant, band, config.amongMobsRadius), config.amongMobsRadius,
+					AMONG_MIN_GAP);
 		};
 	}
 

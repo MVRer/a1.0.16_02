@@ -119,6 +119,35 @@ public final class EntityConfig {
 	/** A walking figure breaks into the run when a player closes on him faster than this (blocks per second). Tunable live. */
 	public double closeInFastSpeed = 3.5;
 
+	// --- goes under (D-030) ---
+	/**
+	 * Chance that a sighting which would end with him walking or running off ends with him digging straight down and
+	 * covering the hole over himself instead, where the ground under him allows it ({@link GoUnder}). Tunable live.
+	 */
+	public double goUnderChance = 0.25;
+	/** Time per block, dug or put back. */
+	public double goUnderDigSeconds = 0.4;
+	/** How deep he sinks, in blocks; never under {@link GoUnder#MIN_DEPTH} (he has to be under the 2 blocks put back). */
+	public int goUnderMinDepth = 4;
+	public int goUnderMaxDepth = 6;
+
+	// --- the close-chase rush (D-037) ---
+	/**
+	 * A player he cannot outrun (elytra, flight, a horse) who closes in fast and gets this close (blocks) makes him turn
+	 * and run straight at them, past them, once per sighting. Tunable live.
+	 */
+	public double rushTriggerDistance = 10;
+	/** He passes the player at least this far to the side (center to center); never under {@link Rush#MIN_OFFSET}. */
+	public double rushPassOffset = 2.0;
+	/** A rush that has not got him out of view by then turns into a plain run away. */
+	public double rushMaxSeconds = 4;
+
+	// --- the End and the Nether (D-034) ---
+	/** Among the endermen or zombified piglins: at least one of them within this many blocks of his spot. */
+	public double amongMobsRadius = 6;
+	/** Under a ceiling (the Nether), solid blocks this close over the player's head count as indoors. */
+	public int ceilingIndoorsBlocks = 4;
+
 	// --- variant spots ---
 	/** The ridge: his feet at least this far above the player's eyes, so the sky is behind him. */
 	public double ridgeMinRise = 2;
@@ -185,6 +214,25 @@ public final class EntityConfig {
 	public double minDistance() {
 		double min = minDistance;
 		return Double.isNaN(min) ? MIN_DISTANCE_FLOOR : Math.max(MIN_DISTANCE_FLOOR, min);
+	}
+
+	/** {@link #goUnderChance} clamped to 0..1 (0 if the file holds NaN). */
+	public double goUnderChance() {
+		double chance = goUnderChance;
+		return Double.isNaN(chance) ? 0.0 : Math.clamp(chance, 0.0, 1.0);
+	}
+
+	/** The depth range he sinks to: at least {@link GoUnder#MIN_DEPTH}, at most {@link GoUnder#MAX_DEPTH}, min never over max. */
+	public int[] goUnderDepths() {
+		int lo = Math.clamp(goUnderMinDepth, GoUnder.MIN_DEPTH, GoUnder.MAX_DEPTH);
+		int hi = Math.clamp(goUnderMaxDepth, GoUnder.MIN_DEPTH, GoUnder.MAX_DEPTH);
+		return new int[] {Math.min(lo, hi), Math.max(lo, hi)};
+	}
+
+	/** {@link #rushPassOffset}, never under {@link Rush#MIN_OFFSET}. */
+	public double rushPassOffset() {
+		double offset = rushPassOffset;
+		return Double.isNaN(offset) ? Rush.MIN_OFFSET : Math.max(Rush.MIN_OFFSET, offset);
 	}
 
 	/** The eye style, BRIGHT if the file holds an unknown value. */
