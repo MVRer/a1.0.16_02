@@ -1,10 +1,17 @@
 package com.forzacode.a1016_02;
 
-import com.forzacode.a1016_02.entity.HimEntity;
-import com.forzacode.a1016_02.entity.ModEntities;
+import com.forzacode.a1016_02.accident.AccidentInit;
+import com.forzacode.a1016_02.atmosphere.AtmosphereInit;
+import com.forzacode.a1016_02.core.CoreInit;
+import com.forzacode.a1016_02.debug.DebugInit;
+import com.forzacode.a1016_02.dig.DigInit;
+import com.forzacode.a1016_02.director.DirectorInit;
+import com.forzacode.a1016_02.ending.EndingInit;
+import com.forzacode.a1016_02.entity.EntityInit;
+import com.forzacode.a1016_02.lore.LoreInit;
+import com.forzacode.a1016_02.world.WorldInit;
 
 import net.fabricmc.api.ModInitializer;
-import net.fabricmc.fabric.api.networking.v1.ServerPlayConnectionEvents;
 
 import net.minecraft.resources.Identifier;
 
@@ -17,9 +24,16 @@ public class A1016_02 implements ModInitializer {
 
 	@Override
 	public void onInitialize() {
-		ModEntities.register();
-
-		ServerPlayConnectionEvents.JOIN.register((handler, sender, server) -> HimEntity.spawnInFrontOf(handler.player));
+		CoreInit.init();
+		DirectorInit.init();
+		EntityInit.init();
+		AtmosphereInit.init();
+		WorldInit.init();
+		DigInit.init();
+		LoreInit.init();
+		AccidentInit.init();
+		EndingInit.init();
+		DebugInit.init();
 	}
 
 	public static Identifier id(String path) {

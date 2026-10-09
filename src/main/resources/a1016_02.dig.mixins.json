@@ -1,0 +1,14 @@
+{
+	"required": true,
+	"package": "com.forzacode.a1016_02.dig.mixin",
+	"compatibilityLevel": "JAVA_25",
+	"mixins": [],
+	"client": [],
+	"server": [],
+	"injectors": {
+		"defaultRequire": 1
+	},
+	"overwrites": {
+		"requireAnnotations": true
+	}
+}

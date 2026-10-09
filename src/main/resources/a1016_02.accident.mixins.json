@@ -1,10 +1,10 @@
 {
 	"required": true,
-	"package": "com.forzacode.a1016_02.mixin",
+	"package": "com.forzacode.a1016_02.accident.mixin",
 	"compatibilityLevel": "JAVA_25",
-	"mixins": [
-		"ExampleMixin"
-	],
+	"mixins": [],
+	"client": [],
+	"server": [],
 	"injectors": {
 		"defaultRequire": 1
 	},

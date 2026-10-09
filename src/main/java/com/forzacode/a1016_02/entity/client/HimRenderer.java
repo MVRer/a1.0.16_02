@@ -1,4 +1,4 @@
-package com.forzacode.a1016_02.client;
+package com.forzacode.a1016_02.entity.client;
 
 import com.forzacode.a1016_02.A1016_02;
 import com.forzacode.a1016_02.entity.HimEntity;
