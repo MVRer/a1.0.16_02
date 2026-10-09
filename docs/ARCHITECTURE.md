@@ -42,6 +42,8 @@ Workstreams: `core director entity atmosphere world dig lore accident ending deb
 | `TraceService` | core (real) | Every world edit "he" makes, plus the out-of-view check |
 | `PlayerWatch` | core (real) | What the subject player is doing and has done |
 | `SiteRegistry` | core (real) | Places where world and dig built things that lore can fill |
+| `ProtectedAreas` | core (real) | Areas his scars and edits leave alone (the untouched grove) |
+| `FogLimits` | core (static) | Fog end and render limit for a player, the same math on server and client |
 | `MobTamper` | atmosphere (D-017) | Freeze, face, silence or move existing mobs |
 | `FragmentService` | lore | Fragment placement and read tracking |
 | `AccidentPlanner` | accident | One armed trap at a time |
@@ -51,13 +53,13 @@ Workstreams: `core director entity atmosphere world dig lore accident ending deb
 One per world. Change it only through its methods, which mark it dirty. The first `get` rolls the profile with a new random salt.
 - `stage()`: `Stage` {ALONE 0, TRACES 1, PROXIMITY 2, TELLING 3, REMOVAL 4}. `setStage(server, stage)` fires `STAGE_CHANGED`.
 - `attention()`, `tension()`: double, 0 to 100, clamped. Change them only through `Attention`.
-- `profile()`: `WorldProfile`; `reroll(seed, salt)`. The salt is hidden (package-private).
+- `profile()`: `WorldProfile`; `reroll(seed, salt)`. The salt is hidden (package-private). `worldgenSalt()`: derived from it once, then fixed for the world (a reroll keeps it); read it at server start for worldgen hashing.
 - `subject()`: `Optional<Subject(uuid, name)>`, the first player who joins (D-002).
 - `stopFired / listRead / tellingStarted` with setters. `fragmentsRead()` + `markFragmentRead(id)`. `fragmentsPlaced()` + `setFragmentPlaced(id, GlobalPos|null)`.
 - `markedDeaths()` + `addMarkedDeath(MarkedDeath(cause, GlobalPos, day))`.
 - `firstBlocks()`: `FirstBlocks(block, craftingTable, chest)`, each a `PlacedBlock(GlobalPos, BlockState)` or null. Recorded by `PlayerWatch`.
 - `effects()`: `Effects(musicOff, duskFogLevel)`. Change through `ClientEffects`; sent again on every join.
-- `flags()`, `hasFlag(f)`, `setFlag(f, bool)`: free namespaced flags (`"lore:f04_done"`). Use them instead of asking for a new field.
+- `flags()`, `hasFlag(f)`, `setFlag(f, bool)`: free namespaced flags (`"lore:f04_done"`). Use them instead of asking for a new field. Shared ones: `ending:last_sighting` (set by ending: Ending A's last sighting may happen), `entity:last_sighting_seen` (set by entity: that figure was seen and is gone), `lore:still_burning` (set by lore when F21's furnace is left: the world's one still-burning moment, D-004).
 
 ### Attention
 `Attention.trigger(server, AttentionTrigger.X)` applies the configured weight of a Triggers row (`DISC_13_UNDERGROUND`, `NAMED_HIM`, `WROTE_NEAR_TRACES`, `ENTERED_TUNNEL`, `DUG_INTO_PYRAMID`, `REPLANTED_GROVE`, `CARRYING_LIST`, `RULES_BOOK_NEAR_BASE`, `LOW_RENDER_DISTANCE`, `SLEPT`, `STARED_AT_HIM`, `DESTROYED_OWN_WRITING`, `OBEYED_AFTER_STOP`, `AVOIDED_TRACES`, `LEFT_GROVES_ALONE`, `STOPPED_DISC_13`, `DAYLIGHT_OPEN_AREAS`, `LIST_IN_LAVA`). Also `raise/lower(server, amount, reason)` and `raiseTension/lowerTension(server, amount, reason)`.
@@ -79,27 +81,38 @@ FireResult fire(FireContext ctx);  // record(player, level, fake, forced, random
 Register cards in `init()` with `Director.register(card)` (stored in `CardRegistry`: `get(id)`, `all()`, `ids()`, `byTier(t)`), which works before the director is installed. When `fire` gets `NO_SPOT` (no out-of-view place exists right now), the director keeps the card for later. Sample: `debug_ping`.
 
 ### Director (`Services.director()`)
-`tick(server)` runs every server tick; the impl picks its own cadence (`Pacing.directorTickTicks()`). `FireResult fire(server, cardId, fake)` is for debug: it fires for the subject, skips gates and pacing but never the out-of-view rule. Also `timewarp(server, days)`, `ticksSinceTag(server, CardTag)` (Long.MAX_VALUE if never), `inQuiet(server)`, `List<String> debugLines(server)`. The stub's `fire` calls the card directly (and fires `CARD_FIRED`); its `timewarp` calls `GameClock.warp`.
+`tick(server)` runs every server tick; the impl picks its own cadence (`Pacing.directorTickTicks()`). `FireResult fire(server, cardId, fake)` is for debug: it fires for the subject, skips gates and pacing but never the out-of-view rule. Also `List<String> timewarp(server, days)` (summary lines; `/a1016 timewarp` prints them), `ticksSinceTag(server, CardTag)` (Long.MAX_VALUE if never), `inQuiet(server)`, `List<String> debugLines(server)`. The stub's `fire` calls the card directly (and fires `CARD_FIRED`); its `timewarp` calls `GameClock.warp`.
 
 ### TraceService (`Services.traces()`, real)
-- `isOutOfView(ServerLevel, BlockPos | AABB | Collection<BlockPos>)`: false if any player is within 3 blocks of it, or has line of sight inside a 160° cone within the server view distance. Only opaque full blocks (`isSolidRender`) block sight; glass, leaves, ice and doors do not. The collection form checks every block with a see-through neighbour. Unloaded points count as unseen. Geometry for tests: `static isOutOfView(level, box, viewers, near, cone)`, `positionsOutOfView(level, positions, viewers, near, cone)`, `Viewer.of(player, chunks)`.
-- `remove(level, pos, cause)` (keeps a waterlogged block's water), `move(level, from, to, cause)` (block entity data moves too; `to` must be replaceable), `convert(level, pos, newState, cause)`, `leave(level, pos, state, cause)` (only into air, replaceable plants, snow layer or fluid without a block entity; never undone), `removeStack(level, pos, slot, count, cause)` (false if `count <= 0` or the slot is empty), `moveStack(level, from, slot, to, cause)`.
+- `isOutOfView(ServerLevel, BlockPos | AABB | Collection<BlockPos>)`: false if any player is within 3 blocks of it, or has line of sight inside a 160° cone within the server view distance. Only opaque full blocks (`isSolidRender`) block sight; glass, leaves, ice and doors do not. The collection form checks every block with a see-through neighbour. Unloaded points count as unseen. D-027: the 3-block rule skips a block strictly below a player's feet while they look 30°+ up and it is outside the cone. Geometry for tests: `static isOutOfView(level, box, viewers, near, cone)`, `positionsOutOfView(level, positions, viewers, near, cone)`, `Viewer.of(player, chunks)`.
+- `remove(level, pos, cause)` (keeps a waterlogged block's water), `move(level, from, to, cause)` (block entity data moves too; `to` must be replaceable), `convert(level, pos, newState, cause)`, `leave(level, pos, state, [blockEntityData,] cause)` (only into air, replaceable plants, snow layer or fluid without a block entity; `saveCustomOnly` data such as chest items or sign text; never undone), `removeStack(level, pos, slot, count, cause)` (false if `count <= 0` or the slot is empty), `moveStack(level, from, slot, to, cause)`, `leaveStack(level, containerPos, stack, cause)` (first empty slot; never undone).
+- `removeLettingFall(level, pos, cause)`: removes the block and lets the sand or gravel column on it, or the stalactite under it, fall by the game's rules. The block, every falling block, the cells they pass and where they land must all be out of view. Only the removed block is ledgered. Refused if a falling block would break into an item.
+- Taking back: `restoreBlock(level, removeEntry, toPos)` (its spot or up to 2 blocks off; the entry is closed, or rewritten as a MOVE), `restoreStack(level, removeStackEntry, containerPos)` (closes the entry), `equipFromLedger(level, stackEntry, mob, slot, cause)` (a REMOVE_STACK stack, or a MOVE_STACK stack taken back out of its chest, into a mob's empty slot; guaranteed drop; the entry becomes EQUIP). All out of view; none creates items.
+- `editSign(level, pos, frontLines, backLines, cause)`: null or empty blanks a side; ledgered as BLOCK_ENTITY with the old text; waxed signs only for causes starting `lore:left/F30`.
+- `figureDig(level, pos, cause)` / `figureFill(level, pos, state, cause)`: ONLY for the figure's dig-under exit (D-030), the one edit allowed in view. Dig refuses fluids, bedrock, block entities and player-placed blocks; fill must reuse a block dug under the same cause (ledgered as a MOVE).
+- `addVeto(TraceVeto)`: `vetoes(level, pos)` is asked for every position every edit would change (dependents, falls, containers, signs, figure edits included); one true refuses the edit. Keep it cheap.
 - Edits are silent: no drops, particles, sounds or spilled containers. Neighbours that would break (torches, signs, plants, rails, door halves) are removed silently and ledgered as `<cause>/dependent`; neighbours that only change shape are view-checked too. A falling block left without support, or an item frame, painting or leash knot on a changed block, refuses the edit.
 - `batch(level, cause)` returns a `TraceBatch`: `.remove(pos) .move(a, b) .convert(pos, s) .leave(pos, s)` then `commit()`: one plan, one view check over every affected block, all or nothing (retry later if it returns false).
 - Every edit returns false and changes nothing if anything it changes is in view. Tests and debug use `Services.traces().forced()`.
-- Everything except `leave` goes to `TraceLedger.get(server)` (`data/a1016_02/traces.dat`): `entries()` oldest first (kind, cause, day, pos, to, old state, block entity, stack, slots), `remove(entry)` once undone. Ending D undoes from it.
+- Everything except `leave` and `leaveStack` goes to `TraceLedger.get(server)` (`data/a1016_02/traces.dat`): `entries()` oldest first (kind REMOVE, MOVE, CONVERT, REMOVE_STACK, MOVE_STACK, BLOCK_ENTITY or EQUIP; cause, day, pos, to, old state, block entity, stack, slots, entity), `remove(entry)` once undone. Ending D undoes from it and skips causes starting with `lore:left/` (what others left stays).
 
 ### PlayerWatch (`Services.watch()`, real)
 `Optional<ServerPlayer> subject(server)`, `isSubject(player)`, `stillTicks(player)` (position only), `ticksSinceCombat(player)`, `ticksSinceJoin(player)`, `isSleeping(player)`, `Optional<GlobalPos> base(player)` (respawn point, else the subject's first block), `lastVisitDay(level, ChunkPos)` (-1 if never; sampled every 5 s, 3x3 chunks). Footprint (all players, capped per dimension): `wasPlacedByPlayer(level, pos)`, `wasDugByPlayer(level, pos)`, `placedNear(level, center, radius, Block | TagKey<Block> | Predicate<BlockState>)` and `dugNear(level, center, radius)` return `List<BlockPos>`. Placement comes from core's `BlockItemMixin`.
 
 ### GameClock
-`playTicks(server)` counts server ticks while the subject is online, plus timewarp. `day(server)` is overworld clock time / 24000 plus timewarp days (day 0 is the first). `warp(server, days)` adds days and 24000 play ticks per day.
+`playTicks(server)` counts server ticks while the subject is online, plus timewarp. `day(server)` is overworld clock time / 24000 plus timewarp days (day 0 is the first). `dayTicks(server)` is `day * 24000` plus the time of day. `warp(server, days)` adds days and 24000 play ticks per day.
 
 ### SiteRegistry (`Services.sites()`, real; thread-safe so worldgen can write to it)
-`Site record(SiteType, ResourceKey<Level>, BlockPos, size)`, `find(type, GlobalPos near, radius)` (horizontal, nearest first), `findUnclaimed(...)`, `boolean claim(site, fragmentId)`, `all()`. `Site(id, type, dimension, pos, size, Optional claimedBy)`. SiteType: RUINED_HUT, ABANDONED_BUILD, TUNNEL_END, OCEAN_PYRAMID, BARE_GROVE, STAIR_BOTTOM, PANIC_TOWER, EMPTIED_HOUSE, CROSS, LONE_LIGHT, DEAD_MOUNTAIN, CUT, HOUSE_COPY, UNDER_BASE. World and dig record sites. Lore fills them.
+`Site record(SiteType, ResourceKey<Level>, BlockPos, size)`, `find(type, GlobalPos near, radius)` (horizontal, nearest first), `findUnclaimed(...)`, `boolean claim(site, fragmentId)`, `Optional<Site> update(site, pos, size)` (keeps id, type and claim), `all()`. `Site(id, type, dimension, pos, size, Optional claimedBy)`. SiteType: RUINED_HUT, ABANDONED_BUILD, TUNNEL_END, OCEAN_PYRAMID, BARE_GROVE, STAIR_BOTTOM, PANIC_TOWER, EMPTIED_HOUSE, CROSS, LONE_LIGHT, DEAD_MOUNTAIN, CUT, HOUSE_COPY, UNDER_BASE. World and dig record sites (world records its one hut and the core pyramid as soon as they are planned at server start). Lore fills them.
+
+### ProtectedAreas (`Services.protectedAreas()`, real; thread-safe, file `data/a1016_02/protected.dat`)
+`protect(id, dimension, BoundingBox)` (same id moves it), `unprotect(id)`, `isProtected(dimension, pos)`, `intersects(dimension, box)`, `all()`. World's new-scar placer skips protected columns. Lore protects the untouched grove.
+
+### FogLimits (static, both sides)
+`FogLimits.of(player)` (server) or `of(clientChunks, serverChunks, duskFogLevel, dayTime)` gives `Result(chunks, renderLimit, fogEnd)`: the un-pulled render limit (`min(client, server) * 16`) and the fog end after the dusk fog, by atmosphere's client curve (`duskWeight`, `fogEnd`). Atmosphere owns the shape: `installShape(() -> AtmosphereConfig.get().fogShape())`.
 
 ### MobTamper / FragmentService / AccidentPlanner / DeathMarker (interfaces)
-- MobTamper: `boolean freeze(mob, ticks)`, `face(mob, Vec3, ticks)`, `silence(mob, ticks)`, `moveOutOfView(mob, BlockPos)`, `void release(mob)`.
+- MobTamper (atmosphere installs it): `boolean freeze(mob, ticks)`, `face(mob, Vec3, ticks)`, `silence(mob, ticks)`, `moveOutOfView(mob, BlockPos)`, `void release(mob)`, `isTampered(mob)` (any effect on it now).
 - FragmentService: `isEnabled(server, id)`, `place(id, level, hint)`, `markRead(player, id)`, `Optional<GlobalPos> placed(server, id)`.
 - AccidentPlanner: `Optional<TrapType> armed()`, `arm(player, TrapType)`, `disarm()`, `causedBy(player, DamageSource)`. `TrapType(String id)` is a record, so accident defines its own.
 - DeathMarker: `mark(player, cause, pos)`, `count(server)`.
@@ -114,4 +127,4 @@ Payloads `FogSurge(strength, rampTicks, holdTicks, fadeTicks)`, `Silence(ticks, 
 `ModConfig.pacing()` is `Pacing`: every number from DESIGN.md "The director", 4b, Triggers and related rules, in natural units, plus `...Ticks()` accessors (and `TickRange tracesStart(tempo)` etc.) that divide by `devFastDivisor` when `devFastMode` is true (default false). Use `ModConfig.realTicks(seconds)` for your own real-time values. Workstream tunables: `ModConfig.section("<ws>", Type.class, Type::new)` (public fields, no-arg constructor), stored under `sections.<ws>`.
 
 ### Commands (op level 2)
-Core (in `debug`): `/a1016 state`, `stage <n>`, `fire <cardId> [fake]`, `timewarp <days>`, `profile reroll`. Workstreams add `/a1016 <ws> ...` with `CommandHooks.register((root, ctx) -> root.then(Commands.literal("<ws>")...))`.
+Core (in `debug`): `/a1016 state`, `stage <n>`, `fire <cardId> [fake]`, `timewarp <days>` (prints the director's summary), `profile reroll`. Workstreams add `/a1016 <ws> ...` with `CommandHooks.register((root, ctx) -> root.then(Commands.literal("<ws>")...))`.
