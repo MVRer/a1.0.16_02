@@ -206,10 +206,10 @@ public final class AccidentPlannerImpl implements AccidentPlanner {
 		long now = ctx.now();
 		boolean live = kind.live();
 		ResourceKey<Level> dimension = candidate.dimension != null ? candidate.dimension : ctx.level().dimension();
-		return new ArmedTrap(kind.id(), dimension, candidate.pos, live ? List.of() : candidate.taken(), candidate.saved, candidate.off(),
+		return kind.onArmed(ctx, candidate, new ArmedTrap(kind.id(), dimension, candidate.pos, live ? List.of() : candidate.taken(), candidate.saved, candidate.off(),
 				Optional.ofNullable(candidate.mob).map(Entity::getUUID).stream().toList(), live ? ArmedTrap.Phase.WATCHING : ArmedTrap.Phase.SET, now,
 				live ? -1 : now, now + (live ? cfg.liveWatchTicks() : kind.window(cfg)), kind.clockUntil(ctx.level(), cfg), candidate.zoneMin,
-				candidate.zoneMax, candidate.clue, 0);
+				candidate.zoneMax, candidate.clue, 0));
 	}
 
 	// --- events ---

@@ -1,6 +1,8 @@
 package com.forzacode.a1016_02.accident.trap;
 
 import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.Set;
 import java.util.EnumSet;
 import java.util.List;
 
@@ -22,9 +24,9 @@ import net.minecraft.world.damagesource.DamageSource;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.monster.Enemy;
 import net.minecraft.world.item.Items;
-import net.minecraft.world.level.LightLayer;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.entity.JukeboxBlockEntity;
+import net.minecraft.world.level.block.state.BlockState;
 
 import org.jspecify.annotations.Nullable;
 
@@ -48,15 +50,10 @@ public final class WhiteEyesLureTrap extends BaseTrap {
 	@Override
 	public ArmedTrap onSpawned(TrapContext ctx, Entity entity, ArmedTrap armed) {
 		if (!(entity instanceof Enemy) || entity.level() != ctx.level() || !armed.zone(0).contains(entity.position())
-				|| ctx.level().getBrightness(LightLayer.BLOCK, entity.blockPosition()) > 0) {
+				|| !DarkCornerTrap.inDarkenedCells(ctx.level(), entity.blockPosition(), armed)) {
 			return armed;
 		}
-		for (BlockPos torch : armed.targets()) {
-			if (torch.distManhattan(entity.blockPosition()) <= DarkCornerTrap.TORCH_REACH) {
-				return armed.blame(entity.getUUID());
-			}
-		}
-		return armed;
+		return armed.blame(entity.getUUID());
 	}
 
 	@Override
@@ -124,12 +121,16 @@ public final class WhiteEyesLureTrap extends BaseTrap {
 			return armed;
 		}
 		for (BlockPos torch : torches) {
+			BlockState state = level.getBlockState(torch);
 			if (TraceOp.apply(level, ctx.view(), "accident:" + id(), List.of(TraceOp.remove(torch)))) {
 				watch.stepTick = ctx.now();
 				List<BlockPos> out = new ArrayList<>(armed.targets());
 				out.add(torch);
+				// The cells this torch lit (through open space only, never through walls) are where a spawn now counts.
+				Set<BlockPos> lit = new HashSet<>(armed.lit());
+				lit.addAll(DarkCornerTrap.litCells(level, List.of(new ArmedTrap.SavedBlock(torch, state))));
 				ArmedTrap next = armed.isSet() ? armed.withPhase(ArmedTrap.Phase.SET, ctx.now() + window(ctx.cfg())) : armed.set(ctx.now(), window(ctx.cfg()), out);
-				return next.withStep(armed.step() + 1, out);
+				return next.withStep(armed.step() + 1, out).withLit(lit);
 			}
 		}
 		return armed;

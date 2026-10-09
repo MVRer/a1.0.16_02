@@ -1,8 +1,13 @@
 package com.forzacode.a1016_02.accident.trap;
 
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.EnumSet;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 
 import com.forzacode.a1016_02.accident.AccidentConfig;
 import com.forzacode.a1016_02.accident.ArmedTrap;
@@ -36,8 +41,6 @@ import org.jspecify.annotations.Nullable;
  * night counts; any other mob death in the base does not.
  */
 public final class DarkCornerTrap extends BaseTrap {
-	/** A torch lights cells up to this Manhattan distance (light 14, falling by one per block). */
-	static final int TORCH_REACH = 13;
 	static final String CAUSE = "accident:dark_corner";
 
 	public DarkCornerTrap() {
@@ -90,17 +93,57 @@ public final class DarkCornerTrap extends BaseTrap {
 		return inDarkenedCells(ctx.level(), entity.blockPosition(), armed) ? armed.blame(entity.getUUID()) : armed;
 	}
 
-	/** Dark now, and within reach of a taken torch (so it was lit before he took them). */
+	/** Dark now, and one of the cells the taken torches lit (flood-filled when the trap was armed). */
 	public static boolean inDarkenedCells(ServerLevel level, BlockPos pos, ArmedTrap armed) {
-		if (level.getBrightness(LightLayer.BLOCK, pos) > 0) {
-			return false;
+		return armed.lit().contains(pos) && level.getBrightness(LightLayer.BLOCK, pos) == 0;
+	}
+
+	/** Remembers the cells the taken torches lit, so only spawns there count. */
+	@Override
+	public ArmedTrap onArmed(TrapContext ctx, Candidate candidate, ArmedTrap armed) {
+		return armed.withLit(litCells(ctx.level(), armed.saved()));
+	}
+
+	/**
+	 * The cells these torches light, the way block light spreads: from each torch's own level, losing at least one per
+	 * step and more through blocks that dampen light, never through opaque blocks, so never through a wall. Cells
+	 * that end at level 1 or more are lit.
+	 */
+	public static Set<BlockPos> litCells(ServerLevel level, List<ArmedTrap.SavedBlock> torches) {
+		Map<BlockPos, Integer> light = new HashMap<>();
+		List<ArrayDeque<BlockPos>> buckets = new ArrayList<>();
+		for (int i = 0; i <= 15; i++) {
+			buckets.add(new ArrayDeque<>());
 		}
-		for (ArmedTrap.SavedBlock torch : armed.saved()) {
-			if (torch.pos().distManhattan(pos) <= TORCH_REACH) {
-				return true;
+		for (ArmedTrap.SavedBlock torch : torches) {
+			int emission = Math.min(15, torch.state().getLightEmission());
+			if (emission > light.getOrDefault(torch.pos(), 0)) {
+				light.put(torch.pos(), emission);
+				buckets.get(emission).add(torch.pos());
 			}
 		}
-		return false;
+		for (int lv = 15; lv >= 2; lv--) {
+			ArrayDeque<BlockPos> bucket = buckets.get(lv);
+			while (!bucket.isEmpty()) {
+				BlockPos pos = bucket.poll();
+				if (light.getOrDefault(pos, 0) != lv) {
+					continue;
+				}
+				for (Direction dir : Direction.values()) {
+					BlockPos next = pos.relative(dir);
+					if (!level.isLoaded(next)) {
+						continue;
+					}
+					int dampening = Math.max(1, level.getBlockState(next).getLightDampening());
+					int reached = lv - dampening;
+					if (dampening < 15 && reached > light.getOrDefault(next, 0)) {
+						light.put(next, reached);
+						buckets.get(reached).add(next);
+					}
+				}
+			}
+		}
+		return new HashSet<>(light.keySet());
 	}
 
 	@Override

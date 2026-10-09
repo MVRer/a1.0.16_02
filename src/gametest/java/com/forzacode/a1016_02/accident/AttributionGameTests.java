@@ -32,11 +32,11 @@ import net.minecraft.world.level.storage.LevelData;
  * part in, and debug marks that must not count.
  */
 public class AttributionGameTests {
-	/** A base with a dark-able corner at (1..2, 1, 1..2) and five torches far from it; the player stands in the middle. */
+	/** A base with a dark-able corner at (1..2, 1, 1..2), clearly the farthest from the middle, and five torches well away from it. */
 	private static Yard darkBase(GameTestHelper helper) {
 		Yard y = new Yard(helper);
 		y.fill(0, 0, 0, 23, 0, 23, Blocks.STONE);
-		int[][] torches = {{1, 1}, {2, 1}, {1, 2}, {16, 16}, {20, 20}, {20, 12}, {12, 20}, {16, 8}};
+		int[][] torches = {{1, 1}, {2, 1}, {1, 2}, {14, 14}, {17, 10}, {10, 17}, {15, 8}, {12, 12}};
 		for (int[] t : torches) {
 			y.placed(t[0], 1, t[1], Blocks.TORCH);
 		}
@@ -56,7 +56,7 @@ public class AttributionGameTests {
 			DamageSources damage = level.damageSources();
 			Zombie born = helper.spawn(EntityTypes.ZOMBIE, new BlockPos(3, 1, 3));
 			planner.onSpawned(level, born);
-			Zombie lit = helper.spawn(EntityTypes.ZOMBIE, new BlockPos(19, 1, 19));
+			Zombie lit = helper.spawn(EntityTypes.ZOMBIE, new BlockPos(13, 1, 14));
 			planner.onSpawned(level, lit);
 			Zombie walkedIn = helper.spawn(EntityTypes.ZOMBIE, new BlockPos(18, 1, 18));
 			planner.onSpawned(level, walkedIn);
@@ -70,6 +70,41 @@ public class AttributionGameTests {
 			born.discard();
 			lit.discard();
 			walkedIn.discard();
+			helper.succeed();
+		});
+	}
+
+	@GameTest(structure = Yard.STRUCTURE, maxTicks = 60)
+	public void darkCornerIgnoresSpawnsBehindAWall(GameTestHelper helper) {
+		Yard y = new Yard(helper);
+		ServerLevel level = y.level;
+		y.fill(0, 0, 0, 23, 0, 23, Blocks.STONE);
+		// The corner is a closed stone room (inside x 1..4, z 1..4); the yard outside it is beyond its walls.
+		y.fill(0, 1, 0, 5, 3, 5, Blocks.STONE);
+		y.fill(1, 1, 1, 4, 3, 4, Blocks.AIR);
+		y.fill(0, 4, 0, 5, 4, 5, Blocks.STONE);
+		int[][] torches = {{1, 1}, {2, 1}, {1, 2}, {14, 14}, {17, 10}, {10, 17}, {15, 8}, {12, 12}};
+		for (int[] t : torches) {
+			y.placed(t[0], 1, t[1], Blocks.TORCH);
+		}
+		y.player.snapTo(y.absVec(11.5, 1, 11.5), 0, 0);
+		AccidentPlannerImpl planner = new AccidentPlannerImpl(server -> y.data, Yard.NOBODY);
+		ArmedTrap trap = planner.arm(y.player, Traps.DARK_CORNER, true).trap();
+		helper.assertTrue(trap != null && trap.saved().size() == 3, "the corner room was not darkened");
+		helper.assertTrue(trap.lit().contains(y.abs(3, 1, 3)), "the room is not among the darkened cells");
+		helper.assertFalse(trap.lit().contains(y.abs(6, 1, 3)), "light went through the wall");
+		helper.runAfterDelay(10, () -> {
+			Zombie inside = helper.spawn(EntityTypes.ZOMBIE, new BlockPos(3, 1, 3));
+			planner.onSpawned(level, inside);
+			// Six blocks from a taken torch, dark, but on the other side of the wall: not his.
+			Zombie outside = helper.spawn(EntityTypes.ZOMBIE, new BlockPos(6, 1, 3));
+			planner.onSpawned(level, outside);
+			y.player.snapTo(y.absVec(6.5, 1, 4.5), 0, 0);
+			helper.assertTrue(level.getBrightness(net.minecraft.world.level.LightLayer.BLOCK, y.abs(6, 1, 3)) == 0, "the spot behind the wall is not dark");
+			helper.assertFalse(planner.causedBy(y.player, level.damageSources().mobAttack(outside)), "a zombie born behind the wall was claimed");
+			helper.assertTrue(planner.causedBy(y.player, level.damageSources().mobAttack(inside)), "a zombie born in the dark room was not claimed");
+			inside.discard();
+			outside.discard();
 			helper.succeed();
 		});
 	}

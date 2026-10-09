@@ -74,6 +74,11 @@ public interface TrapKind {
 		return matches(source, armed);
 	}
 
+	/** The trap was just armed at this spot: a last chance to remember what it needs (the dark corner's lit cells). */
+	default ArmedTrap onArmed(TrapContext ctx, Candidate candidate, ArmedTrap armed) {
+		return armed;
+	}
+
 	/** A mob was just added to the world (spawned, not loaded) while this trap is armed. Returns the updated trap. */
 	default ArmedTrap onSpawned(TrapContext ctx, Entity entity, ArmedTrap armed) {
 		return armed;
