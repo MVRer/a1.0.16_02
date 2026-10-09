@@ -21,6 +21,7 @@ Status values: queued, running, review, fix, merged, blocked. Only the orchestra
 | P1-8b | "The zombie has your sword" (D-032), plus void and lava bridge accidents and the enderman on your bridge (D-034) | accident | feat/accident-sword | v0.7 | queued | Needs P1-9 (`equipFromLedger`) and P1-8 merged |
 | P1-4b | Dig follow-ups: restoreStack into the network chest, SiteRegistry.update | dig | feat/dig-followups | - | running | |
 | P1-5b | Atmosphere follow-ups: FogLimits.installShape, dead mountain silence, no animals there | atmosphere | feat/atmosphere-followups | - | running | |
+| P1-1b | Director fixes: Stage 3 only on a TELLING that names him (D-041); signature stage minimum; no early deck reshuffle; quiet check after any tension rise | director | feat/director-fixes | v0.6 | queued (next free slot) | Must merge together with or before P1-7 |
 | P2-1 | Endings A, B, C, D (full D chain) | ending | feat/ending-endings | v0.8-endings | queued, phase 2 | |
 | P2-2 | Integration: wire all cards, close contract gaps, guardrail pass | (multi) | feat/integration-pass | v1.0 | queued, phase 2 | |
 | P2-3 | Playtest tooling: dev overlay and a 20 h scripted timewarp log | debug | feat/debug-playtest | v1.0 | queued, phase 2 | |
