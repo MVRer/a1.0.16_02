@@ -1,5 +1,7 @@
 package com.forzacode.a1016_02.ending;
 
+import com.forzacode.a1016_02.ending.d.EndingDGameTests;
+
 import static com.forzacode.a1016_02.ending.EndingTestSupport.facts;
 
 import java.util.Optional;
@@ -16,7 +18,7 @@ import net.minecraft.gametest.framework.GameTestHelper;
  * The commit rules of Endings A, B and C as pure functions of the facts, with a forced clock: each condition on its
  * own, the order between paths, and the director flags the paths use.
  */
-public class EndingRuleTests {
+public class EndingRuleTests extends EndingDGameTests {
 	static final long DAY = GameClock.TICKS_PER_DAY;
 	static final long NEVER = EndingState.NEVER;
 	static final int OBEY_DAYS = 3;

@@ -80,14 +80,18 @@ public final class Stair {
 		return LoreData.get(server).anchor(TWIN_ANCHOR);
 	}
 
-	/** The highest bedrock in this column (near the bottom of the world), or one under the world if none. */
-	static int bedrockTop(ServerLevel level, int x, int z) {
-		for (int y = level.getMinY() + 8; y >= level.getMinY(); y--) {
+	/**
+	 * The highest bedrock in this column at or under {@code from} (searched a few blocks down; the bedrock floor
+	 * varies by a few blocks), or the lowest searched level minus one if there is none.
+	 */
+	static int bedrockTop(ServerLevel level, int x, int z, int from) {
+		int bottom = Math.max(level.getMinY(), from - 14);
+		for (int y = from; y >= bottom; y--) {
 			if (level.getBlockState(new BlockPos(x, y, z)).is(Blocks.BEDROCK)) {
 				return y;
 			}
 		}
-		return level.getMinY() - 1;
+		return bottom - 1;
 	}
 
 	static BlockState wall(int y) {
@@ -112,6 +116,7 @@ public final class Stair {
 		int ax = twin.getX();
 		int az = twin.getZ();
 		int chamberCeil = twin.getY() + cfg.chamberHeadroom + 1;
+		int from = twin.getY() + 4;
 		Integer ceiling = null;
 		for (int y = core.getY() - 1; y > chamberCeil + 12; y--) {
 			BlockPos pos = new BlockPos(ax, y, az);
@@ -135,7 +140,7 @@ public final class Stair {
 			int x = ax + r[0];
 			int z = az + r[1];
 			int s = s0 - i;
-			if (s <= bedrockTop(level, x, z)) {
+			if (s <= Math.max(twin.getY() - 6, bedrockTop(level, x, z, from))) {
 				break;
 			}
 			stairs.add(new BlockPos(x, s, z));
@@ -149,6 +154,8 @@ public final class Stair {
 		Set<BlockPos> cells = new LinkedHashSet<>();
 		int ax = plan.axisX();
 		int az = plan.axisZ();
+		int from = plan.bedrockSearchTop();
+		int floor = plan.chamberBox().minY();
 		for (int y = plan.yTop(); y > plan.s0(); y--) {
 			cells.add(new BlockPos(ax, y, az));
 		}
@@ -156,14 +163,14 @@ public final class Stair {
 			int x = ax + RING[k][0];
 			int z = az + RING[k][1];
 			int top = Math.min(plan.yTop(), plan.s0() - k + 3);
-			for (int y = top; y > bedrockTop(level, x, z); y--) {
+			for (int y = top; y > Math.max(floor, bedrockTop(level, x, z, from)); y--) {
 				cells.add(new BlockPos(x, y, z));
 			}
 		}
 		int h = plan.half();
 		for (int x = ax - h; x <= ax + h; x++) {
 			for (int z = az - h; z <= az + h; z++) {
-				for (int y = plan.chamberCeil() - 1; y > bedrockTop(level, x, z); y--) {
+				for (int y = plan.chamberCeil() - 1; y > Math.max(floor, bedrockTop(level, x, z, from)); y--) {
 					cells.add(new BlockPos(x, y, z));
 				}
 			}
@@ -234,6 +241,11 @@ public final class Stair {
 			plan = planned.get();
 			data.setStair(plan);
 		}
+		return buildSegment(level, data, plan, traces, cfg);
+	}
+
+	/** Builds the next segment of this plan (or finishes it). */
+	public static Attempt buildSegment(ServerLevel level, EndingDState data, StairPlan plan, TraceService traces, EndingDConfig cfg) {
 		Set<BlockPos> cells = carved(level, plan);
 		int low = bottom(cells);
 		if (segmentLevels <= 0) {
@@ -327,7 +339,7 @@ public final class Stair {
 	private static void finish(ServerLevel level, EndingDState data, StairPlan plan) {
 		StairPlan done = plan.completed();
 		data.setStair(done);
-		BlockPos corner = new BlockPos(plan.axisX() + plan.half(), bedrockTop(level, plan.axisX() + plan.half(), plan.axisZ() + plan.half()) + 1,
+		BlockPos corner = new BlockPos(plan.axisX() + plan.half(), bedrockTop(level, plan.axisX() + plan.half(), plan.axisZ() + plan.half(), plan.twin().getY() + 4) + 1,
 				plan.axisZ() + plan.half());
 		GlobalPos site = GlobalPos.of(level.dimension(), corner);
 		if (Services.sites().find(SiteType.STAIR_BOTTOM, site, 4).isEmpty()) {

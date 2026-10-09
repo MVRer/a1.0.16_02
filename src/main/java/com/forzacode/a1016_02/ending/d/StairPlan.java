@@ -56,9 +56,9 @@ public record StairPlan(ResourceKey<Level> dimension, BlockPos core, BlockPos tw
 		return new BlockPos(axisX(), s0, axisZ());
 	}
 
-	/** The chamber, wall to wall (inside only), from the bottom of the world to just under its ceiling. */
-	public BoundingBox chamberBox(int minY) {
-		return new BoundingBox(axisX() - half, minY, axisZ() - half, axisX() + half, chamberCeil - 1, axisZ() + half);
+	/** The chamber, wall to wall (inside only), from below the bedrock it stands on to just under its ceiling. */
+	public BoundingBox chamberBox() {
+		return new BoundingBox(axisX() - half, twin.getY() - 6, axisZ() - half, axisX() + half, chamberCeil - 1, axisZ() + half);
 	}
 
 	/** The shaft's 3x3 footprint, from its top down to the chamber's ceiling. */
@@ -66,9 +66,14 @@ public record StairPlan(ResourceKey<Level> dimension, BlockPos core, BlockPos tw
 		return new BoundingBox(axisX() - 1, chamberCeil, axisZ() - 1, axisX() + 1, yTop, axisZ() + 1);
 	}
 
-	/** True if {@code pos} is inside the chamber (any height down to the bottom of the world). */
-	public boolean inChamber(BlockPos pos, int minY) {
-		return chamberBox(minY).isInside(pos);
+	/** True if {@code pos} is inside the chamber. */
+	public boolean inChamber(BlockPos pos) {
+		return chamberBox().isInside(pos);
+	}
+
+	/** Where the bedrock search starts in each column: a little over the twin (bedrock tops vary by a few blocks). */
+	public int bedrockSearchTop() {
+		return twin.getY() + 4;
 	}
 
 	public StairPlan withBuiltTo(int level) {

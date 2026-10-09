@@ -5,6 +5,7 @@ import com.forzacode.a1016_02.core.HerobrineState;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.world.level.chunk.ChunkAccess;
+import net.minecraft.world.level.chunk.LevelChunkSection;
 import net.minecraft.world.level.levelgen.Heightmap;
 import net.minecraft.world.level.block.state.BlockState;
 
@@ -63,7 +64,9 @@ public final class Sting {
 					pos.set(baseX + x, y, baseZ + z);
 					BlockState state = chunk.getBlockState(pos);
 					if (state.isAir() || !state.getFluidState().isEmpty() && state.canBeReplaced()) {
-						chunk.setBlockState(pos, stone);
+						// Straight into the section, without its lock: the noise fill holds it (as vanilla's fill does).
+						LevelChunkSection section = chunk.getSection(chunk.getSectionIndex(y));
+						section.setBlockState(x, y & 15, z, stone, false);
 						filled++;
 					}
 				}

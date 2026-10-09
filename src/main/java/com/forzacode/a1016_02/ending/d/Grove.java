@@ -53,11 +53,19 @@ public final class Grove {
 
 	/** A player is breaking a block: a poplar log in the grove counts, and its drop is marked as grove wood. */
 	static void onBreak(ServerLevel level, ServerPlayer player, BlockPos pos, BlockState state) {
-		if (!isPoplarLog(state) || !Services.watch().isSubject(player) || !contains(level.getServer(), GlobalPos.of(level.dimension(), pos))) {
-			return;
+		if (Services.watch().isSubject(player)) {
+			cutLog(level, EndingDState.get(level.getServer()), pos, state);
 		}
-		EndingDState.get(level.getServer()).addGroveLog();
+	}
+
+	/** The subject cut this block: a poplar log in the grove counts and its drop is grove wood. True if it counted. */
+	public static boolean cutLog(ServerLevel level, EndingDState data, BlockPos pos, BlockState state) {
+		if (!isPoplarLog(state) || !contains(level.getServer(), GlobalPos.of(level.dimension(), pos))) {
+			return false;
+		}
+		data.addGroveLog();
 		Marks.expectDrop(level, pos, state.getBlock().asItem(), Marks.GROVE_WOOD);
+		return true;
 	}
 
 	/** Step 2's dangers, for the subject in the grove. */

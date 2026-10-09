@@ -46,7 +46,7 @@ public final class Chamber {
 
 	/** The chamber's inside, from the bottom of the world to just under its ceiling. */
 	static BoundingBox box(ServerLevel level, StairPlan plan) {
-		return plan.chamberBox(level.getMinY());
+		return plan.chamberBox();
 	}
 
 	static Iterable<BlockPos> cells(BoundingBox box) {

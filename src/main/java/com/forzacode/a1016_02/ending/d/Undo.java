@@ -115,7 +115,8 @@ public final class Undo {
 		}
 		TraceLedger ledger = TraceLedger.get(server);
 		if (!ledger.entries().contains(entry)) {
-			return Result.DONE;
+			// Already undone (or never ledgered): nothing left to put back.
+			return Result.BLOCKED;
 		}
 		ServerLevel level = server.getLevel(entry.pos().dimension());
 		if (level == null) {

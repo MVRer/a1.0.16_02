@@ -2,6 +2,7 @@ package com.forzacode.a1016_02.ending.d;
 
 import java.util.List;
 import java.util.Locale;
+import java.util.function.Predicate;
 
 import com.forzacode.a1016_02.A1016_02;
 import com.forzacode.a1016_02.core.ClientEffects;
@@ -64,6 +65,12 @@ public final class Afterward {
 	 * nothing waiting ends the undo; a pass that still has work rests a while and starts again from the newest.
 	 */
 	public static void step(MinecraftServer server, EndingDState data, EndingDConfig cfg, TraceService traces, int budget) {
+		step(server, data, cfg, traces, budget, entry -> true);
+	}
+
+	/** {@link #step} over the entries {@code scope} accepts (tests keep to their own). */
+	public static void step(MinecraftServer server, EndingDState data, EndingDConfig cfg, TraceService traces, int budget,
+			Predicate<TraceLedger.Entry> scope) {
 		TraceLedger ledger = TraceLedger.get(server);
 		List<TraceLedger.Entry> entries = ledger.entries();
 		if (cursor < 0) {
@@ -78,6 +85,11 @@ public final class Afterward {
 				}
 			}
 			TraceLedger.Entry entry = entries.get(cursor);
+			if (!scope.test(entry)) {
+				cursor--;
+				budget++;
+				continue;
+			}
 			Undo.Result result = Undo.undo(server, entry, traces, LOADS);
 			switch (result) {
 				case DONE -> {
@@ -139,7 +151,7 @@ public final class Afterward {
 				data.undoPasses(), data.regrown().size());
 	}
 
-	static void clear() {
+	public static void clear() {
 		cursor = -1;
 		passDone = passWaiting = passBlocked = passSkipped = 0;
 		restUntil = 0;

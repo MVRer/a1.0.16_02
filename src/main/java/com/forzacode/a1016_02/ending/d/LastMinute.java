@@ -74,6 +74,8 @@ public final class LastMinute {
 	private static boolean waveBuilt;
 	private static @Nullable BlockPos origin;
 	private static boolean running;
+	/** The tick being played (the server's tick count; tests step it themselves). */
+	private static long clock;
 
 	private LastMinute() {
 	}
@@ -100,7 +102,8 @@ public final class LastMinute {
 			data.setStep(Step.LAST_MINUTE);
 		}
 		phase = Phase.START;
-		phaseStart = server.getTickCount();
+		clock = server.getTickCount();
+		phaseStart = clock;
 	}
 
 	/** After a restart in the middle of it: carry on from the saved phase (the climb at the earliest). */
@@ -113,7 +116,8 @@ public final class LastMinute {
 		Phase saved = Phase.values()[Mth.clamp(data.lastMinutePhase(), 0, Phase.values().length - 1)];
 		phase = saved.ordinal() <= Phase.CLIMB.ordinal() ? Phase.START : saved;
 		origin = data.stair().map(StairPlan::twin).orElse(null);
-		phaseStart = server.getTickCount();
+		clock = server.getTickCount();
+		phaseStart = clock;
 	}
 
 	static void reset() {
@@ -133,27 +137,37 @@ public final class LastMinute {
 
 	private static void enter(MinecraftServer server, EndingDState data, Phase next) {
 		phase = next;
-		phaseStart = server.getTickCount();
+		phaseStart = clock;
 		tries = 0;
 		data.setLastMinutePhase(next.ordinal());
 		A1016_02.LOGGER.info("[a1016] ending d: last minute, {}", next.name().toLowerCase(java.util.Locale.ROOT));
 	}
 
 	static void tick(MinecraftServer server, EndingDState data, EndingDConfig cfg) {
+		if (running) {
+			Services.watch().subject(server).ifPresent(player -> tick(server, data, cfg, player));
+		}
+	}
+
+	/** One tick of the sequence, for this player. */
+	public static void tick(MinecraftServer server, EndingDState data, EndingDConfig cfg, ServerPlayer player) {
+		tick(server, data, cfg, player, server.getTickCount());
+	}
+
+	/** One tick of the sequence at tick {@code at} (tests play it without waiting for the server). */
+	static void tick(MinecraftServer server, EndingDState data, EndingDConfig cfg, ServerPlayer player, long at) {
 		if (!running) {
 			return;
 		}
-		Optional<ServerPlayer> subject = Services.watch().subject(server);
-		if (subject.isEmpty()) {
-			return;
-		}
-		ServerPlayer player = subject.get();
+		clock = at;
 		boolean preview = data.has(EndingDState.PREVIEW);
-		long now = server.getTickCount();
+		long now = clock;
 		long inPhase = now - phaseStart;
 		switch (phase) {
 			case START -> {
-				ClientEffects.silence(player, (int) EndingDConfig.ticks(cfg.silenceSeconds), cfg.silenceFadeTicks);
+				if (player.connection != null) {
+					ClientEffects.silence(player, (int) EndingDConfig.ticks(cfg.silenceSeconds), cfg.silenceFadeTicks);
+				}
 				if (!preview) {
 					complete(server, data, cfg);
 				}
@@ -269,8 +283,10 @@ public final class LastMinute {
 					return;
 				}
 				ClientEffects.setMusicOff(server, false);
-				ClientEffects.silence(player, 1, cfg.silenceFadeTicks);
-				CalmMusicPayload.send(player);
+				if (player.connection != null) {
+					ClientEffects.silence(player, 1, cfg.silenceFadeTicks);
+					CalmMusicPayload.send(player);
+				}
 				enter(server, data, Phase.DONE);
 				running = false;
 				if (!preview) {
@@ -313,6 +329,9 @@ public final class LastMinute {
 
 	/** The step sound of a block coming back, for the player only (blocks, not ambient: the silence does not mute it). */
 	private static void footstep(ServerPlayer player, BlockPos pos, BlockState state) {
+		if (player.connection == null) {
+			return;
+		}
 		SoundCues.playTo(player, BuiltInRegistries.SOUND_EVENT.wrapAsHolder(state.getSoundType().getStepSound()), SoundSource.BLOCKS,
 				Vec3.atCenterOf(pos), 0.9F, 0.9F);
 	}

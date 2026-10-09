@@ -77,14 +77,28 @@ public final class Cairn {
 	 * marked; it counts for step 3 only with no offering left on this visit.
 	 */
 	static void onBreak(ServerLevel level, ServerPlayer player, BlockPos pos, BlockState state) {
-		MinecraftServer server = level.getServer();
-		if (state.isAir() || !Services.watch().isSubject(player) || !isCenter(server, level, pos)) {
-			return;
+		if (Services.watch().isSubject(player)) {
+			take(level, EndingDState.get(level.getServer()), pos, state);
+		}
+	}
+
+	/**
+	 * The subject broke this block: if it is the cairn's center, the first block is taken back (its drop is marked) and
+	 * counts for step 3 only if no offering was left on this visit. True if it was the center.
+	 */
+	public static boolean take(ServerLevel level, EndingDState data, BlockPos pos, BlockState state) {
+		if (state.isAir() || !isCenter(level.getServer(), level, pos)) {
+			return false;
 		}
 		Marks.expectDrop(level, pos, state.getBlock().asItem(), Marks.FIRST_BLOCK);
-		EndingDState data = EndingDState.get(server);
 		data.set(EndingDState.FIRST_TAKEN, !offering);
 		A1016_02.LOGGER.info("[a1016] ending d: the first block came out of the cairn{}", offering ? " (an offering was left: it does not count)" : "");
+		return true;
+	}
+
+	/** Tests: an offering was (or was not) left on this visit. */
+	static void setOffering(boolean value) {
+		offering = value;
 	}
 
 	/** True once the first block came out cleanly and is carried at least {@code carryAwayBlocks} from the cairn. */

@@ -4,6 +4,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
+import java.util.function.Predicate;
 
 import com.forzacode.a1016_02.A1016_02;
 import com.forzacode.a1016_02.core.GameClock;
@@ -35,26 +36,36 @@ public final class Chain {
 		if (subject.isEmpty()) {
 			return;
 		}
-		ServerPlayer player = subject.get();
 		HerobrineState state = HerobrineState.get(server);
+		background(server, data, cfg, state, server.getTickCount());
+		check(server, data, cfg, subject.get(), state.fragmentsRead()::contains, View.TRACES);
+	}
+
+	/**
+	 * One check of the current step for this player. {@code read} says which fragments were read; {@code view} is
+	 * the out-of-view question the dangers ask first (core asks again on every edit).
+	 */
+	public static void check(MinecraftServer server, EndingDState data, EndingDConfig cfg, ServerPlayer player, Predicate<String> read, View view) {
 		long now = server.getTickCount();
-		background(server, data, cfg, state, now);
 		Cairn.watch(player, cfg);
 		Step step = data.step();
 		switch (step) {
 			case MAP -> {
-				if (state.fragmentsRead().contains("F28") && inGrove(player)) {
+				if (read.test("F28") && inGrove(player)) {
 					advance(server, data, step);
 				}
 			}
 			case GROVE -> {
-				Grove.dangers(player, View.TRACES, cfg);
-				if (state.fragmentsRead().contains("F30") && data.groveLogs() >= cfg.groveLogsMin) {
+				Grove.dangers(player, view, cfg);
+				if (read.test("F30") && data.groveLogs() >= cfg.groveLogsMin) {
 					advance(server, data, step);
 				}
 			}
 			case TAKE_BACK -> {
-				Cairn.danger(player, data, cfg);
+				if (view == View.TRACES) {
+					// Accident's own planner, with its own view rules (not in tests with fixed viewpoints).
+					Cairn.danger(player, data, cfg);
+				}
 				if (Cairn.carriedAway(player, data, cfg)) {
 					advance(server, data, step);
 				}
@@ -65,14 +76,14 @@ public final class Chain {
 					return;
 				}
 				if (!data.has(EndingDState.FLOODED) && Stair.inShaftBelow(player, plan.get(), cfg.floodDepthBlocks)
-						&& Stair.flood(player, plan.get(), View.TRACES)) {
+						&& Stair.flood(player, plan.get(), view)) {
 					data.set(EndingDState.FLOODED, true);
 				}
-				if (plan.get().inChamber(player.blockPosition(), player.level().getMinY())) {
+				if (plan.get().inChamber(player.blockPosition())) {
 					advance(server, data, step);
 				}
 			}
-			case TORCHES, SENTENCE, CROSS -> chamber(server, data, cfg, player, step, now);
+			case TORCHES, SENTENCE, CROSS -> chamber(server, data, cfg, player, step, now, view);
 			case LAST_MINUTE, AFTERWARD -> {
 			}
 		}
@@ -92,24 +103,24 @@ public final class Chain {
 	}
 
 	/** Steps 5 to 7: down in the chamber. */
-	private static void chamber(MinecraftServer server, EndingDState data, EndingDConfig cfg, ServerPlayer player, Step step, long now) {
+	private static void chamber(MinecraftServer server, EndingDState data, EndingDConfig cfg, ServerPlayer player, Step step, long now, View view) {
 		Optional<StairPlan> found = data.stair().filter(StairPlan::complete);
 		if (found.isEmpty() || !found.get().dimension().equals(player.level().dimension())) {
 			return;
 		}
 		StairPlan plan = found.get();
 		ServerLevel level = player.level();
-		boolean down = plan.inChamber(player.blockPosition(), level.getMinY()) || Stair.inShaftBelow(player, plan, 0);
+		boolean down = plan.inChamber(player.blockPosition()) || Stair.inShaftBelow(player, plan, 0);
 		if (!down && player.blockPosition().distSqr(plan.twin()) > 48 * 48) {
 			return;
 		}
 		List<Chamber.Written> signs = Chamber.signs(level, plan);
 		Chamber.watchNaming(player, data, signs);
-		Chamber.namedFall(player, data, View.TRACES);
+		Chamber.namedFall(player, data, view);
 		if (down && now >= nextLoss) {
 			double seconds = step == Step.CROSS ? cfg.stairLossFastSeconds : cfg.stairLossSeconds;
 			nextLoss = now + EndingDConfig.ticks(seconds);
-			Stair.loseBlock(player, data, plan, View.TRACES);
+			Stair.loseBlock(player, data, plan, view);
 		}
 		switch (step) {
 			case TORCHES -> {
