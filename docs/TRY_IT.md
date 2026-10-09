@@ -2,6 +2,19 @@
 
 One entry per merge, newest first. Run the game from the main checkout (this folder, on `main`).
 
+## READY TO TRY: Director tuning (rarer, but not starved) and the ending hooks  (merged feat/director-tuning, commit ae61642)
+```
+Restart needed: full game restart (Java code). Your run/config was updated to the new pacing defaults.
+See it now:
+  1. /a1016 debug playthrough 20   compare run/logs/a1016_playthrough_*.log with before: Proximity about 0.7-0.8
+     minors/h overall (about 1.3/h while active), a major every 2.3 / 3.8 / 5.4 h for early / slow burn / very late,
+     about 0.8 ambient/h in Traces, 40-46% of Proximity quiet or empty.
+  2. /a1016 debug overlay on   while you play: you'll see quiet periods and empty sessions doing their job.
+What to look for: a real bug is fixed. Waiting out quiet periods used to push every later major back, so long
+  worlds starved. It's still rare on purpose; your playtests decide from here.
+Known rough edges: the endings' director hooks (silence, pace) do nothing visible until the endings land (v0.8).
+```
+
 ## READY TO TRY: He goes under, follows you to the Nether and End, and rushes past when chased  (merged feat/entity-goes-under, main fe17516)
 ```
 Restart needed: full game restart (Java code)
