@@ -5,6 +5,10 @@ import java.util.Optional;
 
 import com.forzacode.a1016_02.atmosphere.AtmosphereConfig;
 import com.forzacode.a1016_02.atmosphere.Curves;
+import com.forzacode.a1016_02.world.WorldData;
+import com.forzacode.a1016_02.world.WorldSites;
+import com.forzacode.a1016_02.world.gen.ScarContext;
+import com.forzacode.a1016_02.world.gen.ScarPlanner;
 import com.forzacode.a1016_02.world.live.NewScarPlacer;
 
 import net.fabricmc.fabric.api.gametest.v1.GameTest;
@@ -141,6 +145,30 @@ public class CoreContractTests {
 		} finally {
 			Services.protectedAreas().unprotect(id);
 		}
+		helper.succeed();
+	}
+
+	@GameTest
+	public void oneOffSitesAreRecordedOncePerWorld(GameTestHelper helper) {
+		MinecraftServer server = helper.getLevel().getServer();
+		ScarContext context = ScarContext.current();
+		ScarPlanner planner = context == null ? null : context.planner(server.overworld());
+		helper.assertTrue(planner != null, "no scar planner for the overworld");
+		// The start already recorded them; starting again (or after a reroll) must not record them twice.
+		planner.recordOneOffSites();
+		planner.recordOneOffSites();
+		WorldData data = WorldData.get(server);
+		Optional<GlobalPos> hut = data.single(WorldSites.HUT);
+		helper.assertTrue(hut.isPresent() == planner.ruinedHut().isPresent(), "the hut's record is not remembered");
+		hut.ifPresent(pos -> helper.assertTrue(Services.sites().find(SiteType.RUINED_HUT, pos, 0).size() == 1, "the hut is recorded "
+				+ Services.sites().find(SiteType.RUINED_HUT, pos, 0).size() + " times"));
+		data.single(WorldSites.CORE_PYRAMID).ifPresent(pos -> helper.assertTrue(Services.sites().find(SiteType.OCEAN_PYRAMID, pos, 0).size() == 1,
+				"the core pyramid is recorded more than once"));
+		hut.ifPresent(pos -> {
+			helper.assertFalse(WorldSites.isOtherSingle(WorldSites.HUT, pos), "the recorded hut counts as another one");
+			helper.assertTrue(WorldSites.isOtherSingle(WorldSites.HUT, GlobalPos.of(pos.dimension(), pos.pos().east(64))),
+					"a hut moved by a reroll would be recorded again");
+		});
 		helper.succeed();
 	}
 

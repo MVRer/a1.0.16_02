@@ -23,8 +23,8 @@ import org.jspecify.annotations.Nullable;
 
 /**
  * The world workstream's private state ({@code data/a1016_02/world.dat}): the scar salt, the inside of every
- * build (for the emptied house), the light on the mountain while it burns, and what the player did at pyramids
- * and bare groves. Server thread only.
+ * build (for the emptied house), the light on the mountain while it burns, what the player did at pyramids and
+ * bare groves, and where the one-per-world sites (the hut, the core pyramid) were recorded. Server thread only.
  */
 public final class WorldData extends SavedData {
 	/** The inside of a build, keyed by its site position. */
@@ -66,7 +66,8 @@ public final class WorldData extends SavedData {
 			GlobalPos.CODEC.listOf().optionalFieldOf("emptied", List.of()).forGetter(d -> List.copyOf(d.emptied)),
 			Light.CODEC.optionalFieldOf("light").forGetter(d -> Optional.ofNullable(d.light)),
 			GlobalPos.CODEC.listOf().optionalFieldOf("pyramidsDug", List.of()).forGetter(d -> List.copyOf(d.pyramidsDug)),
-			Grove.CODEC.listOf().optionalFieldOf("groves", List.of()).forGetter(d -> List.copyOf(d.groves.values()))
+			Grove.CODEC.listOf().optionalFieldOf("groves", List.of()).forGetter(d -> List.copyOf(d.groves.values())),
+			Codec.unboundedMap(Codec.STRING, GlobalPos.CODEC).optionalFieldOf("singles", Map.of()).forGetter(d -> Map.copyOf(d.singles))
 	).apply(i, WorldData::new));
 
 	static final SavedDataType<WorldData> TYPE = new SavedDataType<>(A1016_02.id("world"), WorldData::new, CODEC, null);
@@ -77,19 +78,22 @@ public final class WorldData extends SavedData {
 	private @Nullable Light light;
 	private final Set<GlobalPos> pyramidsDug = new HashSet<>();
 	private final Map<GlobalPos, Grove> groves = new HashMap<>();
+	private final Map<String, GlobalPos> singles = new HashMap<>();
 
 	WorldData() {
 		this.salt = ThreadLocalRandom.current().nextLong();
 		setDirty();
 	}
 
-	private WorldData(long salt, List<Build> builds, List<GlobalPos> emptied, Optional<Light> light, List<GlobalPos> pyramidsDug, List<Grove> groves) {
+	private WorldData(long salt, List<Build> builds, List<GlobalPos> emptied, Optional<Light> light, List<GlobalPos> pyramidsDug, List<Grove> groves,
+			Map<String, GlobalPos> singles) {
 		this.salt = salt;
 		builds.forEach(b -> this.builds.put(b.site(), b));
 		this.emptied.addAll(emptied);
 		this.light = light.orElse(null);
 		this.pyramidsDug.addAll(pyramidsDug);
 		groves.forEach(g -> this.groves.put(g.site(), g));
+		this.singles.putAll(singles);
 	}
 
 	public static WorldData get(MinecraftServer server) {
@@ -99,6 +103,23 @@ public final class WorldData extends SavedData {
 	/** Random per world, made on the first load: where old scars are depends on it (with the seed and profile). */
 	public long salt() {
 		return salt;
+	}
+
+	// --- one-per-world sites ---
+
+	/** Where a one-per-world site ({@link WorldSites#HUT}, {@link WorldSites#CORE_PYRAMID}) was recorded, if it was. */
+	public Optional<GlobalPos> single(String key) {
+		return Optional.ofNullable(singles.get(key));
+	}
+
+	/** Remembers where a one-per-world site was recorded; it is never recorded again for this world. */
+	public void putSingle(String key, GlobalPos pos) {
+		singles.put(key, pos);
+		setDirty();
+	}
+
+	public Map<String, GlobalPos> singles() {
+		return Map.copyOf(singles);
 	}
 
 	// --- builds ---

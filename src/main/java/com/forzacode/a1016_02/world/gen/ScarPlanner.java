@@ -15,11 +15,14 @@ import com.forzacode.a1016_02.core.Habit;
 import com.forzacode.a1016_02.core.SiteType;
 import com.forzacode.a1016_02.world.ScarKind;
 import com.forzacode.a1016_02.world.WorldConfig;
+import com.forzacode.a1016_02.world.WorldData;
 import com.forzacode.a1016_02.world.WorldSites;
 
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
+import net.minecraft.core.GlobalPos;
 import net.minecraft.core.Holder;
+import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.util.Util;
 import net.minecraft.world.level.ChunkPos;
@@ -138,6 +141,10 @@ public final class ScarPlanner {
 		}
 		if (plan.kind() == ScarKind.OCEAN_PYRAMID && plan.anchor().equals(corePyramid().orElse(null))) {
 			Builds.pyramidPocket(plan.anchor()).applyInChunk(genLevel, chunk);
+		}
+		// A hut planned after a profile reroll is not the world's recorded one: build it, but record no second hut.
+		if (plan.kind() == ScarKind.RUINED_HUT && WorldSites.isOtherSingle(WorldSites.HUT, GlobalPos.of(level.dimension(), plan.anchor()))) {
+			return;
 		}
 		for (ScarPlan.SiteMark mark : plan.sites()) {
 			if (chunk.contains(mark.pos()) && !mark.nearestTree()) {
@@ -347,7 +354,8 @@ public final class ScarPlanner {
 			try {
 				ruinedHut();
 				corePyramid();
-				recordOneOffSites();
+				MinecraftServer server = level.getServer();
+				server.execute(this::recordOneOffSites);
 			} catch (RuntimeException e) {
 				A1016_02.LOGGER.error("[a1016] world: scar warm-up failed", e);
 			}
@@ -356,15 +364,33 @@ public final class ScarPlanner {
 
 	/**
 	 * Records the hut's and the core pyramid's sites as soon as they are planned (server start), not only when
-	 * their chunks generate, so lore can plan around them early. Generating the chunk later records nothing twice
-	 * ({@link WorldSites#record} skips a site it already has). Any thread.
+	 * their chunks generate, so lore can plan around them early. Once per world: where each was recorded goes into
+	 * {@link WorldData}, so a later start or a profile reroll (which moves the plans) records nothing new, and the
+	 * hut's chunk records no second hut when it generates ({@link WorldSites#isOtherSingle}). Generating the chunk
+	 * of the recorded one records nothing twice either ({@link WorldSites#record} skips a site it already has).
+	 * Server thread; skipped if this planner's snapshot is no longer current.
 	 */
 	public void recordOneOffSites() {
-		ruinedHut().ifPresent(this::recordSites);
-		corePyramid()
-				.flatMap(anchor -> plansNear(ScarKind.OCEAN_PYRAMID, anchor.getX(), anchor.getZ(), 1).stream().filter(p -> p.anchor().equals(anchor)).findFirst())
-				.filter(plan -> farFromSpawn(plan.footprint()))
-				.ifPresent(this::recordSites);
+		MinecraftServer server = level.getServer();
+		if (!server.isRunning() || ScarContext.current() != ctx) {
+			return;
+		}
+		WorldData data = WorldData.get(server);
+		if (data.single(WorldSites.HUT).isEmpty()) {
+			ruinedHut().ifPresent(plan -> recordSingle(data, WorldSites.HUT, plan));
+		}
+		if (data.single(WorldSites.CORE_PYRAMID).isEmpty()) {
+			corePyramid()
+					.flatMap(anchor -> plansNear(ScarKind.OCEAN_PYRAMID, anchor.getX(), anchor.getZ(), 1).stream().filter(p -> p.anchor().equals(anchor)).findFirst())
+					.filter(plan -> farFromSpawn(plan.footprint()))
+					.ifPresent(plan -> recordSingle(data, WorldSites.CORE_PYRAMID, plan));
+		}
+		WorldSites.setSingles(data.singles());
+	}
+
+	private void recordSingle(WorldData data, String key, ScarPlan plan) {
+		recordSites(plan);
+		data.putSingle(key, GlobalPos.of(level.dimension(), plan.anchor()));
 	}
 
 	private void recordSites(ScarPlan plan) {

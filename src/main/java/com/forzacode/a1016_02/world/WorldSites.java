@@ -1,5 +1,6 @@
 package com.forzacode.a1016_02.world;
 
+import java.util.Map;
 import java.util.Queue;
 import java.util.concurrent.ConcurrentLinkedQueue;
 
@@ -25,7 +26,14 @@ public final class WorldSites {
 	private record PendingBuild(GlobalPos site, BoundingBox interior) {
 	}
 
+	/** {@link WorldData#single} key of the one ruined hut. */
+	public static final String HUT = "ruined_hut";
+	/** {@link WorldData#single} key of the core pyramid. */
+	public static final String CORE_PYRAMID = "core_pyramid";
+
 	private static final Queue<PendingBuild> PENDING = new ConcurrentLinkedQueue<>();
+	/** The one-per-world sites already recorded (from {@link WorldData}), readable by worldgen threads. */
+	private static volatile Map<String, GlobalPos> singles = Map.of();
 
 	private WorldSites() {
 	}
@@ -59,8 +67,20 @@ public final class WorldSites {
 		}
 	}
 
+	/** Publishes the recorded one-per-world sites to worldgen threads. Server thread. */
+	public static void setSingles(Map<String, GlobalPos> recorded) {
+		singles = Map.copyOf(recorded);
+	}
+
+	/** True if a different site was already recorded for this one-per-world key (after a profile reroll moved it). Any thread. */
+	public static boolean isOtherSingle(String key, GlobalPos pos) {
+		GlobalPos recorded = singles.get(key);
+		return recorded != null && !recorded.equals(pos);
+	}
+
 	/** Called when a server stops. */
 	static void clear() {
 		PENDING.clear();
+		singles = Map.of();
 	}
 }
