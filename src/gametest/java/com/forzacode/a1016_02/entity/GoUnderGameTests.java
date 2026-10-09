@@ -32,13 +32,28 @@ import net.minecraft.world.phys.Vec3;
 public class GoUnderGameTests extends RushAndDimensionGameTests {
 	/** Over the whole 8x8: {@code base} up to y 2, dirt 3 to 5, {@code top} at 6. He stands on it at y 7. */
 	private static void ground(GameTestHelper helper, Block base, Block top) {
+		ground(helper, base, Blocks.DIRT, top);
+	}
+
+	/** Over the whole 8x8: {@code base} up to y 2, {@code middle} 3 to 5, {@code top} at 6. */
+	private static void ground(GameTestHelper helper, Block base, Block middle, Block top) {
 		for (int x = 0; x < 8; x++) {
 			for (int z = 0; z < 8; z++) {
 				for (int y = 0; y <= 6; y++) {
-					helper.setBlock(x, y, z, y <= 2 ? base : y <= 5 ? Blocks.DIRT : top);
+					helper.setBlock(x, y, z, y <= 2 ? base : y <= 5 ? middle : top);
 				}
 			}
 		}
+	}
+
+	/**
+	 * Grass over coarse dirt, for the tests that check a shaft comes back exactly as it was. Vanilla grass spreads (on
+	 * a random tick, up to 3 blocks down) onto plain dirt with light above it, which is what an open shaft's floor is:
+	 * over plain dirt a cell could turn to grass before he digs it, or the floor under the last dug block could, and the
+	 * column would differ from before by chance, not by anything he did. Grass never spreads onto coarse dirt.
+	 */
+	private static void groundGrassCannotSpreadInto(GameTestHelper helper) {
+		ground(helper, Blocks.STONE, Blocks.COARSE_DIRT, Blocks.GRASS_BLOCK);
 	}
 
 	private static final Vec3 SHAFT_FEET = new Vec3(3.5, 7.0, 3.5);
@@ -167,7 +182,7 @@ public class GoUnderGameTests extends RushAndDimensionGameTests {
 
 	@GameTest(skyAccess = true, maxTicks = 300, padding = 8)
 	public void aStuckDigWaitsUntilTheOpeningIsOutOfView(GameTestHelper helper) {
-		ground(helper, Blocks.STONE, Blocks.GRASS_BLOCK);
+		groundGrassCannotSpreadInto(helper);
 		ServerLevel level = helper.getLevel();
 		BlockPos top = helper.absolutePos(new BlockPos(3, 6, 3));
 		List<BlockState> before = new ArrayList<>();
@@ -229,7 +244,7 @@ public class GoUnderGameTests extends RushAndDimensionGameTests {
 
 	@GameTest(skyAccess = true, maxTicks = 300, padding = 8)
 	public void anOpenShaftIsSavedAndPutBackAfterAnUnload(GameTestHelper helper) {
-		ground(helper, Blocks.STONE, Blocks.GRASS_BLOCK);
+		groundGrassCannotSpreadInto(helper);
 		ServerLevel level = helper.getLevel();
 		BlockPos top = helper.absolutePos(new BlockPos(3, 6, 3));
 		List<BlockState> before = new ArrayList<>();
@@ -257,6 +272,11 @@ public class GoUnderGameTests extends RushAndDimensionGameTests {
 			EntityData decoded = EntityData.CODEC.parse(NbtOps.INSTANCE, EntityData.CODEC.encodeStart(NbtOps.INSTANCE, data).getOrThrow()).getOrThrow();
 			if (!decoded.pendingDigs().contains(saved)) {
 				problems.add("lost on save: " + decoded.pendingDigs());
+			}
+			// The put-back waits until no player in the level sees the shaft. Mock players are not in the level and the
+			// test level has none, so it is out of view from now on; say so plainly if that ever changes.
+			if (saved != null && (!level.players().isEmpty() || !Services.traces().isOutOfView(level, saved.cells().stream().map(PendingDig.Cell::pos).toList()))) {
+				problems.add("the shaft is in view of a player in the test level: " + level.players());
 			}
 			// His chunk unloads mid-dig: no world edits then, the shaft stays open and saved, no longer his.
 			him.remove(Entity.RemovalReason.UNLOADED_TO_CHUNK);
