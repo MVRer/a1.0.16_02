@@ -137,11 +137,15 @@ public final class AccidentConfig {
 	public int restoreFrom = 22500;
 	public int nightEnd = 23500;
 
-	// --- crosses ---
-	public int crossMinHeight = 3;
-	public int crossMaxHeight = 4;
+	// --- crosses (D-050: a Latin cross, kept to 5 to 6 tall whatever is set here) ---
+	// The heights and the gather radius were crossMinHeight, crossMaxHeight and crossSourceRadius (3, 4 and 6). They are
+	// renamed so a saved config's old values give way to these.
+	public int latinCrossMinHeight = CrossBuilder.MIN_HEIGHT;
+	public int latinCrossMaxHeight = CrossBuilder.MAX_HEIGHT;
+	/** The post's foot is looked for this far from the death spot (blocks). */
 	public int crossSearchRadius = 6;
-	public int crossSourceRadius = 6;
+	/** Its material is taken this far from the foot (blocks): a 6 tall cross needs 8 blocks, the old ones 6 at most. */
+	public int crossGatherRadius = 7;
 	/** How often a waiting cross is tried again (cost setting, seconds). */
 	public double crossRetrySeconds = 5;
 	/** A waiting cross with no buildable spot at all (not just "in view") is given up after this long of retries (minutes). */

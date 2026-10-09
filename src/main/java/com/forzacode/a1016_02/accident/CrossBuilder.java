@@ -14,22 +14,33 @@ import com.forzacode.a1016_02.core.Services;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.server.level.ServerLevel;
+import net.minecraft.tags.BlockTags;
+import net.minecraft.util.RandomSource;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.state.BlockState;
 
 /**
- * Plans the cross over a marked death: a post 1 wide and 3 to 4 tall with one arm on each side just under its top,
- * built only by moving blocks that are already there, taken from the ground around the spot (he cannot create).
+ * Plans the cross over a marked death (D-050): a Latin cross 1 block wide, a post 5 to 6 tall with one arm block on
+ * each side 1 block under its top, so its foot runs 3 to 4 blocks below the arms. It is built only by moving blocks
+ * that are already there, taken from the ground around the spot (he cannot create), and never glass (D-051: glass
+ * crosses are left by others). Where the room or the material runs short it is the tallest Latin cross that fits, never
+ * shorter than {@link #MIN_HEIGHT}; with less than that there is no plan and the cross waits.
  */
 public final class CrossBuilder {
+	/** D-050: the shortest cross that still reads as a Latin cross (3 to 4 tall read as a plus sign). */
+	public static final int MIN_HEIGHT = 5;
+	/** D-050: the tallest. */
+	public static final int MAX_HEIGHT = 6;
+
 	/**
 	 * A cross that can be built now.
 	 *
-	 * @param base  the bottom of the post
-	 * @param cells post bottom to top, then the two arms
-	 * @param ops   one move per cell
+	 * @param base   the bottom of the post
+	 * @param height the post's height, which may be under the one asked for (room or material ran short)
+	 * @param cells  post bottom to top, then the two arms
+	 * @param ops    one move per cell
 	 */
-	public record Plan(BlockPos base, Direction.Axis axis, List<BlockPos> cells, List<TraceOp> ops) {
+	public record Plan(BlockPos base, Direction.Axis axis, int height, List<BlockPos> cells, List<TraceOp> ops) {
 	}
 
 	/** Standing spots looked at for material per plan (each reads a box of blocks). */
@@ -40,7 +51,17 @@ public final class CrossBuilder {
 	private CrossBuilder() {
 	}
 
-	/** The cells of a cross standing on {@code base}. */
+	/** A height for a new cross from the configured range, kept to the Latin shape whatever the config says. */
+	public static int height(RandomSource random, AccidentConfig cfg) {
+		int min = Math.clamp(cfg.latinCrossMinHeight, MIN_HEIGHT, MAX_HEIGHT);
+		int max = Math.clamp(cfg.latinCrossMaxHeight, min, MAX_HEIGHT);
+		return min + random.nextInt(max - min + 1);
+	}
+
+	/**
+	 * The cells of a cross standing on {@code base}: the post bottom to top, then the arm on the positive side of
+	 * {@code axis} and the one on the negative side, both on the row 1 block under the top.
+	 */
 	public static List<BlockPos> cells(BlockPos base, int height, Direction.Axis axis) {
 		List<BlockPos> cells = new ArrayList<>();
 		for (int y = 0; y < height; y++) {
@@ -53,8 +74,13 @@ public final class CrossBuilder {
 		return cells;
 	}
 
-	/** The nearest buildable cross at {@code death}, with its material taken from around it, or empty. */
+	/**
+	 * The nearest buildable cross at {@code death}, with its material taken from around it, or empty. At each spot
+	 * (nearest first) it is the tallest Latin cross from {@code height} down to {@link #MIN_HEIGHT} that has room and
+	 * enough material there.
+	 */
 	public static Optional<Plan> plan(ServerLevel level, BlockPos death, int height, AccidentConfig cfg) {
+		int tallest = Math.clamp(height, MIN_HEIGHT, MAX_HEIGHT);
 		int r = cfg.crossSearchRadius;
 		List<BlockPos> bases = new ArrayList<>();
 		for (BlockPos pos : BlockPos.betweenClosed(death.offset(-r, -4, -r), death.offset(r, 4, r))) {
@@ -67,22 +93,26 @@ public final class CrossBuilder {
 				continue;
 			}
 			for (Direction.Axis axis : new Direction.Axis[] {Direction.Axis.X, Direction.Axis.Z}) {
-				List<BlockPos> cells = cells(base, height, axis);
-				if (!cells.stream().allMatch(cell -> fillable(level, cell))) {
-					continue;
+				boolean counted = false;
+				for (int h = tallest; h >= MIN_HEIGHT; h--) {
+					List<BlockPos> cells = cells(base, h, axis);
+					if (!cells.stream().allMatch(cell -> fillable(level, cell))) {
+						continue;
+					}
+					if (!counted && ++tried > MAX_BASES) {
+						return Optional.empty();
+					}
+					counted = true;
+					List<BlockPos> sources = sources(level, base, cells, cfg.crossGatherRadius);
+					if (sources.size() < cells.size()) {
+						continue;
+					}
+					List<TraceOp> ops = new ArrayList<>();
+					for (int i = 0; i < cells.size(); i++) {
+						ops.add(TraceOp.move(sources.get(i), cells.get(i)));
+					}
+					return Optional.of(new Plan(base, axis, h, cells, ops));
 				}
-				if (++tried > MAX_BASES) {
-					return Optional.empty();
-				}
-				List<BlockPos> sources = sources(level, base, cells, cfg.crossSourceRadius);
-				if (sources.size() < cells.size()) {
-					continue;
-				}
-				List<TraceOp> ops = new ArrayList<>();
-				for (int i = 0; i < cells.size(); i++) {
-					ops.add(TraceOp.move(sources.get(i), cells.get(i)));
-				}
-				return Optional.of(new Plan(base, axis, cells, ops));
 			}
 		}
 		return Optional.empty();
@@ -96,8 +126,8 @@ public final class CrossBuilder {
 
 	/**
 	 * Natural blocks around the cross that can be taken without consequence: plain full blocks, not placed by a
-	 * player, open on top, with nothing attached and no fluid they hold back. The most common kind comes first so the
-	 * cross is of one material where it can be.
+	 * player, never glass, open on top, with nothing attached and no fluid they hold back. The most common kind comes
+	 * first so the cross is of one material where it can be.
 	 */
 	static List<BlockPos> sources(ServerLevel level, BlockPos base, List<BlockPos> cells, int radius) {
 		Set<BlockPos> keep = new LinkedHashSet<>(cells);
@@ -106,7 +136,7 @@ public final class CrossBuilder {
 		for (BlockPos pos : BlockPos.betweenClosed(base.offset(-radius, -SOURCE_DEPTH, -radius), base.offset(radius, SOURCE_DEPTH, radius))) {
 			BlockPos p = pos.immutable();
 			if (keep.contains(p) || !level.isLoaded(p) || !Scan.takeable(level, p) || Scan.ore(level.getBlockState(p))
-					|| !level.getBlockState(p).isSolidRender() || Services.watch().wasPlacedByPlayer(level, p) || !safeToTake(level, p, keep)) {
+					|| !level.getBlockState(p).isSolidRender() || glass(level.getBlockState(p)) || Services.watch().wasPlacedByPlayer(level, p) || !safeToTake(level, p, keep)) {
 				continue;
 			}
 			found.add(p);
@@ -121,6 +151,11 @@ public final class CrossBuilder {
 		List<BlockPos> ordered = new ArrayList<>(found.stream().filter(p -> level.getBlockState(p).is(material)).toList());
 		found.stream().filter(p -> !level.getBlockState(p).is(material)).forEach(ordered::add);
 		return ordered;
+	}
+
+	/** D-051: his crosses are never glass; glass ones are left by others. */
+	static boolean glass(BlockState state) {
+		return state.is(BlockTags.IMPERMEABLE);
 	}
 
 	/** Open on top, nothing attached on any side, no lava beside it, and no water that would run into air. */

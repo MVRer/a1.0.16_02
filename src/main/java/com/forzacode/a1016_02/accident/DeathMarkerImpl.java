@@ -41,9 +41,7 @@ public final class DeathMarkerImpl implements DeathMarker {
 		GlobalPos at = GlobalPos.of(level.dimension(), pos.immutable());
 		long day = GameClock.day(server);
 		HerobrineState.get(server).addMarkedDeath(new MarkedDeath(cause, at, day));
-		int span = Math.max(0, cfg.crossMaxHeight - cfg.crossMinHeight);
-		int height = cfg.crossMinHeight + (span == 0 ? 0 : level.getRandom().nextInt(span + 1));
-		AccidentData.PendingCross cross = new AccidentData.PendingCross(at, cause, height, 0);
+		AccidentData.PendingCross cross = new AccidentData.PendingCross(at, cause, CrossBuilder.height(level.getRandom(), cfg), 0);
 		AccidentData d = data.apply(server);
 		d.addCross(cross);
 		d.log("day " + day + ": marked death (" + cause + ") at " + Candidate.at(pos));
@@ -57,9 +55,7 @@ public final class DeathMarkerImpl implements DeathMarker {
 	 * without recording a marked death or firing {@link HerobrineEvents#MARKED_DEATH}. True if it stands now.
 	 */
 	public boolean preview(ServerPlayer player, String cause, BlockPos pos) {
-		AccidentConfig cfg = AccidentConfig.get();
-		int span = Math.max(0, cfg.crossMaxHeight - cfg.crossMinHeight);
-		int height = cfg.crossMinHeight + (span == 0 ? 0 : player.level().getRandom().nextInt(span + 1));
+		int height = CrossBuilder.height(player.level().getRandom(), AccidentConfig.get());
 		AccidentData.PendingCross cross = new AccidentData.PendingCross(GlobalPos.of(player.level().dimension(), pos.immutable()), cause, height, 0);
 		data.apply(player.level().getServer()).addCross(cross);
 		return build(player.level().getServer(), cross);
@@ -128,8 +124,8 @@ public final class DeathMarkerImpl implements DeathMarker {
 		if (HerobrineState.get(server).markedDeaths().stream().anyMatch(m -> m.pos().equals(cross.pos()))) {
 			d.setLastCross(GlobalPos.of(level.dimension(), plan.base().immutable()), cross.pos()); // a debug preview is not a marked death
 		}
-		d.log("cross (" + cross.cause() + ") stands at " + Candidate.at(plan.base()));
-		A1016_02.LOGGER.info("[a1016] cross for '{}' built at {}", cross.cause(), plan.base());
+		d.log("cross (" + cross.cause() + ") stands at " + Candidate.at(plan.base()) + ", " + plan.height() + " tall");
+		A1016_02.LOGGER.info("[a1016] cross for '{}' built at {}, {} tall (asked {})", cross.cause(), plan.base(), plan.height(), cross.height());
 		return true;
 	}
 }

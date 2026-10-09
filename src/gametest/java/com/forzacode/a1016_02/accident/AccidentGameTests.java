@@ -2,14 +2,10 @@ package com.forzacode.a1016_02.accident;
 
 import java.util.List;
 import java.util.Optional;
-import java.util.concurrent.atomic.AtomicInteger;
 
 import com.forzacode.a1016_02.core.CardRegistry;
 import com.forzacode.a1016_02.core.CardTag;
 import com.forzacode.a1016_02.core.EventCard;
-import com.forzacode.a1016_02.core.HerobrineEvents;
-import com.forzacode.a1016_02.core.HerobrineState;
-import com.forzacode.a1016_02.core.MarkedDeath;
 import com.forzacode.a1016_02.core.Services;
 import com.forzacode.a1016_02.core.Stage;
 import com.forzacode.a1016_02.core.Tier;
@@ -29,15 +25,10 @@ import net.minecraft.world.level.block.Blocks;
 
 /**
  * Game tests of the accident workstream (the trap tests live in {@link TrapGameTests}): the planner's one-at-a-time
- * and once-per-session rules, which deaths it claims, the death marker and its cross, the cards, and saved data.
+ * and once-per-session rules, which deaths it claims, the cards, and saved data. The death marker and its cross are in
+ * {@link CrossGameTests}.
  */
-public class AccidentGameTests extends TrapGameTests {
-	private static final AtomicInteger MARKED_EVENTS = new AtomicInteger();
-
-	static {
-		HerobrineEvents.MARKED_DEATH.register((player, cause, pos) -> MARKED_EVENTS.incrementAndGet());
-	}
-
+public class AccidentGameTests extends CrossGameTests {
 	@GameTest
 	public void realServicesAndCardsAreInstalled(GameTestHelper helper) {
 		helper.assertTrue(Services.accidents() instanceof AccidentPlannerImpl, "the real planner is not installed");
@@ -143,79 +134,6 @@ public class AccidentGameTests extends TrapGameTests {
 		planner.step(y.level.getServer(), y.data, null, y.cfg, y.now());
 		helper.assertTrue(y.data.armed().isEmpty(), "an expired watch stayed armed");
 		helper.succeed();
-	}
-
-	@GameTest(structure = Yard.STRUCTURE, maxTicks = 40)
-	public void markedDeathLeavesACrossBuiltFromTheGround(GameTestHelper helper) {
-		Yard y = new Yard(helper);
-		ServerLevel level = y.level;
-		y.fill(0, 0, 0, 23, 0, 23, Blocks.STONE);
-		y.fill(0, 1, 0, 23, 1, 23, Blocks.DIRT);
-		BlockPos death = y.abs(12, 2, 12);
-		DeathMarkerImpl watched = new DeathMarkerImpl(server -> y.data, Yard.EVERYONE);
-		DeathMarkerImpl unseen = new DeathMarkerImpl(server -> y.data, Yard.NOBODY);
-		int deaths = HerobrineState.get(level.getServer()).markedDeaths().size();
-		int events = MARKED_EVENTS.get();
-
-		watched.mark(y.player, "fell", death);
-		List<MarkedDeath> marked = HerobrineState.get(level.getServer()).markedDeaths();
-		helper.assertTrue(marked.size() == deaths + 1, "the death was not recorded");
-		MarkedDeath last = marked.get(marked.size() - 1);
-		helper.assertTrue(last.cause().equals("fell") && last.pos().pos().equals(death) && last.pos().dimension().equals(level.dimension()), "wrong record " + last);
-		helper.assertTrue(MARKED_EVENTS.get() > events, "MARKED_DEATH did not fire");
-		helper.assertTrue(y.data.crosses().size() == 1 && dirtAbove(y) == 0, "the cross went up in view");
-
-		unseen.tick(level.getServer());
-		helper.assertTrue(y.data.crosses().isEmpty(), "the cross was not built out of view");
-		int raised = dirtAbove(y);
-		int height = raised - 2;
-		helper.assertTrue(height >= y.cfg.crossMinHeight && height <= y.cfg.crossMaxHeight, "cross of " + raised + " blocks; " + y.data.history()
-				+ " column " + List.of(level.getBlockState(death), level.getBlockState(death.above()), level.getBlockState(death.below())));
-		helper.assertTrue(holes(y) == raised, "the cross is not made of blocks taken from the ground: " + holes(y) + " holes, " + raised + " blocks");
-		helper.assertTrue(isCross(y, height), "the blocks do not stand as a cross");
-		// DeathMarker.lastCrossPos: the post's bottom, for the ending's sign.
-		java.util.Optional<net.minecraft.core.GlobalPos> base = unseen.lastCrossPos(level.getServer());
-		helper.assertTrue(base.isPresent() && base.get().dimension().equals(level.dimension()) && base.get().pos().closerThan(death, 10)
-				&& level.getBlockState(base.get().pos()).is(Blocks.DIRT) && base.get().pos().getY() == y.abs(0, 2, 0).getY(), "lastCrossPos: " + base);
-		helper.assertTrue(unseen.crossFor(level.getServer(), net.minecraft.core.GlobalPos.of(level.dimension(), death)).equals(base),
-				"crossFor does not give this death's cross");
-		helper.assertTrue(unseen.crossFor(level.getServer(), net.minecraft.core.GlobalPos.of(level.dimension(), death.east())).isEmpty(),
-				"crossFor gave the cross to another death");
-		y.succeedWithoutDrops();
-	}
-
-	/** Dirt standing above the ground (y >= 2). */
-	private static int dirtAbove(Yard y) {
-		int n = 0;
-		for (BlockPos pos : BlockPos.betweenClosed(y.abs(0, 2, 0), y.abs(23, 8, 23))) {
-			n += y.level.getBlockState(pos).is(Blocks.DIRT) ? 1 : 0;
-		}
-		return n;
-	}
-
-	/** Missing dirt in the ground layer. */
-	private static int holes(Yard y) {
-		int n = 0;
-		for (BlockPos pos : BlockPos.betweenClosed(y.abs(0, 1, 0), y.abs(23, 1, 23))) {
-			n += y.level.getBlockState(pos).isAir() ? 1 : 0;
-		}
-		return n;
-	}
-
-	/** One column of {@code height} with one arm each side just under its top, and nothing else. */
-	private static boolean isCross(Yard y, int height) {
-		for (BlockPos pos : BlockPos.betweenClosed(y.abs(0, 2, 0), y.abs(23, 2, 23))) {
-			if (!y.level.getBlockState(pos).is(Blocks.DIRT)) {
-				continue;
-			}
-			BlockPos base = pos.immutable();
-			for (net.minecraft.core.Direction.Axis axis : new net.minecraft.core.Direction.Axis[] {net.minecraft.core.Direction.Axis.X, net.minecraft.core.Direction.Axis.Z}) {
-				if (CrossBuilder.cells(base, height, axis).stream().allMatch(c -> y.level.getBlockState(c).is(Blocks.DIRT))) {
-					return true;
-				}
-			}
-		}
-		return false;
 	}
 
 	@GameTest
