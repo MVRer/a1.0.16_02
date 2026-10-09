@@ -2,6 +2,24 @@
 
 One entry per merge, newest first. Run the game from the main checkout (this folder, on `main`).
 
+## READY TO TRY: The zombie has your sword, bridges over the void and lava, gravel and dripstone  (merged feat/accident-sword, commit b0b283e)
+```
+Restart needed: full game restart (Java code)
+See it now:
+  1. Launch "Dev Client". /a1016 stage 2.
+  2. The zombie has your sword: put a renamed or enchanted sword in a chest at your base, walk away,
+     /a1016 fire under_you_stack (or chest_opens) until it's taken, then /a1016 accident stolen (lists what could come
+     back). At night: /a1016 accident arm zombie_has_your_sword. A zombie 24-48 blocks out is now holding YOUR item.
+     Kill it and it drops exactly what was taken.
+  3. Gravel ceiling: dig up under gravel, then /a1016 accident arm gravel_ceiling. Dripstone: in a dripstone cave,
+     /a1016 accident arm falling_dripstone and walk under a stalactite.
+  4. End: build a 1-wide bridge over the void, walk it a bit, /a1016 accident arm void_bridge (one block ahead goes
+     missing out of view) or enderman_on_bridge. Nether: the same over lava with lava_bridge.
+  5. Dark corner now always leaves its clue: one torch a block off, or, if every off spot is blocked, one torch missing.
+What to look for: nothing ever spawns or gets stronger. The zombie is ordinary; it just has your gear.
+Known rough edges: the enderman clue (no enderman lives within teleport reach of that bridge) is subtle by design.
+```
+
 ## READY TO TRY: Director tuning (rarer, but not starved) and the ending hooks  (merged feat/director-tuning, commit ae61642)
 ```
 Restart needed: full game restart (Java code). Your run/config was updated to the new pacing defaults.
