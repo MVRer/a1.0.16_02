@@ -30,6 +30,9 @@ Status values: queued, running, review, fix, merged, blocked. Only the orchestra
 | v0.8-endings | P2-1 merged | |
 | v1.0 | P2-2 and P2-3 merged, 20 h simulation passes | |
 
+## Tuning from playtests (apply as code defaults on the next atmosphere touch)
+- `fogDriftStrengthMin` 0.45, `fogDriftStrengthMax` 0.7 (D-022). Already set in Mariano's run/config.
+
 ## Core contract batch (after entity and atmosphere merge)
 - `Director.timewarp` returns summary lines; `/a1016 timewarp` prints them (director)
 - `GameClock.dayTicks` (director)
