@@ -3,13 +3,17 @@ package com.forzacode.a1016_02.core;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
+import java.util.Objects;
 import java.util.Optional;
+import java.util.concurrent.CopyOnWriteArrayList;
 
 import com.forzacode.a1016_02.A1016_02;
 
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.core.GlobalPos;
+import net.minecraft.nbt.CompoundTag;
+import net.minecraft.network.chat.Component;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
@@ -19,6 +23,10 @@ import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.BlockGetter;
 import net.minecraft.world.level.Level;
+import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.entity.SignBlockEntity;
+import net.minecraft.world.level.block.entity.SignText;
+import net.minecraft.world.level.block.entity.SignTextSlot;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
@@ -26,12 +34,14 @@ import net.minecraft.world.phys.Vec3;
 import org.jspecify.annotations.Nullable;
 
 /**
- * Every block, item or light change "he" makes goes through here, plus the out-of-view check (D-012).
- * Every edit returns false and changes nothing if anything it would change is in view of any player. Edits are
- * silent: no drops, particles or sounds, containers never spill, and neighbours that would break (a torch on a
- * removed block, the other door half) are removed silently too and written to the ledger. Removals, moves,
- * conversions and stack changes go to the {@link TraceLedger} so Ending D can undo them; {@link #leave} places
- * things "left by others" and is never undone. Server thread only.
+ * Every block, item or light change "he" makes goes through here, plus the out-of-view check (D-012, D-027).
+ * Every edit returns false and changes nothing if anything it would change is in view of any player, or if a
+ * {@link TraceVeto} objects to any position it would change. Edits are silent: no drops, particles or sounds,
+ * containers never spill, and neighbours that would break (a torch on a removed block, the other door half) are
+ * removed silently too and written to the ledger. Removals, moves, conversions, sign edits and stack changes go to
+ * the {@link TraceLedger} so Ending D can undo them; {@link #leave} and {@link #leaveStack} place things "left by
+ * others" and are never undone. The only edits allowed in view are {@link #figureDig} and {@link #figureFill}
+ * (D-030). Server thread only.
  */
 public final class TraceService {
 	/**
@@ -39,7 +49,7 @@ public final class TraceService {
 	 *
 	 * @param eye          eye position
 	 * @param look         unit look vector
-	 * @param body         the player's bounding box, for the "within 3 blocks" rule
+	 * @param body         the player's bounding box, for the "within 3 blocks" rule (its bottom is the feet)
 	 * @param viewDistance how far they can see, in blocks
 	 */
 	public record Viewer(Vec3 eye, Vec3 look, AABB body, double viewDistance) {
@@ -48,25 +58,76 @@ public final class TraceService {
 		}
 	}
 
+	/**
+	 * D-027: a viewer looking up at least this far (degrees above the horizon) does not see a block strictly below
+	 * their feet that lies outside the cone, even within the 3-block rule ("the blocks under you go").
+	 */
+	public static final double UNDER_FEET_LOOK_UP_DEGREES = 30.0;
+	/** {@link #editSign} may change a waxed sign only for this cause prefix (lore placing F30). */
+	public static final String WAXED_SIGN_CAUSE = "lore:left/F30";
+	/** {@link #restoreBlock} puts a block back at most this many blocks (on every axis) from where it was. */
+	public static final int RESTORE_REACH = 2;
+
 	/** Half the diagonal of a block: how far a block's corners reach from its center. */
 	private static final double BLOCK_RADIUS = 0.87;
+	private static final double LOOK_UP_MIN_Y = Math.sin(Math.toRadians(UNDER_FEET_LOOK_UP_DEGREES)) - 1.0E-9;
+	private static final List<TraceVeto> VETOES = new CopyOnWriteArrayList<>();
 
 	private final boolean force;
+	/** Tests: these viewpoints instead of the level's players. */
+	private final @Nullable List<Viewer> fixedViewers;
 	private @Nullable TraceService forced;
 
 	TraceService(boolean force) {
-		this.force = force;
+		this(force, null);
 	}
 
-	/** Tests and debug only: the same service without the view check. Edits are still silent and ledgered. */
+	private TraceService(boolean force, @Nullable List<Viewer> fixedViewers) {
+		this.force = force;
+		this.fixedViewers = fixedViewers == null ? null : List.copyOf(fixedViewers);
+	}
+
+	/** Tests and debug only: the same service without the view check. Edits are still silent, vetoed and ledgered. */
 	public TraceService forced() {
 		if (force) {
 			return this;
 		}
 		if (forced == null) {
-			forced = new TraceService(true);
+			forced = new TraceService(true, fixedViewers);
 		}
 		return forced;
+	}
+
+	/** Tests only: the same service, but the view check uses these viewpoints instead of the level's players. */
+	TraceService watchedBy(List<Viewer> viewers) {
+		return new TraceService(force, viewers);
+	}
+
+	// --- vetoes ---
+
+	/** Registers a veto asked about every position every edit would change (see {@link TraceVeto}). Any thread. */
+	public void addVeto(TraceVeto veto) {
+		VETOES.add(Objects.requireNonNull(veto));
+	}
+
+	/** Removes a veto (tests). */
+	public void removeVeto(TraceVeto veto) {
+		VETOES.remove(veto);
+	}
+
+	/** True if any registered veto objects to any of these positions. */
+	static boolean vetoed(ServerLevel level, Collection<BlockPos> positions) {
+		if (VETOES.isEmpty()) {
+			return false;
+		}
+		for (BlockPos pos : positions) {
+			for (TraceVeto veto : VETOES) {
+				if (veto.vetoes(level, pos)) {
+					return true;
+				}
+			}
+		}
+		return false;
 	}
 
 	// --- out-of-view check ---
@@ -78,11 +139,12 @@ public final class TraceService {
 	/**
 	 * False if any player in the level is within {@code viewNearBlocks} (3) of the box, or has line of sight to it
 	 * inside a {@code viewConeDegrees} (160°) cone within their view distance. Only opaque full blocks block sight;
-	 * leaves, glass, ice and the like are see-through. Unloaded points count as unseen.
+	 * leaves, glass, ice and the like are see-through. Unloaded points count as unseen. The near rule does not
+	 * count a box strictly below a player's feet while they look up 30° or more and it is outside the cone (D-027).
 	 */
 	public boolean isOutOfView(ServerLevel level, AABB box) {
 		Pacing pacing = ModConfig.pacing();
-		return isOutOfView(level, box, viewers(level), pacing.viewNearBlocks, pacing.viewConeDegrees);
+		return isOutOfView(level, box, viewersFor(level), pacing.viewNearBlocks, pacing.viewConeDegrees);
 	}
 
 	/**
@@ -91,7 +153,7 @@ public final class TraceService {
 	 */
 	public boolean isOutOfView(ServerLevel level, Collection<BlockPos> positions) {
 		Pacing pacing = ModConfig.pacing();
-		return positionsOutOfView(level, positions, viewers(level), pacing.viewNearBlocks, pacing.viewConeDegrees);
+		return positionsOutOfView(level, positions, viewersFor(level), pacing.viewNearBlocks, pacing.viewConeDegrees);
 	}
 
 	/** Every player in the level as a {@link Viewer}, using the server view distance (the conservative bound). */
@@ -102,6 +164,10 @@ public final class TraceService {
 			viewers.add(Viewer.of(player, chunks));
 		}
 		return viewers;
+	}
+
+	private List<Viewer> viewersFor(ServerLevel level) {
+		return fixedViewers != null ? fixedViewers : viewers(level);
 	}
 
 	/** The geometry behind {@link #isOutOfView(ServerLevel, AABB)}, usable with any viewpoints. */
@@ -129,7 +195,7 @@ public final class TraceService {
 			AABB reach = viewer.body().inflate(nearBlocks);
 			if (reach.intersects(bounds)) {
 				for (BlockPos pos : positions) {
-					if (reach.intersects(pos)) {
+					if (reach.intersects(pos) && !hiddenUnderFeet(viewer, new AABB(pos), halfCone)) {
 						return false;
 					}
 				}
@@ -146,18 +212,38 @@ public final class TraceService {
 		return true;
 	}
 
-	/** True if this viewer is near the box or can see any sample point of it. */
+	/** True if this viewer is near the box (D-027 aside) or can see any sample point of it. */
 	public static boolean sees(Level level, Viewer viewer, AABB box, double nearBlocks, double coneDegrees) {
-		if (viewer.body().inflate(nearBlocks).intersects(box)) {
+		double halfCone = Math.toRadians(coneDegrees / 2.0);
+		if (viewer.body().inflate(nearBlocks).intersects(box) && !hiddenUnderFeet(viewer, box, halfCone)) {
 			return true;
 		}
-		double cosHalfCone = Math.cos(Math.toRadians(coneDegrees / 2.0));
+		double cosHalfCone = Math.cos(halfCone);
 		for (Vec3 point : samplePoints(box)) {
 			if (pointInView(viewer, point, cosHalfCone) && level.isLoaded(BlockPos.containing(point)) && lineOfSight(level, viewer.eye(), point, box)) {
 				return true;
 			}
 		}
 		return false;
+	}
+
+	/**
+	 * D-027: the box lies strictly below the viewer's feet, the viewer looks up at least
+	 * {@link #UNDER_FEET_LOOK_UP_DEGREES}, and no part of the box is inside the cone. Such a box is exempt from the
+	 * near rule (line of sight still counts, and cannot reach it outside the cone).
+	 */
+	public static boolean hiddenUnderFeet(Viewer viewer, AABB box, double halfConeRadians) {
+		if (box.maxY > viewer.body().minY + 1.0E-6 || viewer.look().y < LOOK_UP_MIN_Y) {
+			return false;
+		}
+		Vec3 toCenter = box.getCenter().subtract(viewer.eye());
+		double dist = toCenter.length();
+		double radius = 0.5 * Math.sqrt(box.getXsize() * box.getXsize() + box.getYsize() * box.getYsize() + box.getZsize() * box.getZsize());
+		if (dist <= radius) {
+			return false;
+		}
+		double angle = Math.acos(Mth.clamp(toCenter.dot(viewer.look()) / dist, -1.0, 1.0));
+		return angle - Math.asin(radius / dist) > halfConeRadians;
 	}
 
 	/** A block can only be seen if one of its neighbours is not an opaque full block (unloaded counts as open). */
@@ -277,6 +363,31 @@ public final class TraceService {
 		return !level.getBlockState(pos).isAir() && execute(level, cause, List.of(new TraceBatch.Remove(pos.immutable())));
 	}
 
+	/**
+	 * Removes a block and lets what rests on it fall by the game's rules: the sand, red sand or gravel column on top
+	 * of it drops and lands as blocks, or the stalactite (pointed dripstone) hanging under it drops and shatters,
+	 * hurting what it lands on. The removed block, every falling block, every cell they fall through and where they
+	 * land must be out of view, or nothing happens. The removed block (and broken dependents) is ledgered; the fallen
+	 * blocks are not (the game moved them). Refused if a falling block would break into an item (landing in a torch
+	 * or on a slab), if other falling blocks (concrete powder, anvils, suspicious sand) are involved, or if both a
+	 * column and a stalactite rest on the block. With nothing resting on it, this is {@link #remove}.
+	 */
+	public boolean removeLettingFall(ServerLevel level, BlockPos pos, String cause) {
+		if (level.getBlockState(pos).isAir()) {
+			return false;
+		}
+		TraceFall fall = TraceFall.plan(level, pos.immutable());
+		if (fall == null) {
+			return false;
+		}
+		TraceEdit edit = plan(level, cause, List.of(new TraceBatch.Remove(pos.immutable())), fall);
+		if (edit == null || !allowed(level, edit.checkedPositions())) {
+			return false;
+		}
+		edit.apply();
+		return true;
+	}
+
 	/** Moves a block (and its block entity data) to a replaceable spot without a block entity. */
 	public boolean move(ServerLevel level, BlockPos from, BlockPos to, String cause) {
 		return execute(level, cause, List.of(new TraceBatch.Move(from.immutable(), to.immutable())));
@@ -292,8 +403,133 @@ public final class TraceService {
 	 * plants, snow layer, fluid) without a block entity; false otherwise. Not written to the ledger, never undone.
 	 */
 	public boolean leave(ServerLevel level, BlockPos pos, BlockState state, String cause) {
-		return execute(level, cause, List.of(new TraceBatch.Leave(pos.immutable(), state)));
+		return leave(level, pos, state, null, cause);
 	}
+
+	/**
+	 * {@link #leave(ServerLevel, BlockPos, BlockState, String)} with block entity contents: {@code blockEntityData}
+	 * is {@code BlockEntity#saveCustomOnly} data (a chest's {@code Items}, a sign's {@code front_text}) loaded into
+	 * the new block and sent to clients. False if there is data but the block has no block entity.
+	 */
+	public boolean leave(ServerLevel level, BlockPos pos, BlockState state, @Nullable CompoundTag blockEntityData, String cause) {
+		return execute(level, cause, List.of(new TraceBatch.Leave(pos.immutable(), state, blockEntityData == null ? null : blockEntityData.copy())));
+	}
+
+	/**
+	 * Puts back a block removed earlier: {@code entry} is a REMOVE entry still in the ledger, {@code toPos} its old
+	 * spot or one at most {@link #RESTORE_REACH} blocks away on every axis (a torch put back one block off). The
+	 * target must be replaceable and the block must survive there; its block entity data comes back too.
+	 * View-checked like every edit. The entry is closed (same spot) or rewritten in place as a MOVE from the old
+	 * spot (another spot), so Ending D's undo never puts it back twice.
+	 */
+	public boolean restoreBlock(ServerLevel level, TraceLedger.Entry entry, BlockPos toPos) {
+		TraceLedger ledger = TraceLedger.get(level.getServer());
+		BlockPos origin = entry.pos().pos();
+		if (entry.kind() != TraceLedger.Kind.REMOVE || entry.state().isEmpty() || !entry.pos().dimension().equals(level.dimension())
+				|| reach(origin, toPos) > RESTORE_REACH || !ledger.entries().contains(entry)) {
+			return false;
+		}
+		BlockPos to = toPos.immutable();
+		TraceEdit edit = plan(level, entry.cause(), List.of(new TraceBatch.Restore(to, entry.state().get(), entry.blockEntity().map(CompoundTag::copy).orElse(null))), null);
+		if (edit == null || !allowed(level, edit.checkedPositions())) {
+			return false;
+		}
+		edit.apply();
+		if (to.equals(origin)) {
+			ledger.remove(entry);
+		} else {
+			ledger.replace(entry, asMove(entry, to));
+		}
+		return true;
+	}
+
+	/**
+	 * Replaces a sign's text out of view. {@code null} or empty lists blank that side (the "blank sign" event); up to
+	 * 4 lines, the rest are blank; colour and glow stay. Silent, vetoed, and ledgered as BLOCK_ENTITY with the old
+	 * text so Ending D can put it back. False if there is no sign, more than 4 lines, or the sign is waxed and the
+	 * cause does not start with {@link #WAXED_SIGN_CAUSE}.
+	 */
+	public boolean editSign(ServerLevel level, BlockPos pos, @Nullable List<Component> frontLines, @Nullable List<Component> backLines, String cause) {
+		if (!(level.getBlockEntity(pos) instanceof SignBlockEntity sign) || frontLines != null && frontLines.size() > SignText.LINES
+				|| backLines != null && backLines.size() > SignText.LINES || sign.isWaxed() && !cause.startsWith(WAXED_SIGN_CAUSE)) {
+			return false;
+		}
+		List<BlockPos> at = List.of(pos.immutable());
+		if (vetoed(level, at) || !allowed(level, at)) {
+			return false;
+		}
+		BlockState state = level.getBlockState(pos);
+		CompoundTag before = sign.saveCustomOnly(level.registryAccess());
+		sign.setText(withLines(sign.getText(SignTextSlot.FRONT), frontLines), SignTextSlot.FRONT);
+		sign.setText(withLines(sign.getText(SignTextSlot.BACK), backLines), SignTextSlot.BACK);
+		sign.setChanged();
+		level.sendBlockUpdated(pos, state, state, Block.UPDATE_CLIENTS);
+		MinecraftServer server = level.getServer();
+		TraceLedger.get(server).add(new TraceLedger.Entry(TraceLedger.Kind.BLOCK_ENTITY, cause, GameClock.day(server), GlobalPos.of(level.dimension(), pos.immutable()),
+				Optional.empty(), Optional.of(state), Optional.of(before), Optional.empty(), -1, -1));
+		A1016_02.LOGGER.debug("[a1016] trace sign text at {} ({})", pos, cause);
+		return true;
+	}
+
+	/**
+	 * ONLY for the figure entity's own dig-under exit (D-030). Every other caller must use the view-checked methods.
+	 * Removes one block even in view, silently (no drops, particles or sound), ledgered like {@link #remove}, with
+	 * the same dependent, hanging-entity, falling-block and veto safety. Refuses air, fluids (and waterlogged blocks or
+	 * water beside the hole), unbreakable blocks (bedrock), block entities and containers, and blocks a player placed
+	 * ({@code PlayerWatch.wasPlacedByPlayer}), for the block and for every dependent it would take with it.
+	 */
+	public boolean figureDig(ServerLevel level, BlockPos pos, String cause) {
+		BlockState state = level.getBlockState(pos);
+		if (state.isAir() || !state.getFluidState().isEmpty() || state.getDestroySpeed(level, pos) < 0.0F || state.hasBlockEntity()
+				|| level.getBlockEntity(pos) != null) {
+			return false;
+		}
+		TraceEdit edit = plan(level, cause, List.of(new TraceBatch.Remove(pos.immutable())), null);
+		if (edit == null) {
+			return false;
+		}
+		PlayerWatch watch = Services.watch();
+		for (BlockPos changed : edit.changedPositions()) {
+			if (level.getBlockEntity(changed) != null || watch.wasPlacedByPlayer(level, changed) || fluidBeside(level, changed)) {
+				return false;
+			}
+		}
+		edit.apply();
+		return true;
+	}
+
+	/**
+	 * ONLY for the figure entity's own dig-under exit (D-030). Every other caller must use the view-checked methods.
+	 * Covers the hole over him, even in view: puts {@code state} at {@code pos} (replaceable, no block entity, and
+	 * it must survive there), but only as one of the blocks {@link #figureDig} removed under the same {@code cause}
+	 * that is still missing (the newest that matches the block), so it is a move, not a creation. That ledger entry
+	 * is rewritten in place as a MOVE from where the block was dug to {@code pos}. Silent and vetoed.
+	 */
+	public boolean figureFill(ServerLevel level, BlockPos pos, BlockState state, String cause) {
+		TraceLedger ledger = TraceLedger.get(level.getServer());
+		List<TraceLedger.Entry> entries = ledger.entries();
+		TraceLedger.Entry source = null;
+		for (int i = entries.size() - 1; i >= 0 && source == null; i--) {
+			TraceLedger.Entry e = entries.get(i);
+			if (e.kind() == TraceLedger.Kind.REMOVE && e.cause().equals(cause) && e.pos().dimension().equals(level.dimension())
+					&& e.state().filter(s -> s.is(state.getBlock())).isPresent()) {
+				source = e;
+			}
+		}
+		if (source == null) {
+			return false;
+		}
+		BlockPos to = pos.immutable();
+		TraceEdit edit = plan(level, cause, List.of(new TraceBatch.Restore(to, state, null)), null);
+		if (edit == null) {
+			return false;
+		}
+		edit.apply();
+		ledger.replace(source, asMove(source, to));
+		return true;
+	}
+
+	// --- container edits ---
 
 	/**
 	 * Takes up to {@code count} items out of a container slot. The removed stack is kept in the ledger.
@@ -301,7 +537,7 @@ public final class TraceService {
 	 */
 	public boolean removeStack(ServerLevel level, BlockPos pos, int slot, int count, String cause) {
 		if (count <= 0 || !(level.getBlockEntity(pos) instanceof Container container) || slot < 0 || slot >= container.getContainerSize()
-				|| container.getItem(slot).isEmpty() || !allowed(level, List.of(pos))) {
+				|| container.getItem(slot).isEmpty() || !allowedAndNotVetoed(level, List.of(pos))) {
 			return false;
 		}
 		ItemStack removed = container.removeItem(slot, count);
@@ -320,14 +556,8 @@ public final class TraceService {
 			return false;
 		}
 		ItemStack stack = source.getItem(slot);
-		int targetSlot = -1;
-		for (int i = 0; i < target.getContainerSize(); i++) {
-			if (target.getItem(i).isEmpty() && target.canPlaceItem(i, stack)) {
-				targetSlot = i;
-				break;
-			}
-		}
-		if (targetSlot < 0 || !allowed(level, List.of(from, to))) {
+		int targetSlot = emptySlotFor(target, stack);
+		if (targetSlot < 0 || !allowedAndNotVetoed(level, List.of(from, to))) {
 			return false;
 		}
 		target.setItem(targetSlot, stack.copy());
@@ -335,6 +565,48 @@ public final class TraceService {
 		source.setChanged();
 		target.setChanged();
 		logStack(level, TraceLedger.Kind.MOVE_STACK, from, to, stack.copy(), slot, targetSlot, cause);
+		return true;
+	}
+
+	/**
+	 * Puts a stack "left by others" into the first empty slot of a container, out of view. Not ledgered, never
+	 * undone. False if the stack is empty, there is no container or no empty slot takes it.
+	 */
+	public boolean leaveStack(ServerLevel level, BlockPos containerPos, ItemStack stack, String cause) {
+		if (stack.isEmpty() || !(level.getBlockEntity(containerPos) instanceof Container target)) {
+			return false;
+		}
+		int slot = emptySlotFor(target, stack);
+		if (slot < 0 || !allowedAndNotVetoed(level, List.of(containerPos))) {
+			return false;
+		}
+		target.setItem(slot, stack.copy());
+		target.setChanged();
+		A1016_02.LOGGER.debug("[a1016] trace left a stack at {} ({})", containerPos, cause);
+		return true;
+	}
+
+	/**
+	 * Moves a stack he took earlier ({@code entry}: a REMOVE_STACK entry still in the ledger) into the first empty
+	 * slot of the container at {@code toPos} in this level (the network chest), out of view, and closes the entry:
+	 * the items are back in the world, so Ending D has nothing left to return. False if the entry is not an open
+	 * REMOVE_STACK with items, or there is no container or room.
+	 */
+	public boolean restoreStack(ServerLevel level, TraceLedger.Entry entry, BlockPos toPos) {
+		TraceLedger ledger = TraceLedger.get(level.getServer());
+		if (entry.kind() != TraceLedger.Kind.REMOVE_STACK || entry.stack().filter(s -> !s.isEmpty()).isEmpty() || !ledger.entries().contains(entry)
+				|| !(level.getBlockEntity(toPos) instanceof Container target)) {
+			return false;
+		}
+		ItemStack stack = entry.stack().get();
+		int slot = emptySlotFor(target, stack);
+		if (slot < 0 || !allowedAndNotVetoed(level, List.of(toPos))) {
+			return false;
+		}
+		target.setItem(slot, stack.copy());
+		target.setChanged();
+		ledger.remove(entry);
+		A1016_02.LOGGER.debug("[a1016] trace restored a stack from {} to {}", entry.pos(), toPos);
 		return true;
 	}
 
@@ -347,23 +619,78 @@ public final class TraceService {
 		return TraceLedger.get(server);
 	}
 
-	/** Plans the ops and their dependents, checks every affected block, then applies. All or nothing. */
+	// --- internals ---
+
+	/** Plans the ops and their dependents, checks vetoes and every affected block, then applies. All or nothing. */
 	boolean execute(ServerLevel level, String cause, List<TraceBatch.Op> ops) {
-		TraceEdit edit = new TraceEdit(level, cause);
-		for (TraceBatch.Op op : ops) {
-			if (!edit.add(op)) {
-				return false;
-			}
-		}
-		if (edit.isEmpty() || !edit.expand() || edit.touchesAttachedEntity() || !allowed(level, edit.checkedPositions())) {
+		TraceEdit edit = plan(level, cause, ops, null);
+		if (edit == null || !allowed(level, edit.checkedPositions())) {
 			return false;
 		}
 		edit.apply();
 		return true;
 	}
 
+	/** A planned edit that passed every safety rule and veto (not the view check), or null. */
+	private static @Nullable TraceEdit plan(ServerLevel level, String cause, List<TraceBatch.Op> ops, @Nullable TraceFall fall) {
+		TraceEdit edit = new TraceEdit(level, cause);
+		if (fall != null) {
+			edit.letFall(fall);
+		}
+		for (TraceBatch.Op op : ops) {
+			if (!edit.add(op)) {
+				return null;
+			}
+		}
+		if (edit.isEmpty() || !edit.expand() || edit.touchesAttachedEntity() || vetoed(level, edit.checkedPositions())) {
+			return null;
+		}
+		return edit;
+	}
+
 	private boolean allowed(ServerLevel level, Collection<BlockPos> positions) {
 		return force || isOutOfView(level, positions);
+	}
+
+	private boolean allowedAndNotVetoed(ServerLevel level, Collection<BlockPos> positions) {
+		return !vetoed(level, positions) && allowed(level, positions);
+	}
+
+	private static int emptySlotFor(Container target, ItemStack stack) {
+		for (int i = 0; i < target.getContainerSize(); i++) {
+			if (target.getItem(i).isEmpty() && target.canPlaceItem(i, stack)) {
+				return i;
+			}
+		}
+		return -1;
+	}
+
+	private static boolean fluidBeside(ServerLevel level, BlockPos pos) {
+		for (Direction dir : Direction.values()) {
+			if (dir != Direction.DOWN && !level.getFluidState(pos.relative(dir)).isEmpty()) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	private static int reach(BlockPos a, BlockPos b) {
+		return Math.max(Math.abs(a.getX() - b.getX()), Math.max(Math.abs(a.getY() - b.getY()), Math.abs(a.getZ() - b.getZ())));
+	}
+
+	/** A REMOVE entry rewritten as the move it became: from where it was taken to where it is now. */
+	private static TraceLedger.Entry asMove(TraceLedger.Entry removed, BlockPos to) {
+		return new TraceLedger.Entry(TraceLedger.Kind.MOVE, removed.cause(), removed.day(), removed.pos(), Optional.of(to), removed.state(),
+				removed.blockEntity(), Optional.empty(), -1, -1);
+	}
+
+	private static SignText withLines(SignText old, @Nullable List<Component> lines) {
+		List<Component> messages = new ArrayList<>(SignText.LINES);
+		for (int i = 0; i < SignText.LINES; i++) {
+			Component line = lines != null && i < lines.size() ? lines.get(i) : null;
+			messages.add(line == null ? Component.empty() : line);
+		}
+		return new SignText(messages, messages, old.getColor(), old.hasGlowingText());
 	}
 
 	private static void logStack(ServerLevel level, TraceLedger.Kind kind, BlockPos pos, @Nullable BlockPos to, ItemStack stack,

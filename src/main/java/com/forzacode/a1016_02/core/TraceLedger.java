@@ -19,11 +19,17 @@ import net.minecraft.world.level.saveddata.SavedData;
 import net.minecraft.world.level.saveddata.SavedDataType;
 
 /**
- * Everything {@link TraceService} removed, moved or changed, oldest first, so Ending D can undo it.
- * Stored as {@code data/a1016_02/traces.dat}.
+ * Everything {@link TraceService} removed, moved or changed, oldest first, so Ending D can undo it (newest first).
+ * Ending D skips causes starting with {@code lore:left/}: what others left stays. Stored as
+ * {@code data/a1016_02/traces.dat}.
  */
 public final class TraceLedger extends SavedData {
-	public enum Kind { REMOVE, MOVE, CONVERT, REMOVE_STACK, MOVE_STACK }
+	/**
+	 * What an entry undoes. REMOVE, MOVE and CONVERT keep the block (and block entity data) from before; MOVE also the
+	 * destination ({@code to}). REMOVE_STACK and MOVE_STACK keep the stack and slots. BLOCK_ENTITY is block entity
+	 * data replaced in place (sign text): {@code blockEntity} is the data from before.
+	 */
+	public enum Kind { REMOVE, MOVE, CONVERT, REMOVE_STACK, MOVE_STACK, BLOCK_ENTITY }
 
 	/**
 	 * One edit.
@@ -82,6 +88,17 @@ public final class TraceLedger extends SavedData {
 		}
 		entries.add(entry);
 		setDirty();
+	}
+
+	/** Replaces an entry in place (keeps the order), for an edit that was partly undone. False if it is not here. */
+	boolean replace(Entry old, Entry updated) {
+		int index = entries.indexOf(old);
+		if (index < 0) {
+			return false;
+		}
+		entries.set(index, updated);
+		setDirty();
+		return true;
 	}
 
 	/** Drops an entry once it has been undone. */

@@ -4,8 +4,11 @@ import java.util.ArrayList;
 import java.util.List;
 
 import net.minecraft.core.BlockPos;
+import net.minecraft.nbt.CompoundTag;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.block.state.BlockState;
+
+import org.jspecify.annotations.Nullable;
 
 /**
  * A large edit (a tunnel, a cut, a build) checked and applied as one: queue edits, then {@link #commit()}.
@@ -17,7 +20,7 @@ import net.minecraft.world.level.block.state.BlockState;
  */
 public final class TraceBatch {
 	/** One queued edit. */
-	sealed interface Op permits Remove, Move, Convert, Leave {
+	sealed interface Op permits Remove, Move, Convert, Leave, Restore {
 	}
 
 	record Remove(BlockPos pos) implements Op {
@@ -29,7 +32,12 @@ public final class TraceBatch {
 	record Convert(BlockPos pos, BlockState state) implements Op {
 	}
 
-	record Leave(BlockPos pos, BlockState state) implements Op {
+	/** A block "left by others", with optional block entity data. Not recorded in the ledger. */
+	record Leave(BlockPos pos, BlockState state, @Nullable CompoundTag data) implements Op {
+	}
+
+	/** A block put back (restoreBlock, figureFill): placed like {@link Leave}, and it must survive where it goes. */
+	record Restore(BlockPos pos, BlockState state, @Nullable CompoundTag data) implements Op {
 	}
 
 	private final TraceService service;
@@ -63,7 +71,16 @@ public final class TraceBatch {
 
 	/** Places a block "left by others". The commit fails if the target is not replaceable (air, plants, snow, fluid). */
 	public TraceBatch leave(BlockPos pos, BlockState state) {
-		ops.add(new Leave(pos.immutable(), state));
+		return leave(pos, state, null);
+	}
+
+	/**
+	 * Places a block "left by others" with its block entity contents ({@code BlockEntity#saveCustomOnly} data: a
+	 * chest's {@code Items}, a sign's {@code front_text}). The commit fails if the target is not replaceable, or if
+	 * there is data but the block has no block entity.
+	 */
+	public TraceBatch leave(BlockPos pos, BlockState state, @Nullable CompoundTag blockEntityData) {
+		ops.add(new Leave(pos.immutable(), state, blockEntityData == null ? null : blockEntityData.copy()));
 		return this;
 	}
 

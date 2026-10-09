@@ -25,7 +25,9 @@ import net.minecraft.world.entity.decoration.BlockAttachedEntity;
 import net.minecraft.world.level.LevelReader;
 import net.minecraft.world.level.ScheduledTickAccess;
 import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.Fallable;
 import net.minecraft.world.level.block.FallingBlock;
+import net.minecraft.world.level.block.SpeleothemBlock;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.material.Fluid;
@@ -41,7 +43,12 @@ import org.jspecify.annotations.Nullable;
 /**
  * One planned trace edit: the requested changes, the neighbours that would break because of them (removed
  * silently, written to the ledger) and the neighbours that would change shape. {@link TraceService} plans,
- * checks the view on {@link #checkedPositions()}, then {@link #apply()}s.
+ * checks vetoes and the view on {@link #checkedPositions()}, then {@link #apply()}s. With {@link #letFall} the
+ * blocks of a {@link TraceFall} are left to fall by the game's rules: they count as empty while planning what
+ * breaks, the neighbours of their landing cells are checked too, and the fall is started last.
+ *
+ * <p>Lore's {@code TraceEditMixin} shadows {@code level} and {@code changes} and hooks the return of
+ * {@link #expand()}: keep those names until lore moves to {@link TraceVeto}.
  */
 final class TraceEdit {
 	/** Client updates only: no neighbour updates (so nothing pops off and drops), no drops, no container spill. */
@@ -57,9 +64,11 @@ final class TraceEdit {
 	private final String cause;
 	/** Everything that will be set, in order; also the overlay the planning reads through. */
 	private final Map<BlockPos, BlockState> changes = new LinkedHashMap<>();
+	/** Block entity data loaded into a moved or placed block right after it is set. */
 	private final Map<BlockPos, CompoundTag> moveInto = new HashMap<>();
 	private final Set<BlockPos> reshaped = new LinkedHashSet<>();
 	private final List<Record> records = new ArrayList<>();
+	private TraceFall fall = TraceFall.NONE;
 
 	TraceEdit(ServerLevel level, String cause) {
 		this.level = level;
@@ -101,43 +110,66 @@ final class TraceEdit {
 				}
 				yield true;
 			}
-			case TraceBatch.Leave(BlockPos pos, BlockState state) -> {
-				if (!current(pos).canBeReplaced() || hasBlockEntity(pos)) {
-					yield false;
-				}
-				changes.put(pos, state);
-				yield true;
-			}
+			case TraceBatch.Leave(BlockPos pos, BlockState state, CompoundTag data) -> place(pos, state, data);
+			case TraceBatch.Restore(BlockPos pos, BlockState state, CompoundTag data) -> state.canSurvive(level, pos) && place(pos, state, data);
 		};
+	}
+
+	/** Places a block (and its block entity data) into a replaceable spot without a block entity. Not recorded. */
+	private boolean place(BlockPos pos, BlockState state, @Nullable CompoundTag data) {
+		if (!current(pos).canBeReplaced() || hasBlockEntity(pos) || data != null && !state.hasBlockEntity()) {
+			return false;
+		}
+		changes.put(pos, state);
+		if (data != null) {
+			moveInto.put(pos, data);
+		}
+		return true;
+	}
+
+	/** Lets this planned fall happen after the edit instead of refusing it. Call before {@link #expand()}. */
+	void letFall(TraceFall planned) {
+		fall = planned;
 	}
 
 	boolean isEmpty() {
 		return changes.isEmpty();
 	}
 
+	/** The blocks this edit sets itself: the requested ones and the broken dependents. */
+	Set<BlockPos> changedPositions() {
+		return changes.keySet();
+	}
+
 	/**
 	 * Finds the neighbours that survive now but would not after the edit (torches, signs, plants, rails, door
 	 * halves...), cascading, and the ones that would only change shape. False (refuse) if more than
-	 * {@link #MAX_DEPENDENTS} would break or a falling block would lose its support.
+	 * {@link #MAX_DEPENDENTS} would break or a falling block would lose its support (unless it is part of the
+	 * planned fall).
 	 */
 	boolean expand() {
-		LevelReader after = overlay(level, changes);
+		// The world while things fall: the edits, plus every falling cell empty.
+		Map<BlockPos, BlockState> planned = new LinkedHashMap<>(changes);
+		for (BlockPos pos : fall.falling()) {
+			planned.putIfAbsent(pos, level.getBlockState(pos).getFluidState().createLegacyBlock());
+		}
+		LevelReader after = overlay(level, planned);
 		ScheduledTickAccess noTicks = noTicks(level);
-		Deque<BlockPos> queue = new ArrayDeque<>(changes.keySet());
+		Deque<BlockPos> queue = new ArrayDeque<>(planned.keySet());
 		int dependents = 0;
 		while (!queue.isEmpty()) {
 			BlockPos pos = queue.poll();
-			BlockState now = changes.get(pos);
+			BlockState now = planned.get(pos);
 			for (Direction dir : Direction.values()) {
 				BlockPos n = pos.relative(dir);
-				if (changes.containsKey(n) || !level.isLoaded(n)) {
+				if (planned.containsKey(n) || !level.isLoaded(n)) {
 					continue;
 				}
 				BlockState state = level.getBlockState(n);
 				if (state.isAir()) {
 					continue;
 				}
-				if (dir == Direction.UP && state.getBlock() instanceof FallingBlock && FallingBlock.isFree(now)) {
+				if (dir == Direction.UP && fallsWhenFree(state) && FallingBlock.isFree(now)) {
 					return false;
 				}
 				BlockState shaped = state.updateShape(after, noTicks, n, dir.getOpposite(), pos, now, level.getRandom());
@@ -147,31 +179,72 @@ final class TraceEdit {
 						return false;
 					}
 					records.add(new Record(TraceLedger.Kind.REMOVE, n, null, state, blockEntity(n), cause + "/dependent"));
-					changes.put(n, state.getFluidState().createLegacyBlock());
+					BlockState empty = state.getFluidState().createLegacyBlock();
+					changes.put(n, empty);
+					planned.put(n, empty);
 					queue.add(n);
 				} else if (shaped != state || !state.getFluidState().isEmpty()) {
 					reshaped.add(n);
 				}
 			}
 		}
-		reshaped.removeAll(changes.keySet());
-		return true;
+		reshaped.removeAll(planned.keySet());
+		return fall.landing().isEmpty() || expandLanding(planned, noTicks);
 	}
 
 	/**
-	 * True if an item frame, painting or leash knot touches a block this edit changes. Those pop off with a drop
-	 * and a sound a few seconds later, so the edit is refused.
+	 * Sand and gravel coming to rest: refuses if a neighbour of a landing cell would break (the game would drop it)
+	 * and view-checks the neighbours that would change shape.
+	 */
+	private boolean expandLanding(Map<BlockPos, BlockState> planned, ScheduledTickAccess noTicks) {
+		Map<BlockPos, BlockState> settled = new LinkedHashMap<>(planned);
+		settled.putAll(fall.landing());
+		LevelReader done = overlay(level, settled);
+		for (Map.Entry<BlockPos, BlockState> landing : fall.landing().entrySet()) {
+			for (Direction dir : Direction.values()) {
+				BlockPos n = landing.getKey().relative(dir);
+				if (settled.containsKey(n) || !level.isLoaded(n)) {
+					continue;
+				}
+				BlockState state = level.getBlockState(n);
+				if (state.isAir()) {
+					continue;
+				}
+				BlockState shaped = state.updateShape(done, noTicks, n, dir.getOpposite(), landing.getKey(), landing.getValue(), level.getRandom());
+				if (shaped.isAir() || state.canSurvive(level, n) && !state.canSurvive(done, n)) {
+					return false;
+				}
+				if (shaped != state || !state.getFluidState().isEmpty()) {
+					reshaped.add(n);
+				}
+			}
+		}
+		reshaped.removeAll(settled.keySet());
+		return true;
+	}
+
+	/** Blocks the game drops when the block under them goes (sand, gravel, suspicious blocks); not stalagmites, which break. */
+	private static boolean fallsWhenFree(BlockState state) {
+		return state.getBlock() instanceof Fallable && !(state.getBlock() instanceof SpeleothemBlock);
+	}
+
+	/**
+	 * True if an item frame, painting or leash knot touches a block this edit changes (or that falls or receives a
+	 * falling block). Those pop off with a drop and a sound a few seconds later, so the edit is refused.
 	 */
 	boolean touchesAttachedEntity() {
+		Set<BlockPos> touched = new LinkedHashSet<>(changes.keySet());
+		touched.addAll(fall.falling());
+		touched.addAll(fall.landing().keySet());
 		AABB bounds = null;
-		for (BlockPos pos : changes.keySet()) {
+		for (BlockPos pos : touched) {
 			bounds = bounds == null ? new AABB(pos) : bounds.minmax(new AABB(pos));
 		}
 		if (bounds == null) {
 			return false;
 		}
 		for (BlockAttachedEntity entity : level.getEntitiesOfClass(BlockAttachedEntity.class, bounds.inflate(1.0))) {
-			for (BlockPos pos : changes.keySet()) {
+			for (BlockPos pos : touched) {
 				if (entity.getBoundingBox().intersects(new AABB(pos).inflate(0.1))) {
 					return true;
 				}
@@ -180,10 +253,16 @@ final class TraceEdit {
 		return false;
 	}
 
-	/** Every block whose look changes: edits, broken dependents and reshaped neighbours. */
+	/**
+	 * Every block whose look changes: edits, broken dependents and reshaped neighbours, plus for a fall every cell
+	 * that falls, that a falling block passes through and where it comes to rest.
+	 */
 	Set<BlockPos> checkedPositions() {
 		Set<BlockPos> all = new LinkedHashSet<>(changes.keySet());
 		all.addAll(reshaped);
+		all.addAll(fall.falling());
+		all.addAll(fall.path());
+		all.addAll(fall.landing().keySet());
 		return all;
 	}
 
@@ -196,6 +275,9 @@ final class TraceEdit {
 			if (moved != null) {
 				moved.loadCustomOnly(TagValueInput.create(ProblemReporter.DISCARDING, level.registryAccess(), data));
 				moved.setChanged();
+				// Clients need what renders (sign text, a lectern's book), so the block entity is sent again.
+				BlockState state = level.getBlockState(pos);
+				level.sendBlockUpdated(pos, state, state, Block.UPDATE_CLIENTS);
 			}
 		});
 		// Let untouched neighbours adapt their shape (fences, panes, fluids start to flow), still without drops.
@@ -221,7 +303,14 @@ final class TraceEdit {
 			ledger.add(new TraceLedger.Entry(r.kind(), r.cause(), day, GlobalPos.of(level.dimension(), r.pos()), Optional.ofNullable(r.to()),
 					Optional.of(r.state()), Optional.ofNullable(r.blockEntity()), Optional.empty(), -1, -1));
 		}
-		A1016_02.LOGGER.debug("[a1016] trace '{}': {} changes, {} records", cause, changes.size(), records.size());
+		// The game does the falling: the lowest falling block ticks, finds nothing under it and drops; each block
+		// above follows when the one under it leaves.
+		BlockPos start = fall.start();
+		Block startBlock = fall.startBlock();
+		if (start != null && startBlock != null && level.getBlockState(start).is(startBlock)) {
+			level.scheduleTick(start, startBlock, TraceFall.START_DELAY);
+		}
+		A1016_02.LOGGER.debug("[a1016] trace '{}': {} changes, {} records, {} falling", cause, changes.size(), records.size(), fall.falling().size());
 	}
 
 	// --- helpers ---
