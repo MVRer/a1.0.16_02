@@ -1,8 +1,9 @@
 package com.forzacode.a1016_02.ending;
 
 /**
- * Game tests of the ending workstream, already registered in the gametest fabric.mod.json. Add public
- * {@code @GameTest} methods taking a {@code GameTestHelper} here (or in a superclass of this one).
+ * Game tests of the ending workstream, already registered in the gametest fabric.mod.json. The tests live in its
+ * superclasses: {@link EndingRuleTests} (commit rules), {@link EndingBeatTests} (each path's beats, the third-death
+ * rule, hardcore, the debug step) and {@link EndingWorldTests} (the house, the doorway, the ledger, burning, saving).
  */
-public class EndingGameTests {
+public class EndingGameTests extends EndingWorldTests {
 }

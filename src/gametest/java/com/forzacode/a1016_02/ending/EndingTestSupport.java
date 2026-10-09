@@ -1,0 +1,240 @@
+package com.forzacode.a1016_02.ending;
+
+import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Optional;
+import java.util.Set;
+
+import com.forzacode.a1016_02.core.FireResult;
+import com.forzacode.a1016_02.core.GameClock;
+import com.forzacode.a1016_02.core.HerobrineState;
+import com.forzacode.a1016_02.core.MobTamper;
+import com.forzacode.a1016_02.core.PlayerWatch;
+import com.forzacode.a1016_02.core.Services;
+import com.forzacode.a1016_02.core.Stage;
+import com.forzacode.a1016_02.core.TraceService;
+
+import net.minecraft.core.GlobalPos;
+import net.minecraft.gametest.framework.GameTestHelper;
+import net.minecraft.server.MinecraftServer;
+import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.util.RandomSource;
+import net.minecraft.world.level.GameType;
+
+import org.jspecify.annotations.Nullable;
+
+/**
+ * Test support: {@link Ports} records what the ending asked of other workstreams (and answers as told), and
+ * {@link Run} is one ending run with its own {@link HerobrineState}, {@link EndingState}, config, engine and a forced
+ * clock, so tests never share the world's state. World edits use core's forced trace service (the test level has no
+ * real players) and mobs go through the real MobTamper.
+ */
+final class EndingTestSupport {
+	private EndingTestSupport() {
+	}
+
+	/** Records every call; answers from its fields. */
+	static final class Ports implements EndingPorts {
+		FireResult sightingResult = FireResult.FIRED;
+		int sightings;
+		boolean figureOut;
+		/** Trap ids that arm when asked. */
+		final Set<String> armable = new HashSet<>();
+		final List<String> armed = new ArrayList<>();
+		boolean trapArmed;
+		int disarms;
+		boolean copyExists;
+		boolean copyFinished;
+		int copyFinishes;
+		@Nullable GlobalPos copySite;
+		boolean stopSign = true;
+		boolean signMoves = true;
+		final List<GlobalPos> signMovedTo = new ArrayList<>();
+		@Nullable GlobalPos cross;
+		int f10Finished;
+		boolean f20Ready;
+		int f20Calls;
+		int tellingCount;
+		final List<Float> duskFog = new ArrayList<>();
+
+		@Override
+		public FireResult lastSighting(ServerPlayer player) {
+			sightings++;
+			return sightingResult;
+		}
+
+		@Override
+		public boolean figureOut(MinecraftServer server) {
+			return figureOut;
+		}
+
+		@Override
+		public boolean armTrap(ServerPlayer player, String trapId) {
+			if (trapArmed || !armable.contains(trapId)) {
+				return false;
+			}
+			armed.add(trapId);
+			trapArmed = true;
+			return true;
+		}
+
+		@Override
+		public boolean trapArmed() {
+			return trapArmed;
+		}
+
+		@Override
+		public void disarmTraps() {
+			disarms++;
+			trapArmed = false;
+		}
+
+		@Override
+		public boolean copyExists(MinecraftServer server) {
+			return copyExists;
+		}
+
+		@Override
+		public boolean finishCopy(MinecraftServer server) {
+			copyFinishes++;
+			return copyExists;
+		}
+
+		@Override
+		public boolean copyFinished(MinecraftServer server) {
+			return copyFinished;
+		}
+
+		@Override
+		public Optional<GlobalPos> copySite(MinecraftServer server) {
+			return Optional.ofNullable(copySite);
+		}
+
+		@Override
+		public boolean stopSignExists(MinecraftServer server) {
+			return stopSign;
+		}
+
+		@Override
+		public boolean moveStopSignToCross(MinecraftServer server, GlobalPos to) {
+			if (!signMoves) {
+				return false;
+			}
+			signMovedTo.add(to);
+			return true;
+		}
+
+		@Override
+		public Optional<GlobalPos> findCross(MinecraftServer server, GlobalPos death) {
+			return Optional.ofNullable(cross);
+		}
+
+		@Override
+		public boolean finishF10(MinecraftServer server) {
+			f10Finished++;
+			return true;
+		}
+
+		@Override
+		public boolean placeF20(MinecraftServer server) {
+			f20Calls++;
+			return f20Ready;
+		}
+
+		@Override
+		public int tellingCount(MinecraftServer server) {
+			return tellingCount;
+		}
+
+		@Override
+		public void setDuskFog(MinecraftServer server, float level) {
+			duskFog.add(level);
+		}
+
+		@Override
+		public float stageDuskFog(Stage stage) {
+			return 0.7F;
+		}
+
+		@Override
+		public TraceService traces() {
+			return Services.traces().forced();
+		}
+
+		@Override
+		public MobTamper mobs() {
+			return Services.mobs();
+		}
+
+		@Override
+		public PlayerWatch watch() {
+			return Services.watch();
+		}
+	}
+
+	/** One run: private states, recording ports, a mock subject (not in the level) and a clock the test moves. */
+	static final class Run {
+		final GameTestHelper helper;
+		final MinecraftServer server;
+		final HerobrineState state = new HerobrineState();
+		final EndingState data = new EndingState();
+		final EndingConfig cfg = new EndingConfig();
+		final Ports ports = new Ports();
+		final EndingEngine engine = new EndingEngine(ports);
+		final ServerPlayer player;
+		final RandomSource random = RandomSource.create(42L);
+		/** {@code GameClock.dayTicks}: starts at day 10, noon. */
+		long now = 10 * GameClock.TICKS_PER_DAY + 6000;
+
+		Run(GameTestHelper helper) {
+			this.helper = helper;
+			this.server = helper.getLevel().getServer();
+			this.player = (ServerPlayer) helper.makeMockServerPlayer(GameType.SURVIVAL);
+			state.setStage(server, Stage.TELLING);
+		}
+
+		EndingEngine.Ctx ctx() {
+			return new EndingEngine.Ctx(server, player, state, data, cfg, now, random, false);
+		}
+
+		long today() {
+			return Math.floorDiv(now, GameClock.TICKS_PER_DAY);
+		}
+
+		void days(double days) {
+			now += Math.round(days * GameClock.TICKS_PER_DAY);
+		}
+
+		/** Facts where nothing commits: Stage 3, nothing done. */
+		EndingFacts quiet() {
+			return new EndingFacts(state.stage(), state.stopFired(), state.tellingStarted(), now, data.stopSeenAt(), data.lastTellingAt(),
+					data.lastNamedAt(), data.lastReadAt(), -1, data.lastFogStareAt(), ports.tellingCount, data.tellingsSinceStop(), state.attention(),
+					state.markedDeaths().size(), data.fragmentsBurned(), false, data.housePeak(), data.housePeak(), data.ownBroken());
+		}
+
+		void tick() {
+			engine.tick(ctx(), quiet());
+		}
+
+		void commit(EndingPath path) {
+			engine.commit(ctx(), path, "test");
+		}
+
+		<E extends Enum<E>> E beat(Class<E> type, EndingPath path) {
+			return EndingBeats.of(type, data.progress(path));
+		}
+
+		GlobalPos at(int x, int y, int z) {
+			return GlobalPos.of(helper.getLevel().dimension(), helper.absolutePos(new net.minecraft.core.BlockPos(x, y, z)));
+		}
+	}
+
+	/** A facts record with every field named, for the rule tests. */
+	static EndingFacts facts(Stage stage, boolean stopFired, long now, long stopSeenAt, long lastTellingAt, long lastNamedAt, long lastReadAt,
+			long lastTraceVisitDay, long lastFogStareAt, int tellingCount, int tellingsSinceStop, double attention, int markedDeaths, int burned,
+			boolean holds, int peak, int left, int broken) {
+		return new EndingFacts(stage, stopFired, stage.atLeast(Stage.TELLING), now, stopSeenAt, lastTellingAt, lastNamedAt, lastReadAt,
+				lastTraceVisitDay, lastFogStareAt, tellingCount, tellingsSinceStop, attention, markedDeaths, burned, holds, peak, left, broken);
+	}
+}

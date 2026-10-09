@@ -2,7 +2,9 @@
 	"required": true,
 	"package": "com.forzacode.a1016_02.ending.mixin",
 	"compatibilityLevel": "JAVA_25",
-	"mixins": [],
+	"mixins": [
+		"FragmentBurnMixin"
+	],
 	"client": [],
 	"server": [],
 	"injectors": {
