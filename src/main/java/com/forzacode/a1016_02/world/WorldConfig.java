@@ -58,11 +58,12 @@ public final class WorldConfig {
 	public int stillBurningMinBlocks = 1800;
 	public int stillBurningMaxBlocks = 2200;
 	/**
-	 * With F21 rolled, lore looks for F21's emptied house at most 1500 blocks from the base, so the camp stays within
-	 * this distance of the base (and as far from the subject as that allows, at least {@link #stillBurningF21MinBlocks}).
+	 * With F21 rolled the camp also gets F21's emptied house. Lore puts F21 there at any distance, so the camp sits
+	 * about 2000 blocks out as well ("nobody for 2000 blocks"): within this distance of the base, at least
+	 * {@link #stillBurningF21MinBlocks} from the subject, farthest first.
 	 */
-	public int stillBurningF21MaxFromBase = 1450;
-	public int stillBurningF21MinBlocks = 900;
+	public int stillBurningF21MaxFromBase = 2200;
+	public int stillBurningF21MinBlocks = 1800;
 	/** Ticks the furnace still burns once its chunk ticks (16000 is one coal block). Furnaces only tick while loaded. */
 	public int stillBurningLitTicks = 16000;
 	/** Items waiting in the furnace's input (64 take 12800 ticks to smelt). */
