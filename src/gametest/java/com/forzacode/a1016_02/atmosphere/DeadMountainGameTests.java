@@ -48,7 +48,8 @@ public class DeadMountainGameTests {
 		BlockPos rel = new BlockPos(3, 1, 3);
 		helper.runAfterDelay(10, () -> {
 			BlockPos pos = helper.absolutePos(rel);
-			helper.assertFalse(DeadMountains.contains(level.dimension(), pos), "the test area lies in a recorded dead mountain");
+			helper.assertTrue(DeadMountains.in(level.dimension()).stream().noneMatch(a -> a.inCircle(pos.getX(), pos.getZ())),
+					"the test area lies in a recorded dead mountain");
 			Set<EntityType<?>> passives = naturalPassives(level);
 			helper.assertTrue(passives.contains(EntityTypes.COW) && passives.contains(EntityTypes.WOLF) && passives.contains(EntityTypes.GOAT),
 					"overworld passive spawns not found: " + names(passives));
@@ -82,82 +83,104 @@ public class DeadMountainGameTests {
 	}
 
 	/**
-	 * The spawn rule, end to end through {@code SpawnPlacements.checkSpawnRules}. Runs in the End (open void where the
-	 * tests run, unlike the Nether's solid rock) so its recorded site never shows up in the overworld tests and cards
-	 * that look for dead mountains. Glowstone gives the light the End's sky does not.
+	 * The dead ground decides, not a height band: inside one site circle, a dead patch (dirt on a hill) is quiet and
+	 * animal-free while a living patch of grass below it stays normal. End to end through
+	 * {@code SpawnPlacements.checkSpawnRules}. Runs in the End (open void where the tests run, unlike the Nether's
+	 * solid rock) so its recorded site never shows up in the overworld tests and cards that look for dead mountains.
+	 * Glowstone beside each spot gives the light the End's sky does not; sky access keeps the barrier roof off the columns.
 	 */
-	@GameTest(dimension = "minecraft:the_end", maxTicks = 60)
-	public void deadMountainsRefuseNaturalPassiveSpawns(GameTestHelper helper) {
+	@GameTest(dimension = "minecraft:the_end", skyAccess = true, maxTicks = 60)
+	public void deadPatchRefusesSpawnsLivingPatchBelowDoesNot(GameTestHelper helper) {
 		ServerLevel level = helper.getLevel();
 		TamperGameTests.floor(helper);
-		BlockPos insideRel = new BlockPos(1, 1, 1);
+		// One circle of radius 4 around column (3, 3). Dead patch: a hilltop at y 3 over column (1, 1). Living patch:
+		// grass at y 0 over column (5, 5), lower down but inside the same circle. Outside: column (6, 6).
+		BlockPos deadRel = new BlockPos(1, 4, 1);
+		BlockPos livingRel = new BlockPos(5, 1, 5);
 		BlockPos outsideRel = new BlockPos(6, 1, 6);
-		for (BlockPos rel : List.of(insideRel, outsideRel)) {
+		helper.setBlock(1, 1, 1, Blocks.STONE);
+		helper.setBlock(1, 2, 1, Blocks.STONE);
+		helper.setBlock(deadRel.below(), Blocks.DIRT);
+		helper.setBlock(livingRel.below(), Blocks.GRASS_BLOCK);
+		for (BlockPos rel : List.of(deadRel, livingRel, outsideRel)) {
 			helper.setBlock(rel, Blocks.AIR);
 			helper.setBlock(rel.above(), Blocks.AIR);
-			helper.setBlock(rel.above(2), Blocks.GLOWSTONE);
 		}
-		Services.sites().record(SiteType.DEAD_MOUNTAIN, level.dimension(), helper.absolutePos(insideRel), 2);
+		helper.setBlock(deadRel.east(), Blocks.GLOWSTONE);
+		helper.setBlock(livingRel.south(), Blocks.GLOWSTONE);
+		Services.sites().record(SiteType.DEAD_MOUNTAIN, level.dimension(), helper.absolutePos(new BlockPos(3, 4, 3)), 4);
 		DeadMountains.refresh();
 		helper.runAfterDelay(10, () -> {
-			BlockPos inside = helper.absolutePos(insideRel);
+			BlockPos dead = helper.absolutePos(deadRel);
+			BlockPos living = helper.absolutePos(livingRel);
 			BlockPos outside = helper.absolutePos(outsideRel);
-			helper.assertTrue(DeadMountains.contains(level.dimension(), inside) && !DeadMountains.contains(level.dimension(), outside),
-					"area membership: inside " + DeadMountains.contains(level.dimension(), inside) + ", outside " + DeadMountains.contains(level.dimension(), outside));
+			List<DeadMountains.Area> areas = DeadMountains.in(level.dimension());
+
+			// Membership, as the client and the spawn rule see it.
+			helper.assertTrue(DeadMountains.contains(level, dead), "the dead hilltop is not dead mountain");
+			helper.assertTrue(DeadMountains.contains(level, dead.below(3)) && DeadMountains.contains(level, dead.above(20)),
+					"the dead column counts only at some heights");
+			helper.assertFalse(DeadMountains.contains(level, living), "living grass below the dead line went dead");
+			helper.assertFalse(DeadMountains.contains(level, outside), "outside the circle counts");
+			helper.setBlock(livingRel.below(), Blocks.DIRT);
+			helper.setBlock(livingRel, Blocks.SHORT_GRASS);
+			helper.assertFalse(DeadMountains.inside(level, areas, living.getX(), living.getZ()), "a plant on top is not alive");
+			helper.setBlock(livingRel, Blocks.AIR);
+			helper.assertTrue(DeadMountains.inside(level, areas, living.getX(), living.getZ()), "bare dirt in the circle is not dead");
+			helper.setBlock(livingRel.below(), Blocks.GRASS_BLOCK);
+			helper.setBlock(deadRel, Blocks.SNOW);
+			helper.assertTrue(DeadMountains.contains(level, dead), "a snow layer hides the dead ground");
+			helper.setBlock(deadRel, Blocks.AIR);
+
+			// Spawns: nothing passive on the dead patch, whatever its ground; the living patch and outside are normal.
 			Set<EntityType<?>> passives = naturalPassives(level);
-			int blocked = 0;
-			for (Block ground : List.of(Blocks.GRASS_BLOCK, Blocks.DIRT, Blocks.PODZOL, Blocks.COARSE_DIRT, Blocks.STONE, Blocks.GRAVEL, Blocks.SNOW_BLOCK)) {
-				helper.setBlock(insideRel.below(), ground);
+			int refused = 0;
+			for (Block ground : List.of(Blocks.DIRT, Blocks.PODZOL, Blocks.COARSE_DIRT, Blocks.STONE, Blocks.GRAVEL, Blocks.SNOW_BLOCK)) {
+				helper.setBlock(deadRel.below(), ground);
 				helper.setBlock(outsideRel.below(), ground);
 				for (EntityType<?> type : passives) {
 					String what = name(type) + " on " + BuiltInRegistries.BLOCK.getKey(ground).getPath();
-					helper.assertFalse(canSpawn(level, type, inside, EntitySpawnReason.NATURAL), "natural spawn inside a dead mountain: " + what);
-					helper.assertFalse(canSpawn(level, type, inside, EntitySpawnReason.CHUNK_GENERATION), "worldgen spawn inside a dead mountain: " + what);
+					helper.assertFalse(canSpawn(level, type, dead, EntitySpawnReason.NATURAL), "natural spawn on a dead patch: " + what);
+					helper.assertFalse(canSpawn(level, type, dead, EntitySpawnReason.CHUNK_GENERATION), "worldgen spawn on a dead patch: " + what);
 					if (canSpawn(level, type, outside, EntitySpawnReason.NATURAL)) {
-						blocked++;
+						refused++;
 					}
 				}
-				if (ground == Blocks.GRASS_BLOCK) {
-					helper.assertTrue(canSpawn(level, EntityTypes.COW, outside, EntitySpawnReason.NATURAL), "control: no cow on lit grass just outside");
-					helper.assertTrue(canSpawn(level, EntityTypes.COW, inside, EntitySpawnReason.SPAWNER), "the rule touched a non-natural spawn");
-				}
-				if (ground == Blocks.PODZOL) {
-					helper.assertTrue(canSpawn(level, EntityTypes.WOLF, outside, EntitySpawnReason.NATURAL), "control: no wolf on lit podzol just outside");
-				}
 			}
-			helper.assertTrue(blocked > 0, "nothing could spawn outside either, so the test proved nothing");
+			helper.assertTrue(refused > 0, "nothing could spawn outside either, so the test proved nothing");
+			helper.setBlock(outsideRel.below(), Blocks.PODZOL);
+			helper.assertTrue(canSpawn(level, EntityTypes.WOLF, outside, EntitySpawnReason.NATURAL), "control: no wolf on lit podzol outside");
+			helper.assertTrue(canSpawn(level, EntityTypes.COW, living, EntitySpawnReason.NATURAL)
+					&& canSpawn(level, EntityTypes.COW, living, EntitySpawnReason.CHUNK_GENERATION), "no cow on the living grass below the dead line");
+			// Grass put back on the dead patch makes it alive again (the rule reads the ground, nothing is stored).
+			helper.setBlock(deadRel.below(), Blocks.GRASS_BLOCK);
+			helper.assertTrue(canSpawn(level, EntityTypes.COW, dead, EntitySpawnReason.NATURAL), "grass on the hilltop is still refused");
+			helper.setBlock(deadRel.below(), Blocks.PODZOL);
+			helper.assertTrue(canSpawn(level, EntityTypes.WOLF, dead, EntitySpawnReason.SPAWNER), "the rule touched a non-natural spawn");
 
 			// Monsters, other dimensions and other reasons are never touched.
-			helper.assertFalse(DeadMountains.refusesSpawn(EntityTypes.ZOMBIE, EntitySpawnReason.NATURAL, level.dimension(), inside), "a monster spawn was refused");
-			helper.assertFalse(DeadMountains.refusesSpawn(EntityTypes.COW, EntitySpawnReason.NATURAL, Level.OVERWORLD, inside), "refused in the wrong dimension");
-			helper.assertFalse(DeadMountains.refusesSpawn(EntityTypes.COW, EntitySpawnReason.BREEDING, level.dimension(), inside), "refused breeding");
-			helper.assertTrue(DeadMountains.refusesSpawn(EntityTypes.BAT, EntitySpawnReason.NATURAL, level.dimension(), inside)
-					&& DeadMountains.refusesSpawn(EntityTypes.SQUID, EntitySpawnReason.NATURAL, level.dimension(), inside), "bats or squid still allowed");
-
-			// The client gets the same area, and the same sharp edge.
-			List<DeadMountains.Area> near = DeadMountains.near(level.dimension(), inside.getX() + 0.5, inside.getZ() + 0.5, 0);
-			helper.assertTrue(near.size() >= 1 && near.getFirst().contains(inside.getX() + 0.5, inside.getY(), inside.getZ() + 0.5)
-					&& !near.getFirst().contains(inside.getX() + 3.5, inside.getY(), inside.getZ() + 0.5), "client area: " + near);
+			helper.assertFalse(DeadMountains.refusesSpawn(EntityTypes.ZOMBIE, EntitySpawnReason.NATURAL, level, dead), "a monster spawn was refused");
+			helper.assertFalse(DeadMountains.refusesSpawn(EntityTypes.WOLF, EntitySpawnReason.BREEDING, level, dead), "refused breeding");
+			helper.assertTrue(DeadMountains.refusesSpawn(EntityTypes.BAT, EntitySpawnReason.NATURAL, level, dead)
+					&& DeadMountains.refusesSpawn(EntityTypes.SQUID, EntitySpawnReason.NATURAL, level, dead), "bats or squid still allowed");
+			helper.assertTrue(DeadMountains.in(Level.OVERWORLD).stream().noneMatch(a -> a.inCircle(dead.getX(), dead.getZ())),
+					"the site leaked into the overworld");
 			helper.succeed();
 		});
 	}
 
 	@GameTest
 	public void deadMountainAreaMatchesTheScarCircle(GameTestHelper helper) {
-		DeadMountains.Area area = new DeadMountains.Area(100, -40, 20, 52, 164);
-		// The world's dead mountain column test: dx² + dz² <= r².
+		DeadMountains.Area area = new DeadMountains.Area(100, -40, 20);
+		// The world's dead mountain column test: dx*dx + dz*dz <= r*r.
 		for (int x = 70; x <= 130; x++) {
 			for (int z = -70; z <= -10; z++) {
 				long dx = x - 100;
 				long dz = z + 40;
-				boolean scar = dx * dx + dz * dz <= 400;
-				helper.assertTrue(area.contains(x, 100, z) == scar, "edge differs from the scar's at " + x + " " + z);
+				helper.assertTrue(area.inCircle(x, z) == (dx * dx + dz * dz <= 400), "edge differs from the scar's at " + x + " " + z);
 			}
 		}
-		helper.assertTrue(area.contains(100, 52, -40) && area.contains(100, 164, -40) && !area.contains(100, 51, -40) && !area.contains(100, 165, -40),
-				"vertical band");
-		helper.assertTrue(area.contains(120.9, 70.0, -39.5) && !area.contains(121.0, 70.0, -39.5) && area.contains(80.0, 70.0, -40.0)
-				&& !area.contains(79.99, 70.0, -40.0), "a player's block column");
+		helper.assertTrue(Math.abs(area.edgeDistance(130.5, -39.5) - 10.0) < 1.0E-9 && area.edgeDistance(100.5, -39.5) == -20.0, "edge distance");
 
 		// The quiet: eased fade out while inside, a slower return after leaving, no jumps.
 		AtmosphereConfig cfg = AtmosphereConfig.get();

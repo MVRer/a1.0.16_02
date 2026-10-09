@@ -29,7 +29,7 @@ import org.jspecify.annotations.Nullable;
  * thread. Time is counted in client ticks that only advance while the game is not paused. {@link #reset()} on
  * disconnect; core's {@code Sync} on join restores the persistent part (music off, dusk fog).
  *
- * <p>Dead mountains: while the player stands inside one of the areas the server sent, ambience (birds, wind loops,
+ * <p>Dead mountains: while the player stands on the dead ground of one of the circles the server sent, ambience (birds, wind loops,
  * cave mood, ambient additions, every {@code AMBIENT} sound) and music fade out, and no new music track starts; they
  * come back gradually after leaving. Footsteps, blocks, mobs and weather are untouched.
  */
@@ -176,15 +176,8 @@ public final class ClientAtmosphere implements ClientEffectsClient.Handler {
 		if (deadAreas.isEmpty() || minecraft.player == null || minecraft.level == null || !minecraft.level.dimension().equals(deadDimension)) {
 			return false;
 		}
-		double x = minecraft.player.getX();
-		double y = minecraft.player.getY();
-		double z = minecraft.player.getZ();
-		for (DeadMountains.Area area : deadAreas) {
-			if (area.contains(x, y, z)) {
-				return true;
-			}
-		}
-		return false;
+		// The same test as the spawn rule: inside a circle and on dead ground (the surface of the column under the player).
+		return DeadMountains.inside(minecraft.level, deadAreas, minecraft.player.getBlockX(), minecraft.player.getBlockZ());
 	}
 
 	/** @return whether a volume changed */

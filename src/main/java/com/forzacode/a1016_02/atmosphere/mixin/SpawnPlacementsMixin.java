@@ -15,8 +15,9 @@ import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
 /**
- * Dead mountains: no animals ever spawn there. Natural and world-generation spawns of passive mobs inside a recorded
- * dead mountain fail their spawn rules ({@link DeadMountains#refusesSpawn}). Only prevents spawns; never removes a mob.
+ * Dead mountains: no animals ever spawn there. Natural and world-generation spawns of passive mobs on the dead ground
+ * of a recorded dead mountain fail their spawn rules ({@link DeadMountains#refusesSpawn}). Only prevents spawns; never
+ * removes a mob.
  */
 @Mixin(SpawnPlacements.class)
 abstract class SpawnPlacementsMixin {
@@ -24,7 +25,7 @@ abstract class SpawnPlacementsMixin {
 	private static void a1016_02$deadMountain(EntityType<?> type, ServerLevelAccessor level, EntitySpawnReason reason, BlockPos pos, RandomSource random,
 			CallbackInfoReturnable<Boolean> cir) {
 		if ((reason == EntitySpawnReason.NATURAL || reason == EntitySpawnReason.CHUNK_GENERATION)
-				&& DeadMountains.refusesSpawn(type, reason, level.getLevel().dimension(), pos)) {
+				&& DeadMountains.refusesSpawn(type, reason, level, pos)) {
 			cir.setReturnValue(false);
 		}
 	}

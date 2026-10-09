@@ -110,10 +110,6 @@ public final class AtmosphereConfig {
 	public double zombieStillSeconds = 20;
 
 	// --- dead mountains: quieter than anywhere else, and no animals ---
-	/** A recorded dead mountain is a cylinder: its site's circle, from this far below the site (its peak)... */
-	public int deadMountainDepthBlocks = 48;
-	/** ...to this far above it. */
-	public int deadMountainHeightBlocks = 64;
 	/** Dead mountains whose edge is within this many blocks of a player are sent to their client (on every chunk change). */
 	public int deadMountainSendBlocks = 160;
 	/** Ticks for ambience and music to fade out once the player stands on a dead mountain. */

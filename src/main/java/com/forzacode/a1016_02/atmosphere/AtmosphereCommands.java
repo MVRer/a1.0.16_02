@@ -148,7 +148,7 @@ final class AtmosphereCommands {
 
 	private static String deadMountainLine(ServerPlayer player) {
 		List<DeadMountains.Area> all = DeadMountains.in(player.level().dimension());
-		boolean inside = DeadMountains.contains(player.level().dimension(), player.blockPosition());
+		boolean inside = DeadMountains.contains(player.level(), player.blockPosition());
 		List<DeadMountains.Area> near = DeadMountains.near(player.level().dimension(), player.getX(), player.getZ(), Double.MAX_VALUE);
 		String nearest = near.isEmpty() ? "none"
 				: String.format(Locale.ROOT, "%d %d r=%d, edge %.0f blocks away", near.getFirst().x(), near.getFirst().z(), near.getFirst().radius(),
