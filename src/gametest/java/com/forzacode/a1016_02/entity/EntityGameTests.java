@@ -1,12 +1,24 @@
 package com.forzacode.a1016_02.entity;
 
+import java.io.IOException;
+import java.io.Reader;
+import java.io.UncheckedIOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.List;
 
+import com.forzacode.a1016_02.A1016_02;
 import com.forzacode.a1016_02.core.TraceService;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
+import com.mojang.brigadier.ParseResults;
 
 import net.fabricmc.fabric.api.gametest.v1.GameTest;
+import net.fabricmc.loader.api.FabricLoader;
 
+import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.gametest.framework.GameTestHelper;
+import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.util.ProblemReporter;
 import net.minecraft.world.entity.EntityTypes;
@@ -146,5 +158,62 @@ public class EntityGameTests extends SightingRuleGameTests {
 		helper.assertTrue(him.isLow(), "the cow variant does not start low");
 		him.discard();
 		helper.succeed();
+	}
+
+	@GameTest
+	public void eyeStyleDefaultsAndParsing(GameTestHelper helper) {
+		EntityConfig fresh = new EntityConfig();
+		helper.assertTrue(fresh.eyeStyle() == EyeStyle.BRIGHT, "the default eye style is " + fresh.eyeStyle());
+		helper.assertTrue(fresh.eyeFogResistance() == 0.5, "the default fog resistance is " + fresh.eyeFogResistance());
+		fresh.eyeStyle = null; // an unknown value in the file reads as null
+		fresh.eyeFogResistance = 3.0;
+		helper.assertTrue(fresh.eyeStyle() == EyeStyle.BRIGHT && fresh.eyeFogResistance() == 1.0, "bad values are not tamed");
+		for (EyeStyle style : EyeStyle.values()) {
+			helper.assertTrue(EyeStyle.byName(style.shortName()).orElse(null) == style, "does not round-trip: " + style);
+		}
+		helper.assertTrue(EyeStyle.byName("GLOW").orElse(null) == EyeStyle.GLOW && EyeStyle.byName("red").isEmpty(), "byName");
+		helper.succeed();
+	}
+
+	@GameTest
+	public void eyesCommandSetsSavesAndPrints(GameTestHelper helper) {
+		MinecraftServer server = helper.getLevel().getServer();
+		CommandSourceStack source = server.createCommandSourceStack().withSuppressedOutput();
+		EntityConfig config = EntityConfig.get();
+		EyeStyle oldStyle = config.eyeStyle();
+		double oldResistance = config.eyeFogResistance();
+		try {
+			for (String command : List.of("a1016 entity eyes", "a1016 entity eyes flat", "a1016 entity eyes glow 0.25")) {
+				ParseResults<CommandSourceStack> parsed = server.getCommands().getDispatcher().parse(command, source);
+				helper.assertTrue(!parsed.getReader().canRead() && parsed.getExceptions().isEmpty(), "does not parse: " + command);
+			}
+			server.getCommands().performPrefixedCommand(source, "a1016 entity eyes");
+			server.getCommands().performPrefixedCommand(source, "a1016 entity eyes glow 0.25");
+			helper.assertTrue(config.eyeStyle() == EyeStyle.GLOW && config.eyeFogResistance() == 0.25, "not set live: " + config.eyeStyle());
+			JsonObject saved = savedEntitySection();
+			helper.assertTrue("GLOW".equals(saved.get("eyeStyle").getAsString()) && saved.get("eyeFogResistance").getAsDouble() == 0.25,
+					"not saved: " + saved);
+			// The style alone keeps the resistance; out of range and unknown styles change nothing.
+			server.getCommands().performPrefixedCommand(source, "a1016 entity eyes flat");
+			server.getCommands().performPrefixedCommand(source, "a1016 entity eyes bright 1.5");
+			server.getCommands().performPrefixedCommand(source, "a1016 entity eyes red");
+			helper.assertTrue(config.eyeStyle() == EyeStyle.FLAT && config.eyeFogResistance() == 0.25, "changed by a bad command: " + config.eyeStyle()
+					+ " " + config.eyeFogResistance());
+			helper.assertTrue(config == EntityConfig.get(), "the renderer would read another instance");
+		} finally {
+			config.eyeStyle = oldStyle;
+			config.eyeFogResistance = oldResistance;
+			config.save();
+		}
+		helper.succeed();
+	}
+
+	private static JsonObject savedEntitySection() {
+		Path path = FabricLoader.getInstance().getConfigDir().resolve(A1016_02.MOD_ID + ".json");
+		try (Reader reader = Files.newBufferedReader(path)) {
+			return JsonParser.parseReader(reader).getAsJsonObject().getAsJsonObject("sections").getAsJsonObject("entity");
+		} catch (IOException e) {
+			throw new UncheckedIOException(e);
+		}
 	}
 }

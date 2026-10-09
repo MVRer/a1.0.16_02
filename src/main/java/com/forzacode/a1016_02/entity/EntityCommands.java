@@ -9,6 +9,7 @@ import com.forzacode.a1016_02.core.CommandHooks;
 import com.forzacode.a1016_02.core.GameClock;
 import com.forzacode.a1016_02.core.HerobrineState;
 import com.forzacode.a1016_02.core.Services;
+import com.mojang.brigadier.arguments.DoubleArgumentType;
 import com.mojang.brigadier.arguments.StringArgumentType;
 import com.mojang.brigadier.context.CommandContext;
 
@@ -20,7 +21,10 @@ import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.util.RandomSource;
 
-/** {@code /a1016 entity spawn <variant> | clear | info}. Debug only (op level 2, like the whole /a1016 tree). */
+/**
+ * {@code /a1016 entity spawn <variant> | clear | info | eyes [<flat|bright|glow> [fogResistance]]}. Debug only
+ * (op level 2, like the whole /a1016 tree).
+ */
 final class EntityCommands {
 	private EntityCommands() {
 	}
@@ -32,7 +36,46 @@ final class EntityCommands {
 								.suggests((ctx, builder) -> SharedSuggestionProvider.suggest(Arrays.stream(Variant.values()).map(Variant::shortName), builder))
 								.executes(EntityCommands::spawn)))
 				.then(Commands.literal("clear").executes(EntityCommands::clear))
-				.then(Commands.literal("info").executes(EntityCommands::info))));
+				.then(Commands.literal("info").executes(EntityCommands::info))
+				.then(Commands.literal("eyes").executes(EntityCommands::eyes)
+						.then(Commands.argument("style", StringArgumentType.word())
+								.suggests((ctx, builder) -> SharedSuggestionProvider.suggest(Arrays.stream(EyeStyle.values()).map(EyeStyle::shortName), builder))
+								.executes(ctx -> setEyes(ctx, null))
+								.then(Commands.argument("fogResistance", DoubleArgumentType.doubleArg(0.0, 1.0))
+										.executes(ctx -> setEyes(ctx, DoubleArgumentType.getDouble(ctx, "fogResistance"))))))));
+	}
+
+	/** Bare {@code eyes}: prints the current style. */
+	private static int eyes(CommandContext<CommandSourceStack> ctx) {
+		String line = "[a1016] entity eyes: " + describeEyes(EntityConfig.get());
+		ctx.getSource().sendSuccess(() -> Component.literal(line), false);
+		return 1;
+	}
+
+	/**
+	 * Sets the style (and the fog resistance if given) and saves the config. In singleplayer the renderer reads the
+	 * same config instance every frame, so the change shows on the next frame without a restart.
+	 */
+	private static int setEyes(CommandContext<CommandSourceStack> ctx, Double fogResistance) {
+		String name = StringArgumentType.getString(ctx, "style");
+		Optional<EyeStyle> style = EyeStyle.byName(name);
+		if (style.isEmpty()) {
+			ctx.getSource().sendFailure(Component.literal("[a1016] unknown eye style " + name + " (flat, bright, glow)"));
+			return 0;
+		}
+		EntityConfig config = EntityConfig.get();
+		config.eyeStyle = style.get();
+		if (fogResistance != null) {
+			config.eyeFogResistance = fogResistance;
+		}
+		config.save();
+		String line = "[a1016] entity eyes -> " + describeEyes(config) + " (saved)";
+		ctx.getSource().sendSuccess(() -> Component.literal(line), true);
+		return 1;
+	}
+
+	private static String describeEyes(EntityConfig config) {
+		return String.format("%s, fog resistance %.2f", config.eyeStyle().shortName(), config.eyeFogResistance());
 	}
 
 	/** Skips the gates, never the fog edge or the out-of-view rule. */

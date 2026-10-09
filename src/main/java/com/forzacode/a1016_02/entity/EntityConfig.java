@@ -1,6 +1,21 @@
 package com.forzacode.a1016_02.entity;
 
+import java.io.IOException;
+import java.io.Reader;
+import java.io.Writer;
+import java.nio.file.Files;
+import java.nio.file.Path;
+
+import com.forzacode.a1016_02.A1016_02;
 import com.forzacode.a1016_02.core.ModConfig;
+import com.google.gson.Gson;
+import com.google.gson.GsonBuilder;
+import com.google.gson.JsonElement;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParseException;
+import com.google.gson.JsonParser;
+
+import net.fabricmc.loader.api.FabricLoader;
 
 /**
  * The entity workstream's tunables, stored under {@code sections.entity} in {@code config/a1016_02.json}.
@@ -8,6 +23,10 @@ import com.forzacode.a1016_02.core.ModConfig;
  * Real-time values are in seconds and go through {@link ModConfig#realTicks(double)}.
  */
 public final class EntityConfig {
+	private static final String SECTION = "entity";
+	/** Same settings as {@code ModConfig}'s writer. */
+	private static final Gson GSON = new GsonBuilder().setPrettyPrinting().disableHtmlEscaping().create();
+
 	// --- the fog edge ---
 	/** At dusk fog level 1 the spawn limit is pulled in to {@code 1 - duskFogPull} of the render limit. */
 	public double duskFogPull = 0.6;
@@ -79,7 +98,61 @@ public final class EntityConfig {
 	// --- fakes ---
 	public double fakeHoldSeconds = 30;
 
+	// --- eyes (client look only; set live with /a1016 entity eyes, read by the renderer every frame) ---
+	/** FLAT, BRIGHT or GLOW, see {@link EyeStyle}. Volatile: the server thread sets it, the render thread reads it. */
+	public volatile EyeStyle eyeStyle = EyeStyle.BRIGHT;
+	/** BRIGHT and GLOW: the eye pixels take fog at {@code 1 - this} strength. 0 = fogged like the body, 1 = never fogged. */
+	public volatile double eyeFogResistance = 0.5;
+
 	public static EntityConfig get() {
-		return ModConfig.section("entity", EntityConfig.class, EntityConfig::new);
+		return ModConfig.section(SECTION, EntityConfig.class, EntityConfig::new);
+	}
+
+	/** The eye style, BRIGHT if the file holds an unknown value. */
+	public EyeStyle eyeStyle() {
+		EyeStyle style = eyeStyle;
+		return style != null ? style : EyeStyle.BRIGHT;
+	}
+
+	/** {@link #eyeFogResistance} clamped to 0..1. */
+	public double eyeFogResistance() {
+		double resistance = eyeFogResistance;
+		return Double.isNaN(resistance) ? 0.5 : Math.clamp(resistance, 0.0, 1.0);
+	}
+
+	/**
+	 * Writes this section back to {@code config/a1016_02.json}, in memory and on disk. Only {@code sections.entity}
+	 * changes in the file; everything else is kept as it is there. {@code ModConfig} has no public save, so this
+	 * takes the same lock and writes the same way.
+	 */
+	public void save() {
+		synchronized (ModConfig.class) {
+			JsonElement tree = GSON.toJsonTree(this);
+			ModConfig.get().sections.add(SECTION, tree);
+			Path path = FabricLoader.getInstance().getConfigDir().resolve(A1016_02.MOD_ID + ".json");
+			JsonObject root = null;
+			if (Files.exists(path)) {
+				try (Reader reader = Files.newBufferedReader(path)) {
+					JsonElement read = JsonParser.parseReader(reader);
+					root = read.isJsonObject() ? read.getAsJsonObject() : null;
+				} catch (IOException | JsonParseException e) {
+					A1016_02.LOGGER.warn("[a1016] could not read {}, rewriting it from memory", path, e);
+				}
+			}
+			if (root == null) {
+				root = GSON.toJsonTree(ModConfig.get()).getAsJsonObject();
+			}
+			JsonObject sections = root.has("sections") && root.get("sections").isJsonObject() ? root.getAsJsonObject("sections") : new JsonObject();
+			sections.add(SECTION, tree);
+			root.add("sections", sections);
+			try {
+				Files.createDirectories(path.getParent());
+				try (Writer writer = Files.newBufferedWriter(path)) {
+					GSON.toJson(root, writer);
+				}
+			} catch (IOException e) {
+				A1016_02.LOGGER.error("[a1016] could not write {}", path, e);
+			}
+		}
 	}
 }
