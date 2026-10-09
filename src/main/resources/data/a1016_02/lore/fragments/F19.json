@@ -1,0 +1,20 @@
+{
+	"id": "F19",
+	"name": "like we agreed",
+	"form": "book",
+	"where": "Chest in an ocean pyramid (not F07's). Stage 3+",
+	"title": "sent",
+	"pages": [
+		"sent it. one word, like we agreed. took the profile down after. if he keeps posting we'll do the thread too. its better for him this way. its better for everyone."
+	],
+	"stage": "telling",
+	"placement": {
+		"rule": "pyramid_chest",
+		"site": "OCEAN_PYRAMID",
+		"pick": "nearest",
+		"not_with": "F07",
+		"origin": "base",
+		"min_distance": 0,
+		"max_distance": 1500
+	}
+}

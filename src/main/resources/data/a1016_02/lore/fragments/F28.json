@@ -1,0 +1,20 @@
+{
+	"id": "F28",
+	"name": "where he didnt",
+	"form": "item",
+	"where": "Secret chest of one Abandoned Camp. Only after F23 is read",
+	"item": "minecraft:filled_map",
+	"item_name": "where he didnt",
+	"stage": "proximity",
+	"placement": {
+		"rule": "camp_map",
+		"origin": "base",
+		"min_distance": 0,
+		"max_distance": 1600
+	},
+	"requires": {
+		"read": [
+			"F23"
+		]
+	}
+}

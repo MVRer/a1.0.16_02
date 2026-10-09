@@ -1,0 +1,16 @@
+{
+	"id": "F04",
+	"name": "not found",
+	"form": "absence",
+	"where": "First fragment site you visited, after Stage 3",
+	"lines": [
+		"",
+		"",
+		"",
+		""
+	],
+	"stage": "telling",
+	"placement": {
+		"rule": "telling"
+	}
+}

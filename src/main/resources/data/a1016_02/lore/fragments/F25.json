@@ -1,0 +1,21 @@
+{
+	"id": "F25",
+	"name": "the bedrock note",
+	"form": "book",
+	"where": "Bottom of a stair to bedrock",
+	"title": "",
+	"pages": [
+		"he only takes things out. if something is missing he was there. count your torches. this is the only place he cant cut"
+	],
+	"stage": "proximity",
+	"placement": {
+		"rule": "stair_bottom",
+		"site": "STAIR_BOTTOM",
+		"origin": "base",
+		"min_distance": 100,
+		"max_distance": 1500
+	},
+	"requires": {
+		"read_count": 6
+	}
+}

@@ -1,0 +1,21 @@
+{
+	"id": "F11",
+	"name": "white eyes room",
+	"form": "structure",
+	"where": "Cave room below Y 40, jukebox with disc 13, torches removed",
+	"lines": [
+		"dont play it",
+		"down here",
+		"",
+		""
+	],
+	"item": "minecraft:music_disc_13",
+	"stage": "traces",
+	"placement": {
+		"rule": "white_eyes_room",
+		"origin": "base",
+		"min_distance": 100,
+		"max_distance": 500,
+		"y": 40
+	}
+}

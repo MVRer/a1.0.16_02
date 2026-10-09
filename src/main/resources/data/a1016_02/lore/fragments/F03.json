@@ -1,0 +1,16 @@
+{
+	"id": "F03",
+	"name": "Stop.",
+	"form": "sign",
+	"where": "Not generated. First sign you write about him in Stage 3",
+	"lines": [
+		"",
+		"Stop.",
+		"",
+		""
+	],
+	"stage": "telling",
+	"placement": {
+		"rule": "telling"
+	}
+}

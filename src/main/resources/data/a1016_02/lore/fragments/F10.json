@@ -1,0 +1,15 @@
+{
+	"id": "F10",
+	"name": "changes",
+	"form": "book",
+	"where": "Stage 4. Where your first crafting table stood",
+	"title": "changes",
+	"pages": [
+		"* fixed some bugs\n* removed herobrine\n* removed herobrine\n* removed herobrine\n* removed"
+	],
+	"stage": "removal",
+	"placement": {
+		"rule": "first_table",
+		"origin": "base"
+	}
+}

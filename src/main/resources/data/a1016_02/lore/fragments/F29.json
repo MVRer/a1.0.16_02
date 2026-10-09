@@ -1,0 +1,27 @@
+{
+	"id": "F29",
+	"name": "everybody else got one",
+	"form": "book",
+	"where": "Loft of the F15 test room. After F21 is read",
+	"title": "",
+	"pages": [
+		"we never gave him one\neverybody else got one\nwe couldnt. you have to say it to make one"
+	],
+	"stage": "proximity",
+	"placement": {
+		"rule": "test_room_loft",
+		"same_as": "F15"
+	},
+	"requires": {
+		"placed": [
+			"F15"
+		],
+		"read": [
+			"F21"
+		]
+	},
+	"depends": [
+		"F15",
+		"F21"
+	]
+}

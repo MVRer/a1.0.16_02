@@ -1,0 +1,17 @@
+{
+	"id": "F12",
+	"name": "disc 11 [ours]",
+	"form": "item",
+	"where": "Stage 3+. Alone in a chest at the tunnel that ends under your base",
+	"item": "minecraft:music_disc_11",
+	"stage": "telling",
+	"placement": {
+		"rule": "under_base_chest",
+		"site": "UNDER_BASE",
+		"origin": "base",
+		"min_distance": 0,
+		"max_distance": 48,
+		"length_min": 16,
+		"length_max": 24
+	}
+}

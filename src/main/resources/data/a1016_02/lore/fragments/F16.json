@@ -1,0 +1,27 @@
+{
+	"id": "F16",
+	"name": "build notes",
+	"form": "book",
+	"where": "Same test room, second chest",
+	"title": "notes",
+	"pages": [
+		"tue. the carver is doing it again. 2x2 runs, straight, nobody wrote them.",
+		"wed. took his pass out completely.",
+		"thu. tunnels still there in the new build.",
+		"fri. changelog says removed. i dont know what else to write.",
+		"sat. its not random. it goes where people are."
+	],
+	"stage": "proximity",
+	"placement": {
+		"rule": "test_room_chest",
+		"same_as": "F15"
+	},
+	"requires": {
+		"placed": [
+			"F15"
+		]
+	},
+	"depends": [
+		"F15"
+	]
+}

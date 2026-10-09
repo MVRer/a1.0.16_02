@@ -1,0 +1,26 @@
+{
+	"id": "F21",
+	"name": "the diary",
+	"form": "book",
+	"where": "Emptied house beside a still-burning furnace. After 8+ fragments read",
+	"title": "",
+	"pages": [
+		"day 3 fell in a hole that wasnt there when i dug it",
+		"day 7 creeper in the house. door was shut. no sound",
+		"day 11 torches in my mine are gone. i placed them",
+		"day 12 these arent accidents",
+		"day 14 said sorry to him. got quiet",
+		"day 19 its been really quiet"
+	],
+	"stage": "proximity",
+	"placement": {
+		"rule": "emptied_house",
+		"site": "EMPTIED_HOUSE",
+		"origin": "base",
+		"min_distance": 150,
+		"max_distance": 1500
+	},
+	"requires": {
+		"read_count": 8
+	}
+}

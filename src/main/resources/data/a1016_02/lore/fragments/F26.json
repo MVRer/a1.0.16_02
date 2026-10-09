@@ -1,0 +1,22 @@
+{
+	"id": "F26",
+	"name": "the grove",
+	"form": "sign",
+	"where": "In a grove someone re-leafed",
+	"lines": [
+		"planted them",
+		"all back",
+		"thought hed",
+		"like it"
+	],
+	"stage": "proximity",
+	"placement": {
+		"rule": "restored_tree",
+		"origin": "base",
+		"min_distance": 150,
+		"max_distance": 600
+	},
+	"requires": {
+		"read_count": 6
+	}
+}

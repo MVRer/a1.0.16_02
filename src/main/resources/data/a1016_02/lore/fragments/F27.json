@@ -1,0 +1,21 @@
+{
+	"id": "F27",
+	"name": "the last note",
+	"form": "book",
+	"where": "Inside the copy of your own house. Final fragment",
+	"title": "",
+	"pages": [
+		"he isnt sad. we wanted him to be sad. he is angry we made anything at all. if youre reading this he let you"
+	],
+	"stage": "proximity",
+	"placement": {
+		"rule": "house_copy",
+		"site": "HOUSE_COPY",
+		"origin": "base",
+		"min_distance": 0,
+		"max_distance": 1500
+	},
+	"requires": {
+		"read_count": 6
+	}
+}

@@ -1,0 +1,27 @@
+{
+	"id": "F09",
+	"name": "never had",
+	"form": "book",
+	"where": "Buried under the center tree of a leafless grove",
+	"title": "",
+	"pages": [
+		"i never had a",
+		"",
+		"",
+		"",
+		"",
+		"",
+		"",
+		"",
+		"",
+		""
+	],
+	"stage": "proximity",
+	"placement": {
+		"rule": "grove_burial",
+		"site": "BARE_GROVE",
+		"origin": "base",
+		"min_distance": 100,
+		"max_distance": 1000
+	}
+}

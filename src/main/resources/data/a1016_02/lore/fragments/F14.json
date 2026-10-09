@@ -1,0 +1,16 @@
+{
+	"id": "F14",
+	"name": "the picture",
+	"form": "book",
+	"where": "10 blocks straight down from world spawn",
+	"title": "",
+	"pages": [
+		"only one screenshot came out. just fog. people keep asking for the seed like that proves something. it was a1.0.16_02. i checked. it doesnt matter what version you play. he comes with the world."
+	],
+	"stage": "traces",
+	"placement": {
+		"rule": "below_spawn",
+		"origin": "spawn",
+		"y": 10
+	}
+}

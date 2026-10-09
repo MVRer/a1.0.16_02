@@ -1,0 +1,23 @@
+{
+	"id": "F24",
+	"name": "i did what it said",
+	"form": "sign",
+	"where": "Outside a small finished house",
+	"lines": [
+		"i did what the",
+		"sign said. quiet",
+		"for a week",
+		"i thought"
+	],
+	"stage": "proximity",
+	"placement": {
+		"rule": "cross_sign",
+		"site": "CROSS",
+		"origin": "base",
+		"min_distance": 150,
+		"max_distance": 1500
+	},
+	"requires": {
+		"read_count": 6
+	}
+}

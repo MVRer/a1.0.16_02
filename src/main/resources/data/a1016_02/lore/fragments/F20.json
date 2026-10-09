@@ -1,0 +1,24 @@
+{
+	"id": "F20",
+	"name": "for the record",
+	"form": "book",
+	"where": "Stage 4, Ending B only. Under F10",
+	"title": "",
+	"pages": [
+		"if anyone asks.",
+		"i never had a brother.",
+		"say it enough times and its true.",
+		"it worked. hes not anywhere now.",
+		""
+	],
+	"stage": "removal",
+	"placement": {
+		"rule": "ending_b",
+		"same_as": "F10"
+	},
+	"requires": {
+		"placed": [
+			"F10"
+		]
+	}
+}

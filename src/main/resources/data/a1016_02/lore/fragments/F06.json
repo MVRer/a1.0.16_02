@@ -1,0 +1,21 @@
+{
+	"id": "F06",
+	"name": "the list",
+	"form": "book",
+	"where": "Dead end of the longest 2x2 tunnel within 1000 blocks. Stage 2+",
+	"title": "names",
+	"pages": [
+		"kirbyfan_92 . fog . tree line\nstoneslab . saw him on a hill\ndyl4n_m . he was in my house\noreo_tm . white eyes . cave\npk_alpha . gone\nt0rch . gone\n[PLAYER NAME] ."
+	],
+	"stage": "proximity",
+	"placement": {
+		"rule": "tunnel_end_chest",
+		"site": "TUNNEL_END",
+		"pick": "longest",
+		"origin": "base",
+		"min_distance": 100,
+		"max_distance": 1000,
+		"length_min": 24,
+		"length_max": 32
+	}
+}

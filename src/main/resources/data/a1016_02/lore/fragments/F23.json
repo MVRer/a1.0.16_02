@@ -1,0 +1,22 @@
+{
+	"id": "F23",
+	"name": "the list, second copy",
+	"form": "book",
+	"where": "Top of a panic tower. Late",
+	"title": "",
+	"generation": 1,
+	"pages": [
+		"pk_alpha . fell\nt0rch . lava\ndyl4n_m . drowned (in his house)\noreo_tm . fell\nstoneslab .\nkirbyfan_92 .\n[PLAYER NAME] ."
+	],
+	"stage": "proximity",
+	"placement": {
+		"rule": "panic_tower",
+		"site": "PANIC_TOWER",
+		"origin": "base",
+		"min_distance": 100,
+		"max_distance": 1500
+	},
+	"requires": {
+		"read_count": 6
+	}
+}

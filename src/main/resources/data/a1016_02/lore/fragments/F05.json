@@ -1,0 +1,17 @@
+{
+	"id": "F05",
+	"name": "theres more of us",
+	"form": "book",
+	"where": "Cave chest under a single torch. Stage 1+",
+	"title": "for you",
+	"pages": [
+		"you're not the only one. i know a guy who has a list. people who saw him. same thing every time, fog, no eyes. dont post it. i mean it. people who post stop being on the list."
+	],
+	"stage": "traces",
+	"placement": {
+		"rule": "cave_chest",
+		"origin": "base",
+		"min_distance": 150,
+		"max_distance": 600
+	}
+}

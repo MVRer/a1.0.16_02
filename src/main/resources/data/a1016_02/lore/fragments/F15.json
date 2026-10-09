@@ -1,0 +1,18 @@
+{
+	"id": "F15",
+	"name": "house rules",
+	"form": "book",
+	"where": "Sealed 7x7 test room at Y 12 to 20, no entrance. Stage 2+",
+	"title": "rules",
+	"pages": [
+		"1. dont put his name in commit messages. 2. dont put it in chat. 3. if a build has tunnels nobody wrote, roll it back. 4. dont talk about it after. 5. this is not a joke so stop making it one. 6. dont go back for things."
+	],
+	"stage": "proximity",
+	"placement": {
+		"rule": "test_room",
+		"origin": "base",
+		"min_distance": 40,
+		"max_distance": 200,
+		"y": 12
+	}
+}

@@ -1,0 +1,21 @@
+{
+	"id": "F17",
+	"name": "the part that takes things out",
+	"form": "book",
+	"where": "Buried under the first leafless grove you visit. Stage 2+",
+	"title": "",
+	"pages": [
+		"he did the part that takes things out. caves. the clearing. i did the part that puts things in. we used to joke that between us it was a whole world. when he",
+		"",
+		"",
+		""
+	],
+	"stage": "proximity",
+	"placement": {
+		"rule": "visited_grove_burial",
+		"site": "BARE_GROVE",
+		"origin": "base",
+		"min_distance": 0,
+		"max_distance": 1500
+	}
+}

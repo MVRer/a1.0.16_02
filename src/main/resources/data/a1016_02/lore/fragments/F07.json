@@ -1,0 +1,21 @@
+{
+	"id": "F07",
+	"name": "the seed",
+	"form": "sign",
+	"where": "1x1 air pocket at the core of the largest ocean pyramid within 1500 blocks",
+	"lines": [
+		"4788685",
+		"74082066",
+		"804",
+		""
+	],
+	"stage": "proximity",
+	"placement": {
+		"rule": "pyramid_core",
+		"site": "OCEAN_PYRAMID",
+		"pick": "largest",
+		"origin": "base",
+		"min_distance": 0,
+		"max_distance": 1500
+	}
+}

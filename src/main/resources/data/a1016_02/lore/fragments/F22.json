@@ -1,0 +1,28 @@
+{
+	"id": "F22",
+	"name": "dont feel sorry",
+	"form": "sign",
+	"where": "Below the F15 test room",
+	"lines": [
+		"dont let them",
+		"feel sorry for",
+		"him. thats how",
+		"he gets close"
+	],
+	"stage": "proximity",
+	"placement": {
+		"rule": "test_room_below",
+		"same_as": "F15"
+	},
+	"requires": {
+		"placed": [
+			"F15"
+		],
+		"read": [
+			"F15"
+		]
+	},
+	"depends": [
+		"F15"
+	]
+}

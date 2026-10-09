@@ -1,0 +1,15 @@
+{
+	"id": "F13",
+	"name": "the cairn",
+	"form": "structure",
+	"where": "Stage 3, all paths. New ocean pyramid nearest your base",
+	"stage": "telling",
+	"placement": {
+		"rule": "cairn",
+		"site": "OCEAN_PYRAMID",
+		"pick": "nearest",
+		"origin": "base",
+		"min_distance": 0,
+		"max_distance": 1500
+	}
+}

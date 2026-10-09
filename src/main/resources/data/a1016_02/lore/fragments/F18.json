@@ -1,0 +1,22 @@
+{
+	"id": "F18",
+	"name": "it wasnt us",
+	"form": "sign",
+	"where": "2x2 tunnel end. Stage 3+",
+	"lines": [
+		"someone got",
+		"a pm. it",
+		"wasnt from us.",
+		"i asked."
+	],
+	"stage": "telling",
+	"placement": {
+		"rule": "tunnel_end_sign",
+		"site": "TUNNEL_END",
+		"origin": "base",
+		"min_distance": 60,
+		"max_distance": 1000,
+		"length_min": 12,
+		"length_max": 20
+	}
+}

@@ -1,0 +1,24 @@
+{
+	"id": "F02",
+	"name": "second post",
+	"form": "book",
+	"where": "Same hut later, or a tunnel end. Stage 2",
+	"title": "new world (2)",
+	"pages": [
+		"my thread got deleted. like 5 min. im posting again. theres tunnels now. 2x2. i didnt dig them. theres pyramids in the water. sand. trees with no",
+		"",
+		"",
+		""
+	],
+	"stage": "proximity",
+	"placement": {
+		"rule": "hut_or_tunnel",
+		"site": "TUNNEL_END",
+		"same_as": "F01",
+		"origin": "base",
+		"min_distance": 80,
+		"max_distance": 1000,
+		"length_min": 12,
+		"length_max": 20
+	}
+}

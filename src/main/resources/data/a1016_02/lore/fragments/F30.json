@@ -1,0 +1,23 @@
+{
+	"id": "F30",
+	"name": "i did, but",
+	"form": "sign",
+	"where": "One on the oldest poplar in the untouched grove, its twin on bedrock under the seed pyramid",
+	"lines": [
+		"i did, but",
+		"",
+		"",
+		""
+	],
+	"stage": "proximity",
+	"placement": {
+		"rule": "twin_signs",
+		"same_as": "F07"
+	},
+	"requires": {
+		"placed": [
+			"F07",
+			"F28"
+		]
+	}
+}

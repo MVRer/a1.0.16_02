@@ -1,0 +1,18 @@
+{
+	"id": "F01",
+	"name": "the cow",
+	"form": "book",
+	"where": "Chest in a ruined cobble hut, 300 to 800 blocks out. Stage 1",
+	"title": "new world",
+	"pages": [
+		"ok so this is weird. new world, fog really bad because my pc sucks. saw a cow in the fog and went to it. not a cow. it was a guy. normal skin. no name over him. his eyes were empty. he just looked at me and then ran. this is singleplayer."
+	],
+	"stage": "traces",
+	"placement": {
+		"rule": "ruined_hut",
+		"site": "RUINED_HUT",
+		"origin": "spawn",
+		"min_distance": 300,
+		"max_distance": 800
+	}
+}

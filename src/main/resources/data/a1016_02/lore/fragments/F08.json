@@ -1,0 +1,22 @@
+{
+	"id": "F08",
+	"name": "no longer",
+	"form": "sign",
+	"where": "Stone face at a 2x2 tunnel end",
+	"lines": [
+		"he is no",
+		"longer",
+		"with us",
+		""
+	],
+	"stage": "proximity",
+	"placement": {
+		"rule": "tunnel_end_sign",
+		"site": "TUNNEL_END",
+		"origin": "base",
+		"min_distance": 60,
+		"max_distance": 1000,
+		"length_min": 12,
+		"length_max": 20
+	}
+}
