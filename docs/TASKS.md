@@ -27,7 +27,7 @@ Status values: queued, running, review, fix, merged, blocked. Only the orchestra
 | P1-6b | Lore: F21 only in world's still-burning camp (D-004); never a second furnace | lore | feat/lore-stillburning | v0.8 | running | Then world moves the camp back to about 2000 blocks (config) |
 | P2-1 | Endings A, B, C, D (full D chain) | ending | feat/ending-endings | v0.8-endings | queued, phase 2 | |
 | P2-2 | Integration: wire all cards, close contract gaps, guardrail pass | (multi) | feat/integration-pass | v1.0 | queued, phase 2 | |
-| P2-3 | Playtest tooling: dev overlay and a 20 h scripted timewarp log | debug | feat/debug-playtest | v1.0 | review | Narrow exception: one public read-only DirectorApi |
+| P2-3 | Playtest tooling: dev overlay and a 20 h scripted timewarp log | debug | feat/debug-playtest | v1.0 | merged | Narrow exception: one public read-only DirectorApi |
 
 ## Milestones
 | Tag | Closes when | Status |

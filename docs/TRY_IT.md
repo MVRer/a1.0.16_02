@@ -2,6 +2,20 @@
 
 One entry per merge, newest first. Run the game from the main checkout (this folder, on `main`).
 
+## READY TO TRY: Playtest tooling (dev overlay and the 20 h playthrough)  (merged feat/debug-playtest, commit 5dc34df)
+```
+Restart needed: full game restart (new HUD and Java code)
+See it now:
+  1. Launch "Dev Client". /a1016 debug overlay on   (a small panel, top-left: stage, attention, tension, quiet, pity,
+     tempo, held card and why it's waiting, last card fired (real or fake), next minor or major allowed, armed trap,
+     sighting phase). /a1016 debug overlay off hides it. Dev environment only, never in a real play jar.
+  2. /a1016 debug playthrough 20   (simulates 20 h of play for each tempo as a dry run; nothing happens in your world)
+     Logs: run/logs/a1016_playthrough_early.log, _slow_burn.log, _very_late.log
+What to look for: hard limits pass for every tempo. Rates (seed 1016): EARLY on target; SLOW_BURN minors run low
+  (0.42/h overall); VERY_LATE had only 1 major in 12 h of Proximity. A director tuning pass is next.
+Known rough edges: in devFastMode the overlay's "first day" and "quiet" countdowns show unscaled times.
+```
+
 ## READY TO TRY: World signatures (still burning, your house elsewhere, the cross row, redstone torches)  (merged feat/world-signatures, commit af92e15)
 ```
 Restart needed: full game restart (Java code)
