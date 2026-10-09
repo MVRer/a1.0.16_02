@@ -1,5 +1,6 @@
 package com.forzacode.a1016_02.atmosphere;
 
+import com.forzacode.a1016_02.core.FogLimits;
 import com.forzacode.a1016_02.core.ModConfig;
 import com.forzacode.a1016_02.core.Stage;
 
@@ -22,9 +23,9 @@ public final class AtmosphereConfig {
 	/** Fog start as a share of the fog end when the fog is at its heaviest (the old close-in fog). */
 	public double heavyFogStartFraction = 0.15;
 
-	// --- fog drift ---
-	public double fogDriftStrengthMin = 0.55;
-	public double fogDriftStrengthMax = 0.85;
+	// --- fog drift (D-022: 0.85 was too strong in playtests, 0.7 at most) ---
+	public double fogDriftStrengthMin = 0.45;
+	public double fogDriftStrengthMax = 0.7;
 	public int fogDriftRampTicks = 16;
 	public int fogDriftFadeTicks = 100;
 	public double fogDriftNoCombatSeconds = 30;
@@ -114,6 +115,11 @@ public final class AtmosphereConfig {
 
 	public static AtmosphereConfig get() {
 		return ModConfig.section("atmosphere", AtmosphereConfig.class, AtmosphereConfig::new);
+	}
+
+	/** The dusk fog shape for core's {@link FogLimits} (install with {@code FogLimits.installShape(() -> get().fogShape())}). */
+	public FogLimits.Shape fogShape() {
+		return new FogLimits.Shape(duskMinFogBlocks, duskNightWeight);
 	}
 
 	public float duskFogFor(Stage stage) {
