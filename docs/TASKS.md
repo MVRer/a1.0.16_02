@@ -23,9 +23,10 @@ Status values: queued, running, review, fix, merged, blocked. Only the orchestra
 | P1-5b | Atmosphere follow-ups: FogLimits.installShape, dead mountain silence, no animals there | atmosphere | feat/atmosphere-followups | - | merged | Gap for world: record DEAD_MOUNTAIN when any of its chunks generates, so worldgen animals are blocked too |
 | P1-1b | Director fixes: Stage 3 only on a TELLING that names him (D-041); signature stage minimum; no early deck reshuffle; quiet check after any tension rise | director | feat/director-fixes | v0.6 | merged | Must merge together with or before P1-7 |
 | P1-4c | Fix the flaky dig test `networkChestNeverLoadsAChunkInTheTick` (2 of 5 runs fail on main) | dig | feat/dig-flaky | - | running | Priority: main must not flake |
+| P1-1c | Director pacing tuning with the playthrough tool: SLOW_BURN minors 0.42/h overall, VERY_LATE 1 major in 12 h of Proximity. Bring the soft rates to 4b's low end; hard limits stay | director | feat/director-tuning | v1.0 | queued (after P2-3 merges) | Rarity stays the product (D-020) |
 | P2-1 | Endings A, B, C, D (full D chain) | ending | feat/ending-endings | v0.8-endings | queued, phase 2 | |
 | P2-2 | Integration: wire all cards, close contract gaps, guardrail pass | (multi) | feat/integration-pass | v1.0 | queued, phase 2 | |
-| P2-3 | Playtest tooling: dev overlay and a 20 h scripted timewarp log | debug | feat/debug-playtest | v1.0 | running | Narrow exception: one public read-only DirectorApi |
+| P2-3 | Playtest tooling: dev overlay and a 20 h scripted timewarp log | debug | feat/debug-playtest | v1.0 | review | Narrow exception: one public read-only DirectorApi |
 
 ## Milestones
 | Tag | Closes when | Status |
