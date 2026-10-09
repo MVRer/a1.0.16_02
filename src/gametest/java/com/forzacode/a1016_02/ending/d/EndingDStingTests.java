@@ -97,16 +97,29 @@ public class EndingDStingTests {
 		helper.succeed();
 	}
 
-	@GameTest
+	/**
+	 * Chunks {@link #stingChunksHaveNoCaves} is generating right now. The gate is one global flag read by the worldgen
+	 * threads, so {@link #stingGateFollowsTheCompleteFlag} waits until none is (game test batches overlap).
+	 */
+	private static final java.util.concurrent.atomic.AtomicInteger GENERATING = new java.util.concurrent.atomic.AtomicInteger();
+
+	@GameTest(maxTicks = 12000)
 	public void stingGateFollowsTheCompleteFlag(GameTestHelper helper) {
-		Sting.set(false, false);
-		helper.assertFalse(Sting.skipCarvers() || Sting.fillNoiseCaves(), "the gate is on by default");
-		Sting.refresh(helper.getLevel().getServer());
-		helper.assertFalse(Sting.skipCarvers(), "the gate opened without ending:d_complete");
-		Sting.set(true, true);
-		helper.assertTrue(Sting.skipCarvers() && Sting.fillNoiseCaves(), "the gate did not close");
-		Sting.set(false, false);
-		helper.succeed();
+		helper.succeedWhen(() -> {
+			if (GENERATING.get() > 0) {
+				throw helper.assertionException("waiting: the cave test has a chunk generating");
+			}
+			try {
+				Sting.set(false, false);
+				helper.assertFalse(Sting.skipCarvers() || Sting.fillNoiseCaves(), "the gate is on by default");
+				Sting.refresh(helper.getLevel().getServer());
+				helper.assertFalse(Sting.skipCarvers(), "the gate opened without ending:d_complete");
+				Sting.set(true, true);
+				helper.assertTrue(Sting.skipCarvers() && Sting.fillNoiseCaves(), "the gate did not close");
+			} finally {
+				Sting.set(false, false);
+			}
+		});
 	}
 
 	/**
@@ -136,6 +149,7 @@ public class EndingDStingTests {
 		ProtoChunk open = freshChunk(level, pos);
 		ProtoChunk closed = freshChunk(level, pos);
 		// Worldgen threads do the work; the test polls each tick (slowed a little, since the test server does not wait).
+		GENERATING.incrementAndGet();
 		Sting.set(false, false);
 		CompletableFuture<ChunkAccess> before = generate(generator, random, structures, level, possible, open);
 		CompletableFuture<?>[] after = new CompletableFuture<?>[1];
@@ -146,7 +160,10 @@ public class EndingDStingTests {
 					throw helper.assertionException("still generating the open chunk");
 				}
 				Sting.set(true, true);
-				after[0] = generate(generator, random, structures, level, possible, closed).whenComplete((c, e) -> Sting.set(false, false));
+				after[0] = generate(generator, random, structures, level, possible, closed).whenComplete((c, e) -> {
+					Sting.set(false, false);
+					GENERATING.decrementAndGet();
+				});
 			}
 			if (!after[0].isDone()) {
 				pause();
