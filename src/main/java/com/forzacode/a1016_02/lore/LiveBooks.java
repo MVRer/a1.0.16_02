@@ -21,6 +21,7 @@ import net.minecraft.world.Container;
 import net.minecraft.world.entity.EntityTypes;
 import net.minecraft.world.entity.decoration.ItemFrame;
 import net.minecraft.world.entity.item.ItemEntity;
+import net.minecraft.world.level.entity.EntityTypeTest;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.component.WrittenBookContent;
 import net.minecraft.world.level.block.entity.BlockEntity;
@@ -154,12 +155,10 @@ public final class LiveBooks {
 			for (ItemEntity item : level.getEntities(EntityTypes.ITEM, e -> FragmentItems.is(e.getItem(), "F10"))) {
 				updated += refresh(item.getItem(), name, cause, true) ? 1 : 0;
 			}
-			for (ItemFrame frame : level.getEntities(EntityTypes.ITEM_FRAME, e -> FragmentItems.is(e.getItem(), "F10"))) {
-				ItemStack copy = frame.getItem().copy();
-				if (refresh(copy, name, cause, true)) {
-					frame.setItem(copy);
-					updated++;
-				}
+			// Item frames and glow item frames: the stack is changed in place, silently (no frame sound, nothing seen:
+			// a book's pages are not shown on a frame), and saved with the frame.
+			for (ItemFrame frame : level.getEntities(EntityTypeTest.forClass(ItemFrame.class), e -> FragmentItems.is(e.getItem(), "F10"))) {
+				updated += refresh(frame.getItem(), name, cause, true) ? 1 : 0;
 			}
 		}
 		A1016_02.LOGGER.info("[a1016] lore: F10 gained its last line ({} copies within reach)", updated);

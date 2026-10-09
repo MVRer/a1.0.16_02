@@ -176,10 +176,13 @@ public final class TellingData extends SavedData {
 		return count;
 	}
 
-	/** Counts one telling; the first one is remembered. Returns the new count. */
-	int countTelling(long seq, long day) {
+	/**
+	 * Counts one telling. The first one that names him is remembered as the first telling (writing near his traces
+	 * counts, but does not start it, D-041). Returns the new count.
+	 */
+	int countTelling(long seq, long day, boolean namesHim) {
 		count++;
-		if (firstTellingSeq < 0) {
+		if (namesHim && firstTellingSeq < 0) {
 			firstTellingSeq = seq;
 			firstTellingDay = day;
 		}
@@ -194,7 +197,7 @@ public final class TellingData extends SavedData {
 		return seq;
 	}
 
-	/** Order of the first telling, or -1 before it. */
+	/** Order of the first telling (the first time a player named him), or -1 before it. */
 	public long firstTellingSeq() {
 		return firstTellingSeq;
 	}
@@ -217,10 +220,23 @@ public final class TellingData extends SavedData {
 		return signs.stream().filter(s -> s.pos().equals(pos)).findFirst();
 	}
 
-	/** Records (or replaces) the sign at its position. */
+	/** Records (or replaces) the sign at its position, keeping at most {@link LoreConfig#tellingMaxSigns}. */
 	void putSign(WrittenSign sign) {
+		putSign(sign, LoreConfig.get().tellingMaxSigns);
+	}
+
+	/** Records the sign; past {@code max} the oldest are forgotten, never the "Stop." sign or its candidate. */
+	void putSign(WrittenSign sign, int max) {
 		signs.removeIf(s -> s.pos().equals(sign.pos()));
 		signs.add(sign);
+		while (signs.size() > Math.max(1, max)) {
+			Optional<WrittenSign> oldest = signs.stream().filter(s -> !s.pos().equals(stopCandidate) && !s.pos().equals(stopSign))
+					.min(java.util.Comparator.comparingLong(WrittenSign::seq));
+			if (oldest.isEmpty()) {
+				break;
+			}
+			signs.remove(oldest.get());
+		}
 		setDirty();
 	}
 
@@ -243,9 +259,17 @@ public final class TellingData extends SavedData {
 		return books.stream().filter(b -> b.id().equals(id)).findFirst();
 	}
 
+	/** Records (or replaces) the book, keeping at most {@link LoreConfig#tellingMaxBooks} (the oldest are forgotten). */
 	void putBook(WrittenBook book) {
+		putBook(book, LoreConfig.get().tellingMaxBooks);
+	}
+
+	void putBook(WrittenBook book, int max) {
 		books.removeIf(b -> b.id().equals(book.id()));
 		books.add(book);
+		while (books.size() > Math.max(1, max)) {
+			books.stream().min(java.util.Comparator.comparingLong(WrittenBook::seq)).ifPresent(books::remove);
+		}
 		setDirty();
 	}
 

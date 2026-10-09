@@ -5,7 +5,9 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.TreeMap;
+import java.util.TreeSet;
 
 import com.forzacode.a1016_02.A1016_02;
 import com.mojang.serialization.Codec;
@@ -25,6 +27,7 @@ import net.minecraft.world.level.saveddata.SavedDataType;
  * <li>read targets: blocks that count as reading a fragment when looked at up close (signs, the cairn's core)</li>
  * <li>site claims: which {@code SiteRegistry} site each fragment used</li>
  * <li>eligible since: play ticks when each fragment could first be placed (own builds wait a while after it)</li>
+ * <li>own sites: registry sites lore built itself, which are never his traces (D-041)</li>
  * </ul>
  */
 public final class LoreData extends SavedData {
@@ -34,7 +37,8 @@ public final class LoreData extends SavedData {
 			Codec.unboundedMap(Codec.STRING, GlobalPos.CODEC).optionalFieldOf("anchors", Map.of()).forGetter(d -> d.anchors),
 			Codec.unboundedMap(Codec.STRING, GlobalPos.CODEC.listOf()).optionalFieldOf("readTargets", Map.of()).forGetter(d -> d.readTargets),
 			Codec.unboundedMap(Codec.STRING, Codec.INT).optionalFieldOf("siteClaims", Map.of()).forGetter(d -> d.siteClaims),
-			Codec.unboundedMap(Codec.STRING, Codec.LONG).optionalFieldOf("eligibleSince", Map.of()).forGetter(d -> d.eligibleSince)
+			Codec.unboundedMap(Codec.STRING, Codec.LONG).optionalFieldOf("eligibleSince", Map.of()).forGetter(d -> d.eligibleSince),
+			Codec.INT.listOf().optionalFieldOf("ownSites", List.of()).forGetter(d -> List.copyOf(d.ownSites))
 	).apply(i, LoreData::new));
 
 	public static final SavedDataType<LoreData> TYPE = new SavedDataType<>(A1016_02.id("lore"), LoreData::new, CODEC, null);
@@ -43,16 +47,19 @@ public final class LoreData extends SavedData {
 	private final Map<String, List<GlobalPos>> readTargets = new TreeMap<>();
 	private final Map<String, Integer> siteClaims = new TreeMap<>();
 	private final Map<String, Long> eligibleSince = new TreeMap<>();
+	/** Sites lore built itself (left by people, D-041): never "his traces". */
+	private final Set<Integer> ownSites = new TreeSet<>();
 
 	public LoreData() {
 	}
 
 	private LoreData(Map<String, GlobalPos> anchors, Map<String, List<GlobalPos>> readTargets, Map<String, Integer> siteClaims,
-			Map<String, Long> eligibleSince) {
+			Map<String, Long> eligibleSince, List<Integer> ownSites) {
 		this.anchors.putAll(anchors);
 		readTargets.forEach((id, list) -> this.readTargets.put(id, new ArrayList<>(list)));
 		this.siteClaims.putAll(siteClaims);
 		this.eligibleSince.putAll(eligibleSince);
+		this.ownSites.addAll(ownSites);
 	}
 
 	public static LoreData get(MinecraftServer server) {
@@ -105,6 +112,17 @@ public final class LoreData extends SavedData {
 			return now;
 		}
 		return since;
+	}
+
+	/** True if lore built this site itself (a hut, a house, a tower: left by people). */
+	public boolean isOwnSite(int siteId) {
+		return ownSites.contains(siteId);
+	}
+
+	public void addOwnSite(int siteId) {
+		if (ownSites.add(siteId)) {
+			setDirty();
+		}
 	}
 
 	public void setSiteClaim(String id, int siteId) {

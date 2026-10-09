@@ -39,11 +39,11 @@ import net.minecraft.world.level.block.entity.SignBlockEntity;
 
 /**
  * The telling watcher. Naming him puts him back: a sign or a book that names him (see {@link NameMatcher}), or
- * one written within {@code pacing.tellingRadius} of his traces (sites and ledgered edits), and chat that names
- * him, are "telling". Each telling counts, raises attention ({@code NAMED_HIM}, {@code WROTE_NEAR_TRACES}), sets
- * {@code tellingStarted} and fires {@link HerobrineEvents#TELLING} (the director moves to Telling on the first).
- * Signs and books about him are remembered in {@link TellingData}; so is every sign written after the first
- * telling, for blank sign. Destroying them lowers attention ({@code DESTROYED_OWN_WRITING}); the list (F06) burnt
+ * one written within {@code pacing.tellingRadius} of his traces ({@link TraceIndex}, D-041), and chat that names
+ * him, are "telling". Each telling counts, raises attention ({@code NAMED_HIM}, {@code WROTE_NEAR_TRACES}) and
+ * fires {@link HerobrineEvents#TELLING} with {@code namesHim}; only naming him sets {@code tellingStarted} and
+ * starts Stage 3. Signs and books about him are remembered in {@link TellingData}; so is every sign written after
+ * the first time he was named, for blank sign (both lists capped, oldest dropped). Destroying them lowers attention ({@code DESTROYED_OWN_WRITING}); the list (F06) burnt
  * in lava or fire lowers it sharply ({@code LIST_IN_LAVA}) and he raises a new pyramid ({@link ListPyramid}).
  */
 public final class Telling {
@@ -53,8 +53,6 @@ public final class Telling {
 	public static final String COUNT_FLAG = "lore:telling_count";
 	/** Set once a copy of the list (F06) burnt in lava or fire. */
 	public static final String LIST_BURNED_FLAG = "lore:list_burned";
-	/** Ledger causes of things others left (lore's builds); they are not his traces. */
-	private static final String LEFT_CAUSE = "lore:left/";
 
 	/** Where his traces are, for "written near his traces". */
 	@FunctionalInterface
@@ -76,6 +74,7 @@ public final class Telling {
 	static void reset() {
 		nextVisitCheck = 0;
 		nextBlankRetry = 0;
+		LIVE.clear();
 		ListPyramid.reset();
 	}
 
@@ -176,9 +175,9 @@ public final class Telling {
 
 	/**
 	 * A sign was written with {@code text} (both sides, see {@link SignEdits#text}). Blank or unchanged text tells
-	 * nothing. A sign about him is told and remembered; before the first telling other signs are not remembered,
-	 * after it every sign is (blank sign's pool). The first sign about him written in Stage 3 becomes the "Stop."
-	 * candidate.
+	 * nothing. A sign about him (naming him, or near his traces) is told and remembered; before the first time he
+	 * was named other signs are not remembered, after it every sign is (blank sign's pool). The first sign naming him
+	 * written in Stage 3 becomes the "Stop." candidate.
 	 */
 	static Told writeSign(ServerPlayer player, ServerLevel level, BlockPos pos, String text, HerobrineState state, TellingData data, Traces traces) {
 		GlobalPos at = GlobalPos.of(level.dimension(), pos.immutable());
@@ -203,7 +202,7 @@ public final class Telling {
 			tell(player, text, pos, names, near, seq, day, state, data);
 		}
 		data.putSign(new WrittenSign(at, player.getUUID(), text, about, names, seq, day, after, false));
-		if (about && data.stopCandidate().isEmpty() && !state.stopFired() && state.stage().atLeast(Stage.TELLING)) {
+		if (names && data.stopCandidate().isEmpty() && !state.stopFired() && state.stage().atLeast(Stage.TELLING)) {
 			data.setStopCandidate(at);
 			A1016_02.LOGGER.info("[a1016] lore: the sign at {} is the one that will say \"Stop.\"", pos.toShortString());
 		}
@@ -249,12 +248,18 @@ public final class Telling {
 		return new Told(true, true, false, false);
 	}
 
-	/** Counts a telling, raises attention, sets {@code tellingStarted} and fires {@code TELLING}. */
+	/**
+	 * Counts a telling, raises attention and fires {@code TELLING} with {@code namesHim}. Naming him also sets
+	 * {@code tellingStarted} (the director starts Stage 3 on it, D-041); writing near his traces does not.
+	 */
 	static void tell(ServerPlayer player, String text, BlockPos pos, boolean names, boolean near, long seq, long day, HerobrineState state,
 			TellingData data) {
 		MinecraftServer server = player.level().getServer();
-		int count = data.countTelling(seq, day);
-		state.setTellingStarted(true);
+		// D-041: both count as telling; only naming him starts it (Stage 3, tellingStarted, the first telling).
+		int count = data.countTelling(seq, day, names);
+		if (names) {
+			state.setTellingStarted(true);
+		}
 		mirrorCount(state, count);
 		if (names) {
 			Attention.trigger(server, AttentionTrigger.NAMED_HIM);
@@ -367,29 +372,29 @@ public final class Telling {
 		return String.join("\n", parts).strip();
 	}
 
-	/** His traces as the live world knows them: recorded sites and ledgered edits (not what others left). */
+	/** The live ledger's index, kept up to date incrementally (reset with the server). */
+	private static final TraceIndex LIVE = new TraceIndex();
+
+	/** His traces as the live world knows them (D-041): his sites, not lore's own builds, and his ledgered edits. */
 	static Traces live(MinecraftServer server) {
-		return (pos, radius) -> near(pos, radius, Services.sites().all(), TraceLedger.get(server).entries());
+		LoreData lore = LoreData.get(server);
+		return (pos, radius) -> nearSite(pos, radius, Services.sites().all(), lore::isOwnSite) || LIVE.sync(TraceLedger.get(server)).near(pos, radius);
 	}
 
-	/** True if a site (its rough extent counted) or a ledgered edit of his is within {@code radius} blocks. */
-	static boolean near(GlobalPos pos, int radius, Collection<SiteRegistry.Site> sites, Collection<TraceLedger.Entry> entries) {
+	/** True if one of his sites (its rough extent counted) is within {@code radius} blocks. */
+	static boolean nearSite(GlobalPos pos, int radius, Collection<SiteRegistry.Site> sites, java.util.function.IntPredicate loreBuilt) {
 		BlockPos p = pos.pos();
 		for (SiteRegistry.Site site : sites) {
 			double reach = radius + Math.max(0, site.size());
-			if (site.dimension().equals(pos.dimension()) && site.pos().distSqr(p) <= reach * reach) {
-				return true;
-			}
-		}
-		double radiusSqr = (double) radius * radius;
-		for (TraceLedger.Entry entry : entries) {
-			if (!entry.pos().dimension().equals(pos.dimension()) || entry.cause().startsWith(LEFT_CAUSE)) {
-				continue;
-			}
-			if (entry.pos().pos().distSqr(p) <= radiusSqr || entry.to().map(to -> to.distSqr(p) <= radiusSqr).orElse(false)) {
+			if (TraceIndex.isHis(site, loreBuilt) && site.dimension().equals(pos.dimension()) && site.pos().distSqr(p) <= reach * reach) {
 				return true;
 			}
 		}
 		return false;
+	}
+
+	/** {@link #live} over given sites (none built by lore) and ledger entries (tests). */
+	static boolean near(GlobalPos pos, int radius, Collection<SiteRegistry.Site> sites, Collection<TraceLedger.Entry> entries) {
+		return nearSite(pos, radius, sites, id -> false) || TraceIndex.of(entries).near(pos, radius);
 	}
 }

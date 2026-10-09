@@ -14,7 +14,10 @@ import net.minecraft.core.GlobalPos;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.Level;
+import net.minecraft.world.level.block.CeilingHangingSignBlock;
 import net.minecraft.world.level.block.StandingSignBlock;
+import net.minecraft.world.level.block.SupportType;
+import net.minecraft.world.level.block.WallHangingSignBlock;
 import net.minecraft.world.level.block.WallSignBlock;
 import net.minecraft.world.level.block.entity.SignBlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
@@ -52,9 +55,10 @@ public final class LoreApi {
 	}
 
 	/**
-	 * Ending B only: places F20 in a chest directly under where F10 was placed (the block there is taken out). True
-	 * once it is there (also when it already was); false if F10 was never placed, the spot is in view or its chunk
-	 * is still loading.
+	 * Ending B only: places F20 in a chest under where F10 was placed: directly under it, or beside that spot (or
+	 * one lower) if a block entity or an unbreakable block is there. Taking the block out is his edit, ledgered like
+	 * any other; the chest is left by others. True once it is there (also when it already was); false if F10 was
+	 * never placed, the spot is in view or its chunk is still loading.
 	 */
 	public static boolean placeF20(MinecraftServer server) {
 		return placeF20(server, HerobrineState.get(server), Services.traces());
@@ -74,32 +78,47 @@ public final class LoreApi {
 			return false;
 		}
 		BlockPos under = f10.pos().below();
-		if (!ChunkGate.request(level, under, 1)) {
+		if (!ChunkGate.request(level, under, 2)) {
 			return false;
 		}
-		BlockState there = level.getBlockState(under);
-		if (level.getBlockEntity(under) != null || there.getDestroySpeed(level, under) < 0) {
+		Optional<BlockPos> spot = underSpot(level, under);
+		if (spot.isEmpty()) {
+			return false;
+		}
+		BlockPos at = spot.get();
+		if (!Terrain.isAirOrReplaceable(level.getBlockState(at)) && !Build.his(traces, level, "F20").remove(at).commit()) {
 			return false;
 		}
 		String name = state.subject().map(HerobrineState.Subject::name).orElse("Steve");
-		Build build = Build.left(traces, level, "F20");
-		if (!Terrain.isAirOrReplaceable(there)) {
-			build.remove(under);
-		}
-		build.chest(under, Direction.NORTH, List.of(FragmentItems.book(f20.get(), name)));
-		if (!build.commit()) {
+		if (!Build.left(traces, level, "F20").chest(at, Direction.NORTH, List.of(FragmentItems.book(f20.get(), name))).commit()) {
 			return false;
 		}
-		state.setFragmentPlaced("F20", GlobalPos.of(level.dimension(), under));
-		A1016_02.LOGGER.info("[a1016] lore: F20 lies under F10 at {}", under.toShortString());
+		state.setFragmentPlaced("F20", GlobalPos.of(level.dimension(), at));
+		A1016_02.LOGGER.info("[a1016] lore: F20 lies under F10 at {}", at.toShortString());
 		return true;
+	}
+
+	/** Directly under F10, else beside that spot, else one lower: no block entity there, and breakable. */
+	static Optional<BlockPos> underSpot(ServerLevel level, BlockPos under) {
+		List<BlockPos> spots = new java.util.ArrayList<>();
+		spots.add(under);
+		Direction.Plane.HORIZONTAL.forEach(dir -> spots.add(under.relative(dir)));
+		spots.add(under.below());
+		for (BlockPos spot : spots) {
+			BlockState there = level.getBlockState(spot);
+			if (level.getBlockEntity(spot) == null && there.getDestroySpeed(level, spot) >= 0 && !UnbreakableSigns.isProtected(level, spot)) {
+				return Optional.of(spot);
+			}
+		}
+		return Optional.empty();
 	}
 
 	/**
 	 * Ending A: the "Stop." sign now stands in front of the player's cross. {@code crossPos} is the cross's bottom
 	 * block (standing on the ground). A standing sign is moved onto the ground beside it, a wall sign onto the
-	 * cross's side, facing away; if the player rewrote it, "Stop." comes back (F03's own text). False if there is no
-	 * "Stop." sign, it is in another dimension, no side is free, or the move would be seen.
+	 * cross's side, a hanging sign from the post's side or under an arm; if the player rewrote it, "Stop." comes back
+	 * (F03's own text). False if there is no "Stop." sign, it is in another dimension, no spot fits, or the move
+	 * would be seen; the sign is still known then (only a broken sign is forgotten), so it can be tried again.
 	 */
 	public static boolean moveStopSignToCross(MinecraftServer server, GlobalPos crossPos) {
 		return moveStopSignToCross(server, HerobrineState.get(server), TellingData.get(server), crossPos, Services.traces(),
@@ -127,49 +146,28 @@ public final class LoreApi {
 			return false;
 		}
 		BlockState sign = level.getBlockState(from);
-		if (!(level.getBlockEntity(from) instanceof SignBlockEntity) || !PlaceNotFound.isMovableSign(sign)) {
+		if (!(level.getBlockEntity(from) instanceof SignBlockEntity)) {
+			// The sign is gone (the player broke it): there is nothing left to move.
 			data.setStopSign(null);
 			return false;
 		}
 		Optional<BlockPos> moved = Optional.empty();
-		for (Direction dir : frontFirst(level, cross)) {
-			BlockPos to;
-			BlockState placed;
-			if (sign.getBlock() instanceof StandingSignBlock) {
-				to = cross.relative(dir);
-				placed = sign.setValue(StandingSignBlock.ROTATION, RotationSegment.convertToSegment(dir));
-				if (!to.equals(from) && !Terrain.isFloor(level, to)) {
-					continue;
-				}
-			} else {
-				to = null;
-				placed = sign.setValue(WallSignBlock.FACING, dir);
-				for (int up = 0; up <= 1 && to == null; up++) {
-					BlockPos post = cross.above(up);
-					BlockPos spot = post.relative(dir);
-					boolean free = spot.equals(from) || Terrain.isAirOrReplaceable(level.getBlockState(spot)) && level.getBlockEntity(spot) == null;
-					if (free && level.getBlockState(post).isFaceSturdy(level, post, dir)) {
-						to = spot;
-					}
-				}
-				if (to == null) {
-					continue;
-				}
-			}
-			if (to.equals(from) && placed == sign) {
-				moved = Optional.of(to);
+		for (Spot spot : spotsBeside(level, cross, from, sign)) {
+			if (spot.pos().equals(from) && spot.state() == sign) {
+				moved = Optional.of(from);
 				break;
 			}
 			Build build = Build.his(traces, level, "F03");
-			if (!to.equals(from)) {
-				build.move(from, to);
+			if (!spot.pos().equals(from)) {
+				build.move(from, spot.pos());
 			}
-			build.convert(to, placed);
-			if (build.commit()) {
-				moved = Optional.of(to);
-				break;
+			build.convert(spot.pos(), spot.state());
+			if (!build.commit()) {
+				// Seen (or refused): keep the sign where it is and try again later.
+				return false;
 			}
-			return false;
+			moved = Optional.of(spot.pos());
+			break;
 		}
 		if (moved.isEmpty()) {
 			return false;
@@ -193,6 +191,58 @@ public final class LoreApi {
 		}
 		A1016_02.LOGGER.info("[a1016] lore: the \"Stop.\" sign stands in front of the cross at {}", cross.toShortString());
 		return true;
+	}
+
+	/** Where the moved sign goes and how it stands there. */
+	record Spot(BlockPos pos, BlockState state) {
+	}
+
+	/**
+	 * Where this kind of sign can be in front of the cross, best first (sides without an arm first): a standing sign
+	 * on the ground beside it, a wall sign on the post, a wall hanging sign from the post's side, a ceiling hanging
+	 * sign under an arm. Empty for any other kind (the reference is kept).
+	 */
+	static List<Spot> spotsBeside(ServerLevel level, BlockPos cross, BlockPos from, BlockState sign) {
+		List<Spot> spots = new java.util.ArrayList<>();
+		for (Direction dir : frontFirst(level, cross)) {
+			if (sign.getBlock() instanceof StandingSignBlock) {
+				BlockPos to = cross.relative(dir);
+				if (to.equals(from) || Terrain.isFloor(level, to)) {
+					spots.add(new Spot(to, sign.setValue(StandingSignBlock.ROTATION, RotationSegment.convertToSegment(dir))));
+				}
+			} else if (sign.getBlock() instanceof WallSignBlock) {
+				for (int up = 0; up <= 1; up++) {
+					BlockPos post = cross.above(up);
+					BlockPos to = post.relative(dir);
+					if (free(level, to, from) && level.getBlockState(post).isFaceSturdy(level, post, dir)) {
+						spots.add(new Spot(to, sign.setValue(WallSignBlock.FACING, dir)));
+					}
+				}
+			} else if (sign.getBlock() instanceof WallHangingSignBlock) {
+				// Turned side-on, so it hangs from the post itself (facing clockwise of the side it is on).
+				for (int up = 0; up <= 2; up++) {
+					BlockPos post = cross.above(up);
+					BlockPos to = post.relative(dir);
+					if (free(level, to, from) && level.getBlockState(post).isFaceSturdy(level, post, dir, SupportType.FULL)) {
+						spots.add(new Spot(to, sign.setValue(WallHangingSignBlock.FACING, dir.getClockWise())));
+					}
+				}
+			} else if (sign.getBlock() instanceof CeilingHangingSignBlock) {
+				for (int up = 1; up <= 4; up++) {
+					BlockPos arm = cross.above(up).relative(dir);
+					BlockPos to = arm.below();
+					if (!Terrain.isAirOrReplaceable(level.getBlockState(arm)) && level.getBlockState(arm).isFaceSturdy(level, arm, Direction.DOWN,
+							SupportType.CENTER) && free(level, to, from)) {
+						spots.add(new Spot(to, sign.setValue(CeilingHangingSignBlock.ROTATION, RotationSegment.convertToSegment(dir))));
+					}
+				}
+			}
+		}
+		return spots;
+	}
+
+	private static boolean free(ServerLevel level, BlockPos to, BlockPos from) {
+		return to.equals(from) || Terrain.isAirOrReplaceable(level.getBlockState(to)) && level.getBlockEntity(to) == null;
 	}
 
 	/** The cross's sides without an arm first (its front and back), then the rest. */

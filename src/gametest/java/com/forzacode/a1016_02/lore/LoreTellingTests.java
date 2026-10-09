@@ -29,6 +29,7 @@ import net.minecraft.server.network.FilteredText;
 import net.minecraft.server.network.Filterable;
 import net.minecraft.util.RandomSource;
 import net.minecraft.world.Container;
+import net.minecraft.world.entity.decoration.GlowItemFrame;
 import net.minecraft.world.entity.item.ItemEntity;
 import net.minecraft.world.item.DyeColor;
 import net.minecraft.world.item.ItemStack;
@@ -38,6 +39,7 @@ import net.minecraft.world.item.component.WrittenBookContent;
 import net.minecraft.world.level.GameType;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.StandingSignBlock;
+import net.minecraft.world.level.block.WallHangingSignBlock;
 import net.minecraft.world.level.block.WallSignBlock;
 import net.minecraft.world.level.block.entity.SignBlockEntity;
 import net.minecraft.world.level.block.entity.SignText;
@@ -210,31 +212,75 @@ public class LoreTellingTests extends LorePlacementTests {
 		ServerLevel level = helper.getLevel();
 		ServerPlayer player = mock(helper);
 		BlockPos here = helper.absolutePos(new BlockPos(2, 1, 2));
-		SiteRegistry.Site near = new SiteRegistry.Site(-1, SiteType.RUINED_HUT, level.dimension(), here.offset(30, 0, 0), 3, Optional.empty());
-		SiteRegistry.Site far = new SiteRegistry.Site(-2, SiteType.RUINED_HUT, level.dimension(), here.offset(60, 0, 0), 3, Optional.empty());
-		Telling.Traces nearSite = (pos, r) -> Telling.near(pos, r, List.of(near), List.of());
-		Telling.Traces farSite = (pos, r) -> Telling.near(pos, r, List.of(far), List.of());
+		// D-041: a tunnel end is his; a hut was left by people.
+		SiteRegistry.Site tunnel = new SiteRegistry.Site(-1, SiteType.TUNNEL_END, level.dimension(), here.offset(30, 0, 0), 3, Optional.empty());
+		SiteRegistry.Site hut = new SiteRegistry.Site(-2, SiteType.RUINED_HUT, level.dimension(), here.offset(10, 0, 0), 3, Optional.empty());
+		SiteRegistry.Site farTunnel = new SiteRegistry.Site(-3, SiteType.TUNNEL_END, level.dimension(), here.offset(60, 0, 0), 3, Optional.empty());
+		Telling.Traces nearTunnel = (pos, r) -> Telling.near(pos, r, List.of(tunnel), List.of());
+		Telling.Traces nearHut = (pos, r) -> Telling.near(pos, r, List.of(hut, farTunnel), List.of());
 
 		HerobrineState state = new HerobrineState();
 		TellingData data = new TellingData();
-		Telling.Told plainFar = sign(helper, new BlockPos(2, 1, 2), player, "meet at the hut", state, data, farSite);
-		helper.assertFalse(plainFar.told() || plainFar.recorded(), "a plain sign far from his traces told");
+		Telling.Told byHut = sign(helper, new BlockPos(2, 1, 2), player, "meet at the hut", state, data, nearHut);
+		helper.assertFalse(byHut.told() || byHut.recorded(), "a plain sign by a hut (left by people) told");
 		int before = TOLD.size();
-		Telling.Told plainNear = sign(helper, new BlockPos(3, 1, 2), player, "meet at the hut", state, data, nearSite);
-		helper.assertTrue(plainNear.told() && plainNear.nearTraces() && !plainNear.namesHim(), "a sign near his traces did not tell");
+		Telling.Told byTunnel = sign(helper, new BlockPos(3, 1, 2), player, "meet at the hut", state, data, nearTunnel);
+		helper.assertTrue(byTunnel.told() && byTunnel.nearTraces() && !byTunnel.namesHim(), "a sign near his tunnel did not tell");
 		helper.assertTrue(TOLD.size() > before && TOLD.getLast().endsWith("|false"), "TELLING for the sign near traces should not name him");
-		helper.assertTrue(data.count() == 1 && state.tellingStarted(), "count " + data.count());
+		helper.assertTrue(data.count() == 1, "count " + data.count());
+		helper.assertFalse(state.tellingStarted() || data.told(), "writing near his traces started the telling (only his name does, D-041)");
+		helper.assertTrue(data.stopCandidate().isEmpty(), "a sign that does not name him became the Stop. sign");
 
 		GlobalPos at = GlobalPos.of(level.dimension(), here);
+		helper.assertFalse(Telling.nearSite(at, 32, List.of(tunnel), id -> id == -1), "a site lore built counted as his trace");
 		TraceLedger.Entry his = new TraceLedger.Entry(TraceLedger.Kind.REMOVE, "dig:tunnel", 0, GlobalPos.of(level.dimension(), here.offset(0, -20, 0)),
 				Optional.empty(), Optional.empty(), Optional.empty(), Optional.empty(), -1, -1);
 		TraceLedger.Entry left = new TraceLedger.Entry(TraceLedger.Kind.REMOVE, "lore:left/F09", 0, GlobalPos.of(level.dimension(), here.offset(0, -5, 0)),
 				Optional.empty(), Optional.empty(), Optional.empty(), Optional.empty(), -1, -1);
 		helper.assertTrue(Telling.near(at, 32, List.of(), List.of(his)), "an edit of his 20 blocks away is not a trace");
 		helper.assertFalse(Telling.near(at, 32, List.of(), List.of(left)), "what others left counted as his trace");
+		helper.assertTrue(TraceIndex.of(List.of(his, left)).size() == 1, "the index kept what others left");
 		player.snapTo(net.minecraft.world.phys.Vec3.atBottomCenterOf(here), 0.0F, 0.0F);
-		helper.assertTrue(Telling.writeBook(player, writable("we built a hut"), false, state, data, nearSite).nearTraces(),
+		helper.assertTrue(Telling.writeBook(player, writable("we built a hut"), false, state, data, nearTunnel).nearTraces(),
 				"a book written near his traces did not tell");
+		helper.assertTrue(Telling.chat(player, "herobrine", state, data).told() && state.tellingStarted() && data.told(), "naming him did not start it");
+		helper.succeed();
+	}
+
+	/** The live index follows the ledger as he edits: a new edit is a trace at once. */
+	@GameTest
+	public void theTraceIndexFollowsTheLedger(GameTestHelper helper) {
+		floor(helper);
+		ServerLevel level = helper.getLevel();
+		MinecraftServer server = level.getServer();
+		Telling.Traces live = Telling.live(server);
+		BlockPos stone = helper.absolutePos(new BlockPos(4, 0, 4));
+		// Far above the test grid: nothing of his is there before the edit (the index is read first, then grows).
+		GlobalPos high = GlobalPos.of(level.dimension(), stone.atY(level.getMaxY() - 2));
+		helper.assertFalse(live.near(high, 2), "a trace near the top of the world before any edit there");
+		helper.setBlock(4, 1, 4, Blocks.STONE);
+		BlockPos edited = helper.absolutePos(new BlockPos(4, 1, 4));
+		helper.assertTrue(Services.traces().forced().remove(level, edited, "test:his_edit"), "the test edit failed");
+		helper.assertTrue(live.near(GlobalPos.of(level.dimension(), edited.above(10)), 12), "a new edit of his is not seen as a trace");
+		helper.assertFalse(live.near(high, 2), "the index grew a trace that is not there");
+		helper.succeed();
+	}
+
+	@GameTest
+	public void rememberedSignsAreCapped(GameTestHelper helper) {
+		TellingData data = new TellingData();
+		java.util.UUID writer = java.util.UUID.randomUUID();
+		GlobalPos stop = GlobalPos.of(helper.getLevel().dimension(), helper.absolutePos(new BlockPos(0, 1, 0)));
+		data.putSign(new TellingData.WrittenSign(stop, writer, "herobrine", true, true, 0, 0, false, false), 3);
+		data.setStopCandidate(stop);
+		for (int n = 1; n <= 6; n++) {
+			GlobalPos at = GlobalPos.of(helper.getLevel().dimension(), helper.absolutePos(new BlockPos(n, 1, 0)));
+			data.putSign(new TellingData.WrittenSign(at, writer, "sign " + n, false, false, n, 0, true, false), 3);
+		}
+		helper.assertTrue(data.signs().size() == 3, "kept " + data.signs().size());
+		helper.assertTrue(data.sign(stop).isPresent(), "the Stop. candidate was forgotten");
+		helper.assertTrue(data.signs().stream().mapToLong(TellingData.WrittenSign::seq).min().orElse(0) == 0
+				&& data.signs().stream().anyMatch(sign -> sign.seq() == 6), "not the newest kept: " + data.signs());
 		helper.succeed();
 	}
 
@@ -521,15 +567,71 @@ public class LoreTellingTests extends LorePlacementTests {
 		helper.setBlock(3, 1, 3, Blocks.CHEST);
 		BlockPos chest = helper.absolutePos(new BlockPos(3, 1, 3));
 		((Container) level.getBlockEntity(chest)).setItem(0, FragmentItems.book(fragment("F10"), "Steve"));
+		// A copy in a glow item frame too: changed in place, silently.
+		helper.setBlock(1, 1, 1, Blocks.STONE);
+		GlowItemFrame frame = new GlowItemFrame(level, helper.absolutePos(new BlockPos(1, 1, 2)), Direction.SOUTH);
+		frame.setItem(FragmentItems.book(fragment("F10"), "Steve"), false);
+		level.addFreshEntity(frame);
 		HerobrineState state = new HerobrineState();
 		state.setFragmentPlaced("F10", GlobalPos.of(level.dimension(), chest));
-		helper.assertTrue(LiveBooks.finishF10(server, state) >= 1 && state.hasFlag(LiveBooks.F10_FINISHED), "F10 was not finished");
+		helper.assertTrue(LiveBooks.finishF10(server, state) >= 2 && state.hasFlag(LiveBooks.F10_FINISHED), "F10 was not finished");
 		List<String> f10 = lines(pages(((Container) level.getBlockEntity(chest)).getItem(0)));
 		helper.assertTrue(f10.getLast().equals("* removed Steve"), "F10 reads " + f10);
+		helper.assertTrue(lines(pages(frame.getItem())).getLast().equals("* removed Steve"), "the framed F10 reads " + pages(frame.getItem()));
+		frame.discard();
 
+		int ledgered = TraceLedger.get(server).entries().size();
 		helper.assertTrue(LoreApi.placeF20(server, state, Services.traces().forced()), "F20 was not placed");
 		assertHolds(helper, chest.below(), "F20");
+		helper.assertTrue(TraceLedger.get(server).entries().subList(ledgered, TraceLedger.get(server).entries().size()).stream()
+				.anyMatch(e -> e.cause().equals("lore:his/F20") && e.pos().pos().equals(chest.below())), "taking the block under F10 is not his ledgered edit");
 		helper.assertTrue(LoreApi.placeF20(server, state, Services.traces().forced()), "placing F20 again failed");
+
+		// A block entity right under F10: F20 goes beside it, and the barrel stays.
+		helper.setBlock(6, 1, 6, Blocks.BARREL);
+		helper.setBlock(6, 2, 6, Blocks.CHEST);
+		HerobrineState other = new HerobrineState();
+		other.setFragmentPlaced("F10", GlobalPos.of(level.dimension(), helper.absolutePos(new BlockPos(6, 2, 6))));
+		helper.assertTrue(LoreApi.placeF20(server, other, Services.traces().forced()), "F20 was not placed beside the barrel");
+		helper.assertBlockPresent(Blocks.BARREL, new BlockPos(6, 1, 6));
+		assertHolds(helper, other.fragmentsPlaced().get("F20").pos(), "F20");
+		helper.assertTrue(other.fragmentsPlaced().get("F20").pos().getY() == helper.absolutePos(new BlockPos(6, 1, 6)).getY(), "F20 is not under F10");
+		helper.succeed();
+	}
+
+	/** A hanging "Stop." sign hangs from the cross; with nowhere to go it is kept for another try, not forgotten. */
+	@GameTest
+	public void endingAHangingStopSignIsKept(GameTestHelper helper) {
+		floor(helper);
+		MinecraftServer server = helper.getLevel().getServer();
+		ServerLevel level = helper.getLevel();
+		helper.setBlock(1, 1, 1, Blocks.STONE);
+		helper.setBlock(1, 1, 2, Blocks.OAK_WALL_HANGING_SIGN.defaultBlockState().setValue(WallHangingSignBlock.FACING, Direction.EAST));
+		BlockPos stop = helper.absolutePos(new BlockPos(1, 1, 2));
+		((SignBlockEntity) level.getBlockEntity(stop)).setText(signText(fragment("F03").lines()), SignTextSlot.FRONT);
+		HerobrineState state = new HerobrineState();
+		TellingData data = new TellingData();
+		data.setStopSign(GlobalPos.of(level.dimension(), stop));
+		TestEditor editor = new TestEditor();
+		// No cross at all here: nothing to hang from.
+		GlobalPos nothing = GlobalPos.of(level.dimension(), helper.absolutePos(new BlockPos(6, 1, 6)));
+		helper.assertFalse(LoreApi.moveStopSignToCross(server, state, data, nothing, Services.traces().forced(), editor), "moved with no cross");
+		helper.assertTrue(data.stopSign().isPresent(), "the Stop. sign was forgotten");
+		// A cross: post at (5, 1..3, 5), arms east and west.
+		for (int y = 1; y <= 3; y++) {
+			helper.setBlock(5, y, 5, Blocks.DIRT);
+		}
+		helper.setBlock(4, 2, 5, Blocks.DIRT);
+		helper.setBlock(6, 2, 5, Blocks.DIRT);
+		helper.assertTrue(LoreApi.moveStopSignToCross(server, state, data, GlobalPos.of(level.dimension(), helper.absolutePos(new BlockPos(5, 1, 5))),
+				Services.traces().forced(), editor), "the hanging Stop. sign was not moved");
+		BlockPos at = data.stopSign().orElseThrow().pos();
+		helper.assertTrue(level.getBlockState(at).getBlock() instanceof WallHangingSignBlock && level.getBlockState(at).canSurvive(level, at)
+				&& ((WallHangingSignBlock) level.getBlockState(at).getBlock()).canPlace(level.getBlockState(at), level, at), "it does not hang there");
+		helper.assertTrue(Math.abs(at.getX() - helper.absolutePos(new BlockPos(5, 1, 5)).getX()) + Math.abs(at.getZ() - helper.absolutePos(new BlockPos(5, 1, 5)).getZ()) == 1,
+				"it is not beside the cross: " + at.toShortString());
+		helper.assertBlockPresent(Blocks.AIR, new BlockPos(1, 1, 2));
+		helper.assertTrue(frontOf(helper, at).equals(fragment("F03").lines()), "it reads " + frontOf(helper, at));
 		helper.succeed();
 	}
 

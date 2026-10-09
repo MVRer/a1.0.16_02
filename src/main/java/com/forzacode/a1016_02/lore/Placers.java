@@ -195,6 +195,7 @@ final class Placers {
 	/** Records a place lore built itself, claimed by this fragment. */
 	private static Site ownSite(Request req, SiteType type, BlockPos pos, int size, boolean claim) {
 		Site site = Services.sites().record(type, req.level().dimension(), pos, size);
+		LoreData.get(req.level().getServer()).addOwnSite(site.id());
 		if (claim) {
 			Services.sites().claim(site, req.id());
 		}
