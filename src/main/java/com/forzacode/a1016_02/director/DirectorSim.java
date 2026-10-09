@@ -127,21 +127,27 @@ public final class DirectorSim {
 			return events.stream().filter(e -> e.kind() == Kind.STAGE && e.stage() == stage).mapToLong(Event::play).findFirst().orElse(-1);
 		}
 
-		/** Empty sessions as [start, end) play ticks (end = where the session or run ended). */
+		/** Empty stretches as [start, end) play ticks: from the session start to its end or the empty cap. */
 		public List<long[]> emptySessions() {
 			List<long[]> out = new ArrayList<>();
 			long openStart = -1;
+			long openUntil = -1;
+			if (params.continueSession && start.sessionStart >= 0 && start.sessionEmpty && start.sessionEmptyUntil > startPlay) {
+				openStart = startPlay;
+				openUntil = start.sessionEmptyUntil;
+			}
 			for (Event e : events) {
 				if (openStart >= 0 && (e.kind() == Kind.SESSION_END || e.kind() == Kind.SESSION_START)) {
-					out.add(new long[] {openStart, e.play()});
+					out.add(new long[] {openStart, Math.min(e.play(), openUntil)});
 					openStart = -1;
 				}
 				if (e.kind() == Kind.SESSION_START && e.flag()) {
 					openStart = e.play();
+					openUntil = e.until();
 				}
 			}
 			if (openStart >= 0) {
-				out.add(new long[] {openStart, endPlay});
+				out.add(new long[] {openStart, Math.min(endPlay, openUntil)});
 			}
 			return out;
 		}

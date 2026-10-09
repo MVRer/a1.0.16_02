@@ -1,6 +1,7 @@
 package com.forzacode.a1016_02.director;
 
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
@@ -33,6 +34,7 @@ import org.jspecify.annotations.Nullable;
  * {@code TraceService} and {@code MobTamper}. Persistent state is {@link DirectorData}.
  */
 public final class DirectorImpl implements Director {
+	private static final Set<String> BROKEN_CARDS = new HashSet<>();
 	private final RandomSource random = RandomSource.create();
 	private long countdown;
 
@@ -218,7 +220,13 @@ public final class DirectorImpl implements Director {
 	static List<CardInfo> cards() {
 		List<CardInfo> out = new ArrayList<>();
 		for (EventCard card : CardRegistry.all()) {
-			out.add(CardInfo.of(card));
+			try {
+				out.add(CardInfo.of(card));
+			} catch (RuntimeException e) {
+				if (BROKEN_CARDS.add(card.id())) {
+					A1016_02.LOGGER.error("[a1016] director: card {} is malformed and is left out of the decks", card.id(), e);
+				}
+			}
 		}
 		return out;
 	}

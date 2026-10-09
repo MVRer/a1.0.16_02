@@ -1,6 +1,7 @@
 package com.forzacode.a1016_02.director;
 
 import java.util.EnumSet;
+import java.util.Objects;
 import java.util.Set;
 
 import com.forzacode.a1016_02.core.CardTag;
@@ -17,8 +18,11 @@ public record CardInfo(String id, Tier tier, Stage earliestStage, Set<Habit> hab
 	public static final String SIGNATURE_CROSS_ROW = "signature_cross_row";
 
 	public CardInfo {
-		habits = habits.isEmpty() ? Set.of() : Set.copyOf(EnumSet.copyOf(habits));
-		tags = tags.isEmpty() ? Set.of() : Set.copyOf(EnumSet.copyOf(tags));
+		Objects.requireNonNull(id, "id");
+		Objects.requireNonNull(tier, "tier");
+		Objects.requireNonNull(earliestStage, "earliestStage");
+		habits = habits == null || habits.isEmpty() ? Set.of() : Set.copyOf(EnumSet.copyOf(habits));
+		tags = tags == null || tags.isEmpty() ? Set.of() : Set.copyOf(EnumSet.copyOf(tags));
 	}
 
 	public static CardInfo of(EventCard card) {
