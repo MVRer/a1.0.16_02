@@ -43,16 +43,24 @@ final class FragmentServiceImpl implements FragmentService {
 		markRead(HerobrineState.get(player.level().getServer()), player, id);
 	}
 
-	/** Records the read; the first time, sets {@code listRead} for F06 and fires {@link HerobrineEvents#FRAGMENT_READ}. */
+	/** Records the read; the first time, also fires {@link HerobrineEvents#FRAGMENT_READ}. */
 	static boolean markRead(HerobrineState state, ServerPlayer player, String id) {
+		if (!recordRead(state, id)) {
+			return false;
+		}
+		A1016_02.LOGGER.info("[a1016] lore: {} read {}", player.getName().getString(), id);
+		HerobrineEvents.FRAGMENT_READ.invoker().onFragmentRead(player, id);
+		return true;
+	}
+
+	/** The state part of a read: marks it, and sets {@code listRead} for the list (F06). True the first time. */
+	static boolean recordRead(HerobrineState state, String id) {
 		if (!state.markFragmentRead(id)) {
 			return false;
 		}
 		if (id.equals("F06")) {
 			state.setListRead(true);
 		}
-		A1016_02.LOGGER.info("[a1016] lore: {} read {}", player.getName().getString(), id);
-		HerobrineEvents.FRAGMENT_READ.invoker().onFragmentRead(player, id);
 		return true;
 	}
 

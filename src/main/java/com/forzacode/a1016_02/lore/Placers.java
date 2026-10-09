@@ -66,6 +66,11 @@ import net.minecraft.world.phys.Vec3;
 final class Placers {
 	/** Rules the fragment engine does not place (telling and Ending B, the next task). */
 	static final Set<String> NOT_PLACED = Set.of("telling", "ending_b");
+	/** Every rule {@link #place} knows. */
+	static final Set<String> RULES = Set.of("ruined_hut", "hut_or_tunnel", "cave_chest", "tunnel_end_chest", "tunnel_end_sign",
+			"pyramid_core", "pyramid_chest", "cairn", "grove_burial", "visited_grove_burial", "first_table", "white_eyes_room",
+			"under_base_chest", "below_spawn", "test_room", "test_room_chest", "test_room_loft", "test_room_below", "emptied_house",
+			"panic_tower", "cross_sign", "stair_bottom", "restored_tree", "house_copy", "camp_map", "twin_signs", "telling", "ending_b");
 
 	private static final TagKey<Structure> CAMPS = TagKey.create(Registries.STRUCTURE, Identifier.withDefaultNamespace("abandoned_camp"));
 	private static final ResourceKey<LootTable> CAMP_SECRET_CHEST = ResourceKey.create(Registries.LOOT_TABLE,
@@ -1053,7 +1058,7 @@ final class Placers {
 		for (BlockPos column : Terrain.candidates(level, req.origin(), req.minDistance(), req.maxDistance(), 24, req.random())) {
 			BlockPos spot = Terrain.ground(level, column.getX(), column.getZ()).above();
 			Vec3 toSpot = Vec3.atCenterOf(spot).subtract(viewer.map(ServerPlayer::position).orElse(Vec3.atCenterOf(req.origin())));
-			if (viewer.isPresent() && toSpot.dot(viewer.get().getViewVector(1.0F)) > 0 || !Terrain.isFloor(level, spot)
+			if (viewer.isPresent() && toSpot.dot(viewer.get().getLookAngle()) > 0 || !Terrain.isFloor(level, spot)
 					|| !level.getFluidState(spot).isEmpty()) {
 				continue;
 			}

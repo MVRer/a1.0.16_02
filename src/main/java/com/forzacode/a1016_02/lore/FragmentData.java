@@ -41,7 +41,7 @@ public final class FragmentData extends SimpleJsonResourceReloadListener<Fragmen
 			if (!file.getNamespace().equals(A1016_02.MOD_ID)) {
 				return;
 			}
-			if (!file.getPath().equals(fragment.id())) {
+			if (!file.getPath().equals(fragment.id().toLowerCase(java.util.Locale.ROOT))) {
 				A1016_02.LOGGER.warn("[a1016] lore: fragment file {} holds id {}", file, fragment.id());
 			}
 			for (String problem : BookLayout.problems(fragment)) {

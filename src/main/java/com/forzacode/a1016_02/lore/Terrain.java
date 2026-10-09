@@ -75,10 +75,16 @@ final class Terrain {
 	static boolean isNaturalSolid(BlockState state) {
 		return state.isSolidRender() && !state.hasBlockEntity()
 				&& (state.is(BlockTags.BASE_STONE_OVERWORLD) || state.is(BlockTags.DIRT) || state.is(BlockTags.SAND) || state.is(ORES)
-				|| state.is(Blocks.GRAVEL) || state.is(Blocks.CLAY));
+				|| state.is(Blocks.GRAVEL) || state.is(Blocks.CLAY) || isSoil(state));
 	}
 
 	private static final TagKey<Block> ORES = TagKey.create(Registries.BLOCK, Identifier.withDefaultNamespace("ores"));
+
+	/** Ground a tree can stand on: dirt, grass, podzol, mycelium, mud. */
+	static boolean isSoil(BlockState state) {
+		return state.is(BlockTags.DIRT) || state.is(Blocks.GRASS_BLOCK) || state.is(Blocks.PODZOL) || state.is(Blocks.MYCELIUM)
+				|| state.is(Blocks.MUD);
+	}
 
 	/** A spot where something can stand: replaceable and dry, with solid ground below. */
 	static boolean isFloor(ServerLevel level, BlockPos pos) {

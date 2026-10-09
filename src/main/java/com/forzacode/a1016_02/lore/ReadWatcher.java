@@ -130,7 +130,7 @@ final class ReadWatcher {
 		if (distance > config.readDistance) {
 			return false;
 		}
-		if (distance > 0.5 && to.normalize().dot(player.getViewVector(1.0F)) < Math.cos(Math.toRadians(config.readConeDegrees / 2.0))) {
+		if (distance > 0.5 && to.normalize().dot(player.getLookAngle()) < Math.cos(Math.toRadians(config.readConeDegrees / 2.0))) {
 			return false;
 		}
 		BlockHitResult hit = level.clip(new ClipContext(eye, center, ClipContext.Block.OUTLINE, ClipContext.Fluid.NONE, player));

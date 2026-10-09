@@ -198,8 +198,7 @@ final class Builders {
 		while (level.getBlockState(base.below()).is(BlockTags.LOGS)) {
 			base = base.below();
 		}
-		BlockState under = level.getBlockState(base.below());
-		return under.is(BlockTags.DIRT) ? Optional.of(base) : Optional.empty();
+		return Terrain.isSoil(level.getBlockState(base.below())) ? Optional.of(base) : Optional.empty();
 	}
 
 	/** Tree trunk bases within {@code radius} (horizontal) of {@code center}, nearest first. */
