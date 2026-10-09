@@ -26,7 +26,7 @@ Status values: queued, running, review, fix, merged, blocked. Only the orchestra
 | P1-1c | Director pacing tuning with the playthrough tool: SLOW_BURN minors 0.42/h overall, VERY_LATE 1 major in 12 h of Proximity. Bring the soft rates to 4b's low end; hard limits stay | director | feat/director-tuning | v1.0 | merged | Rarity stays the product (D-020). Narrow exception: Pacing default numbers |
 | P1-6b | Lore: F21 only in world's still-burning camp (D-004); never a second furnace | lore | feat/lore-stillburning | v0.8 | merged | Follow-up for P2-2: raise `WorldConfig.stillBurningF21MaxFromBase` (1450) and `stillBurningF21MinBlocks` (900) to about 2000 |
 | P1-5c | Fix the flaky atmosphere tamper test (released cow doesn't always walk) | atmosphere | feat/atmosphere-flaky | - | merged | Test-only. 6/6 on the branch, 2/2 with --rerun-tasks on main |
-| P1-2e | Fix the flaky entity test `an_open_shaft_is_saved_and_put_back_after_an_unload` (1 in 3) | entity | feat/entity-flaky | - | running | |
+| P1-2e | Fix the flaky entity test `an_open_shaft_is_saved_and_put_back_after_an_unload` (1 in 3) | entity | feat/entity-flaky | - | merged | Cause: vanilla grass spreading onto exposed dirt. In play, the bare-dirt clue fades back to grass over a few days, which is fine |
 | P1-3c | Latin cross shape for all world crosses and the cross row (D-050), plus rare glass memorial crosses left by others (D-051) | world | feat/world-crosses | v1.0 | queued (after P2-2b, which edits world) | |
 | P1-8c | Latin cross shape for death-marker crosses (D-050) | accident | feat/accident-cross-shape | v1.0 | queued (after P2-2b, which edits accident) | Check that Ending D's player-built cross detection accepts the Latin shape |
 | P2-1a | Endings A, B, C, Stage 4 entry, the third-death rule | ending | feat/ending-abc | v0.8-endings | merged | Gap: naming him clears the ever-held fragment list | Uses the director flags `director:silence_until_day` and `director:pace_multiplier` (coming in P1-1c) |
@@ -45,7 +45,7 @@ Status values: queued, running, review, fix, merged, blocked. Only the orchestra
 | v0.5-fragments | P1-6 merged | tagged (pacing check: director 20 h game tests green) |
 | v0.6-telling | P1-7 merged | tagged (pacing check: director 20 h game tests green) |
 | v0.7-accidents | P1-8 merged | tagged (pacing check: director 20 h game tests green) |
-| v0.8-endings | P2-1a and P2-1b merged | merged; tag after the entity flake fix (P1-2e) |
+| v0.8-endings | P2-1a and P2-1b merged | tagged (300 tests green 3/3, including the 20 h pacing sims for every tempo) |
 | v1.0 | P2-2 and P2-3 merged, 20 h simulation passes | |
 
 ## Tuning from playtests (apply as code defaults on the next atmosphere touch)
