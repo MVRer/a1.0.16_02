@@ -26,7 +26,7 @@ Status values: queued, running, review, fix, merged, blocked. Only the orchestra
 | P1-1c | Director pacing tuning with the playthrough tool: SLOW_BURN minors 0.42/h overall, VERY_LATE 1 major in 12 h of Proximity. Bring the soft rates to 4b's low end; hard limits stay | director | feat/director-tuning | v1.0 | merged | Rarity stays the product (D-020). Narrow exception: Pacing default numbers |
 | P1-6b | Lore: F21 only in world's still-burning camp (D-004); never a second furnace | lore | feat/lore-stillburning | v0.8 | merged | Follow-up for P2-2: raise `WorldConfig.stillBurningF21MaxFromBase` (1450) and `stillBurningF21MinBlocks` (900) to about 2000 |
 | P1-5c | Fix the flaky atmosphere tamper test (released cow doesn't always walk) | atmosphere | feat/atmosphere-flaky | - | merged | Test-only. 6/6 on the branch, 2/2 with --rerun-tasks on main |
-| P2-1a | Endings A, B, C, Stage 4 entry, the third-death rule | ending | feat/ending-abc | v0.8-endings | running | Uses the director flags `director:silence_until_day` and `director:pace_multiplier` (coming in P1-1c) |
+| P2-1a | Endings A, B, C, Stage 4 entry, the third-death rule | ending | feat/ending-abc | v0.8-endings | review | Uses the director flags `director:silence_until_day` and `director:pace_multiplier` (coming in P1-1c) |
 | P2-1b | Ending D: the full chain, the last minute, the afterward, the sting | ending (ending/d/**) | feat/ending-d | v0.8-endings | running | Owns ending/d/** only; builds the team's stair under F07 if missing |
 | P2-2a | Integration cleanup: audit literals moved to config, Locale.ROOT, retire stale Pacing fields, world camp distance, director sim reaching Telling, lore contract asks | multi (not ending) | feat/integration-cleanup | v1.0 | running | From the guardrail audit (no blockers) |
 | P2-2b | Final integration: wire the endings in, full guardrail pass, 20 h sim | (multi) | feat/integration-final | v1.0 | queued (after P2-1a and P2-1b) | |
@@ -49,6 +49,7 @@ Status values: queued, running, review, fix, merged, blocked. Only the orchestra
 - `fogDriftStrengthMin` 0.45, `fogDriftStrengthMax` 0.7 (D-022). Already set in Mariano's run/config.
 
 ## Cross-workstream follow-ups for P2-1 (ending) and P2-2 (integration)
+- (for P2-2b) director: a flag when OBEYED_AFTER_STOP fires; entity: a flag or event when STARED_AT_HIM fires; accident: expose a marked death's cross position and an `arm` with a center point (ending-abc asks). Ending D's tests need a slot in the test class chain
 - lore: F21 in the still-burning camp (P1-6b running)
 - ending D undo: skip ledger causes `lore:left/*` and the `world:still_burning` REMOVE entries (terrain cleared for the camp)
 - entity: retire `Pacing.sightingMinDistance` and `Pacing.stareSeconds` (entity has its own now)
