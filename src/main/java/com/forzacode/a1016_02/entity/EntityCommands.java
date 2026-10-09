@@ -69,7 +69,7 @@ final class EntityCommands {
 		}
 		EntityTuning.Key k = key.get();
 		if (!k.accepts(value)) {
-			ctx.getSource().sendFailure(Component.literal(String.format("[a1016] %s must be %s to %s", k.name(), EntityTuning.format(k.min()),
+			ctx.getSource().sendFailure(Component.literal(String.format(Locale.ROOT, "[a1016] %s must be %s to %s", k.name(), EntityTuning.format(k.min()),
 					EntityTuning.format(k.max()))));
 			return 0;
 		}
@@ -130,9 +130,9 @@ final class EntityCommands {
 		FogEdge edge = FogEdge.of(player, variant.get() == Variant.CLOSE);
 		FigureApi.Spawned spawned = FigureApi.spawnAtFogEdge(player, variant.get(), RandomSource.create(), true);
 		String where = spawned.figure() == null ? ""
-				: String.format(" at %s, %d blocks out", spawned.figure().blockPosition().toShortString(),
+				: String.format(Locale.ROOT, " at %s, %d blocks out", spawned.figure().blockPosition().toShortString(),
 						Math.round(SpotFinder.horizontal(player.position(), spawned.figure().position())));
-		String line = String.format("[a1016] entity spawn %s -> %s%s (band %d..%d)", variant.get().shortName(), spawned.result(), where,
+		String line = String.format(Locale.ROOT, "[a1016] entity spawn %s -> %s%s (band %d..%d)", variant.get().shortName(), spawned.result(), where,
 				Math.round(edge.inner()), Math.round(edge.outer()));
 		ctx.getSource().sendSuccess(() -> Component.literal(line), true);
 		return spawned.figure() != null ? 1 : 0;
@@ -152,21 +152,21 @@ final class EntityCommands {
 		lines.add("[a1016] entity: " + out.size() + " out");
 		for (HimEntity him : out) {
 			String dist = player == null ? "?" : String.valueOf(Math.round(SpotFinder.horizontal(player.position(), him.position())));
-			String closed = player == null ? "?" : String.format("%.1f", him.closedBy(player.getUUID()));
-			lines.add(String.format(" %s %s at %s (%s blocks) age=%ds seenFor=%ds unseen=%d stare=%d closed=%s triggered=%s fled=%s low=%s",
+			String closed = player == null ? "?" : String.format(Locale.ROOT, "%.1f", him.closedBy(player.getUUID()));
+			lines.add(String.format(Locale.ROOT, " %s %s at %s (%s blocks) age=%ds seenFor=%ds unseen=%d stare=%d closed=%s triggered=%s fled=%s low=%s",
 					him.variant().shortName(), him.phase(), him.blockPosition().toShortString(), dist, him.age() / 20,
 					him.seenFor() < 0 ? -1 : him.seenFor() / 20, him.unseenTicks(), him.stareTicks(), closed, him.triggered(), him.fled(), him.isLow()));
 		}
 		EntityData data = EntityData.get(server);
 		String last = data.lastPos() == null ? "-" : data.lastPos().pos().toShortString();
-		lines.add(String.format("record: last=%s@%s day=%d (x%d) today=%d sightings=%d fakes=%d stared=%d",
+		lines.add(String.format(Locale.ROOT, "record: last=%s@%s day=%d (x%d) today=%d sightings=%d fakes=%d stared=%d",
 				data.lastVariant().isEmpty() ? "-" : data.lastVariant(), last, data.lastDay(), data.countOnLastDay(), GameClock.day(server),
 				data.sightings(), data.fakes(), data.stared()));
 		if (player != null) {
 			HerobrineState state = HerobrineState.get(server);
 			FogEdge edge = FogEdge.of(player, false);
 			FogEdge close = FogEdge.of(player, true);
-			lines.add(String.format("fog: view=%d chunks, render end=%d, visible end=%d (duskFog %.2f), band %d..%d, close %d..%d, time=%d base=%s",
+			lines.add(String.format(Locale.ROOT, "fog: view=%d chunks, render end=%d, visible end=%d (duskFog %.2f), band %d..%d, close %d..%d, time=%d base=%s",
 					edge.chunks(), Math.round(edge.renderLimit()), Math.round(edge.limit()), state.effects().duskFogLevel(), Math.round(edge.inner()),
 					Math.round(edge.outer()), Math.round(close.inner()), Math.round(close.outer()),
 					SightingGates.timeOfDay(server), Services.watch().base(player).map(b -> b.pos().toShortString()).orElse("-")));
