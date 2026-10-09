@@ -70,7 +70,7 @@ public final class RouteSampler {
 		if (level.getBlockState(cell).is(BlockTags.CLIMBABLE)) {
 			flags |= RouteBook.LADDER;
 		}
-		if (!level.canSeeSky(cell)) {
+		if (Scan.covered(level, cell)) {
 			flags |= RouteBook.UNDER;
 		}
 		if (Scan.water(level, cell)) {

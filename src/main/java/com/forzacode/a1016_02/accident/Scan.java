@@ -13,6 +13,7 @@ import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.FallingBlock;
 import net.minecraft.world.level.block.TorchBlock;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.levelgen.Heightmap;
 import net.minecraft.world.level.material.FluidState;
 
 /** Small block questions the trap scanners share. */
@@ -130,6 +131,14 @@ public final class Scan {
 			}
 		}
 		return Optional.empty();
+	}
+
+	/**
+	 * Something solid (not leaves) above head height: a roof, a ceiling, rock. Uses the heightmap rather than sky light,
+	 * which lags behind block changes.
+	 */
+	public static boolean covered(Level level, BlockPos pos) {
+		return level.getHeight(Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, pos.getX(), pos.getZ()) > pos.getY() + 2;
 	}
 
 	/** Time of day in the overworld, 0 to 23999. */

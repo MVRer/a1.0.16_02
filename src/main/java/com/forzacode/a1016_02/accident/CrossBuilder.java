@@ -34,6 +34,8 @@ public final class CrossBuilder {
 
 	/** Standing spots looked at for material per plan (each reads a box of blocks). */
 	private static final int MAX_BASES = 6;
+	/** Material comes from the ground near the spot's own level, at most this far above or below the post's base. */
+	private static final int SOURCE_DEPTH = 3;
 
 	private CrossBuilder() {
 	}
@@ -101,7 +103,7 @@ public final class CrossBuilder {
 		Set<BlockPos> keep = new LinkedHashSet<>(cells);
 		keep.add(base.below());
 		List<BlockPos> found = new ArrayList<>();
-		for (BlockPos pos : BlockPos.betweenClosed(base.offset(-radius, -radius, -radius), base.offset(radius, 3, radius))) {
+		for (BlockPos pos : BlockPos.betweenClosed(base.offset(-radius, -SOURCE_DEPTH, -radius), base.offset(radius, SOURCE_DEPTH, radius))) {
 			BlockPos p = pos.immutable();
 			if (keep.contains(p) || !level.isLoaded(p) || !Scan.takeable(level, p) || Scan.ore(level.getBlockState(p))
 					|| !level.getBlockState(p).isSolidRender() || Services.watch().wasPlacedByPlayer(level, p) || !safeToTake(level, p, keep)) {
@@ -109,12 +111,16 @@ public final class CrossBuilder {
 			}
 			found.add(p);
 		}
+		found.sort(Comparator.comparingDouble(p -> p.distSqr(base)));
+		// The material is what most of the nearest ground is made of; that kind goes first, nearest first.
 		Map<Block, Integer> kinds = new HashMap<>();
-		for (BlockPos p : found) {
+		for (BlockPos p : found.subList(0, Math.min(found.size(), cells.size() * 3))) {
 			kinds.merge(level.getBlockState(p).getBlock(), 1, Integer::sum);
 		}
-		found.sort(Comparator.comparingInt((BlockPos p) -> -kinds.get(level.getBlockState(p).getBlock())).thenComparingDouble(p -> p.distSqr(base)));
-		return found;
+		Block material = kinds.entrySet().stream().max(Map.Entry.comparingByValue()).map(Map.Entry::getKey).orElse(null);
+		List<BlockPos> ordered = new ArrayList<>(found.stream().filter(p -> level.getBlockState(p).is(material)).toList());
+		found.stream().filter(p -> !level.getBlockState(p).is(material)).forEach(ordered::add);
+		return ordered;
 	}
 
 	/** Open on top, nothing attached on any side, no lava beside it, and no water that would run into air. */

@@ -113,7 +113,7 @@ public final class MovedMobTrap extends BaseTrap {
 	/** The nearest living mob of this kind that is not already within {@code notWithin} of the base. */
 	static <T extends Mob> @Nullable T nearest(ServerLevel level, Class<T> type, AABB search, BlockPos base, int notWithin) {
 		Vec3 center = Vec3.atCenterOf(base);
-		return level.getEntitiesOfClass(type, search, mob -> mob.isAlive() && !mob.isPersistenceRequired() && mob.position().distanceTo(center) > notWithin)
+		return level.getEntitiesOfClass(type, search, mob -> mob.isAlive() && mob.position().distanceTo(center) > notWithin)
 				.stream().min(Comparator.comparingDouble(mob -> mob.position().distanceTo(center))).orElse(null);
 	}
 
@@ -131,10 +131,10 @@ public final class MovedMobTrap extends BaseTrap {
 	}
 
 	/** Floor cells inside the house: two open cells over a solid floor, roofed, no sky. */
-	static List<BlockPos> interior(ServerLevel level, BlockPos base) {
+	public static List<BlockPos> interior(ServerLevel level, BlockPos base) {
 		List<BlockPos> cells = new ArrayList<>();
 		for (BlockPos pos : BlockPos.betweenClosed(base.offset(-HOUSE_RADIUS, -3, -HOUSE_RADIUS), base.offset(HOUSE_RADIUS, 3, HOUSE_RADIUS))) {
-			if (Scan.open(level, pos) && Scan.open(level, pos.above()) && Scan.fullSolid(level, pos.below()) && !level.canSeeSky(pos) && roofed(level, pos)) {
+			if (Scan.open(level, pos) && Scan.open(level, pos.above()) && Scan.fullSolid(level, pos.below()) && Scan.covered(level, pos) && roofed(level, pos)) {
 				cells.add(pos.immutable());
 			}
 		}
@@ -152,7 +152,7 @@ public final class MovedMobTrap extends BaseTrap {
 	}
 
 	/** At least one door near the base, and every one of them closed. */
-	static boolean doorsShut(ServerLevel level, BlockPos base) {
+	public static boolean doorsShut(ServerLevel level, BlockPos base) {
 		int doors = 0;
 		for (BlockPos pos : BlockPos.betweenClosed(base.offset(-DOOR_RADIUS, -3, -DOOR_RADIUS), base.offset(DOOR_RADIUS, 3, DOOR_RADIUS))) {
 			BlockState state = level.getBlockState(pos);

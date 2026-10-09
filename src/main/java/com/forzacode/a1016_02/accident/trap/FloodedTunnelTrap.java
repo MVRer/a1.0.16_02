@@ -81,7 +81,7 @@ public final class FloodedTunnelTrap extends BaseTrap {
 			return null;
 		}
 		ServerPlayer player = ctx.player();
-		if (player == null || player.level() != level || level.canSeeSky(player.blockPosition())) {
+		if (player == null || player.level() != level || !Scan.covered(level, player.blockPosition())) {
 			return armed;
 		}
 		double dist = Math.sqrt(player.blockPosition().distSqr(plug));
