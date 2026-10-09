@@ -242,6 +242,62 @@ public class WorldSignatureTests {
 		helper.succeed();
 	}
 
+	/**
+	 * Ending C, or the director silent for good: the copy waits and nothing leaves the house, even with a step due.
+	 * Once C is undone (he is named again) and the silence lifts, it carries on.
+	 */
+	@GameTest(structure = BIG, maxTicks = 40)
+	public void houseCopyWaitsWhileTheWorldIsQuiet(GameTestHelper helper) {
+		ServerLevel level = helper.getLevel();
+		ServerPlayer builder = (ServerPlayer) helper.makeMockServerPlayer(GameType.SURVIVAL);
+		fill(helper, 0, 0, 0, 7, 1, 8, Blocks.STONE);
+		fill(helper, 10, 0, 10, 20, 4, 21, Blocks.STONE);
+		List<BlockPos> house = buildHouse(helper, builder);
+		List<BlockState> before = house.stream().map(level::getBlockState).toList();
+		HouseShell.Capture capture = HouseShell.capture(level, List.of(helper.absolutePos(new BlockPos(3, 3, 3))), new WorldConfig());
+		helper.assertTrue(capture != null && capture.closed(), "the closed house was not captured");
+		HouseCopyState state = HouseCopier.placeSite(level, HouseCopyState.captured(level.dimension(), capture, 21, 0),
+				helper.absolutePos(new BlockPos(14, 5, 14)), SiteSink.collecting(new ArrayList<>()), 0);
+		helper.assertTrue(state.phase() == HouseCopyState.Phase.BUILDING && state.nextStep() <= 0, "the copy is not building with a step due");
+
+		net.minecraft.server.MinecraftServer server = level.getServer();
+		SignatureData data = WorldData.get(server).signatures();
+		Optional<HouseCopyState> worldCopy = data.houseCopy();
+		com.forzacode.a1016_02.core.HerobrineState flags = com.forzacode.a1016_02.core.HerobrineState.get(server);
+		Set<String> hadFlags = new HashSet<>(flags.flags());
+		List<String> touched = new ArrayList<>(HouseCopier.QUIET_FLAGS);
+		touched.addAll(HouseCopier.STOP_FLAGS);
+		try {
+			touched.forEach(f -> flags.setFlag(f, false));
+			for (String flag : HouseCopier.QUIET_FLAGS) {
+				data.setHouseCopy(state);
+				flags.setFlag(flag, true);
+				for (int i = 0; i < 3; i++) {
+					HouseCopier.tick(server);
+				}
+				HouseCopyState after = data.houseCopy().orElseThrow();
+				helper.assertTrue(HouseCopier.paused(server) && after.phase() == HouseCopyState.Phase.BUILDING && after.moved().isEmpty(),
+						"with " + flag + " the copy is " + after.phase() + " with " + after.moved().size() + " moved");
+				for (int i = 0; i < house.size(); i++) {
+					helper.assertTrue(level.getBlockState(house.get(i)) == before.get(i), "a block left the house with " + flag + ": "
+							+ house.get(i).toShortString());
+				}
+				helper.assertTrue(ledger(helper, HouseCopier.CAUSE).isEmpty(), "the copy ledgered moves with " + flag);
+				flags.setFlag(flag, false);
+			}
+			// C undone, the silence lifted: the copy carries on.
+			data.setHouseCopy(state);
+			helper.assertFalse(HouseCopier.paused(server) || HouseCopier.stopped(server), "still paused with no quiet flag");
+			HouseCopier.tick(server);
+			helper.assertTrue(!data.houseCopy().orElseThrow().moved().isEmpty() && !ledger(helper, HouseCopier.CAUSE).isEmpty(),
+					"the copy did not carry on once the world was no longer quiet");
+		} finally {
+			data.setHouseCopy(worldCopy.orElse(null));
+			touched.forEach(f -> flags.setFlag(f, hadFlags.contains(f)));
+		}
+		helper.succeed();
+	}
+
 	@GameTest(structure = BIG, maxTicks = 80)
 	public void houseCopyOnlyMovesNeverTheRoofAndKeepsTheHouseClosed(GameTestHelper helper) {
 		ServerLevel level = helper.getLevel();

@@ -79,6 +79,12 @@ public final class HouseCopier {
 	 * cancelled.
 	 */
 	public static final List<String> STOP_FLAGS = List.of("ending:d_complete", "ending:ended");
+	/**
+	 * {@code HerobrineState} flags that pause the copy: the world is quiet for good ({@code director:silence_forever})
+	 * or the path is Ending C ({@code ending:path=C}). Nothing moves while either is set; if C is undone (he is named
+	 * again) and the silence lifts, the copy carries on.
+	 */
+	public static final List<String> QUIET_FLAGS = List.of("director:silence_forever", "ending:path=C");
 
 	/** What one step did. {@code refused} counts moves refused (in view). */
 	public record StepResult(HouseCopyState state, int moved, int refused, String note) {
@@ -470,9 +476,16 @@ public final class HouseCopier {
 		return STOP_FLAGS.stream().anyMatch(state::hasFlag);
 	}
 
+	/** True while the world is quiet ({@link #QUIET_FLAGS}): the copy waits and nothing leaves the house. */
+	public static boolean paused(MinecraftServer server) {
+		HerobrineState state = HerobrineState.get(server);
+		return QUIET_FLAGS.stream().anyMatch(state::hasFlag);
+	}
+
 	/**
 	 * Called every second: finds the copy site, then runs the steps (or the finish) when due and loaded. Does nothing
-	 * once the story is over ({@link #stopped}), and cancels a finish still pending then.
+	 * once the story is over ({@link #stopped}), and cancels a finish still pending then. Waits, moving nothing, while
+	 * the world is quiet ({@link #paused}: Ending C, or the director silent for good).
 	 */
 	public static void tick(MinecraftServer server) {
 		SignatureData data = WorldData.get(server).signatures();
@@ -484,6 +497,10 @@ public final class HouseCopier {
 		if (stopped(server)) {
 			siteSearch = null;
 			cancelFinish(server);
+			return;
+		}
+		if (paused(server)) {
+			siteSearch = null;
 			return;
 		}
 		ServerLevel level = server.getLevel(s.dimension());
