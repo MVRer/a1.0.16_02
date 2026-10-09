@@ -28,6 +28,7 @@ Status values: queued, running, review, fix, merged, blocked. Only the orchestra
 | P1-5c | Fix the flaky atmosphere tamper test (released cow doesn't always walk) | atmosphere | feat/atmosphere-flaky | - | merged | Test-only. 6/6 on the branch, 2/2 with --rerun-tasks on main |
 | P1-2e | Fix the flaky entity test `an_open_shaft_is_saved_and_put_back_after_an_unload` (1 in 3) | entity | feat/entity-flaky | - | merged | Cause: vanilla grass spreading onto exposed dirt. In play, the bare-dirt clue fades back to grass over a few days, which is fine |
 | P1-3c | Latin cross shape for all world crosses and the cross row (D-050), plus rare glass memorial crosses left by others (D-051) | world | feat/world-crosses | v1.0 | merged | Follow-up: lore `TraceIndex.isHis` and accident `Lures.hisPlaces` must skip `CrossApi.isGlassMemorial` | |
+| P1-8d | Glass memorials are not his places (lore isHis, accident lures) | lore + accident | feat/glass-not-his | v1.0 | merged | |
 | P1-8c | Latin cross shape for death-marker crosses (D-050) | accident | feat/accident-cross-shape | v1.0 | merged | Check that Ending D's player-built cross detection accepts the Latin shape |
 | P1-5d | Gentle dusk fog: early slow ease-in, continuous shape, eased level changes (D-053) | atmosphere | feat/atmosphere-dusk-ease | v1.0 | merged | The cause: the haze switched from vanilla's 1024 to the render distance at once, and clouds cut from 2048 to 192 | Playtest fix. Doesn't touch the cards integration is editing |
 | P2-1a | Endings A, B, C, Stage 4 entry, the third-death rule | ending | feat/ending-abc | v0.8-endings | merged | Gap: naming him clears the ever-held fragment list | Uses the director flags `director:silence_until_day` and `director:pace_multiplier` (coming in P1-1c) |
@@ -47,7 +48,7 @@ Status values: queued, running, review, fix, merged, blocked. Only the orchestra
 | v0.6-telling | P1-7 merged | tagged (pacing check: director 20 h game tests green) |
 | v0.7-accidents | P1-8 merged | tagged (pacing check: director 20 h game tests green) |
 | v0.8-endings | P2-1a and P2-1b merged | tagged (300 tests green 3/3, including the 20 h pacing sims for every tempo) |
-| v1.0 | P2-2 and P2-3 merged, 20 h simulation passes | |
+| v1.0 | P2-2 and P2-3 merged, 20 h simulation passes | tagged (329 tests green 3/3, 20 h sims for all tempos with all 70 real cards) |
 
 ## Tuning from playtests (apply as code defaults on the next atmosphere touch)
 - `fogDriftStrengthMin` 0.45, `fogDriftStrengthMax` 0.7 (D-022). Already set in Mariano's run/config.

@@ -2,6 +2,19 @@
 
 One entry per merge, newest first. Run the game from the main checkout (this folder, on `main`).
 
+## READY TO TRY: v1.0  (main 1d6cb3a; jar build/libs/a1016_02-1.0.0-26.3.jar)
+```
+Restart needed: full game restart.
+See it now, the real way (no debug commands):
+  1. Make a NEW hardcore world (normal launcher or "Minecraft Client"), Render Distance 6. Play normally for hours.
+     A whole first evening may contain nothing you can be sure of. That's the design.
+  2. To watch the machinery while you test: /a1016 debug overlay on (dev only).
+  3. To check pacing without playing: /a1016 debug playthrough 20
+What to look for: whether it's scary. Report what felt cheap or too frequent; tuning lives in run/config/a1016_02.json.
+Known rough edges: VERY_LATE worlds are rare by design (D-054). The F06 usernames still need a real-player check
+  before release (D-013).
+```
+
 ## READY TO TRY: Latin crosses everywhere, and glass memorials  (merged feat/world-crosses, commit bc6e01c)
 ```
 Restart needed: full game restart (worldgen and Java code). Old crosses in already-generated chunks keep their
