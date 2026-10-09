@@ -29,6 +29,7 @@ import net.minecraft.server.network.FilteredText;
 import net.minecraft.server.network.Filterable;
 import net.minecraft.util.RandomSource;
 import net.minecraft.world.Container;
+import net.minecraft.world.entity.item.ItemEntity;
 import net.minecraft.world.item.DyeColor;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
@@ -471,6 +472,27 @@ public class LoreTellingTests extends LorePlacementTests {
 		helper.assertTrue(burns.burned().pending() == max - 1, "a raised pyramid is still owed");
 		helper.assertTrue(Services.sites().find(SiteType.OCEAN_PYRAMID, GlobalPos.of(helper.getLevel().dimension(), helper.absolutePos(new BlockPos(3, 1, 3))), 0)
 				.stream().anyMatch(s -> s.pos().equals(helper.absolutePos(new BlockPos(3, 1, 3)))), "the new pyramid is not a site");
+		helper.succeed();
+	}
+
+	/** The live path: a book about him burnt in lava by the player who wrote it (lore's item mixin). */
+	@GameTest
+	public void burningYourOwnBookAboutHimIsNoticed(GameTestHelper helper) throws ClassNotFoundException {
+		// The book mixin's target loads (and its hooks apply) only when a player connects; load it here so a bad hook fails the build.
+		Class.forName("net.minecraft.server.network.ServerGamePacketListenerImpl");
+		MinecraftServer server = helper.getLevel().getServer();
+		ServerLevel level = helper.getLevel();
+		ServerPlayer player = mock(helper);
+		ItemStack book = writable("herobrine " + helper.absolutePos(BlockPos.ZERO).toShortString());
+		TellingData data = TellingData.get(server);
+		Telling.writeBook(player, book, false, HerobrineState.get(server), data, NO_TRACES);
+		String id = Telling.bookId(book).orElseThrow(() -> helper.assertionException(Component.literal("the book was not stamped")));
+		BlockPos at = helper.absolutePos(new BlockPos(2, 2, 2));
+		ItemEntity item = new ItemEntity(level, at.getX() + 0.5, at.getY(), at.getZ() + 0.5, book);
+		item.setThrower(player);
+		item.hurtServer(level, level.damageSources().lava(), 10.0F);
+		helper.assertTrue(item.isRemoved(), "the book did not burn");
+		helper.assertTrue(data.book(id).isEmpty(), "the burnt book about him is still remembered");
 		helper.succeed();
 	}
 
