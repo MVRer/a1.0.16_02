@@ -2,6 +2,18 @@
 
 One entry per merge, newest first. Run the game from the main checkout (this folder, on `main`).
 
+## READY TO TRY: Core update (contract batch)  (merged feat/core-contracts, commit 3e434ee)
+```
+Restart needed: full game restart (core Java code)
+See it now:
+  1. /a1016 timewarp 2   now prints the director's summary of the skipped days.
+  2. Fog drift now ships at 0.45 to 0.7 by default (D-022; your config already had it).
+What to look for: mostly invisible plumbing. It unlocks the next features: the dig-down exit, the zombie with
+  your sword, the gravel ceiling and dripstone traps, blank signs and "Stop.", and new scars that never touch the
+  untouched grove.
+Known rough edges: none visible. The workstreams adopt the new calls in their next tasks.
+```
+
 ## READY TO TRY: Bright eyes and sightings you can actually see  (merged feat/entity-eyes, commit 3f33a8e)
 ```
 Restart needed: full game restart (new renderer, shader and Java code)

@@ -17,7 +17,7 @@ Status values: queued, running, review, fix, merged, blocked. Only the orchestra
 | P1-7 | Telling: sign and book watcher, blank signs, "Stop.", place not found, list updates (F30 unbreakable moved to P1-6) | lore | feat/lore-telling | v0.6-telling | running | Rebases on P1-9 for editSign, veto hook and ProtectedAreas |
 | P1-8 | Accidents: planner, every trap, death marker (uses atmosphere's MobTamper) | accident | feat/accident-traps | v0.7-accidents | ready | Fixing false-positive kills (dark corner, house fire, no bed), unloaded window, debug mark preview, torch undo | Gravel ceiling and dripstone are written, but spring only after P1-9 lands `removeLettingFall`. Debug `mark` counts toward Ending B |
 | P1-3b | World signatures: still burning, your house elsewhere, row of crosses with a fresh one. Plus the rare redstone torch card (D-033) | world | feat/world-signatures | v0.8 | queued | Follows D-004 and D-005 |
-| P1-9 | Core contract batch (see list below) plus D-022 fog defaults | core (narrow edits in director, atmosphere, world) | feat/core-contracts | (all) | re-review | Added: figureDig/figureFill (D-030), restoreBlock (accident), veto hook (lore F30, replaces the lore mixin into TraceEdit) |
+| P1-9 | Core contract batch (see list below) plus D-022 fog defaults | core (narrow edits in director, atmosphere, world) | feat/core-contracts | (all) | merged | Added: figureDig/figureFill (D-030), restoreBlock (accident), veto hook (lore F30, replaces the lore mixin into TraceEdit) |
 | P1-8b | "The zombie has your sword" (D-032), plus void and lava bridge accidents and the enderman on your bridge (D-034) | accident | feat/accident-sword | v0.7 | queued | Needs P1-9 (`equipFromLedger`) and P1-8 merged |
 | P2-1 | Endings A, B, C, D (full D chain) | ending | feat/ending-endings | v0.8-endings | queued, phase 2 | |
 | P2-2 | Integration: wire all cards, close contract gaps, guardrail pass | (multi) | feat/integration-pass | v1.0 | queued, phase 2 | |
@@ -39,7 +39,14 @@ Status values: queued, running, review, fix, merged, blocked. Only the orchestra
 ## Tuning from playtests (apply as code defaults on the next atmosphere touch)
 - `fogDriftStrengthMin` 0.45, `fogDriftStrengthMax` 0.7 (D-022). Already set in Mariano's run/config.
 
-## Core contract batch (after entity and atmosphere merge)
+## Core contract batch: MERGED (P1-9). Remaining follow-ups per workstream:
+- entity: FogEdge uses `FogLimits` (or the client-reported fog end); goes-under uses `startFigureDig`/`figureDug` (vertical limit is horizontal-only; keep fills within the column)
+- atmosphere: `FogLimits.installShape(...)`; dead mountain silence
+- accident: `removeLettingFall`, `restoreBlock`, `equipFromLedger`, flip CoreGaps
+- lore: ProtectedAreas for the untouched grove, `editSign`, `addVeto` replaces TraceEditMixin, `leave` with block entity data
+- dig: `restoreStack`, `SiteRegistry.update`
+
+## Core contract batch (original list)
 - `Director.timewarp` returns summary lines; `/a1016 timewarp` prints them (director)
 - `GameClock.dayTicks` (director)
 - A shared fog-end helper in core, used by entity and atmosphere. Entity's FogEdge imports atmosphere's Curves until then (entity)
