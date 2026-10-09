@@ -27,15 +27,15 @@ import org.jspecify.annotations.Nullable;
  * Where his traces are, for "written near his traces" (D-041): only what he removed or moved. His site kinds
  * (tunnels and cuts, ocean pyramids, bare groves, dead mountains, emptied houses, the Under-you network, crosses,
  * the house copy), never one lore built itself (left by people), plus every ledgered edit except what others left
- * ({@code lore:left/*}). Ledger positions are kept per chunk and brought up to date incrementally: only entries
+ * (any cause containing {@code :left/}, such as {@code lore:left/F07} or the team's stair). Ledger positions are kept per chunk and brought up to date incrementally: only entries
  * added since the last look are read; a ledger that shrank or changed under the index is read again.
  */
 final class TraceIndex {
 	/** The site kinds that are his: what he removed or moved. */
 	static final Set<SiteType> HIS_SITES = EnumSet.of(SiteType.TUNNEL_END, SiteType.CUT, SiteType.OCEAN_PYRAMID, SiteType.BARE_GROVE,
 			SiteType.DEAD_MOUNTAIN, SiteType.EMPTIED_HOUSE, SiteType.UNDER_BASE, SiteType.CROSS, SiteType.HOUSE_COPY);
-	/** Ledger causes of what others left: never his traces. */
-	static final String LEFT_CAUSE = "lore:left/";
+	/** Ledger causes of what others left: never his traces ({@code TraceLedger.LEFT_BY_OTHERS}, in any workstream). */
+	static final String LEFT_CAUSE = TraceLedger.LEFT_BY_OTHERS;
 
 	private final Map<ResourceKey<Level>, Long2ObjectOpenHashMap<LongArrayList>> cells = new HashMap<>();
 	private @Nullable TraceLedger source;
@@ -44,7 +44,7 @@ final class TraceIndex {
 
 	/** True if the ledger entry is his (not something others left). */
 	static boolean isHis(TraceLedger.Entry entry) {
-		return !entry.cause().startsWith(LEFT_CAUSE);
+		return !TraceLedger.isLeftByOthers(entry.cause());
 	}
 
 	/** True if the site is his: one of his kinds, and not one lore built itself. */

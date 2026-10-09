@@ -22,10 +22,19 @@ import net.minecraft.world.level.saveddata.SavedDataType;
 
 /**
  * Everything {@link TraceService} removed, moved or changed, oldest first, so Ending D can undo it (newest first).
- * Ending D skips causes starting with {@code lore:left/}: what others left stays. Stored as
- * {@code data/a1016_02/traces.dat}.
+ * Causes are {@code <workstream>:<what>}. A cause containing {@value #LEFT_BY_OTHERS} ({@code lore:left/F07},
+ * {@code lore:left/ending-d/stair}, {@code world:left/...}) is something others left, never his trace: lore does not
+ * count it as his ({@link #isLeftByOthers}) and Ending D never undoes it. Stored as {@code data/a1016_02/traces.dat}.
  */
 public final class TraceLedger extends SavedData {
+	/** The cause segment that marks what others left (the people before the player), in any workstream. */
+	public static final String LEFT_BY_OTHERS = ":left/";
+
+	/** True if this cause is something others left ({@value #LEFT_BY_OTHERS} anywhere in it), not his trace. */
+	public static boolean isLeftByOthers(String cause) {
+		return cause.contains(LEFT_BY_OTHERS);
+	}
+
 	/**
 	 * What an entry undoes. REMOVE, MOVE and CONVERT keep the block (and block entity data) from before; MOVE also the
 	 * destination ({@code to}). REMOVE_STACK and MOVE_STACK keep the stack and slots. BLOCK_ENTITY is block entity

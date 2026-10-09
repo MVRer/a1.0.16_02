@@ -242,6 +242,14 @@ public class LoreTellingTests extends LorePlacementTests {
 		helper.assertTrue(Telling.near(at, 32, List.of(), List.of(his)), "an edit of his 20 blocks away is not a trace");
 		helper.assertFalse(Telling.near(at, 32, List.of(), List.of(left)), "what others left counted as his trace");
 		helper.assertTrue(TraceIndex.of(List.of(his, left)).size() == 1, "the index kept what others left");
+		// Any workstream's ":left/" cause is left by others (the team's stair is lore:left/ending-d/stair).
+		for (String cause : List.of("world:left/hut", "ending:left/torch", "lore:left/ending-d/stair")) {
+			TraceLedger.Entry other = new TraceLedger.Entry(TraceLedger.Kind.REMOVE, cause, 0, GlobalPos.of(level.dimension(), here.offset(0, -5, 0)),
+					Optional.empty(), Optional.empty(), Optional.empty(), Optional.empty(), -1, -1);
+			helper.assertFalse(TraceIndex.isHis(other) || Telling.near(at, 32, List.of(), List.of(other)), cause + " counted as his trace");
+		}
+		helper.assertTrue(TraceIndex.isHis(his) && !TraceLedger.isLeftByOthers("dig:tunnel_left") && TraceLedger.isLeftByOthers("world:left/x"),
+				"the left-by-others convention is off");
 		player.snapTo(net.minecraft.world.phys.Vec3.atBottomCenterOf(here), 0.0F, 0.0F);
 		helper.assertTrue(Telling.writeBook(player, writable("we built a hut"), false, state, data, nearTunnel).nearTraces(),
 				"a book written near his traces did not tell");
