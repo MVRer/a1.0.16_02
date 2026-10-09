@@ -197,12 +197,13 @@ public class DigGameTests extends TunnelGameTests {
 	public void debugCommandsParseAndRun(GameTestHelper helper) {
 		MinecraftServer server = helper.getLevel().getServer();
 		CommandSourceStack source = server.createCommandSourceStack().withSuppressedOutput();
-		for (String command : List.of("a1016 dig network grow 3", "a1016 dig network info", "a1016 dig network reveal", "a1016 dig tunnel plain",
-				"a1016 dig tunnel tunnel_that_grows", "a1016 dig tunnel tunnel_into_mine")) {
+		for (String command : List.of("a1016 dig network grow 3", "a1016 dig network info", "a1016 dig network reveal", "a1016 dig network chest",
+				"a1016 dig tunnel plain", "a1016 dig tunnel tunnel_that_grows", "a1016 dig tunnel tunnel_into_mine")) {
 			ParseResults<CommandSourceStack> parsed = server.getCommands().getDispatcher().parse(command, source);
 			helper.assertTrue(!parsed.getReader().canRead() && parsed.getExceptions().isEmpty(), "does not parse: " + command);
 		}
 		server.getCommands().performPrefixedCommand(source, "a1016 dig network info");
+		server.getCommands().performPrefixedCommand(source, "a1016 dig network chest");
 		helper.succeed();
 	}
 
@@ -221,6 +222,10 @@ public class DigGameTests extends TunnelGameTests {
 		net.lastNight = 7;
 		net.nights = 4;
 		net.budget = 3;
+		net.chest = new BlockPos(1, 2, 3);
+		net.stacksRestored = 2;
+		net.restoredNight = 6;
+		net.restoredTonight = 1;
 		data.networks.add(net);
 		GrowingTunnel tunnel = new GrowingTunnel(helper.getLevel().dimension(), new BlockPos(0, 64, 0), new BlockPos(40, 64, 0), Direction.WEST);
 		tunnel.anchors.add(new BlockPos(40, 64, 0));
@@ -236,6 +241,8 @@ public class DigGameTests extends TunnelGameTests {
 		helper.assertTrue(back.anchors.equals(net.anchors) && back.cells.equals(net.cells) && back.shaftAnchors.equals(net.shaftAnchors), "anchors");
 		helper.assertTrue(back.depth == 58 && back.lastNight == 7 && back.nights == 4 && back.budget == 3 && net.alcove.equals(back.alcove)
 				&& net.bedHead.equals(back.bedHead) && back.heads.size() == 1 && back.heads.getFirst().dir == Direction.EAST, "network fields");
+		helper.assertTrue(net.chest.equals(back.chest) && back.stacksRestored == 2 && back.restoredNight == 6 && back.restoredTonight == 1,
+				"restored stacks");
 		GrowingTunnel t = loaded.growing().orElseThrow();
 		helper.assertTrue(t.anchors.equals(tunnel.anchors) && t.visited && t.dir == Direction.WEST && t.first.equals(tunnel.first), "growing tunnel");
 		helper.assertTrue(loaded.tunnels.size() == 1 && loaded.hasOnce("mining_that_moves@PROXIMITY")

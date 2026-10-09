@@ -67,6 +67,58 @@ public class TunnelGameTests extends NetworkGameTests {
 	}
 
 	@GameTest(maxTicks = 100)
+	public void tunnelThatGrowsKeepsItsSiteCurrentFromTheFirstVisit(GameTestHelper helper) {
+		DigConfig config = new DigConfig();
+		config.growingStartMin = 44;
+		config.growingStartMax = 56;
+		int growth = ModConfig.pacing().tunnelGrowthPerVisit;
+		int clearance = config.tunnelPlayerClearance;
+		DigGround g = DigGround.of(helper, 15, 64, 12, 24, Blocks.STONE);
+		g.digBox(52, 4, 8, 60, 6, 14);
+		BlockPos base = g.at(56, 4, 11);
+		g.hollow(2, 4, 8, 5, 6, 14);
+		PosSet explored = new PosSet();
+		explored.add(g.at(3, 4, 11), Integer.MAX_VALUE);
+		GrowingTunnel tunnel = GrowingTunnel.start(g.level, base, explored, config, clearance, growth, RandomSource.create(7L), Services.traces(), 0);
+		helper.assertTrue(tunnel != null, "no tunnel started");
+		helper.assertTrue(tunnel.siteId < 0 && tunnel.site().isEmpty(), "a site before the player ever came by");
+
+		// The first visit records it at the end, sized by the length.
+		tunnel.visit();
+		int id = tunnel.siteId;
+		assertSiteCurrent(helper, tunnel, id);
+		// Each growth after a visit moves the same site to the new end and length.
+		for (int visit = 1; visit <= 2; visit++) {
+			tunnel.visited = false;
+			tunnel.visit();
+			int length = tunnel.length();
+			helper.assertTrue(tunnel.grow(g.level, growth, clearance, config, Services.traces(), visit) && tunnel.length() > length,
+					"visit " + visit + " did not grow it");
+			assertSiteCurrent(helper, tunnel, id);
+		}
+		helper.assertTrue(Services.sites().all().stream().filter(site -> site.type() == SiteType.TUNNEL_END && site.id() != id)
+				.noneMatch(site -> tunnel.anchors.contains(site.pos())), "more than one site for one tunnel");
+
+		// Lore claims it (the longest tunnel): what it left at the end stays at the end, so the tunnel stops there.
+		helper.assertTrue(Services.sites().claim(site(id), "f06"), "claim refused");
+		BlockPos end = tunnel.end();
+		int length = tunnel.length();
+		helper.assertFalse(tunnel.grow(g.level, growth, clearance, config, Services.traces(), 3), "a claimed tunnel grew");
+		helper.assertTrue(tunnel.complete && tunnel.end().equals(end) && tunnel.length() == length, "a claimed tunnel moved its end");
+		SiteRegistry.Site claimed = site(id);
+		helper.assertTrue(claimed.claimedBy().filter("f06"::equals).isPresent() && claimed.pos().equals(end) && claimed.size() == length,
+				"the claimed site changed: " + claimed);
+		helper.succeed();
+	}
+
+	private static void assertSiteCurrent(GameTestHelper helper, GrowingTunnel tunnel, int id) {
+		helper.assertTrue(id >= 0 && tunnel.siteId == id, "site id " + tunnel.siteId + ", expected " + id);
+		SiteRegistry.Site site = site(id);
+		helper.assertTrue(site.type() == SiteType.TUNNEL_END && site.dimension().equals(tunnel.dimension) && site.pos().equals(tunnel.end())
+				&& site.size() == tunnel.length(), "site " + site + " is not at the end " + tunnel.end() + " with length " + tunnel.length());
+	}
+
+	@GameTest(maxTicks = 100)
 	public void tunnelIntoMineBreaksThroughAndEndsInStone(GameTestHelper helper) {
 		DigConfig config = new DigConfig();
 		DigGround g = DigGround.of(helper, 5, 48, 10, 48, Blocks.STONE);

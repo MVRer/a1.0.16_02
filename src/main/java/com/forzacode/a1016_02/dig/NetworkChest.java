@@ -8,13 +8,16 @@ import com.forzacode.a1016_02.core.PlayerWatch;
 import com.forzacode.a1016_02.core.Services;
 import com.forzacode.a1016_02.core.SiteRegistry;
 import com.forzacode.a1016_02.core.SiteType;
+import com.forzacode.a1016_02.core.TraceLedger;
 
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.GlobalPos;
 import net.minecraft.core.Registry;
 import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.TicketType;
+import net.minecraft.world.Container;
 import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.ChestBlock;
@@ -31,7 +34,8 @@ import org.jspecify.annotations.Nullable;
  * {@code TraceService.move} from far away: first a chest at an unclaimed ABANDONED_BUILD or RUINED_HUT site,
  * otherwise a single chest nobody placed (a structure chest) in a loaded chunk far from the player and the base.
  * Nothing is loaded synchronously: a site chunk that is not loaded gets a short loading ticket (one chunk per try,
- * loaded in the background) and a later try, a few seconds on, takes its chest.
+ * loaded in the background) and a later try, a few seconds on, takes its chest. Once it is in, the stacks the base's
+ * chests lost before it came are moved into it from the ledger, a few per night ({@link #restoreLedgered}).
  */
 public final class NetworkChest {
 	private static final int MAX_SITES_PER_TRY = 2;
@@ -72,6 +76,59 @@ public final class NetworkChest {
 		}
 		net.chestRetryTick = sources.requested() ? level.getServer().getTickCount() + RETRY_TICKS : Long.MAX_VALUE;
 		return false;
+	}
+
+	/**
+	 * Moves the stacks the base's chests lost while the network had no chest (still open in the ledger) into the
+	 * network chest with {@code TraceService.restoreStack}, oldest first, at most
+	 * {@link DigConfig#networkStacksRestoredPerNight} per night. Only while the chest is loaded, out of view and not
+	 * vetoed; a refusal waits for a later check. Returns the number of stacks moved in.
+	 */
+	static int restoreLedgered(NetworkGrower.Ctx ctx) {
+		Network net = ctx.net();
+		ServerLevel level = ctx.level();
+		BlockPos chest = net.chest;
+		if (chest == null || !level.dimension().equals(net.dimension) || !level.isLoaded(chest) || !(level.getBlockEntity(chest) instanceof Container)
+				|| Services.watch().wasPlacedByPlayer(level, chest)) {
+			return 0;
+		}
+		if (net.restoredNight != ctx.night()) {
+			net.restoredNight = ctx.night();
+			net.restoredTonight = 0;
+		}
+		int left = ctx.config().networkStacksRestoredPerNight - net.restoredTonight;
+		int restored = 0;
+		if (left > 0) {
+			for (TraceLedger.Entry entry : waiting(level.getServer(), net, ctx.config())) {
+				// Every stack goes to the same chest: in view, vetoed or full holds for the rest too.
+				if (restored >= left || !ctx.traces().restoreStack(level, entry, chest)) {
+					break;
+				}
+				restored++;
+			}
+		}
+		if (restored > 0) {
+			net.restoredTonight += restored;
+			net.stacksRestored += restored;
+			A1016_02.LOGGER.debug("[a1016] dig: moved {} ledgered stacks into the network chest at {}", restored, chest);
+		}
+		return restored;
+	}
+
+	/**
+	 * The stacks taken from the chests of this network's base ({@link UnderYouStackCard#CAUSE}) that are still in the
+	 * ledger, oldest first.
+	 */
+	static List<TraceLedger.Entry> waiting(MinecraftServer server, Network net, DigConfig config) {
+		long reach = (long) config.networkBaseMoveDistance * config.networkBaseMoveDistance;
+		List<TraceLedger.Entry> waiting = new ArrayList<>();
+		for (TraceLedger.Entry entry : TraceLedger.get(server).entries()) {
+			if (entry.kind() == TraceLedger.Kind.REMOVE_STACK && entry.cause().equals(UnderYouStackCard.CAUSE) && entry.pos().dimension().equals(net.dimension)
+					&& entry.pos().pos().distSqr(net.base) <= reach && entry.stack().filter(stack -> !stack.isEmpty()).isPresent()) {
+				waiting.add(entry);
+			}
+		}
+		return waiting;
 	}
 
 	/** Candidate chests in loaded chunks, best first; asks for at most one unloaded site chunk to load. */

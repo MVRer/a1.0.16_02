@@ -67,9 +67,16 @@ public final class Network {
 	int budget;
 	int underBaseSite = -1;
 	int shaftSite = -1;
-	/** Stacks moved into the chest, and stacks taken while there was no chest (they stay in the ledger). */
+	/**
+	 * Stacks moved into the chest, stacks taken while there was no chest (kept in the ledger), and ledgered stacks
+	 * moved into the chest later ({@link NetworkChest#restoreLedgered}).
+	 */
 	int stacksMoved;
 	int stacksLedgered;
+	int stacksRestored;
+	/** The night index of the last restore, and how many stacks were restored on that night. */
+	long restoredNight = Long.MIN_VALUE;
+	int restoredTonight;
 	/** Not saved: founding is tried once per night. */
 	long foundTriedNight = Long.MIN_VALUE;
 	/** Not saved: when a far chunk was asked to load for the chest, the server tick of the next try. */
@@ -241,6 +248,9 @@ public final class Network {
 		tag.putInt("shaftSite", shaftSite);
 		tag.putInt("stacksMoved", stacksMoved);
 		tag.putInt("stacksLedgered", stacksLedgered);
+		tag.putInt("stacksRestored", stacksRestored);
+		tag.putLong("restoredNight", restoredNight);
+		tag.putInt("restoredTonight", restoredTonight);
 		return tag;
 	}
 
@@ -278,6 +288,9 @@ public final class Network {
 		net.shaftSite = tag.getIntOr("shaftSite", -1);
 		net.stacksMoved = tag.getIntOr("stacksMoved", 0);
 		net.stacksLedgered = tag.getIntOr("stacksLedgered", 0);
+		net.stacksRestored = tag.getIntOr("stacksRestored", 0);
+		net.restoredNight = tag.getLongOr("restoredNight", Long.MIN_VALUE);
+		net.restoredTonight = tag.getIntOr("restoredTonight", 0);
 		return net;
 	}
 

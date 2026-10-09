@@ -39,6 +39,11 @@ public final class DigConfig {
 	public int chestSourceMinDistance = 96;
 	/** How far from the base he looks for a chest at a recorded site. */
 	public int chestSourceSiteRadius = 1000;
+	/**
+	 * Stacks taken from the base's chests before the network had its chest (still in the ledger) that are moved into
+	 * it per in-game night, oldest first, out of view.
+	 */
+	public int networkStacksRestoredPerNight = 2;
 
 	// --- card tunnels ---
 	/** Solid blocks a card tunnel keeps from anything the player dug or placed (unless the card breaks in). */

@@ -2,6 +2,7 @@ package com.forzacode.a1016_02.dig;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 
 import com.forzacode.a1016_02.core.ModConfig;
 import com.forzacode.a1016_02.core.Pacing;
@@ -9,6 +10,7 @@ import com.forzacode.a1016_02.core.Services;
 import com.forzacode.a1016_02.core.SiteRegistry;
 import com.forzacode.a1016_02.core.SiteType;
 import com.forzacode.a1016_02.core.TraceLedger;
+import com.forzacode.a1016_02.core.TraceVeto;
 
 import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 
@@ -16,6 +18,7 @@ import net.fabricmc.fabric.api.gametest.v1.GameTest;
 
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
+import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.gametest.framework.GameTestHelper;
 import net.minecraft.util.RandomSource;
 import net.minecraft.world.level.ChunkPos;
@@ -376,6 +379,77 @@ public class NetworkGameTests {
 		helper.assertTrue(container.getItem(2).isEmpty() && below.getItem(0).is(Items.BONE) && below.getItem(0).getCount() == 8,
 				"the stack did not move into the network chest");
 		helper.assertTrue(net.stacksMoved == 1 && container.getItem(1).is(Items.IRON_PICKAXE), "gear touched or not counted");
+		helper.succeed();
+	}
+
+	@GameTest
+	public void ledgeredStacksMoveIntoTheNetworkChestAFewPerNight(GameTestHelper helper) {
+		DigConfig config = testConfig();
+		config.networkStacksRestoredPerNight = 2;
+		DigGround g = DigGround.of(helper, 12, 40, 6, 40, Blocks.STONE);
+		BlockPos base = g.at(20, 6, 20);
+		BlockPos home = g.at(22, 6, 20);
+		g.place(home, Blocks.CHEST.defaultBlockState());
+		Container container = (Container) g.level.getBlockEntity(home);
+		container.setItem(0, new ItemStack(Items.COBBLESTONE, 16));
+		container.setItem(1, new ItemStack(Items.BONE, 8));
+		container.setItem(2, new ItemStack(Items.COAL, 5));
+		Network net = new Network(g.level.dimension(), base);
+		RandomSource random = RandomSource.create(8L);
+
+		// The first nights there is no chest down there: every stack goes into the ledger.
+		for (int i = 0; i < 3; i++) {
+			helper.assertTrue(UnderYouStackCard.takeStack(g.level, base, net, random, Services.traces()), "stack " + i + " not taken");
+		}
+		List<TraceLedger.Entry> waiting = NetworkChest.waiting(g.level.getServer(), net, config);
+		helper.assertTrue(net.stacksLedgered == 3 && waiting.size() == 3, "ledgered " + net.stacksLedgered + ", waiting " + waiting.size());
+		List<ItemStack> taken = waiting.stream().map(e -> e.stack().orElseThrow().copy()).toList();
+		helper.assertTrue(DigCommands.chestLines(g.level.getServer(), net).getFirst().contains("no network chest yet"), "debug: a chest before it came");
+		helper.assertTrue(NetworkChest.restoreLedgered(ctx(g, net, new PosSet(), config, random, 9)) == 0, "restored with no chest");
+
+		// The chest is moved in (with what it already held).
+		g.hollow(3, 1, 3, 3, 1, 3);
+		g.level.setBlock(g.at(3, 1, 3), Blocks.CHEST.defaultBlockState(), Block.UPDATE_CLIENTS);
+		net.chest = g.at(3, 1, 3);
+		Container below = (Container) g.level.getBlockEntity(net.chest);
+		below.setItem(0, new ItemStack(Items.ROTTEN_FLESH, 3));
+
+		// Only through TraceService: a veto on the chest holds every stack back.
+		BlockPos chest = net.chest;
+		TraceVeto veto = (level, pos) -> pos.equals(chest);
+		Services.traces().addVeto(veto);
+		int vetoed = NetworkChest.restoreLedgered(ctx(g, net, new PosSet(), config, random, 10));
+		Services.traces().removeVeto(veto);
+		helper.assertTrue(vetoed == 0 && NetworkChest.waiting(g.level.getServer(), net, config).size() == 3, "a vetoed restore went through");
+
+		// A few per night, oldest first.
+		helper.assertTrue(NetworkChest.restoreLedgered(ctx(g, net, new PosSet(), config, random, 10)) == 2, "not 2 on the first night");
+		helper.assertTrue(NetworkChest.restoreLedgered(ctx(g, net, new PosSet(), config, random, 10)) == 0, "more than 2 in one night");
+		helper.assertTrue(ItemStack.matches(below.getItem(1), taken.get(0)) && ItemStack.matches(below.getItem(2), taken.get(1)),
+				"not the oldest two: " + below.getItem(1) + ", " + below.getItem(2));
+		List<TraceLedger.Entry> left = NetworkChest.waiting(g.level.getServer(), net, config);
+		helper.assertTrue(left.size() == 1 && ItemStack.matches(left.getFirst().stack().orElseThrow(), taken.get(2)), "the ledger was not closed");
+		// The next night, from the background growth: the last one.
+		UnderYou.growNow(ctx(g, net, new PosSet(), config, random, 11), new DigData(), 0, false);
+		helper.assertTrue(ItemStack.matches(below.getItem(3), taken.get(2)) && net.stacksRestored == 3, "the last stack did not come the next night");
+		helper.assertTrue(NetworkChest.waiting(g.level.getServer(), net, config).isEmpty(), "stacks still waiting");
+		helper.assertTrue(NetworkChest.restoreLedgered(ctx(g, net, new PosSet(), config, random, 12)) == 0, "restored twice");
+
+		// Nothing was made: the chest holds what it had plus exactly what went missing.
+		int count = 0;
+		for (int slot = 0; slot < below.getContainerSize(); slot++) {
+			count += below.getItem(slot).getCount();
+			helper.assertTrue(container.getItem(slot).isEmpty(), "the base chest still has " + container.getItem(slot));
+		}
+		helper.assertTrue(count == 3 + 16 + 8 + 5, "the network chest holds " + count + " items");
+
+		// The debug line: where it is and what is in it.
+		List<String> lines = DigCommands.chestLines(g.level.getServer(), net);
+		String at = String.format(Locale.ROOT, "%d %d %d", chest.getX(), chest.getY(), chest.getZ());
+		helper.assertTrue(lines.getFirst().contains(at) && lines.getFirst().contains("4 of 27 slots used"), "debug header: " + lines.getFirst());
+		helper.assertTrue(lines.contains("  slot 0: 3 x minecraft:rotten_flesh") && lines.contains("  slot 1: " + taken.get(0).getCount() + " x "
+				+ BuiltInRegistries.ITEM.getKey(taken.get(0).getItem())), "debug contents: " + lines);
+		helper.assertTrue(lines.getLast().contains("restored from it 3, still waiting 0"), "debug counts: " + lines.getLast());
 		helper.succeed();
 	}
 }

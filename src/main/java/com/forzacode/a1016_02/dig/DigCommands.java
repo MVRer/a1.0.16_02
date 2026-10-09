@@ -2,6 +2,7 @@ package com.forzacode.a1016_02.dig;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.Optional;
 
 import com.forzacode.a1016_02.core.CommandHooks;
@@ -16,17 +17,20 @@ import net.minecraft.commands.Commands;
 import net.minecraft.commands.SharedSuggestionProvider;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.GlobalPos;
+import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.util.RandomSource;
+import net.minecraft.world.Container;
+import net.minecraft.world.item.ItemStack;
 
 import org.jspecify.annotations.Nullable;
 
 /**
- * {@code /a1016 dig network grow <nights> | network info | network reveal | tunnel <card>}. Debug only: the
- * growth and the tunnels still respect the out-of-view rule.
+ * {@code /a1016 dig network grow <nights> | network info | network reveal | network chest | tunnel <card>}. Debug
+ * only: the growth and the tunnels still respect the out-of-view rule. Numbers use {@link Locale#ROOT} (D-031).
  */
 final class DigCommands {
 	static final List<String> TUNNELS = List.of("plain", ScarCards.TunnelThatGrows.ID, ScarCards.TunnelIntoMine.ID);
@@ -40,7 +44,8 @@ final class DigCommands {
 						.then(Commands.literal("grow")
 								.then(Commands.argument("nights", IntegerArgumentType.integer(1, 100)).executes(DigCommands::grow)))
 						.then(Commands.literal("info").executes(DigCommands::info))
-						.then(Commands.literal("reveal").executes(DigCommands::reveal)))
+						.then(Commands.literal("reveal").executes(DigCommands::reveal))
+						.then(Commands.literal("chest").executes(DigCommands::chest)))
 				.then(Commands.literal("tunnel")
 						.then(Commands.argument("card", StringArgumentType.word())
 								.suggests((ctx, builder) -> SharedSuggestionProvider.suggest(TUNNELS, builder))
@@ -91,6 +96,7 @@ final class DigCommands {
 			net.nights++;
 			net.budget += config.networkBlocksPerNight;
 			net.shaftStuckNight = Long.MIN_VALUE;
+			net.restoredNight = Long.MIN_VALUE;
 			NetworkGrower.Ctx c = UnderYou.ctx(level, net, data, playerPos, night, random);
 			if (!net.anchors.isEmpty()) {
 				NetworkGrower.refreshTargets(c);
@@ -100,7 +106,7 @@ final class DigCommands {
 		data.changed();
 		int left = net.budget;
 		int total = carved;
-		say(ctx, String.format("[a1016] dig: +%d nights, carved %d steps (%d anchors now); %d steps waiting (in view or nowhere to go)", nights, total,
+		say(ctx, String.format(Locale.ROOT, "[a1016] dig: +%d nights, carved %d steps (%d anchors now); %d steps waiting (in view or nowhere to go)", nights, total,
 				net.anchors.size(), left));
 		return 1;
 	}
@@ -117,26 +123,74 @@ final class DigCommands {
 		} else {
 			Network net = current.get();
 			ServerLevel level = server.getLevel(net.dimension);
-			lines.add(String.format("[a1016] dig: network %d/%d under base %s (%s): %d anchors, %d cells, nights=%d budget=%d", data.networks.size(),
+			lines.add(String.format(Locale.ROOT, "[a1016] dig: network %d/%d under base %s (%s): %d anchors, %d cells, nights=%d budget=%d", data.networks.size(),
 					data.networks.size(), net.base.toShortString(), net.dimension.identifier(), net.anchors.size(), net.cells.size(), net.nights, net.budget));
-			net.bounds().ifPresent(b -> lines.add(String.format("depth: corridors at y=%d (%d below the base); extent x %d..%d, y %d..%d, z %d..%d",
+			net.bounds().ifPresent(b -> lines.add(String.format(Locale.ROOT, "depth: corridors at y=%d (%d below the base); extent x %d..%d, y %d..%d, z %d..%d",
 					net.depth, net.base.getY() - net.depth, b[0].getX(), b[1].getX(), b[0].getY(), b[1].getY(), b[0].getZ(), b[1].getZ())));
 			lines.add("shaft: " + shaftLine(net, config));
 			lines.add("chest: " + (net.chest != null ? "at " + net.chest.toShortString() : net.alcove != null
 					? "dead end at " + net.alcove.toShortString() + ", no chest yet" : "no dead end yet")
-					+ String.format("; stacks moved %d, in the ledger %d", net.stacksMoved, net.stacksLedgered));
+					+ "; " + stacksLine(server, net));
 			if (level != null) {
 				lines.add("nearest player dig: " + nearestDigLine(level, net, config));
 			}
 		}
 		GrowingTunnel growing = data.growing;
-		lines.add(growing == null ? "tunnel that grows: none" : String.format("tunnel that grows: length %d, end %s, %s%s, %.0f blocks from the base",
+		lines.add(growing == null ? "tunnel that grows: none" : String.format(Locale.ROOT, "tunnel that grows: length %d, end %s, %s%s, %.0f blocks from the base; %s",
 				growing.length(), growing.end().toShortString(), growing.complete ? "complete" : "growing", growing.visited ? ", visited" : "",
-				growing.distanceToBase(growing.end())));
+				growing.distanceToBase(growing.end()), growing.site().map(site -> String.format(Locale.ROOT, "TUNNEL_END site #%d at %s, size %d%s", site.id(),
+						site.pos().toShortString(), site.size(), site.claimedBy().map(id -> ", claimed by " + id).orElse(""))).orElse("no site until the first visit")));
 		lines.add("card tunnels: " + data.tunnels.size() + ", explored points: " + data.explored.values().stream().mapToInt(PosSet::size).sum()
 				+ ", planted saplings: " + data.planted.values().stream().mapToInt(PosSet::size).sum());
 		lines.forEach(line -> say(ctx, line));
 		return 1;
+	}
+
+	private static String stacksLine(MinecraftServer server, Network net) {
+		DigConfig config = DigConfig.get();
+		return String.format(Locale.ROOT, "stacks moved in %d, taken into the ledger %d, restored from it %d, still waiting %d (%d per night)",
+				net.stacksMoved, net.stacksLedgered, net.stacksRestored, NetworkChest.waiting(server, net, config).size(),
+				config.networkStacksRestoredPerNight);
+	}
+
+	private static int chest(CommandContext<CommandSourceStack> ctx) {
+		MinecraftServer server = ctx.getSource().getServer();
+		chestLines(server, DigData.get(server).network().orElse(null)).forEach(line -> say(ctx, line));
+		return 1;
+	}
+
+	/** Where the network chest is and what is in it (never loads a chunk), then the stack counts. */
+	static List<String> chestLines(MinecraftServer server, @Nullable Network net) {
+		if (net == null) {
+			return List.of("[a1016] dig: no network yet");
+		}
+		List<String> lines = new ArrayList<>();
+		BlockPos chest = net.chest;
+		ServerLevel level = server.getLevel(net.dimension);
+		if (chest == null) {
+			lines.add("[a1016] dig: no network chest yet (" + (net.alcove != null ? "dead end at " + net.alcove.toShortString() : "no dead end yet") + ")");
+		} else {
+			String at = String.format(Locale.ROOT, "[a1016] dig: network chest at %d %d %d (%s)", chest.getX(), chest.getY(), chest.getZ(),
+					net.dimension.identifier());
+			if (level == null || !level.isLoaded(chest)) {
+				lines.add(at + ", not loaded: contents unknown");
+			} else if (!(level.getBlockEntity(chest) instanceof Container container)) {
+				lines.add(at + ", but there is no chest there now (" + level.getBlockState(chest).getBlock().getName().getString() + ")");
+			} else {
+				List<String> items = new ArrayList<>();
+				for (int slot = 0; slot < container.getContainerSize(); slot++) {
+					ItemStack stack = container.getItem(slot);
+					if (!stack.isEmpty()) {
+						items.add(String.format(Locale.ROOT, "  slot %d: %d x %s", slot, stack.getCount(), BuiltInRegistries.ITEM.getKey(stack.getItem())));
+					}
+				}
+				lines.add(String.format(Locale.ROOT, "%s: %d of %d slots used%s", at, items.size(), container.getContainerSize(),
+						items.isEmpty() ? ", empty" : ""));
+				lines.addAll(items);
+			}
+		}
+		lines.add(stacksLine(server, net));
+		return lines;
 	}
 
 	private static String shaftLine(Network net, DigConfig config) {
@@ -170,7 +224,7 @@ final class DigCommands {
 		if (bestDig == null) {
 			return "none within " + (config.networkRadius + 16) + " blocks of the base";
 		}
-		return String.format("%d blocks (%d solid between) at %s; it never grows within %d of a dig, breachable once a dig is within %d", best,
+		return String.format(Locale.ROOT, "%d blocks (%d solid between) at %s; it never grows within %d of a dig, breachable once a dig is within %d", best,
 				Math.max(0, best - 1), bestDig.toShortString(), ModConfig.pacing().digBelow, ModConfig.pacing().breachWithin);
 	}
 
@@ -196,7 +250,7 @@ final class DigCommands {
 				}
 			}
 			if (best != null) {
-				lines.add(String.format("[a1016] dig: dig down at x=%d z=%d: a corridor at y=%d, %d blocks below your feet", best.getX(), best.getZ(),
+				lines.add(String.format(Locale.ROOT, "[a1016] dig: dig down at x=%d z=%d: a corridor at y=%d, %d blocks below your feet", best.getX(), best.getZ(),
 						best.getY(), feet.getY() - best.getY()));
 			}
 		}
@@ -227,7 +281,7 @@ final class DigCommands {
 					return fail(ctx, "[a1016] dig: no out-of-view stone for a tunnel here");
 				}
 				DigData.get(level.getServer()).addTunnel(new DigData.CardTunnel(level.dimension(), carved.anchors(), "plain", carved.siteId()));
-				say(ctx, String.format("[a1016] dig: tunnel of %d from %s to %s", carved.anchors().size(), carved.opening().toShortString(),
+				say(ctx, String.format(Locale.ROOT, "[a1016] dig: tunnel of %d from %s to %s", carved.anchors().size(), carved.opening().toShortString(),
 						carved.end().toShortString()));
 			}
 			case ScarCards.TunnelThatGrows.ID -> {
@@ -237,7 +291,7 @@ final class DigCommands {
 					return fail(ctx, existing != null && existing.complete ? "[a1016] dig: the tunnel that grows is complete (ends at "
 							+ existing.end().toShortString() + ")" : "[a1016] dig: nowhere out of view to start or grow it now");
 				}
-				say(ctx, String.format("[a1016] dig: tunnel that grows, length %d, from %s to %s, %.0f blocks from the base%s", tunnel.length(),
+				say(ctx, String.format(Locale.ROOT, "[a1016] dig: tunnel that grows, length %d, from %s to %s, %.0f blocks from the base%s", tunnel.length(),
 						tunnel.first.toShortString(), tunnel.end().toShortString(), tunnel.distanceToBase(tunnel.end()),
 						tunnel.complete ? " (complete)" : ""));
 			}
@@ -246,7 +300,7 @@ final class DigCommands {
 				if (carved == null) {
 					return fail(ctx, "[a1016] dig: no dug tunnel " + config.intoMineMinDistance + "+ blocks away to break into (out of view)");
 				}
-				say(ctx, String.format("[a1016] dig: broke into the mine at %s, %d long, ends at %s", carved.opening().toShortString(),
+				say(ctx, String.format(Locale.ROOT, "[a1016] dig: broke into the mine at %s, %d long, ends at %s", carved.opening().toShortString(),
 						carved.anchors().size(), carved.end().toShortString()));
 			}
 			default -> {

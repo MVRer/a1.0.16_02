@@ -2,9 +2,11 @@ package com.forzacode.a1016_02.dig;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 import java.util.Set;
 
 import com.forzacode.a1016_02.core.Services;
+import com.forzacode.a1016_02.core.SiteRegistry;
 import com.forzacode.a1016_02.core.SiteType;
 import com.forzacode.a1016_02.core.TraceService;
 
@@ -28,6 +30,7 @@ import org.jspecify.annotations.Nullable;
  * base. Each visit it is about {@code Pacing.tunnelGrowthPerVisit} blocks longer (grown while the player is away). It
  * stops just short of the base and never breaks in: it ends as soon as the next step would come within the card
  * clearance of anything the player dug or placed, or within {@link DigConfig#growingStopShortOfBase} of the base.
+ * Its TUNNEL_END site is recorded on the player's first visit and then follows the end and the length as it grows.
  */
 public final class GrowingTunnel {
 	public static final String CAUSE = "dig:tunnel_that_grows";
@@ -148,12 +151,17 @@ public final class GrowingTunnel {
 	}
 
 	/**
-	 * Carves up to {@code steps} more anchors toward the base as one out-of-view batch. Marks the tunnel complete
-	 * (and records its TUNNEL_END site) when it reaches the stop distance or the player's spaces. False if nothing
-	 * was carved (in view, or blocked for now).
+	 * Carves up to {@code steps} more anchors toward the base as one out-of-view batch. Keeps its TUNNEL_END site (once
+	 * recorded) at the new end and length. Marks the tunnel complete (and records the site if it was never visited)
+	 * when it reaches the stop distance or the player's spaces, or once a fragment has claimed the site (what was
+	 * left at the end stays at the end). False if nothing was carved (in view, or blocked for now).
 	 */
 	boolean grow(ServerLevel level, int steps, int clearance, DigConfig config, TraceService traces, long day) {
 		if (complete) {
+			return false;
+		}
+		if (site().map(SiteRegistry.Site::claimed).orElse(false)) {
+			finish();
 			return false;
 		}
 		Tunnels.Rules rules = Tunnels.Rules.card(clearance);
@@ -210,15 +218,47 @@ public final class GrowingTunnel {
 		lastGrowDay = day;
 		if (reachedEnd) {
 			finish();
+		} else if (siteId >= 0) {
+			syncSite();
 		}
 		return true;
 	}
 
 	private void finish() {
 		complete = true;
+		syncSite();
+	}
+
+	/** The player came by: from the first visit on, its TUNNEL_END site is recorded and kept current. */
+	void visit() {
+		visited = true;
+		syncSite();
+	}
+
+	/** Its TUNNEL_END site, once recorded. */
+	Optional<SiteRegistry.Site> site() {
 		if (siteId < 0) {
-			siteId = Services.sites().record(SiteType.TUNNEL_END, dimension, end(), length()).id();
+			return Optional.empty();
 		}
+		return Services.sites().all().stream().filter(site -> site.id() == siteId).findFirst();
+	}
+
+	/**
+	 * Records the TUNNEL_END site at the far end with the length as its size, or moves the recorded one there
+	 * ({@code SiteRegistry.update} keeps its id and claim). Lore picks the longest tunnel by size.
+	 */
+	void syncSite() {
+		if (anchors.isEmpty()) {
+			return;
+		}
+		Optional<SiteRegistry.Site> current = site();
+		if (current.isPresent()) {
+			if (!current.get().pos().equals(end()) || current.get().size() != length()) {
+				Services.sites().update(current.get(), end(), length());
+			}
+			return;
+		}
+		siteId = Services.sites().record(SiteType.TUNNEL_END, dimension, end(), length()).id();
 	}
 
 	/** Keeps going along the current axis while it still closes in on the base, then turns toward it (rare turns). */

@@ -250,7 +250,7 @@ public final class DigTicker {
 		}
 		if (nearest <= config.growingVisitRadius) {
 			if (!tunnel.visited) {
-				tunnel.visited = true;
+				tunnel.visit();
 				data.setDirty();
 			}
 			return;

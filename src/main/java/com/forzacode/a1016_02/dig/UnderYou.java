@@ -96,7 +96,10 @@ public final class UnderYou {
 				night, playerPos);
 	}
 
-	/** Spends the budget (founding at most once a night unless forced), fetches the chest and records the site. */
+	/**
+	 * Spends the budget (founding at most once a night unless forced), fetches the chest, moves the night's few
+	 * ledgered stacks into it and records the site.
+	 */
 	static int growNow(NetworkGrower.Ctx ctx, DigData data, int maxSteps, boolean force) {
 		Network net = ctx.net();
 		if (net.anchors.isEmpty() && net.foundTriedNight == ctx.night() && !force) {
@@ -112,6 +115,9 @@ public final class UnderYou {
 			if (NetworkChest.tryFetch(ctx)) {
 				data.setDirty();
 			}
+		}
+		if (net.chest != null && NetworkChest.restoreLedgered(ctx) > 0) {
+			data.setDirty();
 		}
 		if (net.underBaseSite < 0 && !net.anchors.isEmpty() && net.nights >= ctx.config().networkChestAfterNights + 3) {
 			NetworkGrower.recordUnderBase(ctx, net.anchors.getFirst());

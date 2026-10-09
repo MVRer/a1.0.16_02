@@ -27,8 +27,9 @@ import org.jspecify.annotations.Nullable;
 
 /**
  * "Under you" home cue: a chest in the base is one stack short. The stack is moved into the chest in the network
- * ({@code TraceService.moveStack}); while the network has no chest yet, it is taken out and kept in the ledger.
- * Only ordinary stackable items, never tools or gear.
+ * ({@code TraceService.moveStack}); while the network has no chest yet, it is taken out and kept in the ledger, and
+ * once the chest is in, those stacks are moved into it a few per night ({@link NetworkChest#restoreLedgered}). Only
+ * ordinary stackable items, never tools or gear.
  */
 final class UnderYouStackCard extends DigCard {
 	static final String ID = "under_you_stack";
