@@ -15,6 +15,7 @@ import net.minecraft.nbt.NbtOps;
 import net.minecraft.nbt.Tag;
 import net.minecraft.resources.RegistryOps;
 import net.minecraft.server.level.ServerLevel;
+import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.level.GameType;
 import net.minecraft.world.level.Level;
@@ -117,6 +118,28 @@ public class CoreGameTests {
 		helper.assertTrue(TraceService.isOutOfView(level, new AABB(behind), viewers, 3, 160), "a block behind the viewer counts as in view");
 		BlockPos near = helper.absolutePos(new BlockPos(1, 1, 0)).north(2);
 		helper.assertFalse(TraceService.isOutOfView(level, new AABB(near), viewers, 3, 160), "a block within 3 blocks counts as out of view");
+		helper.succeed();
+	}
+
+	@GameTest
+	public void footprintTracksPlacedAndDug(GameTestHelper helper) {
+		ServerLevel level = helper.getLevel();
+		PlayerWatch watch = Services.watch();
+		BlockPos placed = helper.absolutePos(new BlockPos(5, 1, 5));
+		BlockPos dug = helper.absolutePos(new BlockPos(6, 1, 1));
+		helper.setBlock(5, 1, 5, Blocks.OAK_PLANKS);
+
+		watch.onPlaced((ServerPlayer) helper.makeMockServerPlayer(GameType.SURVIVAL), level, placed, Blocks.OAK_PLANKS.defaultBlockState());
+		watch.onBroken(level, dug);
+
+		helper.assertTrue(watch.wasPlacedByPlayer(level, placed) && !watch.wasDugByPlayer(level, placed), "placed block not recorded");
+		helper.assertTrue(watch.wasDugByPlayer(level, dug) && !watch.wasPlacedByPlayer(level, dug), "dug block not recorded");
+		helper.assertTrue(watch.placedNear(level, placed.offset(3, 0, -3), 4, Blocks.OAK_PLANKS).contains(placed), "placedNear missed it");
+		helper.assertTrue(watch.placedNear(level, placed, 4, Blocks.STONE).isEmpty(), "placedNear ignored the block filter");
+		helper.assertTrue(watch.dugNear(level, dug.offset(-2, 1, 2), 2).contains(dug) && watch.dugNear(level, dug.offset(10, 0, 0), 4).isEmpty(), "dugNear");
+
+		watch.onBroken(level, placed); // breaking a player-placed block is not digging
+		helper.assertTrue(!watch.wasPlacedByPlayer(level, placed) && !watch.wasDugByPlayer(level, placed), "broken placed block");
 		helper.succeed();
 	}
 

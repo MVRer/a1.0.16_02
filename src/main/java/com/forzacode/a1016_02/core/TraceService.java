@@ -124,6 +124,9 @@ public final class TraceService {
 			if (distSqr > 1.0E-6 && toPoint.normalize().dot(viewer.look()) < cosHalfCone) {
 				continue;
 			}
+			if (!level.isLoaded(BlockPos.containing(point))) {
+				continue; // not loaded, so not sent to any client; also keeps the raycast from loading chunks
+			}
 			BlockHitResult hit = level.clip(new ClipContext(viewer.eye(), point, ClipContext.Block.VISUAL, ClipContext.Fluid.NONE, CollisionContext.empty()));
 			if (hit.getType() == HitResult.Type.MISS || box.intersects(new AABB(hit.getBlockPos()).deflate(1.0E-3))) {
 				return true;
