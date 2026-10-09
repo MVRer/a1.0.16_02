@@ -131,6 +131,7 @@ public final class MobTamperImpl implements MobTamper {
 		return state != null && state.silenced(now(mob));
 	}
 
+	@Override
 	public boolean isTampered(Mob mob) {
 		return ((TamperedMob) mob).a1016_02$tamper() != null;
 	}

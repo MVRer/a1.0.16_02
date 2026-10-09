@@ -5,8 +5,9 @@ import net.minecraft.world.entity.Mob;
 import net.minecraft.world.phys.Vec3;
 
 /**
- * Every manipulation of an existing mob goes through here (never spawn one). The accident workstream installs
- * the real one. Each method returns false if it did nothing.
+ * Every manipulation of an existing mob goes through here (never spawn one). The atmosphere workstream owns and
+ * installs the real one (D-017); accident and entity use it. Each method returns false if it did nothing.
+ * Server thread only.
  */
 public interface MobTamper {
 	/** Stops the mob's movement and AI for a while. */
@@ -23,6 +24,12 @@ public interface MobTamper {
 
 	/** Ends every effect on the mob now. */
 	void release(Mob mob);
+
+	/**
+	 * True while any effect (freeze, face, silence) is on the mob: from the call that started it until its deadline
+	 * passes (cleared within a tick after) or {@link #release}. Use it so two cards never fight over one mob.
+	 */
+	boolean isTampered(Mob mob);
 
 	/** Default: does nothing. */
 	final class Stub implements MobTamper {
@@ -48,6 +55,11 @@ public interface MobTamper {
 
 		@Override
 		public void release(Mob mob) {
+		}
+
+		@Override
+		public boolean isTampered(Mob mob) {
+			return false;
 		}
 	}
 }
