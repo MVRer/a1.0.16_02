@@ -9,7 +9,7 @@ Status values: queued, running, review, fix, merged, blocked. Only the orchestra
 | P1-2 | The figure: model, white eyes, fog-edge spawn out of view, all sighting variants, stare then leave, despawn | entity | feat/entity-figure | v0.2-figure | merged | 3 review rounds. Rule: never despawn while in view. Contract asks: shared fog-end helper, document ending:last_sighting | Starts from the HimEntity prototype (D-001) |
 | P1-3 | Old scars (worldgen) and the live new-scar placer | world | feat/world-scars | v0.3-traces | merged | 2 review rounds. Later task: signatures (still burning, house elsewhere, cross row). Follow-ups: dead mountain silence and no animals (atmosphere), new pyramid when the list goes into lava (lore-telling) |
 | P1-4 | Live diggers and the "Under you" network | dig | feat/dig-diggers | v0.3-traces | merged | 2 review rounds plus a flaky-test fix. Contract asks: restoreStack, SiteRegistry.update | Records TUNNEL_END and UNDER_BASE sites |
-| P1-5 | Dread layer: fog, silence, music off, sound director, mobs acting wrong (client and server) | atmosphere | feat/atmosphere-dread | v0.4-dread | ready | Review PASS, notes fixed, rebased. Waits for v0.3 (D-021) | Also builds the real MobTamper (D-017) |
+| P1-5 | Dread layer: fog, silence, music off, sound director, mobs acting wrong (client and server) | atmosphere | feat/atmosphere-dread | v0.4-dread | merged | Real MobTamper is on main. Follow-up: dead mountain silence and no animals | Also builds the real MobTamper (D-017) |
 | P1-6 | Fragments: all 30 as data, placement by stage and profile, sites | lore | feat/lore-fragments | v0.5-fragments | running | Contract gap to expect: a protected "untouched grove" so new scars avoid it |
 | P1-7 | Telling: sign and book watcher, blank signs, "Stop.", place not found, list updates, unbreakable F30 | lore | feat/lore-telling | v0.6-telling | queued, after P1-6 | |
 | P1-8 | Accidents: planner, every trap, death marker (uses atmosphere's MobTamper) | accident | feat/accident-traps | v0.7-accidents | running | Gravel ceiling waits on a core opt-in. Rebases onto main once atmosphere's MobTamper lands |
@@ -23,7 +23,7 @@ Status values: queued, running, review, fix, merged, blocked. Only the orchestra
 | v0.1-skeleton | P0-1 merged | tagged (no timewarp sim yet: no director) |
 | v0.2-figure | P1-2 merged | tagged (pacing check: director's 20 h fixed-seed game tests green) |
 | v0.3-traces | P1-3 and P1-4 merged | tagged (pacing check: director 20 h game tests green) |
-| v0.4-dread | P1-5 merged | |
+| v0.4-dread | P1-5 merged | tagged (pacing check: director 20 h game tests green) |
 | v0.5-fragments | P1-6 merged | |
 | v0.6-telling | P1-7 merged | |
 | v0.7-accidents | P1-8 merged | |

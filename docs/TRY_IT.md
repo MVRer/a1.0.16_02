@@ -2,6 +2,25 @@
 
 One entry per merge, newest first. Run the game from the main checkout (this folder, on `main`).
 
+## READY TO TRY: The dread layer (fog, silence, music off, sounds, mobs acting wrong)  (merged feat/atmosphere-dread, commit 2dd4fb8)
+```
+Restart needed: full game restart (client mixins for fog, music and compass)
+See it now:
+  1. Launch "Dev Client", then /a1016 stage 2
+  2. Fog: /a1016 atmosphere fog surge 0.85 8   then   /time set 12900 and /a1016 atmosphere fog dusk 0.6
+  3. Sound: /a1016 atmosphere silence 10 (everything cuts, then creeps back), /a1016 atmosphere music off|on
+  4. Mobs: /summon cow ^ ^ ^5, then /a1016 atmosphere tamper freeze | face | release
+  5. Cards: /a1016 fire fog_drift | animals_face_fog | distant_cave_sound | silence | mining_in_the_dark (at night,
+     stand still 20 s) | chest_opens | door_left_open | one_block_missing | footstep_late | compass_drift (hold a
+     compass) | villagers_inside_at_noon | dog_wont_go | cat_hisses_corner | patient_skeleton | empty_water |
+     bat_in_sealed_room | cow_where_nothing_spawns (needs a dead mountain nearby)
+  6. Relog: music off and dusk fog come back after leaving and rejoining.
+What to look for: no music after your first night. Fog that thickens for a few seconds and lets go. Animals all
+  staring the same way. Every sound is vanilla, with no visible cause.
+Known rough edges: footstep_late plays at your next stop after it's fired. The fake "only a cow" and
+  "zombie at dusk" sightings now work, since MobTamper is real.
+```
+
 ## READY TO TRY: The world is wrong (old scars and new scars)  (merged feat/world-scars, commit 11ce61a)
 ```
 Restart needed: full game restart (new worldgen feature and Java code)
