@@ -63,13 +63,17 @@ final class LoreCommands {
 		MinecraftServer server = ctx.getSource().getServer();
 		HerobrineState state = HerobrineState.get(server);
 		say(ctx, "[a1016] fragments (stage " + state.stage() + ", read " + state.fragmentsRead().size() + "):");
+		boolean waitsForCamp = Placers.waitsForStillBurning(state.hasFlag(Placers.STILL_BURNING), Services.sites().all(),
+				server.overworld().dimension());
 		for (Fragment fragment : FragmentData.all()) {
 			String id = fragment.id();
 			GlobalPos placed = state.fragmentsPlaced().get(id);
+			boolean enabled = Services.fragments().isEnabled(server, id);
+			boolean waiting = enabled && waitsForCamp && fragment.placement().rule().equals("emptied_house");
 			String line = String.format("%s %s | %s | from %s, %s | %s | %s", id, fragment.name(),
-					Services.fragments().isEnabled(server, id) ? "on" : "off",
+					enabled ? "on" : "off",
 					fragment.stage().name().toLowerCase(java.util.Locale.ROOT), fragment.placement().rule(),
-					placed == null ? "not placed" : "placed " + placed.pos().toShortString()
+					placed == null ? (waiting ? "waiting for still burning" : "not placed") : "placed " + placed.pos().toShortString()
 							+ (placed.dimension().equals(server.overworld().dimension()) ? "" : " " + placed.dimension().identifier()),
 					state.fragmentsRead().contains(id) ? "READ" : "unread");
 			say(ctx, line);

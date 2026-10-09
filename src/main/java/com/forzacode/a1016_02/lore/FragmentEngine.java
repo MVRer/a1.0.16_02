@@ -211,5 +211,10 @@ public final class FragmentEngine {
 		public Set<String> read() {
 			return HerobrineState.get(server).fragmentsRead();
 		}
+
+		@Override
+		public boolean stillBurning() {
+			return HerobrineState.get(server).hasFlag(Placers.STILL_BURNING);
+		}
 	}
 }

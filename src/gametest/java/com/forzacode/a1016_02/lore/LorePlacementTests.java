@@ -392,15 +392,64 @@ public class LorePlacementTests extends LoreTextTests {
 		helper.succeed();
 	}
 
+	/**
+	 * D-004: F21 only ever goes beside world's still-burning furnace. Two ordinary emptied houses (one bare, one with
+	 * a lit furnace) sit in F21's band; the camp (its build claimed by world, its house beside a lit furnace) is
+	 * recorded last. Every attempt in one test, in order, because the camp is looked up at any distance.
+	 */
 	@GameTest
-	public void theDiaryBesideTheBurningFurnace(GameTestHelper helper) {
+	public void theDiaryWaitsForStillBurning(GameTestHelper helper) {
 		floor(helper);
-		helper.setBlock(new BlockPos(3, 1, 3), Blocks.FURNACE.defaultBlockState().setValue(AbstractFurnaceBlock.LIT, true));
-		seed(helper, SiteType.EMPTIED_HOUSE, new BlockPos(3, 1, 3), 3);
-		Placing.Result result = place(helper, "F21", abs(helper, 3, 1, 3), new TestFacts(helper));
-		helper.assertTrue(result.pos.distManhattan(abs(helper, 3, 1, 3)) == 1, "F21 not beside the furnace");
+		ServerLevel level = helper.getLevel();
+		BlockState lit = Blocks.FURNACE.defaultBlockState().setValue(AbstractFurnaceBlock.LIT, true);
+		Site bare = seed(helper, SiteType.EMPTIED_HOUSE, new BlockPos(1, 1, 1), 1);
+		helper.setBlock(new BlockPos(1, 1, 6), lit);
+		Site litHouse = seed(helper, SiteType.EMPTIED_HOUSE, new BlockPos(1, 1, 5), 1);
+		helper.setBlock(new BlockPos(6, 1, 6), lit);
+		TestFacts facts = new TestFacts(helper);
+		BlockPos near = abs(helper, 3, 1, 3);
+
+		// 2. Without the flag F21 waits: not into an emptied house, and no furnace or house of its own.
+		helper.assertTrue(Placers.place(request(helper, "F21", near, 0, 4, facts)).isEmpty(), "F21 was placed before still burning");
+		// 3. The flag is set but world has not recorded the camp's house yet: it still waits.
+		facts.stillBurning = true;
+		helper.assertTrue(Placers.place(request(helper, "F21", near, 0, 4, facts)).isEmpty(), "F21 was placed before the camp's house exists");
+		helper.assertTrue(Placers.waitsForStillBurning(true, Services.sites().all(), level.dimension()), "the list would not say F21 waits");
+		helper.assertTrue(Placers.waitsForStillBurning(false, Services.sites().all(), level.dimension()), "F21 does not wait without the flag");
+		assertNoDiary(helper, bare, litHouse);
+
+		// 1. World built the camp: F21 goes beside its furnace, far outside F21's 150 to 1500 band.
+		Site build = seed(helper, SiteType.ABANDONED_BUILD, new BlockPos(7, 1, 7), 2);
+		Services.sites().claim(build, Placers.CAMP_CLAIM);
+		Site camp = seed(helper, SiteType.EMPTIED_HOUSE, new BlockPos(6, 1, 4), 3);
+		helper.assertFalse(Placers.waitsForStillBurning(true, Services.sites().all(), level.dimension()), "the list would still say F21 waits");
+		BlockPos far = near.offset(3000, 0, 0);
+		Placing.Result result = Placers.place(request(helper, "F21", far, 150, 1500, facts))
+				.orElseThrow(() -> helper.assertionException(Component.literal("F21 was not placed in the still-burning camp")));
+		helper.assertTrue(result.pos.distManhattan(abs(helper, 6, 1, 6)) == 1, "F21 not beside the camp's furnace: " + result.pos.toShortString());
 		assertHolds(helper, result.pos, "F21");
+		assertClaimed(helper, result, "F21");
+		helper.assertTrue(result.site.get().id() == camp.id(), "F21 took another emptied house: site #" + result.site.get().id());
+		assertNoDiary(helper, bare, litHouse, result.pos);
 		helper.succeed();
+	}
+
+	/** Only the test's two furnaces, no chest but {@code allowed}, and the ordinary emptied houses still free. */
+	private static void assertNoDiary(GameTestHelper helper, Site bare, Site litHouse, BlockPos... allowed) {
+		int found = 0;
+		for (BlockPos pos : BlockPos.betweenClosed(helper.absolutePos(new BlockPos(-1, 0, -1)), helper.absolutePos(new BlockPos(8, 4, 8)))) {
+			BlockState state = helper.getLevel().getBlockState(pos);
+			if (state.getBlock() instanceof AbstractFurnaceBlock) {
+				found++;
+			}
+			if (state.is(Blocks.CHEST) && !List.of(allowed).contains(pos)) {
+				throw helper.assertionException(Component.literal("a chest was left at " + pos.toShortString()));
+			}
+		}
+		helper.assertTrue(found == 2, "lore lit a furnace of its own: " + found + " furnaces");
+		for (Site site : List.of(bare, litHouse)) {
+			helper.assertTrue(Services.sites().all().stream().anyMatch(s -> s.id() == site.id() && !s.claimed()), "an ordinary emptied house was used");
+		}
 	}
 
 	@GameTest

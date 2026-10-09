@@ -36,8 +36,8 @@ import net.minecraft.tags.BlockTags;
 import net.minecraft.world.Container;
 import net.minecraft.world.RandomizableContainer;
 import net.minecraft.world.item.ItemStack;
-import net.minecraft.world.item.Items;
 import net.minecraft.world.level.ChunkPos;
+import net.minecraft.world.level.Level;
 import net.minecraft.world.level.biome.Biome;
 import net.minecraft.world.level.block.AbstractFurnaceBlock;
 import net.minecraft.world.level.block.Blocks;
@@ -802,80 +802,80 @@ final class Placers {
 		return build.commit() ? Optional.of(new Result(sign).read(sign)) : Optional.empty();
 	}
 
-	// --- F21 the emptied house with the still-burning furnace ---
+	// --- F21 the diary, beside world's still-burning furnace (D-004) ---
 
-	/** Set when lore left F21's still-burning furnace: the world's one "still burning" moment (D-004). */
+	/**
+	 * Set by world once it built the still-burning camp: the world's one "still burning" moment (D-004), with
+	 * F21's emptied house beside its lit furnace when F21 is rolled.
+	 */
 	static final String STILL_BURNING = "lore:still_burning";
+	/** World claims the camp's ABANDONED_BUILD site with this (world's {@code StillBurning.CLAIM}). */
+	static final String CAMP_CLAIM = "world:still_burning";
+	/** The camp's emptied house stands within this many blocks of the camp's build (world puts it about 10 away). */
+	static final int CAMP_REACH = 16;
 
+	/**
+	 * F21 goes only into the emptied house of world's still-burning camp, beside its furnace, whatever the
+	 * distance (F21's distance band does not apply). Until world set {@link #STILL_BURNING} and recorded the camp's
+	 * house, F21 waits. Lore never lights a furnace of its own: that would be a second "still burning" (D-004).
+	 */
 	private static Optional<Result> emptiedHouse(Request req) {
+		if (!req.facts().stillBurning()) {
+			return Optional.empty();
+		}
+		Optional<Site> camp = stillBurningHouse(Services.sites().all(), req.level().dimension(), req.origin());
+		if (camp.isEmpty()) {
+			return Optional.empty();
+		}
+		Site site = camp.get();
 		ServerLevel level = req.level();
-		for (Site site : sites(req, SiteType.EMPTIED_HOUSE)) {
-			int r = Math.max(3, site.size());
-			if (!ready(req, site.pos(), r + 1)) {
-				return Optional.empty();
+		int r = Math.max(3, site.size());
+		if (!ready(req, site.pos(), r + 1)) {
+			return Optional.empty();
+		}
+		List<BlockPos> furnaces = new ArrayList<>();
+		for (BlockPos pos : BlockPos.betweenClosed(site.pos().offset(-r, -2, -r), site.pos().offset(r, 3, r))) {
+			if (level.getBlockState(pos).getBlock() instanceof AbstractFurnaceBlock) {
+				furnaces.add(pos.immutable());
 			}
-			for (BlockPos pos : BlockPos.betweenClosed(site.pos().offset(-r, -2, -r), site.pos().offset(r, 3, r))) {
-				BlockState state = level.getBlockState(pos);
-				if (state.getBlock() instanceof AbstractFurnaceBlock && state.getValue(AbstractFurnaceBlock.LIT)) {
-					for (Direction dir : Direction.Plane.HORIZONTAL) {
-						BlockPos spot = pos.relative(dir);
-						if (Terrain.isFloor(level, spot)) {
-							if (!left(req).chest(spot, dir, contents(req)).commit()) {
-								return Optional.empty();
-							}
-							return Optional.of(claim(new Result(spot), site, req.id()));
-						}
-					}
-				}
-			}
-			Optional<BlockPos> furnace = Terrain.floorNear(level, site.pos(), 2, 1, List.of());
-			if (furnace.isEmpty()) {
-				continue;
-			}
+		}
+		// The lit one first; one that burned out (its chunks ticked while the player was there) is still that furnace.
+		furnaces.sort(Comparator.comparing((BlockPos pos) -> !level.getBlockState(pos).getValue(AbstractFurnaceBlock.LIT)));
+		for (BlockPos furnace : furnaces) {
 			for (Direction dir : Direction.Plane.HORIZONTAL) {
-				BlockPos chest = furnace.get().relative(dir);
-				if (!Terrain.isFloor(level, chest)) {
-					continue;
+				BlockPos spot = furnace.relative(dir);
+				if (Terrain.isFloor(level, spot)) {
+					if (!left(req).chest(spot, dir, contents(req)).commit()) {
+						return Optional.empty();
+					}
+					return Optional.of(claim(new Result(spot).anchor("F21/furnace", furnace), site, req.id()));
 				}
-				Build build = left(req);
-				stillBurning(build, furnace.get(), dir.getOpposite());
-				build.chest(chest, dir.getClockWise(), contents(req));
-				if (!build.commit()) {
-					return Optional.empty();
-				}
-				HerobrineState.get(level.getServer()).setFlag(STILL_BURNING, true);
-				return Optional.of(claim(new Result(chest).anchor("F21/furnace", furnace.get()), site, req.id()));
 			}
 		}
-		for (BlockPos column : candidates(req)) {
-			if (!ready(req, column, 3)) {
-				return Optional.empty();
-			}
-			Direction door = Direction.Plane.HORIZONTAL.getRandomDirection(req.random());
-			Optional<House> house = Builders.planHouse(level, column, door, false);
-			if (house.isEmpty()) {
-				continue;
-			}
-			BlockPos center = house.get().center();
-			BlockPos furnace = center.relative(door.getOpposite());
-			BlockPos chest = furnace.relative(door.getClockWise());
-			Build build = left(req);
-			Builders.place(build, house.get().pieces());
-			stillBurning(build, furnace, door);
-			build.chest(chest, door, contents(req));
-			if (build.commit()) {
-				HerobrineState.get(level.getServer()).setFlag(STILL_BURNING, true);
-				Site site = ownSite(req, SiteType.EMPTIED_HOUSE, center, 3, true);
-				return Optional.of(new Result(chest).site(site).anchor("F21/furnace", furnace));
-			}
-		}
-		return Optional.empty();
+		// The furnace is gone or boxed in: the diary still goes in the camp's house, never anywhere else.
+		return chestNear(req, site, r);
 	}
 
-	/** A lit furnace with a little left to smelt; it lights again from its fuel when the player comes near. */
-	private static void stillBurning(Build build, BlockPos furnace, Direction facing) {
-		build.furnace(furnace, Blocks.FURNACE.defaultBlockState().setValue(AbstractFurnaceBlock.FACING, facing).setValue(AbstractFurnaceBlock.LIT, true),
-				List.of(new ItemStack(Items.COBBLESTONE, 8), new ItemStack(Items.COAL, 1)));
+	/**
+	 * The emptied house of world's still-burning camp: the unclaimed EMPTIED_HOUSE nearest the camp's build (the
+	 * ABANDONED_BUILD claimed {@link #CAMP_CLAIM}), within {@link #CAMP_REACH}. World builds one camp per world;
+	 * should there be more (tests), the one nearest {@code near}. Empty until world recorded it.
+	 */
+	static Optional<Site> stillBurningHouse(List<Site> sites, ResourceKey<Level> dimension, BlockPos near) {
+		double reachSqr = (double) CAMP_REACH * CAMP_REACH;
+		return sites.stream()
+				.filter(s -> s.type() == SiteType.ABANDONED_BUILD && s.dimension().equals(dimension) && s.claimedBy().equals(Optional.of(CAMP_CLAIM)))
+				.sorted(Comparator.comparingDouble(s -> Builders.horizontalDistSqr(s.pos(), near)))
+				.flatMap(build -> sites.stream()
+						.filter(s -> s.type() == SiteType.EMPTIED_HOUSE && !s.claimed() && s.dimension().equals(dimension)
+								&& Builders.horizontalDistSqr(s.pos(), build.pos()) <= reachSqr)
+						.min(Comparator.comparingDouble(s -> Builders.horizontalDistSqr(s.pos(), build.pos()))).stream())
+				.findFirst();
+	}
+
+	/** True while F21 waits for world's still-burning camp: the flag is not set, or the camp's house is not recorded yet. */
+	static boolean waitsForStillBurning(boolean flag, List<Site> sites, ResourceKey<Level> dimension) {
+		return !flag || stillBurningHouse(sites, dimension, BlockPos.ZERO).isEmpty();
 	}
 
 	// --- F23 top of a panic tower ---

@@ -46,6 +46,9 @@ final class Placing {
 		boolean enabled(String id);
 
 		Set<String> read();
+
+		/** World built the still-burning camp ({@code lore:still_burning}), where F21 goes (D-004). */
+		boolean stillBurning();
 	}
 
 	/**

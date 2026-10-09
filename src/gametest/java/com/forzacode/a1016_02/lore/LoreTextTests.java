@@ -241,6 +241,7 @@ public class LoreTextTests {
 		BlockPos base;
 		BlockPos spawn;
 		GlobalPos grove;
+		boolean stillBurning;
 
 		TestFacts(GameTestHelper helper) {
 			base = helper.absolutePos(new BlockPos(4, 1, 4));
@@ -290,6 +291,11 @@ public class LoreTextTests {
 		@Override
 		public Set<String> read() {
 			return read;
+		}
+
+		@Override
+		public boolean stillBurning() {
+			return stillBurning;
 		}
 	}
 }
