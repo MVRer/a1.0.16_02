@@ -49,8 +49,13 @@ public final class LivePlacer {
 			@Nullable BoundingBox interior) {
 	}
 
+	/** The glass memorial cross (D-051): left by others, so what it clears is ledgered under {@value #GLASS_CAUSE}. */
+	public static final String GLASS_CROSS = "glass_cross";
+	/** A cause containing {@code :left/}: not his trace (D-055), never undone by Ending D. */
+	public static final String GLASS_CAUSE = "world:left/glass_cross";
+
 	private static final String[] NAMES = {"dead_mountain", "bare_forest", "cut", "tunnel", "stair", "abandoned_build", "ruined_hut",
-		"panic_tower", "emptied_house", "cross", "lone_light", "lone_light_cave", "lone_light_ocean", "ocean_pyramid"};
+		"panic_tower", "emptied_house", "cross", GLASS_CROSS, "lone_light", "lone_light_cave", "lone_light_ocean", "ocean_pyramid"};
 
 	private LivePlacer() {
 	}
@@ -90,8 +95,8 @@ public final class LivePlacer {
 			WorldSites.drain(level.getServer());
 			double d = Math.sqrt(player.distanceToSqr(Vec3.atCenterOf(placement.sitePos())));
 			A1016_02.LOGGER.info("[a1016] world: placed {} at {}", name, placement.sitePos().toShortString());
-			return new Result(true, String.format(Locale.ROOT, "placed %s at %s (%.0f blocks away), site %s", name, placement.sitePos().toShortString(), d,
-					placement.site()));
+			return new Result(true, String.format(Locale.ROOT, "placed %s at %s (%.0f blocks away), site %s%s", name, placement.sitePos().toShortString(), d,
+					placement.site(), name.equals(GLASS_CROSS) ? " (glass memorial, left by others)" : ""));
 		}
 		return new Result(false, "no out-of-view spot for " + name + " (" + tried + " fitting spots, " + inView + " in view); turn around or move");
 	}
@@ -112,11 +117,15 @@ public final class LivePlacer {
 		return spots;
 	}
 
+	private static String causeOf(String name) {
+		return name.equals(GLASS_CROSS) ? GLASS_CAUSE : CAUSE + "/" + name;
+	}
+
 	private static boolean commit(ServerLevel level, Placement placement, String name) {
 		if (placement.edits() != null) {
-			return !placement.edits().isEmpty() && NewScarPlacer.commit(level, placement.edits(), CAUSE + "/" + name);
+			return !placement.edits().isEmpty() && NewScarPlacer.commit(level, placement.edits(), causeOf(name));
 		}
-		TraceBatch batch = Services.traces().batch(level, CAUSE + "/" + name);
+		TraceBatch batch = Services.traces().batch(level, causeOf(name));
 		placement.blueprint().queue(level, batch);
 		return batch.size() > 0 && batch.commit();
 	}
@@ -184,6 +193,9 @@ public final class LivePlacer {
 			case "cross" -> {
 				return wet ? null : of(Builds.cross(x, ground, z, facing, wood, h), SiteType.CROSS);
 			}
+			case GLASS_CROSS -> {
+				return wet ? null : of(Builds.glassCross(x, ground, z, facing, h), SiteType.CROSS);
+			}
 			case "lone_light" -> {
 				return wet ? null : of(Builds.lonelight(Builds.LightKind.GLOWSTONE, x, ground, z), SiteType.LONE_LIGHT);
 			}
@@ -242,7 +254,7 @@ public final class LivePlacer {
 
 	/** For tests and the cards: the kind a debug name builds. */
 	public static @Nullable ScarKind kindOf(String name) {
-		return ScarKind.byId(name.startsWith("lone_light") ? "lone_light" : name).orElse(null);
+		return ScarKind.byId(name.startsWith("lone_light") ? "lone_light" : name.equals(GLASS_CROSS) ? "cross" : name).orElse(null);
 	}
 
 	static boolean inLoadedChunk(ServerLevel level, BlockPos pos) {

@@ -3,6 +3,8 @@ package com.forzacode.a1016_02.world.gen;
 import java.util.ArrayList;
 import java.util.List;
 
+import com.forzacode.a1016_02.world.CrossApi;
+
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.core.Holder;
@@ -24,8 +26,9 @@ import net.minecraft.world.level.block.state.properties.SlabType;
 import net.minecraft.world.level.levelgen.structure.BoundingBox;
 
 /**
- * The small things "others left": huts, the panic tower, crosses, pyramids and lone lights, as blueprints
- * anchored on a ground block. Builds never carry signs or books; all text belongs to lore.
+ * The small builds of the old scars: what "others left" (huts, the panic tower, lone lights, glass memorial
+ * crosses) and his pyramids and crosses, as blueprints anchored on a ground block. Builds never carry signs or
+ * books; all text belongs to lore.
  */
 public final class Builds {
 	/** A blueprint and the place lore should use. */
@@ -251,22 +254,68 @@ public final class Builds {
 		return new Build(bp, shelter, height, new BoundingBox(shelter.getX(), feet, shelter.getZ(), shelter.getX(), feet + 1, shelter.getZ()));
 	}
 
-	/** A cobblestone or wood cross, one block wide, 3 or 4 tall. The site is its base. */
-	public static Build cross(int x, int groundY, int z, Direction facing, Wood wood, long seed) {
-		int height = Hash.between(seed ^ 51, 3, 4);
-		boolean wooden = Hash.unit(seed ^ 52) < 0.4;
-		BlockState stem = wooden ? wood.strippedLog().defaultBlockState() : Blocks.COBBLESTONE.defaultBlockState();
-		BlockState arm = wooden ? wood.strippedLog().defaultBlockState().setValue(RotatedPillarBlock.AXIS, facing.getClockWise().getAxis()) : stem;
-		Blueprint bp = new Blueprint();
-		for (int up = 1; up <= height; up++) {
-			bp.put(new BlockPos(x, groundY + up, z), stem);
+	/** D-050: every cross is 5 or 6 tall: one block above the arms, the arms, and a foot of 3 or 4 below them. */
+	public static final int CROSS_MIN_HEIGHT = 5;
+	public static final int CROSS_MAX_HEIGHT = 6;
+
+	/** A cross's height from a hash, {@value #CROSS_MIN_HEIGHT} or {@value #CROSS_MAX_HEIGHT}. */
+	public static int crossHeight(long h) {
+		return Hash.between(h, CROSS_MIN_HEIGHT, CROSS_MAX_HEIGHT);
+	}
+
+	/**
+	 * The cells of a Latin cross (D-050), one block wide: the stem bottom-up from {@code base} ({@code height} blocks),
+	 * then the two arms, one block each side along {@code armAxis}, on the row one below the top.
+	 */
+	public static List<BlockPos> latinCross(BlockPos base, int height, Direction.Axis armAxis) {
+		List<BlockPos> cells = new ArrayList<>(height + 2);
+		for (int up = 0; up < height; up++) {
+			cells.add(base.above(up));
 		}
-		Direction right = facing.getClockWise();
-		int armY = groundY + height - 1;
-		bp.put(new BlockPos(x + right.getStepX(), armY, z + right.getStepZ()), arm);
-		bp.put(new BlockPos(x - right.getStepX(), armY, z - right.getStepZ()), arm);
+		BlockPos armRow = base.above(height - 2);
+		Direction side = Direction.fromAxisAndDirection(armAxis, Direction.AxisDirection.POSITIVE);
+		cells.add(armRow.relative(side.getOpposite()));
+		cells.add(armRow.relative(side));
+		return cells;
+	}
+
+	/** True if the cell is one of the two arms of {@link #latinCross} (they come after the stem). */
+	public static boolean isArm(List<BlockPos> cells, int index) {
+		return index >= cells.size() - 2;
+	}
+
+	/**
+	 * His cross: cobblestone or stripped wood, a Latin cross 5 or 6 tall (D-050), arms across {@code facing}. A wood
+	 * cross has an upright stem and its arms' logs lie along the arms. The site is its base (size: its height).
+	 */
+	public static Build cross(int x, int groundY, int z, Direction facing, Wood wood, long seed) {
+		int height = crossHeight(seed ^ 51);
+		boolean wooden = Hash.unit(seed ^ 52) < 0.4;
+		Direction.Axis armAxis = facing.getClockWise().getAxis();
+		BlockState stem = wooden ? wood.strippedLog().defaultBlockState().setValue(RotatedPillarBlock.AXIS, Direction.Axis.Y)
+				: Blocks.COBBLESTONE.defaultBlockState();
+		BlockState arm = wooden ? wood.strippedLog().defaultBlockState().setValue(RotatedPillarBlock.AXIS, armAxis) : stem;
+		return crossOf(x, groundY, z, armAxis, height, stem, arm, false);
+	}
+
+	/**
+	 * A glass memorial (D-051): the same Latin cross in glass blocks, left by others (the people on the list). Glass
+	 * never forms by itself, so it can't be his material. The site's size is its height negated
+	 * ({@link CrossApi#siteSize}).
+	 */
+	public static Build glassCross(int x, int groundY, int z, Direction facing, long seed) {
+		BlockState glass = Blocks.GLASS.defaultBlockState();
+		return crossOf(x, groundY, z, facing.getClockWise().getAxis(), crossHeight(seed ^ 51), glass, glass, true);
+	}
+
+	private static Build crossOf(int x, int groundY, int z, Direction.Axis armAxis, int height, BlockState stem, BlockState arm, boolean glass) {
 		BlockPos base = new BlockPos(x, groundY + 1, z);
-		return new Build(bp, base, height, new BoundingBox(base));
+		List<BlockPos> cells = latinCross(base, height, armAxis);
+		Blueprint bp = new Blueprint();
+		for (int n = 0; n < cells.size(); n++) {
+			bp.put(cells.get(n), isArm(cells, n) ? arm : stem);
+		}
+		return new Build(bp, base, CrossApi.siteSize(height, glass), new BoundingBox(base));
 	}
 
 	/**

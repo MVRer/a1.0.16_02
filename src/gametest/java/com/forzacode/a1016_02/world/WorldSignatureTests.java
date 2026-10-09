@@ -52,7 +52,7 @@ import net.minecraft.world.phys.Vec3;
  * They keep the shared world untouched: their own {@link SignatureData}, sites collected in a list, no player. The
  * big builds use the 24x16x24 {@value #BIG} structure.
  */
-public class WorldSignatureTests {
+public class WorldSignatureTests extends WorldCrossTests {
 	static final String BIG = "a1016_02:world/signature";
 
 	private static void fill(GameTestHelper helper, int x0, int y0, int z0, int x1, int y1, int z1, Block block) {
@@ -393,11 +393,18 @@ public class WorldSignatureTests {
 
 	// --- the row of crosses ---
 
+	/**
+	 * The row is his: Latin crosses (D-050) of moved local material only, the ledger shows a move for every block,
+	 * and never glass (D-051), even with glass the nearest block under each old cross and around the fresh one.
+	 */
 	@GameTest(structure = BIG, maxTicks = 60)
 	public void crossRowIsMovedMaterial(GameTestHelper helper) {
 		ServerLevel level = helper.getLevel();
 		fill(helper, 0, 0, 0, 23, 4, 23, Blocks.STONE);
 		fill(helper, 0, 5, 0, 23, 5, 23, Blocks.GRASS_BLOCK);
+		List<BlockPos> glass = List.of(new BlockPos(2, 2, 12), new BlockPos(6, 2, 12), new BlockPos(10, 2, 12), new BlockPos(14, 2, 12),
+				new BlockPos(18, 5, 11), new BlockPos(18, 5, 13), new BlockPos(17, 5, 11));
+		glass.forEach(pos -> helper.setBlock(pos, Blocks.GLASS));
 		WorldConfig config = new WorldConfig();
 		config.crossRowMaterialRadius = 2;
 		config.crossRowMaterialDepth = 4; // stay inside the test area
@@ -405,6 +412,14 @@ public class WorldSignatureTests {
 		CrossRow.Plan plan = CrossRow.plan(level, first, Direction.EAST, 11L, config);
 		helper.assertTrue(plan != null, "no row planned on flat ground: " + CrossRow.lastRefusal());
 		helper.assertTrue(plan.crosses().size() == CrossRow.GONE.size() + 1 && plan.crosses().getLast().fresh(), "not one cross per gone name plus a fresh one");
+		helper.assertTrue(plan.crosses().getLast().base().equals(helper.absolutePos(new BlockPos(18, 6, 12))), "the fresh cross is not where the glass is");
+		for (CrossRow.Cross cross : plan.crosses()) {
+			helper.assertTrue((cross.height() == 5 || cross.height() == 6)
+					&& cross.blocks().equals(Builds.latinCross(cross.base(), cross.height(), Direction.Axis.X)), "not a Latin cross along the row: " + cross);
+		}
+		for (CrossRow.Move move : plan.moves()) {
+			helper.assertFalse(level.getBlockState(move.from()).is(Blocks.GLASS), "the row takes glass from " + move.from().toShortString());
+		}
 		List<SiteRegistry.Site> sites = new ArrayList<>();
 		helper.assertTrue(CrossRow.commit(level, plan, Services.traces(), SiteSink.collecting(sites)), "the out-of-view row was refused");
 
@@ -413,9 +428,16 @@ public class WorldSignatureTests {
 		helper.assertTrue(entries.size() == blocks && entries.stream().allMatch(e -> e.kind() == TraceLedger.Kind.MOVE),
 				entries.size() + " ledger entries for " + blocks + " cross blocks (not all moves)");
 		int groundY = helper.absolutePos(new BlockPos(0, 5, 0)).getY();
+		for (BlockPos pos : glass) {
+			helper.assertBlockPresent(Blocks.GLASS, pos);
+		}
 		for (CrossRow.Cross cross : plan.crosses()) {
+			BlockPos top = cross.base().above(cross.height() - 1);
+			helper.assertTrue(level.getBlockState(top.east()).isAir() && level.getBlockState(top.west()).isAir()
+					&& level.getBlockState(top.above()).isAir(), "the cross at " + cross.base().toShortString() + " is not 1 wide above its arms");
 			for (BlockPos pos : cross.blocks()) {
 				helper.assertFalse(level.getBlockState(pos).isAir(), "a cross lacks " + pos.toShortString());
+				helper.assertFalse(level.getBlockState(pos).is(Blocks.GLASS), "the row has glass at " + pos.toShortString());
 				TraceLedger.Entry move = entries.stream().filter(e -> e.to().equals(Optional.of(pos))).findFirst().orElse(null);
 				helper.assertTrue(move != null, "no move into " + pos.toShortString());
 				BlockPos from = move.pos().pos();

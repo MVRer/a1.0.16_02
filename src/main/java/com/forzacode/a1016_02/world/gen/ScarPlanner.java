@@ -13,6 +13,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import com.forzacode.a1016_02.A1016_02;
 import com.forzacode.a1016_02.core.Habit;
 import com.forzacode.a1016_02.core.SiteType;
+import com.forzacode.a1016_02.world.CrossApi;
 import com.forzacode.a1016_02.world.ScarKind;
 import com.forzacode.a1016_02.world.WorldConfig;
 import com.forzacode.a1016_02.world.WorldData;
@@ -50,6 +51,8 @@ public final class ScarPlanner {
 	public static final int POINT_REACH = 272;
 	private static final int CACHE_LIMIT = 50_000;
 	private static final int SPOTS_PER_CELL = 4;
+	/** Mixed into a hilltop cross's hash for its glass roll. */
+	private static final long GLASS_SALT = 0x61A55L;
 
 	private enum Ground { OCEAN, LAND, HILL, NONE }
 
@@ -521,15 +524,7 @@ public final class ScarPlanner {
 		return switch (kind) {
 			case OCEAN_PYRAMID -> planPyramid(x, z, h);
 			case LONE_LIGHT -> planLight(ground, x, z, h);
-			case CROSS -> {
-				int[] top = climb(x, z, 8, 5);
-				if (terrain.wet(top[0], top[1])) {
-					yield null;
-				}
-				int y = terrain.ground(top[0], top[1]);
-				Builds.Build build = Builds.cross(top[0], y, top[1], horizontal(h), Builds.Wood.of(terrain.surfaceBiome(top[0], top[1])), h);
-				yield plan(kind, build);
-			}
+			case CROSS -> hilltopCross(terrain, x, z, h, glassChance());
 			case ABANDONED_BUILD, EMPTIED_HOUSE -> {
 				int half = kind == ScarKind.ABANDONED_BUILD ? 3 : 4;
 				Holder<Biome> biome = terrain.surfaceBiome(x, z);
@@ -751,9 +746,37 @@ public final class ScarPlanner {
 		return new ScarPlan(ScarKind.DEAD_MOUNTAIN, center, radius, extras, area, sites);
 	}
 
+	// --- the hilltop cross ---
+
+	/** Chance that this world's hilltop cross is a glass memorial instead of his (D-051): higher in Mourner worlds. */
+	public double glassChance() {
+		return config.glassCrossChance(ctx.habits());
+	}
+
+	/**
+	 * A cross alone on the top nearest (x, z): with {@code glassChance} a glass memorial left by others (D-051),
+	 * else his cobblestone or wood cross. Only this cross can be glass; the ones on dead mountains and at tunnel
+	 * mouths are always his. Null on wet ground. Static, so tests can plan on any terrain.
+	 */
+	public static @Nullable ScarPlan hilltopCross(Terrain terrain, int x, int z, long h, double glassChance) {
+		int[] top = climb(terrain, x, z, 8, 5);
+		if (terrain.wet(top[0], top[1])) {
+			return null;
+		}
+		int y = terrain.ground(top[0], top[1]);
+		Builds.Build build = Hash.unit(h ^ GLASS_SALT) < glassChance ? Builds.glassCross(top[0], y, top[1], horizontal(h), h)
+				: Builds.cross(top[0], y, top[1], horizontal(h), Builds.Wood.of(terrain.surfaceBiome(top[0], top[1])), h);
+		return plan(ScarKind.CROSS, build);
+	}
+
+	/** True if the plan is a glass memorial cross (D-051). */
+	public static boolean isGlassMemorial(ScarPlan plan) {
+		return plan.kind() == ScarKind.CROSS && CrossApi.isGlassSize(plan.size());
+	}
+
 	// --- helpers ---
 
-	private ScarPlan plan(ScarKind kind, Builds.Build build) {
+	private static ScarPlan plan(ScarKind kind, Builds.Build build) {
 		ScarPlan.SiteMark mark = new ScarPlan.SiteMark(kind.site(), build.site(), build.size(),
 				kind == ScarKind.ABANDONED_BUILD || kind == ScarKind.EMPTIED_HOUSE || kind == ScarKind.RUINED_HUT ? build.interior() : null, false);
 		return new ScarPlan(kind, build.site(), build.size(), build.blueprint(), null, List.of(mark));
@@ -761,6 +784,10 @@ public final class ScarPlanner {
 
 	/** Walks uphill from (x, z) in steps of {@code stride}, halving it when no neighbour is higher. */
 	int[] climb(int x, int z, int stride, int steps) {
+		return climb(terrain, x, z, stride, steps);
+	}
+
+	private static int[] climb(Terrain terrain, int x, int z, int stride, int steps) {
 		int bx = x;
 		int bz = z;
 		int by = terrain.ground(x, z);

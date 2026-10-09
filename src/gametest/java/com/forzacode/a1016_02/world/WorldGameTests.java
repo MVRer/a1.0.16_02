@@ -27,16 +27,12 @@ import net.fabricmc.fabric.api.gametest.v1.GameTest;
 
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
-import net.minecraft.core.Holder;
-import net.minecraft.core.registries.Registries;
 import net.minecraft.gametest.framework.GameTestHelper;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.Container;
 import net.minecraft.world.entity.EntityTypes;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.level.ChunkPos;
-import net.minecraft.world.level.biome.Biome;
-import net.minecraft.world.level.biome.Biomes;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.DoorBlock;
 import net.minecraft.world.level.block.LeavesBlock;
@@ -247,21 +243,9 @@ public class WorldGameTests extends WorldSignatureTests {
 		});
 	}
 
+	/** The cross's shape is tested in {@link WorldCrossTests#latinCrossCellsForBothHeights}. */
 	@GameTest
-	public void crossAndTowerShapes(GameTestHelper helper) {
-		ServerLevel level = helper.getLevel();
-		BlockPos ground = helper.absolutePos(new BlockPos(2, 0, 2));
-		Builds.Build cross = Builds.cross(ground.getX(), ground.getY(), ground.getZ(), Direction.NORTH, Builds.Wood.OAK, 7L);
-		cross.blueprint().applyAll(level);
-		int height = cross.size();
-		helper.assertTrue(height == 3 || height == 4, "a cross " + height + " tall");
-		for (int up = 1; up <= height; up++) {
-			helper.assertFalse(level.getBlockState(ground.above(up)).isAir(), "a gap in the cross");
-		}
-		BlockPos arms = ground.above(height - 1);
-		helper.assertFalse(level.getBlockState(arms.east()).isAir() || level.getBlockState(arms.west()).isAir(), "the cross has no arms");
-		helper.assertTrue(level.getBlockState(ground.above(height).east()).isAir(), "the cross is wider than one block above its arms");
-
+	public void towerShape(GameTestHelper helper) {
 		BlockPos towerGround = helper.absolutePos(new BlockPos(6, -1, 6));
 		Builds.Build tower = Builds.panicTower(towerGround.getX(), towerGround.getY(), towerGround.getZ(), 3L);
 		helper.assertTrue(tower.size() >= 6 && tower.size() <= 12, "tower height " + tower.size());
@@ -316,43 +300,7 @@ public class WorldGameTests extends WorldSignatureTests {
 		helper.succeed();
 	}
 
-	// --- old scars: planning ---
-
-	/** Terrain for planning tests: ground from a function, stone up to it, plains everywhere. */
-	private static Terrain terrain(ServerLevel level, java.util.function.IntBinaryOperator ground) {
-		Holder<Biome> plains = level.registryAccess().lookupOrThrow(Registries.BIOME).getOrThrow(Biomes.PLAINS);
-		return new Terrain() {
-			@Override
-			public int seaLevel() {
-				return 63;
-			}
-
-			@Override
-			public int minY() {
-				return level.getMinY();
-			}
-
-			@Override
-			public int ground(int x, int z) {
-				return ground.applyAsInt(x, z);
-			}
-
-			@Override
-			public int surface(int x, int z) {
-				return ground.applyAsInt(x, z);
-			}
-
-			@Override
-			public Holder<Biome> biome(int x, int y, int z) {
-				return plains;
-			}
-
-			@Override
-			public BlockState block(int x, int y, int z) {
-				return y <= ground.applyAsInt(x, z) ? Blocks.STONE.defaultBlockState() : Blocks.AIR.defaultBlockState();
-			}
-		};
-	}
+	// --- old scars: planning (terrain() comes from WorldCrossTests) ---
 
 	/**
 	 * Worldgen builds a small scar piece by piece: every chunk it touches must look at its cell, or a piece (and the
@@ -388,7 +336,7 @@ public class WorldGameTests extends WorldSignatureTests {
 		Builds.Build cross = Builds.cross(tunnel.endB().getX() + 2, 70, tunnel.endB().getZ(), Direction.EAST, Builds.Wood.OAK, 1L);
 		cross.blueprint().ops().forEach(tunnel.blueprint()::add);
 		assertBuiltWhole(helper, new ScarPlan(ScarKind.TUNNEL, tunnel.site(), tunnel.size(), tunnel.blueprint(), null,
-				List.of(ScarPlan.SiteMark.of(SiteType.CUT, tunnel.site(), tunnel.size()), ScarPlan.SiteMark.of(SiteType.CROSS, cross.site(), 3))), cell);
+				List.of(ScarPlan.SiteMark.of(SiteType.CUT, tunnel.site(), tunnel.size()), ScarPlan.SiteMark.of(SiteType.CROSS, cross.site(), cross.size()))), cell);
 
 		// A stair from near the top of the world, at the edge of its cell, would reach too far: the planner drops it.
 		Carves.Carve tooLong = Carves.stair(terrain(level, (x, z) -> 300), cell - 16, cell / 2, Direction.EAST, Carves.PathCheck.SOLID);

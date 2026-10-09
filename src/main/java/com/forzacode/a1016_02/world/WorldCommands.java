@@ -6,6 +6,7 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
+import java.util.stream.Stream;
 
 import com.forzacode.a1016_02.core.CommandHooks;
 import com.forzacode.a1016_02.core.Services;
@@ -38,7 +39,8 @@ import net.minecraft.world.phys.Vec3;
 /**
  * Debug commands for the world workstream (op level 2):
  * {@code /a1016 world sites [type] | locate <scar> | place <scar> | newscar now | signature <name> now | signature status |
- * housecopy status | housecopy step <n>}.
+ * housecopy status | housecopy step <n>}. {@code locate glass_cross} and {@code place glass_cross} find and build the
+ * glass memorial cross (D-051), a rare kind of hilltop cross.
  */
 final class WorldCommands {
 	private static final int SITE_LINES = 12;
@@ -56,7 +58,8 @@ final class WorldCommands {
 								.executes(ctx -> sites(ctx, StringArgumentType.getString(ctx, "type")))))
 				.then(Commands.literal("locate")
 						.then(Commands.argument("scar", StringArgumentType.word())
-								.suggests((ctx, b) -> SharedSuggestionProvider.suggest(Arrays.stream(ScarKind.values()).map(ScarKind::id), b))
+								.suggests((ctx, b) -> SharedSuggestionProvider.suggest(
+										Stream.concat(Arrays.stream(ScarKind.values()).map(ScarKind::id), Stream.of(LivePlacer.GLASS_CROSS)), b))
 								.executes(WorldCommands::locate)))
 				.then(Commands.literal("place")
 						.then(Commands.argument("scar", StringArgumentType.word())
@@ -148,15 +151,18 @@ final class WorldCommands {
 				.toList());
 		say(ctx, "[a1016] " + sites.size() + " site(s)" + (filter == null ? "" : " of " + filter) + " in " + level.dimension().identifier());
 		for (SiteRegistry.Site site : sites.subList(0, Math.min(SITE_LINES, sites.size()))) {
-			say(ctx, String.format(Locale.ROOT, "#%d %s %s d=%d size=%d%s", site.id(), site.type(), site.pos().toShortString(),
-					Math.round(horizontal(from, site.pos())), site.size(), site.claimedBy().map(id -> " claimed by " + id).orElse("")));
+			say(ctx, String.format(Locale.ROOT, "#%d %s %s d=%d size=%d%s%s", site.id(), site.type(), site.pos().toShortString(),
+					Math.round(horizontal(from, site.pos())), site.size(), CrossApi.isGlassMemorial(site) ? " (glass memorial)" : "",
+					site.claimedBy().map(id -> " claimed by " + id).orElse("")));
 		}
 		return sites.size();
 	}
 
 	private static int locate(CommandContext<CommandSourceStack> ctx) {
 		String name = StringArgumentType.getString(ctx, "scar");
-		Optional<ScarKind> kind = ScarKind.byId(name);
+		// A glass memorial (D-051) is a rare hilltop cross: locate it among the planned crosses.
+		boolean glassOnly = name.equals(LivePlacer.GLASS_CROSS);
+		Optional<ScarKind> kind = glassOnly ? Optional.of(ScarKind.CROSS) : ScarKind.byId(name);
 		ScarContext context = ScarContext.current();
 		ScarPlanner planner = context == null ? null : context.planner(ctx.getSource().getLevel());
 		if (kind.isEmpty() || planner == null) {
@@ -165,12 +171,16 @@ final class WorldCommands {
 		}
 		Vec3 from = ctx.getSource().getPosition();
 		List<ScarPlan> plans = planner.plansNear(kind.get(), (int) from.x, (int) from.z, LOCATE_RADIUS);
-		say(ctx, String.format(Locale.ROOT, "[a1016] %d planned %s within %d (habits=%s density=%s, weight %.1f)", plans.size(), kind.get().id(),
-				LOCATE_RADIUS, context.habits(), context.density(), planner.weight(kind.get())));
+		if (glassOnly) {
+			plans = plans.stream().filter(ScarPlanner::isGlassMemorial).toList();
+		}
+		String chance = kind.get() == ScarKind.CROSS ? String.format(Locale.ROOT, ", glass chance %.3f", planner.glassChance()) : "";
+		say(ctx, String.format(Locale.ROOT, "[a1016] %d planned %s within %d (habits=%s density=%s, weight %.1f%s)", plans.size(), name,
+				LOCATE_RADIUS, context.habits(), context.density(), planner.weight(kind.get()), chance));
 		for (ScarPlan plan : plans.subList(0, Math.min(5, plans.size()))) {
 			boolean core = kind.get() == ScarKind.OCEAN_PYRAMID && plan.anchor().equals(planner.corePyramid().orElse(null));
 			say(ctx, String.format(Locale.ROOT, "%s %s d=%d size=%d%s", plan.kind().id(), plan.anchor().toShortString(),
-					Math.round(horizontal(from, plan.anchor())), plan.size(), core ? " (core pocket)" : ""));
+					Math.round(horizontal(from, plan.anchor())), plan.size(), core ? " (core pocket)" : ScarPlanner.isGlassMemorial(plan) ? " (glass memorial)" : ""));
 		}
 		BlockPos origin = planner.origin();
 		say(ctx, "spawn search origin " + origin.getX() + " " + origin.getZ());

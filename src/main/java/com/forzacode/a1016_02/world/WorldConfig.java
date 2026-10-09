@@ -2,7 +2,9 @@ package com.forzacode.a1016_02.world;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.Set;
 
+import com.forzacode.a1016_02.core.Habit;
 import com.forzacode.a1016_02.core.ModConfig;
 
 /**
@@ -33,6 +35,12 @@ public final class WorldConfig {
 	public int deadMountainMaxRadius = 96;
 	public int bareForestMinRadius = 48;
 	public int bareForestMaxRadius = 160;
+	/**
+	 * D-051: chance that a hilltop cross is a glass memorial left by others instead of his cross, in Mourner worlds
+	 * (about 1 in 6) and in every other world (about 1 in 15).
+	 */
+	public double glassCrossChanceMourner = 1.0 / 6;
+	public double glassCrossChanceOther = 1.0 / 15;
 
 	// --- live cards ---
 	/** How far from the subject the new-scar placer looks for stale areas, in chunks. */
@@ -147,6 +155,11 @@ public final class WorldConfig {
 
 	public double areaChance(int densityOrdinal) {
 		return pick(areaChance, densityOrdinal, 0.5);
+	}
+
+	/** The glass memorial chance of a hilltop cross in a world with these habits (D-051). */
+	public double glassCrossChance(Set<Habit> habits) {
+		return Math.clamp(habits.contains(Habit.MOURNER) ? glassCrossChanceMourner : glassCrossChanceOther, 0.0, 1.0);
 	}
 
 	private static double pick(double[] values, int index, double fallback) {

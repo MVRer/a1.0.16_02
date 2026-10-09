@@ -24,6 +24,7 @@ import com.forzacode.a1016_02.world.SignatureData;
 import com.forzacode.a1016_02.world.WorldConfig;
 import com.forzacode.a1016_02.world.WorldData;
 import com.forzacode.a1016_02.world.gen.Blueprint;
+import com.forzacode.a1016_02.world.gen.Builds;
 import com.forzacode.a1016_02.world.gen.Hash;
 import com.forzacode.a1016_02.world.gen.Vegetation;
 import com.forzacode.a1016_02.world.live.LiveTerrain;
@@ -107,8 +108,10 @@ public final class CrossRow {
 
 	/**
 	 * Plans the row along {@code along} from {@code firstBase} (the air block above the first cross's ground):
-	 * {@code GONE.size() + 1} crosses {@code crossRowSpacing} apart, arms along the row. Each base sits on its own
-	 * ground within a block of the first. Null if the ground, the room or the material is missing.
+	 * {@code GONE.size() + 1} Latin crosses (D-050, {@link Builds#latinCross}) {@code crossRowSpacing} apart, arms
+	 * along the row. Each base sits on its own ground within a block of the first. Null if the ground, the room or
+	 * the material is missing. Every block is moved local material: never glass, which is only ever left by others
+	 * (D-051) and is not ground the row can take.
 	 */
 	public static @Nullable Plan plan(ServerLevel level, BlockPos firstBase, Direction along, long seed, WorldConfig config) {
 		int count = GONE.size() + 1;
@@ -121,14 +124,8 @@ public final class CrossRow {
 			if (base == null) {
 				return refuse("no ground for cross " + k + " near " + column.toShortString());
 			}
-			int height = Hash.between(Hash.of(seed, k), 3, 4);
-			List<BlockPos> blocks = new ArrayList<>();
-			for (int up = 0; up < height; up++) {
-				blocks.add(base.above(up));
-			}
-			BlockPos armRow = base.above(height - 2);
-			blocks.add(armRow.relative(along.getOpposite()));
-			blocks.add(armRow.relative(along));
+			int height = Builds.crossHeight(Hash.of(seed, k));
+			List<BlockPos> blocks = Builds.latinCross(base, height, along.getAxis());
 			for (BlockPos pos : blocks) {
 				BlockState there = level.getBlockState(pos);
 				if (!there.canBeReplaced() || !there.getFluidState().isEmpty() || level.getBlockEntity(pos) != null || !taken.add(pos)) {
