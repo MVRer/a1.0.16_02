@@ -8,38 +8,32 @@ import java.util.Set;
 
 import com.forzacode.a1016_02.accident.ArmedTrap;
 import com.forzacode.a1016_02.accident.Candidate;
-import com.forzacode.a1016_02.accident.CoreGaps;
 import com.forzacode.a1016_02.accident.RouteBook;
 import com.forzacode.a1016_02.accident.Scan;
 import com.forzacode.a1016_02.accident.TraceOp;
 import com.forzacode.a1016_02.accident.TrapContext;
 import com.forzacode.a1016_02.core.Habit;
+import com.forzacode.a1016_02.core.Services;
 
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.damagesource.DamageTypes;
-import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.SpeleothemBlock;
 import net.minecraft.world.level.block.state.BlockState;
-import net.minecraft.world.level.block.state.properties.BlockStateProperties;
 
 import org.jspecify.annotations.Nullable;
 
 /**
  * Falling dripstone: the block holding a stalactite over your path in a dripstone cave. A live trap: when you walk
- * under it and the block is out of view, it goes and the stalactite falls. Dripstone falls, it happens. The clue:
- * the block above it is gone. Needs the core falling-block opt-in ({@link CoreGaps}); today core would remove the
- * stalactite as a silent dependent instead.
+ * under it and the block is out of view, it goes ({@code TraceService.removeLettingFall}) and the stalactite falls.
+ * Only the taken block must be out of view; the stalactite may be seen falling and shattering (D-038). Dripstone
+ * falls, it happens. The clue: the block above it is gone.
  */
 public final class FallingDripstoneTrap extends BaseTrap {
 	public FallingDripstoneTrap() {
 		super("falling_dripstone", true, "crushed", EnumSet.of(Habit.WATCHER), DamageTypes.FALLING_STALACTITE);
-	}
-
-	@Override
-	public @Nullable String blocked() {
-		return CoreGaps.FALLING_OPT_IN ? null : "needs the core opt-in that lets a stalactite fall";
 	}
 
 	@Override
@@ -77,8 +71,9 @@ public final class FallingDripstoneTrap extends BaseTrap {
 		return found;
 	}
 
+	/** A hanging speleothem (pointed dripstone, tip down), the kind core lets fall. */
 	static boolean stalactite(BlockState state) {
-		return state.is(Blocks.POINTED_DRIPSTONE) && state.getValue(BlockStateProperties.VERTICAL_DIRECTION) == Direction.DOWN;
+		return state.getBlock() instanceof SpeleothemBlock && state.getValue(SpeleothemBlock.TIP_DIRECTION) == Direction.DOWN;
 	}
 
 	@Override
@@ -96,12 +91,8 @@ public final class FallingDripstoneTrap extends BaseTrap {
 		if (feet.getX() != holder.getX() || feet.getZ() != holder.getZ() || feet.getY() > armed.zoneMin().getY() + 2) {
 			return armed;
 		}
-		List<BlockPos> watched = new ArrayList<>();
-		watched.add(holder);
-		for (BlockPos down = holder.below(); stalactite(level.getBlockState(down)); down = down.below()) {
-			watched.add(down);
-		}
-		if (!ctx.view().outOfView(level, watched) || !CoreGaps.removeLettingFall(level, holder, "accident:" + id())) {
+		// D-038: only the holder must be out of view; the stalactite may be seen falling.
+		if (!ctx.view().outOfView(level, List.of(holder)) || !Services.traces().removeLettingFall(level, holder, "accident:" + id())) {
 			return armed;
 		}
 		return armed.set(ctx.now(), window(ctx.cfg()), List.of(holder));

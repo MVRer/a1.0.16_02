@@ -1,7 +1,9 @@
 package com.forzacode.a1016_02.accident;
 
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
+import java.util.Locale;
 
 import com.forzacode.a1016_02.core.CommandHooks;
 import com.forzacode.a1016_02.core.GameClock;
@@ -24,9 +26,10 @@ import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.phys.Vec3;
 
 /**
- * {@code /a1016 accident status | candidates [trap] | arm <trap> | disarm | mark <cause> [record]}. Arming skips the
- * session cap but never the one-at-a-time or out-of-view rules. {@code mark} only previews the cross unless told to
- * {@code record}, because a recorded marked death counts toward Ending B.
+ * {@code /a1016 accident status | candidates [trap] | arm <trap> | disarm | stolen | mark <cause> [record]}. Arming
+ * skips the session cap but never the one-at-a-time or out-of-view rules. {@code stolen} lists the weapon and armor
+ * stacks he took that could turn up on a zombie. {@code mark} only previews the cross unless told to {@code record},
+ * because a recorded marked death counts toward Ending B.
  */
 final class AccidentCommands {
 	/** How far behind the player {@code mark} puts the cross, so it can be built out of view and then looked at. */
@@ -56,6 +59,7 @@ final class AccidentCommands {
 					planner.disarm(server, "disarmed by command");
 					return send(ctx, List.of(was == null ? "[a1016] accident: nothing was armed" : "[a1016] accident: disarmed " + was));
 				}))
+				.then(Commands.literal("stolen").executes(ctx -> send(ctx, stolen(ctx.getSource().getServer()))))
 				.then(Commands.literal("mark")
 						.then(Commands.argument("cause", StringArgumentType.word())
 								.suggests((ctx, builder) -> SharedSuggestionProvider.suggest(DeathCauses.KNOWN, builder))
@@ -73,12 +77,12 @@ final class AccidentCommands {
 		AccidentConfig cfg = AccidentConfig.get();
 		long now = GameClock.playTicks(server);
 		List<String> lines = new ArrayList<>();
-		lines.add(d.armed().map(t -> "[a1016] accident: " + t.type() + " " + t.phase().name().toLowerCase() + " at " + Candidate.at(t.pos()) + " in "
+		lines.add(d.armed().map(t -> "[a1016] accident: " + t.type() + " " + t.phase().name().toLowerCase(Locale.ROOT) + " at " + Candidate.at(t.pos()) + " in "
 				+ t.dimension().identifier().getPath() + ", " + minutes(t.until() - now) + " left").orElse("[a1016] accident: nothing armed"));
 		d.armed().ifPresent(t -> lines.add("  clue: " + t.clue()));
+		d.armed().flatMap(ArmedTrap::worn).ifPresent(w -> lines.add("  worn: " + StolenGear.describe(w.stack()) + " in the " + w.slot().getName() + " slot"));
 		d.restoring().ifPresent(t -> lines.add("  dark corner torches still out at " + Candidate.at(t.pos())));
-		lines.add("  session arms " + planner.sessionArms() + "/" + cfg.maxTrapsPerSession + ", MobTamper " + (Services.mobs() instanceof MobTamper.Stub ? "stub" : "real")
-				+ ", falling opt-in " + (CoreGaps.FALLING_OPT_IN ? "yes" : "no (gravel ceiling and dripstone never spring)"));
+		lines.add("  session arms " + planner.sessionArms() + "/" + cfg.maxTrapsPerSession + ", MobTamper " + (Services.mobs() instanceof MobTamper.Stub ? "stub" : "real"));
 		if (player != null) {
 			int tunnel = 0;
 			int ladder = 0;
@@ -100,6 +104,35 @@ final class AccidentCommands {
 		List<String> history = d.history();
 		for (String line : history.subList(Math.max(0, history.size() - 5), history.size())) {
 			lines.add("  - " + line);
+		}
+		return lines;
+	}
+
+	/**
+	 * The weapon and armor stacks he took that could come back on a zombie (theirs, still where he left them, not
+	 * cursed), the ones picked first on top, and when each is ready ("days later").
+	 */
+	static List<String> stolen(MinecraftServer server) {
+		AccidentConfig cfg = AccidentConfig.get();
+		long day = GameClock.day(server);
+		List<StolenGear.Stolen> all = StolenGear.all(server);
+		List<StolenGear.Stolen> back = new ArrayList<>(all.stream().filter(StolenGear.Stolen::canComeBack).toList());
+		back.sort(Comparator.comparingInt((StolenGear.Stolen st) -> -StolenGear.score(st.stack())).thenComparingLong(st -> st.entry().day()));
+		List<String> lines = new ArrayList<>();
+		lines.add("[a1016] accident: " + back.size() + " stolen weapon and armor stacks could come back (" + all.size() + " in the ledger, day " + day + ")");
+		for (StolenGear.Stolen st : back) {
+			GlobalPos from = st.entry().pos();
+			String where = st.held() ? "he holds it" : "in the chest at " + st.entry().to().map(Candidate::at).orElse("?");
+			String when = st.oldEnough(day, cfg) ? "ready" : "ready on day " + (st.entry().day() + cfg.swordMinDaysAfterTaken);
+			lines.add("  - " + StolenGear.describe(st.stack()) + ": taken on day " + st.entry().day() + " from " + Candidate.at(from.pos()) + " in "
+					+ from.dimension().identifier().getPath() + ", " + where + ", " + when);
+		}
+		long notTheirs = all.stream().filter(st -> !st.fromPlayer()).count();
+		long moved = all.stream().filter(st -> st.fromPlayer() && !st.stillThere()).count();
+		long cursed = all.stream().filter(st -> st.fromPlayer() && st.stillThere() && st.vanishes()).count();
+		if (notTheirs + moved + cursed > 0) {
+			lines.add("  not counted: " + notTheirs + " not from your own containers, " + moved + " no longer where he left them (or not loaded), " + cursed
+					+ " would vanish (curse of vanishing)");
 		}
 		return lines;
 	}

@@ -10,7 +10,6 @@ import com.forzacode.a1016_02.core.TraceBatch;
 
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
-import net.minecraft.world.level.block.state.BlockState;
 
 /** One planned world edit. Every one goes through {@link com.forzacode.a1016_02.core.TraceService}. */
 public sealed interface TraceOp {
@@ -18,10 +17,6 @@ public sealed interface TraceOp {
 	}
 
 	record Move(BlockPos from, BlockPos to) implements TraceOp {
-	}
-
-	/** Puts back something he took earlier (the dark corner's torches). */
-	record Leave(BlockPos pos, BlockState state) implements TraceOp {
 	}
 
 	static TraceOp remove(BlockPos pos) {
@@ -42,7 +37,6 @@ public sealed interface TraceOp {
 					all.add(from);
 					all.add(to);
 				}
-				case Leave(BlockPos pos, BlockState state) -> all.add(pos);
 			}
 		}
 		return all;
@@ -53,7 +47,6 @@ public sealed interface TraceOp {
 		return ops.stream().map(op -> switch (op) {
 			case Remove(BlockPos pos) -> pos;
 			case Move(BlockPos from, BlockPos to) -> from;
-			case Leave(BlockPos pos, BlockState state) -> pos;
 		}).toList();
 	}
 
@@ -70,7 +63,6 @@ public sealed interface TraceOp {
 			switch (op) {
 				case Remove(BlockPos pos) -> batch.remove(pos);
 				case Move(BlockPos from, BlockPos to) -> batch.move(from, to);
-				case Leave(BlockPos pos, BlockState state) -> batch.leave(pos, state);
 			}
 		}
 		return batch.commit();

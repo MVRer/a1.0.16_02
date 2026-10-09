@@ -79,6 +79,32 @@ public final class AccidentConfig {
 	/** A moved mob lands at least this far from the player. */
 	public int mobMinFromPlayer = 8;
 
+	// --- the zombie has your sword (D-032) ---
+	/** The zombie is at least this far from the player (blocks). */
+	public int swordZombieMinDistance = 24;
+	/** And at most this far. */
+	public int swordZombieMaxDistance = 48;
+	/** A stack comes back only this many in-game days after he took it ("days later"). */
+	public int swordMinDaysAfterTaken = 2;
+	/** At most this many stack and zombie pairs are offered per scan. */
+	public int swordMaxCandidates = 24;
+
+	// --- bridges out of the overworld (D-034) ---
+	/** The gap (or the moved enderman) is at least this far from the player (blocks). */
+	public int bridgeMinFromPlayer = 6;
+	/** Lava bridge: lava within this many blocks under the deck. */
+	public int lavaBridgeMaxDrop = 48;
+	/** Lava bridge: at least this many lava sources in the 5x5 where you would land (a lake, not a trickle). */
+	public int lavaLakeMinSources = 9;
+	/** A death counts within this many blocks (horizontally) of the gap or the moved enderman. */
+	public int bridgeZoneRadius = 16;
+	/** A death by the void, a fall or lava counts this long after dropping through the gap (seconds of game time). */
+	public double bridgeFallMemorySeconds = 30;
+	/** Enderman: the one moved comes from at least this far (beyond its 32-block teleport), and none is nearer. */
+	public int endermanMinMove = 33;
+	/** Enderman: looked for this far from the bridge. */
+	public int endermanSearchRadius = 96;
+
 	// --- lures ---
 	public int cairnSearchRadius = 512;
 	public int cairnVisitRadius = 16;
@@ -143,6 +169,11 @@ public final class AccidentConfig {
 	/** Game ticks (burning is game physics, not pacing, so never divided by devFastMode). */
 	public long fireBurnMemoryTicks() {
 		return Math.round(fireBurnMemorySeconds * 20.0);
+	}
+
+	/** Game ticks (falling is game physics, not pacing, so never divided by devFastMode). */
+	public long bridgeFallMemoryTicks() {
+		return Math.round(bridgeFallMemorySeconds * 20.0);
 	}
 
 	/** TIME_SINCE_REST counts game ticks. */

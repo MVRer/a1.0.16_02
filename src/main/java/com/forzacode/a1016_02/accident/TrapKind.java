@@ -103,4 +103,24 @@ public interface TrapKind {
 	default boolean anywhere() {
 		return false;
 	}
+
+	/** True if the trap is over once its mob dies (the zombie wearing the sword, the moved enderman). */
+	default boolean endsWithMob() {
+		return false;
+	}
+
+	/**
+	 * The list word for a death this trap claimed, when the trap knows better than the damage type ("own sword" for
+	 * the zombie that wore it), or null for {@link DeathCauses#word}.
+	 */
+	default @Nullable String word(DamageSource source, ArmedTrap armed) {
+		return null;
+	}
+
+	/**
+	 * Every tick while this trap is set and the subject is in its level: a chance to note what only shows for a moment
+	 * (falling through a bridge's gap).
+	 */
+	default void watch(ServerPlayer subject, ArmedTrap armed, AccidentData data, AccidentConfig cfg, long now) {
+	}
 }

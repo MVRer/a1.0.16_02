@@ -57,6 +57,8 @@ public final class AccidentInit {
 		ServerLivingEntityEvents.AFTER_DEATH.register((entity, source) -> {
 			if (entity instanceof ServerPlayer player) {
 				PLANNER.onDeath(player, source);
+			} else {
+				PLANNER.onMobDied(entity);
 			}
 		});
 	}

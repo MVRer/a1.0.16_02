@@ -8,11 +8,11 @@ import java.util.Set;
 
 import com.forzacode.a1016_02.accident.ArmedTrap;
 import com.forzacode.a1016_02.accident.Candidate;
-import com.forzacode.a1016_02.accident.CoreGaps;
 import com.forzacode.a1016_02.accident.Scan;
 import com.forzacode.a1016_02.accident.TraceOp;
 import com.forzacode.a1016_02.accident.TrapContext;
 import com.forzacode.a1016_02.core.Habit;
+import com.forzacode.a1016_02.core.Services;
 
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
@@ -24,18 +24,14 @@ import org.jspecify.annotations.Nullable;
 
 /**
  * Gravel ceiling: the block under a gravel or sand column above the shaft where you dig up. A live trap: it waits
- * until you are in the shaft, far enough below that the block is out of reach and out of view, then takes it and the
- * column comes down by the game's own rules. You suffocated. The clue: the hollow shaft above, where the gravel came
- * from. Needs the core falling-block opt-in ({@link CoreGaps}).
+ * until you are in the shaft, far enough below that the block is out of reach and out of view, then takes it
+ * ({@code TraceService.removeLettingFall}) and the column comes down by the game's own rules. Only the taken block
+ * must be out of view; the gravel may be seen falling (D-038). You suffocated. The clue: the hollow shaft above, where
+ * the gravel came from.
  */
 public final class GravelCeilingTrap extends BaseTrap {
 	public GravelCeilingTrap() {
 		super("gravel_ceiling", true, "suffocated", EnumSet.of(Habit.CARVER), DamageTypes.IN_WALL, DamageTypes.FALLING_BLOCK);
-	}
-
-	@Override
-	public @Nullable String blocked() {
-		return CoreGaps.FALLING_OPT_IN ? null : "needs the core opt-in that lets a falling block drop";
 	}
 
 	@Override
@@ -88,12 +84,8 @@ public final class GravelCeilingTrap extends BaseTrap {
 		if (!underIt) {
 			return armed;
 		}
-		List<BlockPos> watched = new ArrayList<>();
-		watched.add(support);
-		for (int n = 1; n <= column(level, support); n++) {
-			watched.add(support.above(n));
-		}
-		if (!ctx.view().outOfView(level, watched) || !CoreGaps.removeLettingFall(level, support, "accident:" + id())) {
+		// D-038: only the support must be out of view; the column may be seen coming down.
+		if (!ctx.view().outOfView(level, List.of(support)) || !Services.traces().removeLettingFall(level, support, "accident:" + id())) {
 			return armed;
 		}
 		return armed.set(ctx.now(), window(ctx.cfg()), List.of(support));

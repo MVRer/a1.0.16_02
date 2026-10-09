@@ -3,8 +3,11 @@ package com.forzacode.a1016_02.accident;
 import java.util.List;
 import java.util.Optional;
 
+import com.forzacode.a1016_02.core.TraceLedger;
+
 import net.minecraft.core.BlockPos;
 import net.minecraft.resources.ResourceKey;
+import net.minecraft.world.entity.EquipmentSlot;
 import net.minecraft.world.entity.Mob;
 import net.minecraft.world.level.Level;
 
@@ -26,9 +29,13 @@ public final class Candidate {
 	public final @Nullable BlockPos mobTo;
 	/** The level the edits happen in, when it is not the one searched (the bed while you are in the Nether). */
 	public final @Nullable ResourceKey<Level> dimension;
+	/** The stack he took earlier that goes onto {@link #mob} (the zombie's sword), and the slot it goes into. */
+	public final TraceLedger.@Nullable Entry stolen;
+	public final @Nullable EquipmentSlot slot;
 
 	private Candidate(BlockPos pos, List<TraceOp> ops, BlockPos zoneMin, BlockPos zoneMax, String clue, List<ArmedTrap.SavedBlock> saved,
-			@Nullable BlockPos offPos, @Nullable Mob mob, @Nullable BlockPos mobTo, @Nullable ResourceKey<Level> dimension) {
+			@Nullable BlockPos offPos, @Nullable Mob mob, @Nullable BlockPos mobTo, @Nullable ResourceKey<Level> dimension, TraceLedger.@Nullable Entry stolen,
+			@Nullable EquipmentSlot slot) {
 		this.pos = pos.immutable();
 		this.ops = List.copyOf(ops);
 		this.zoneMin = zoneMin.immutable();
@@ -39,11 +46,13 @@ public final class Candidate {
 		this.mob = mob;
 		this.mobTo = mobTo;
 		this.dimension = dimension;
+		this.stolen = stolen;
+		this.slot = slot;
 	}
 
 	/** A spot with its edits; a death counts inside {@code zoneMin..zoneMax}. */
 	public static Candidate of(BlockPos pos, List<TraceOp> ops, BlockPos zoneMin, BlockPos zoneMax, String clue) {
-		return new Candidate(pos, ops, zoneMin, zoneMax, clue, List.of(), null, null, null, null);
+		return new Candidate(pos, ops, zoneMin, zoneMax, clue, List.of(), null, null, null, null, null, null);
 	}
 
 	/** A death counts within {@code radius} blocks of {@code pos} (and {@code below} blocks under it). */
@@ -52,15 +61,20 @@ public final class Candidate {
 	}
 
 	public Candidate withSaved(List<ArmedTrap.SavedBlock> blocks, @Nullable BlockPos off) {
-		return new Candidate(pos, ops, zoneMin, zoneMax, clue, blocks, off, mob, mobTo, dimension);
+		return new Candidate(pos, ops, zoneMin, zoneMax, clue, blocks, off, mob, mobTo, dimension, stolen, slot);
 	}
 
 	public Candidate withMob(Mob moved, BlockPos to) {
-		return new Candidate(pos, ops, zoneMin, zoneMax, clue, saved, offPos, moved, to, dimension);
+		return new Candidate(pos, ops, zoneMin, zoneMax, clue, saved, offPos, moved, to, dimension, stolen, slot);
+	}
+
+	/** The mob gets this stolen stack in this slot (it stays where it is). */
+	public Candidate withStolen(Mob wearer, TraceLedger.Entry entry, EquipmentSlot into) {
+		return new Candidate(pos, ops, zoneMin, zoneMax, clue, saved, offPos, wearer, wearer.blockPosition(), dimension, entry, into);
 	}
 
 	public Candidate inDimension(ResourceKey<Level> key) {
-		return new Candidate(pos, ops, zoneMin, zoneMax, clue, saved, offPos, mob, mobTo, key);
+		return new Candidate(pos, ops, zoneMin, zoneMax, clue, saved, offPos, mob, mobTo, key, stolen, slot);
 	}
 
 	public Optional<BlockPos> off() {

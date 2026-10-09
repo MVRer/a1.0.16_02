@@ -2,6 +2,7 @@ package com.forzacode.a1016_02.accident;
 
 import java.util.HashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.function.Function;
@@ -23,6 +24,7 @@ import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.damagesource.DamageSource;
 import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.Level;
 
@@ -229,9 +231,28 @@ public final class AccidentPlannerImpl implements AccidentPlanner {
 		}
 		MinecraftServer forServer = player.level().getServer();
 		ArmedTrap trap = data(forServer).armed().orElseThrow();
-		String word = DeathCauses.word(source, Traps.byId(trap.type()).orElse(null));
+		String word = listWord(source, trap);
 		Services.deaths().mark(player, word, player.blockPosition());
 		disarm(forServer, "killed (" + word + ")");
+	}
+
+	/** A mob died: a trap that hangs on that mob (the zombie wearing your sword, the moved enderman) is over. */
+	public void onMobDied(LivingEntity entity) {
+		if (!(entity.level() instanceof ServerLevel level)) {
+			return;
+		}
+		MinecraftServer forServer = level.getServer();
+		ArmedTrap trap = data(forServer).armed().orElse(null);
+		if (trap != null && trap.blames(entity.getUUID()) && Traps.byId(trap.type()).map(TrapKind::endsWithMob).orElse(false)) {
+			disarm(forServer, "its mob died");
+		}
+	}
+
+	/** The list word for a death this trap claimed: the trap's own ("own sword"), else the damage's ("fell"). */
+	static String listWord(DamageSource source, ArmedTrap trap) {
+		TrapKind kind = Traps.byId(trap.type()).orElse(null);
+		String own = kind == null ? null : kind.word(source, trap);
+		return own != null ? own : DeathCauses.word(source, kind);
 	}
 
 	/**
@@ -286,6 +307,7 @@ public final class AccidentPlannerImpl implements AccidentPlanner {
 		}
 		if (subject != null) {
 			watchBurns(subject, d, cfg, now);
+			watchArmed(subject, d, cfg, now);
 		}
 		if (restoreDue || tick % AccidentConfig.cadenceTicks(cfg.plannerTickSeconds) == 0) {
 			restoreDue = false;
@@ -328,7 +350,7 @@ public final class AccidentPlannerImpl implements AccidentPlanner {
 			}
 			if (next != trap) {
 				if (next.phase() != trap.phase()) {
-					String line = "day " + day + ": " + trap.type() + " " + next.phase().name().toLowerCase() + " at " + Candidate.at(next.pos());
+					String line = "day " + day + ": " + trap.type() + " " + next.phase().name().toLowerCase(Locale.ROOT) + " at " + Candidate.at(next.pos());
 					d.log(line);
 					A1016_02.LOGGER.info("[a1016] accident: {}", line);
 				}
@@ -351,6 +373,15 @@ public final class AccidentPlannerImpl implements AccidentPlanner {
 		if (HouseFireTrap.touchesTraced(subject.level(), trap, subject.getBoundingBox(), cfg)) {
 			d.tracedBurnTick = now;
 		}
+	}
+
+	/** Every tick: the armed trap's own watch (a fall through a bridge gap), while it is set and the subject is in its level. */
+	void watchArmed(ServerPlayer subject, AccidentData d, AccidentConfig cfg, long now) {
+		ArmedTrap trap = d.armed().orElse(null);
+		if (trap == null || !trap.isSet() || !subject.level().dimension().equals(trap.dimension())) {
+			return;
+		}
+		Traps.byId(trap.type()).ifPresent(kind -> kind.watch(subject, trap, d, cfg, now));
 	}
 
 	/** Cairn visits and grove leaves, for the lure traps. */

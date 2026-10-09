@@ -12,7 +12,6 @@ import java.util.Set;
 import com.forzacode.a1016_02.accident.AccidentConfig;
 import com.forzacode.a1016_02.accident.ArmedTrap;
 import com.forzacode.a1016_02.accident.Candidate;
-import com.forzacode.a1016_02.accident.CoreGaps;
 import com.forzacode.a1016_02.accident.Scan;
 import com.forzacode.a1016_02.accident.TraceOp;
 import com.forzacode.a1016_02.accident.TrapContext;
@@ -242,50 +241,36 @@ public final class DarkCornerTrap extends BaseTrap {
 	}
 
 	/**
-	 * Puts the torches back, the first one a block off, all out of view. Spots the player filled in the meantime are
-	 * skipped. With core's {@code restoreBlock} each torch comes back from its own ledger entry; until then they are put
-	 * back with {@code leave} and their removals leave the ledger, so Ending D never makes a second torch.
+	 * Puts the torches back, the first one a block off, all out of view, each from its own ledger entry through
+	 * {@code TraceService.restoreBlock}: the ones back in place close their entries, the one a block off becomes a MOVE,
+	 * so Ending D never makes a second torch. Spots the player filled in the meantime, and torches whose removal is no
+	 * longer in the ledger (Ending D took it back), are skipped. True once every torch that can come back is back; a
+	 * partial restore (one refused) is finished on a later call.
 	 */
 	public static boolean restore(ServerLevel level, ViewGate view, ArmedTrap armed) {
-		List<ArmedTrap.SavedBlock> torches = new ArrayList<>();
+		TraceLedger ledger = TraceLedger.get(level.getServer());
+		List<TraceLedger.Entry> entries = new ArrayList<>();
 		List<BlockPos> spots = new ArrayList<>();
 		for (int i = 0; i < armed.saved().size(); i++) {
 			ArmedTrap.SavedBlock torch = armed.saved().get(i);
 			BlockPos spot = i == 0 && armed.offPos().isPresent() ? armed.offPos().get() : torch.pos();
-			if (level.getBlockState(spot).isAir() && torch.state().canSurvive(level, spot)) {
-				torches.add(torch);
+			TraceLedger.Entry entry = removal(ledger, level, torch.pos());
+			if (entry != null && level.getBlockState(spot).isAir() && torch.state().canSurvive(level, spot)) {
+				entries.add(entry);
 				spots.add(spot);
 			}
 		}
-		if (torches.isEmpty()) {
+		if (spots.isEmpty()) {
 			return true;
 		}
 		if (!view.outOfView(level, spots)) {
 			return false;
 		}
-		TraceLedger ledger = TraceLedger.get(level.getServer());
-		if (CoreGaps.RESTORE_BLOCK) {
-			boolean all = true;
-			for (int i = 0; i < torches.size(); i++) {
-				TraceLedger.Entry entry = removal(ledger, level, torches.get(i).pos());
-				all &= entry != null && CoreGaps.restoreBlock(level, entry, spots.get(i));
-			}
-			return all;
+		boolean all = true;
+		for (int i = 0; i < spots.size(); i++) {
+			all &= Services.traces().restoreBlock(level, entries.get(i), spots.get(i));
 		}
-		List<TraceOp> ops = new ArrayList<>();
-		for (int i = 0; i < torches.size(); i++) {
-			ops.add(new TraceOp.Leave(spots.get(i), torches.get(i).state()));
-		}
-		if (!TraceOp.apply(level, view, CAUSE + "/back", ops)) {
-			return false;
-		}
-		for (ArmedTrap.SavedBlock torch : torches) {
-			TraceLedger.Entry entry = removal(ledger, level, torch.pos());
-			if (entry != null) {
-				ledger.remove(entry);
-			}
-		}
-		return true;
+		return all;
 	}
 
 	/** The newest ledgered removal of a dark corner torch at {@code pos}. */

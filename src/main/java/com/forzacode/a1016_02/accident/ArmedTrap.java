@@ -15,6 +15,8 @@ import com.mojang.serialization.codecs.RecordCodecBuilder;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.UUIDUtil;
 import net.minecraft.resources.ResourceKey;
+import net.minecraft.world.entity.EquipmentSlot;
+import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.AABB;
@@ -36,10 +38,11 @@ import net.minecraft.world.phys.AABB;
  * @param clue    what a careful player can find afterward
  * @param step    progress of a stepwise trap (torches out so far)
  * @param lit     the dark corner: the cells the taken torches lit (flood-filled at arm time); only spawns there count
+ * @param worn    the zombie has your sword: the stack he put on the mob, as it was taken, and the slot it is in
  */
 public record ArmedTrap(String type, ResourceKey<Level> dimension, BlockPos pos, List<BlockPos> targets, List<SavedBlock> saved,
 		Optional<BlockPos> offPos, List<UUID> mobs, Phase phase, Window window, BlockPos zoneMin, BlockPos zoneMax, String clue, int step,
-		Set<BlockPos> lit) {
+		Set<BlockPos> lit, Optional<Worn> worn) {
 	public enum Phase { WATCHING, SET, RESTORED }
 
 	/** {@link #clockUntil} when the trap has no game-clock deadline. */
@@ -51,6 +54,14 @@ public record ArmedTrap(String type, ResourceKey<Level> dimension, BlockPos pos,
 				BlockPos.CODEC.fieldOf("pos").forGetter(SavedBlock::pos),
 				BlockState.CODEC.fieldOf("state").forGetter(SavedBlock::state)
 		).apply(i, SavedBlock::new));
+	}
+
+	/** A stack he took from the player and put on a mob, and the equipment slot it went into. */
+	public record Worn(ItemStack stack, EquipmentSlot slot) {
+		public static final Codec<Worn> CODEC = RecordCodecBuilder.create(i -> i.group(
+				ItemStack.CODEC.fieldOf("stack").forGetter(Worn::stack),
+				EquipmentSlot.CODEC.fieldOf("slot").forGetter(Worn::slot)
+		).apply(i, Worn::new));
 	}
 
 	/**
@@ -87,7 +98,8 @@ public record ArmedTrap(String type, ResourceKey<Level> dimension, BlockPos pos,
 			BlockPos.CODEC.fieldOf("zoneMax").forGetter(ArmedTrap::zoneMax),
 			Codec.STRING.optionalFieldOf("clue", "").forGetter(ArmedTrap::clue),
 			Codec.INT.optionalFieldOf("step", 0).forGetter(ArmedTrap::step),
-			PACKED.optionalFieldOf("lit", Set.of()).forGetter(ArmedTrap::lit)
+			PACKED.optionalFieldOf("lit", Set.of()).forGetter(ArmedTrap::lit),
+			Worn.CODEC.optionalFieldOf("worn").forGetter(ArmedTrap::worn)
 	).apply(i, ArmedTrap::new));
 
 	public ArmedTrap {
@@ -100,7 +112,8 @@ public record ArmedTrap(String type, ResourceKey<Level> dimension, BlockPos pos,
 	/** A trap with no lit cells, its window given field by field. */
 	public ArmedTrap(String type, ResourceKey<Level> dimension, BlockPos pos, List<BlockPos> targets, List<SavedBlock> saved, Optional<BlockPos> offPos,
 			List<UUID> mobs, Phase phase, long armedAt, long setAt, long until, long clockUntil, BlockPos zoneMin, BlockPos zoneMax, String clue, int step) {
-		this(type, dimension, pos, targets, saved, offPos, mobs, phase, new Window(armedAt, setAt, until, clockUntil), zoneMin, zoneMax, clue, step, Set.of());
+		this(type, dimension, pos, targets, saved, offPos, mobs, phase, new Window(armedAt, setAt, until, clockUntil), zoneMin, zoneMax, clue, step, Set.of(),
+				Optional.empty());
 	}
 
 	public long armedAt() {
@@ -138,7 +151,7 @@ public record ArmedTrap(String type, ResourceKey<Level> dimension, BlockPos pos,
 
 	private ArmedTrap with(List<BlockPos> newTargets, List<UUID> newMobs, Phase newPhase, Window newWindow, BlockPos min, BlockPos max, int newStep,
 			Set<BlockPos> newLit) {
-		return new ArmedTrap(type, dimension, pos, newTargets, saved, offPos, newMobs, newPhase, newWindow, min, max, clue, newStep, newLit);
+		return new ArmedTrap(type, dimension, pos, newTargets, saved, offPos, newMobs, newPhase, newWindow, min, max, clue, newStep, newLit, worn);
 	}
 
 	/** The world changed now: the death window starts. */
@@ -164,6 +177,10 @@ public record ArmedTrap(String type, ResourceKey<Level> dimension, BlockPos pos,
 
 	public ArmedTrap withLit(Set<BlockPos> cells) {
 		return with(targets, mobs, phase, window, zoneMin, zoneMax, step, cells);
+	}
+
+	public ArmedTrap withWorn(Worn newWorn) {
+		return new ArmedTrap(type, dimension, pos, targets, saved, offPos, mobs, phase, window, zoneMin, zoneMax, clue, step, lit, Optional.of(newWorn));
 	}
 
 	/** Adds a mob whose damage now counts as this trap's. */

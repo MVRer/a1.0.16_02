@@ -9,12 +9,15 @@ import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.tags.BlockTags;
 import net.minecraft.util.Mth;
 import net.minecraft.world.level.Level;
+import net.minecraft.world.phys.Vec3;
 
 import org.jspecify.annotations.Nullable;
 
 /**
  * Learns the subject's routes: every half second it records the cell their feet are in (walking, climbing or
- * swimming, never flying or riding), and fills short gaps between two samples with the open cells in between.
+ * swimming, never flying or riding), and fills short gaps between two samples with the open cells in between. It
+ * also keeps which way they last walked ({@link AccidentData#heading}), so a bridge trap knows what is ahead. Works
+ * the same in every dimension: routes are kept per level.
  */
 public final class RouteSampler {
 	private @Nullable ResourceKey<Level> lastDimension;
@@ -42,6 +45,10 @@ public final class RouteSampler {
 			int dx = feet.getX() - last.getX();
 			int dy = feet.getY() - last.getY();
 			int dz = feet.getZ() - last.getZ();
+			if (dx != 0 || dz != 0) {
+				data.heading = new Vec3(dx, 0, dz).normalize();
+				data.headingDimension = level.dimension();
+			}
 			int steps = Math.max(Math.abs(dx), Math.max(Math.abs(dy), Math.abs(dz)));
 			if (steps > 1 && steps <= cfg.routeInterpolateMax) {
 				for (int i = 1; i < steps; i++) {

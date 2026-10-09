@@ -42,7 +42,10 @@ public class AccidentGameTests extends TrapGameTests {
 	public void realServicesAndCardsAreInstalled(GameTestHelper helper) {
 		helper.assertTrue(Services.accidents() instanceof AccidentPlannerImpl, "the real planner is not installed");
 		helper.assertTrue(Services.deaths() instanceof DeathMarkerImpl, "the real death marker is not installed");
-		helper.assertTrue(Traps.ALL.size() == 17, "13 accidents plus 4 lures, got " + Traps.ALL.size());
+		helper.assertTrue(Traps.ALL.size() == 21, "13 accidents, 4 lures, the zombie's sword and 3 bridges, got " + Traps.ALL.size());
+		for (TrapKind trap : Traps.ALL) {
+			helper.assertTrue(trap.blocked() == null || trap.blocked().contains("MobTamper"), trap.id() + " is still blocked: " + trap.blocked());
+		}
 		for (TrapKind trap : Traps.ALL) {
 			EventCard card = CardRegistry.get(Traps.cardId(trap)).orElse(null);
 			helper.assertTrue(card != null, "no card for " + trap.id());

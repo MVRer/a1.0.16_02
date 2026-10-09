@@ -31,7 +31,7 @@ import net.minecraft.world.level.storage.LevelData;
  * these check the misses that must stay misses: ordinary monsters, fire that is not his, phantoms of nights he had no
  * part in, and debug marks that must not count.
  */
-public class AttributionGameTests {
+public class AttributionGameTests extends BridgeGameTests {
 	/** A base with a dark-able corner at (1..2, 1, 1..2), clearly the farthest from the middle, and five torches well away from it. */
 	private static Yard darkBase(GameTestHelper helper) {
 		Yard y = new Yard(helper);
@@ -44,7 +44,7 @@ public class AttributionGameTests {
 		return y;
 	}
 
-	@GameTest(structure = Yard.STRUCTURE, maxTicks = 60)
+	@GameTest(structure = Yard.STRUCTURE, maxTicks = 60, padding = Yard.BASE_PADDING)
 	public void darkCornerBlamesOnlyMonstersBornInTheDark(GameTestHelper helper) {
 		Yard y = darkBase(helper);
 		ServerLevel level = y.level;
@@ -74,7 +74,7 @@ public class AttributionGameTests {
 		});
 	}
 
-	@GameTest(structure = Yard.STRUCTURE, maxTicks = 60)
+	@GameTest(structure = Yard.STRUCTURE, maxTicks = 60, padding = Yard.BASE_PADDING)
 	public void darkCornerIgnoresSpawnsBehindAWall(GameTestHelper helper) {
 		Yard y = new Yard(helper);
 		ServerLevel level = y.level;
@@ -109,7 +109,7 @@ public class AttributionGameTests {
 		});
 	}
 
-	@GameTest(structure = Yard.STRUCTURE, maxTicks = 60)
+	@GameTest(structure = Yard.STRUCTURE, maxTicks = 60, padding = Yard.BASE_PADDING)
 	public void darkCornerEndsByTheClockAndComesBackWhenLoaded(GameTestHelper helper) {
 		Yard y = darkBase(helper);
 		ServerLevel level = y.level;

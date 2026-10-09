@@ -29,6 +29,11 @@ import org.jspecify.annotations.Nullable;
  */
 final class Yard {
 	static final String STRUCTURE = "a1016_02:accident/yard";
+	/**
+	 * Empty space around a yard whose trap searches the footprint around a base (the dark corner's 24 blocks): without
+	 * it the neighbouring tests, 5 blocks away on the grid, lend it their torches.
+	 */
+	static final int BASE_PADDING = 24;
 
 	/** Nobody is looking anywhere. */
 	static final ViewGate NOBODY = ViewGate.of(List.of());

@@ -14,6 +14,7 @@ import com.forzacode.a1016_02.accident.TrapContext;
 import com.forzacode.a1016_02.core.Habit;
 import com.forzacode.a1016_02.core.Services;
 import com.forzacode.a1016_02.core.SiteRegistry;
+import com.forzacode.a1016_02.core.TraceService;
 
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.GlobalPos;
@@ -28,9 +29,10 @@ import org.jspecify.annotations.Nullable;
 
 /**
  * The lure, restoring his groves: he lets you finish. While you are up placing the last leaves, the blocks under you
- * go. A live trap: it springs while you are placing leaves high up, and takes the pillar you climbed from four blocks
- * under your feet down (nearer than that would be in view). The clue: your pillar ends four blocks under where you
- * stood.
+ * go. A live trap: it springs while you are placing leaves high up and looking up at the canopy, and takes the pillar
+ * you climbed, from the block under your feet to the ground. D-027: blocks strictly under your feet are out of view
+ * while you look 30 degrees or more up, so nothing vanishes on camera. The clue: the whole pillar is gone and not one
+ * block of it dropped.
  */
 public final class GroveLureTrap extends BaseTrap {
 	public GroveLureTrap() {
@@ -58,7 +60,7 @@ public final class GroveLureTrap extends BaseTrap {
 		}
 		int r = grove.size() + 8;
 		found.add(Candidate.of(grove.pos(), List.of(), grove.pos().offset(-r, -24, -r), grove.pos().offset(r, 40, r),
-				"The pillar you climbed in the grove at " + at(grove.pos()) + " ends four blocks under where you stood."));
+				"The pillar you climbed in the grove at " + at(grove.pos()) + " is gone to the ground, and not one block of it dropped."));
 		return found;
 	}
 
@@ -70,7 +72,7 @@ public final class GroveLureTrap extends BaseTrap {
 		if (armed.isSet() || player == null || player.level() != level || !armed.zone(0).contains(player.position()) || !player.onGround()) {
 			return armed;
 		}
-		if (ctx.data().lure.groveLeavesTick < ctx.now() - cfg.groveRecentTicks()) {
+		if (ctx.data().lure.groveLeavesTick < ctx.now() - cfg.groveRecentTicks() || !lookingUp(player)) {
 			return armed;
 		}
 		BlockPos feet = player.blockPosition();
@@ -80,14 +82,19 @@ public final class GroveLureTrap extends BaseTrap {
 			column.add(cursor);
 			cursor = cursor.below();
 		}
-		if (feet.getY() - (cursor.getY() + 1) < cfg.groveMinHeight) {
+		if (feet.getY() - (cursor.getY() + 1) < cfg.groveMinHeight || column.size() < 2) {
 			return armed;
 		}
-		List<BlockPos> take = column.stream().filter(p -> p.getY() <= feet.getY() - 4).toList();
-		if (take.size() < 2 || !TraceOp.apply(level, ctx.view(), "accident:" + id(), take.stream().map(TraceOp::remove).toList())) {
+		// Every block strictly under the feet, in their own column: the view check exempts them only while they look up.
+		if (!TraceOp.apply(level, ctx.view(), "accident:" + id(), column.stream().map(TraceOp::remove).toList())) {
 			return armed;
 		}
-		return armed.set(ctx.now(), window(cfg), take).withZone(new BlockPos(feet.getX() - 3, cursor.getY() - 2, feet.getZ() - 3), feet.offset(3, 3, 3));
+		return armed.set(ctx.now(), window(cfg), column).withZone(new BlockPos(feet.getX() - 3, cursor.getY() - 2, feet.getZ() - 3), feet.offset(3, 3, 3));
+	}
+
+	/** Looking up far enough that the blocks under the feet are out of view (D-027). */
+	static boolean lookingUp(ServerPlayer player) {
+		return player.getViewVector(1.0F).y >= Math.sin(Math.toRadians(TraceService.UNDER_FEET_LOOK_UP_DEGREES));
 	}
 
 	/** A block the player put there to climb: their pillar, ladders, scaffolding. */

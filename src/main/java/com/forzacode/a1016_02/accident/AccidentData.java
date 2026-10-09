@@ -10,9 +10,12 @@ import com.mojang.serialization.Codec;
 import com.mojang.serialization.codecs.RecordCodecBuilder;
 
 import net.minecraft.core.GlobalPos;
+import net.minecraft.resources.ResourceKey;
 import net.minecraft.server.MinecraftServer;
+import net.minecraft.world.level.Level;
 import net.minecraft.world.level.saveddata.SavedData;
 import net.minecraft.world.level.saveddata.SavedDataType;
+import net.minecraft.world.phys.Vec3;
 
 import org.jspecify.annotations.Nullable;
 
@@ -58,6 +61,11 @@ public final class AccidentData extends SavedData {
 	public final LureWatch lure = new LureWatch();
 	/** Not saved: the last play tick the subject touched fire or lava that traces back to the house fire's gap. */
 	public long tracedBurnTick = Long.MIN_VALUE;
+	/** Not saved: the last play tick the subject dropped through the armed bridge gap. */
+	public long gapPassTick = Long.MIN_VALUE;
+	/** Not saved: which way the subject was last walking (horizontal, unit length), and in which level. */
+	public @Nullable Vec3 heading;
+	public @Nullable ResourceKey<Level> headingDimension;
 
 	/** What the planner sees the player doing at the lures this session. */
 	public static final class LureWatch {

@@ -7,6 +7,7 @@ import com.forzacode.a1016_02.accident.trap.DarkCornerTrap;
 import com.forzacode.a1016_02.accident.trap.MovedMobTrap;
 import com.forzacode.a1016_02.core.MobTamper;
 import com.forzacode.a1016_02.core.Services;
+import com.forzacode.a1016_02.core.TraceLedger;
 
 import net.fabricmc.fabric.api.gametest.v1.GameTest;
 
@@ -17,6 +18,7 @@ import net.minecraft.core.registries.Registries;
 import net.minecraft.gametest.framework.GameTestHelper;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.damagesource.DamageSources;
 import net.minecraft.world.entity.EntityTypes;
 import net.minecraft.world.entity.monster.Creeper;
 import net.minecraft.world.item.ItemStack;
@@ -27,11 +29,12 @@ import net.minecraft.world.level.block.BedBlock;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.DoorBlock;
 import net.minecraft.world.level.block.LadderBlock;
+import net.minecraft.world.level.block.SpeleothemBlock;
 import net.minecraft.world.level.block.entity.JukeboxBlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.state.properties.BedPart;
-import net.minecraft.world.level.block.state.properties.BlockStateProperties;
 import net.minecraft.world.level.block.state.properties.DoubleBlockHalf;
+import net.minecraft.world.level.block.state.properties.SpeleothemThickness;
 import net.minecraft.world.level.storage.LevelData;
 import net.minecraft.world.phys.AABB;
 
@@ -107,43 +110,87 @@ public class TrapGameTests extends AttributionGameTests {
 		}
 	}
 
-	@GameTest(structure = Yard.STRUCTURE, maxTicks = 40)
-	public void gravelCeilingWaitsForTheCoreOptIn(GameTestHelper helper) {
+	@GameTest(structure = Yard.STRUCTURE, maxTicks = 100)
+	public void gravelCeilingDropsTheColumnOnThePlayer(GameTestHelper helper) {
 		Yard y = new Yard(helper);
 		gravelShaft(y);
 		BlockPos cap = y.abs(5, 8, 5);
 		Candidate spot = y.taking(Traps.GRAVEL_CEILING.candidates(y.ctx(Yard.NOBODY, y.abs(5, 1, 5))), cap);
-		helper.assertTrue(Traps.GRAVEL_CEILING.live(), "gravel ceiling should be live");
-		// Core refuses taking the cap under gravel; the trap never bypasses that.
+		helper.assertTrue(Traps.GRAVEL_CEILING.live() && Traps.GRAVEL_CEILING.blocked() == null, "gravel ceiling should be a live trap that can spring");
+		helper.assertTrue(spot.clue.contains("shaft"), "the clue is not the hollow shaft: " + spot.clue);
+		// A plain removal would leave gravel hanging; core refuses that. The trap lets it fall instead.
 		helper.assertFalse(Services.traces().remove(y.level, cap, "test:gravel"), "core let gravel lose its support");
 		ArmedTrap armed = AccidentPlannerImpl.build(Traps.GRAVEL_CEILING, y.ctx(Yard.NOBODY, cap), spot, y.cfg);
-		ServerPlayer climber = y.player;
-		climber.snapTo(y.absVec(5.5, 1, 5.5), 0, 0);
-		ArmedTrap after = Traps.GRAVEL_CEILING.tick(y.ctx(Yard.NOBODY, cap, climber), armed);
-		helper.assertTrue(after != null && !after.isSet(), "sprang without the core opt-in");
-		helper.assertTrue(CoreGaps.FALLING_OPT_IN || Traps.GRAVEL_CEILING.blocked() != null, "blocked() must say why while the opt-in is missing");
-		helper.assertBlockPresent(Blocks.STONE, new BlockPos(5, 8, 5));
-		helper.assertBlockPresent(Blocks.GRAVEL, new BlockPos(5, 11, 5));
-		y.succeedWithoutDrops();
+		ServerPlayer digger = y.player;
+		// Not far enough under it yet.
+		y.face(digger, 5.5, 6, 5.5, 0, 0);
+		ArmedTrap high = Traps.GRAVEL_CEILING.tick(y.ctx(Yard.eyesOf(digger), cap, digger), armed);
+		helper.assertTrue(high != null && !high.isSet(), "sprang with the player right under the cap");
+		// At the bottom of the shaft, looking up at the cap: in view, nothing happens.
+		y.face(digger, 5.5, 1, 5.5, 0, -90);
+		ArmedTrap seen = Traps.GRAVEL_CEILING.tick(y.ctx(Yard.eyesOf(digger), cap, digger), armed);
+		helper.assertTrue(seen != null && !seen.isSet() && y.state(5, 8, 5).is(Blocks.STONE), "the cap went while the player looked at it");
+		// Looking at the wall: the cap goes (D-038: only it must be unseen) and the gravel comes down by the game's rules.
+		y.face(digger, 5.5, 1, 5.5, 0, 0);
+		ArmedTrap sprung = Traps.GRAVEL_CEILING.tick(y.ctx(Yard.eyesOf(digger), cap, digger), armed);
+		helper.assertTrue(sprung != null && sprung.isSet() && sprung.targets().equals(List.of(cap)), "did not spring with the cap out of view");
+		helper.assertTrue(y.ledgered("accident:gravel_ceiling", Set.of(cap)) == 1, "the cap is not ledgered");
+		helper.assertTrue(y.ledgered("accident:gravel_ceiling", Set.of(y.abs(5, 9, 5), y.abs(5, 10, 5), y.abs(5, 11, 5))) == 0, "the fallen gravel was ledgered");
+
+		y.data.setArmed(sprung);
+		AccidentPlannerImpl planner = new AccidentPlannerImpl(server -> y.data, Yard.NOBODY);
+		DamageSources damage = y.level.damageSources();
+		helper.assertTrue(planner.causedBy(digger, damage.inWall()), "suffocating under the gravel was not claimed");
+		helper.assertFalse(planner.causedBy(digger, damage.fall()), "a fall was claimed by the gravel ceiling");
+		y.face(digger, 45.5, 1, 5.5, 0, 0);
+		helper.assertFalse(planner.causedBy(digger, damage.inWall()), "suffocating far from the shaft was claimed");
+		helper.succeedWhen(() -> {
+			for (int h = 1; h <= 3; h++) {
+				helper.assertBlockPresent(Blocks.GRAVEL, new BlockPos(5, h, 5));
+			}
+			for (int h = 4; h <= 11; h++) {
+				helper.assertBlockPresent(Blocks.AIR, new BlockPos(5, h, 5));
+			}
+			helper.assertEntityNotPresent(EntityTypes.FALLING_BLOCK);
+			helper.assertEntityNotPresent(EntityTypes.ITEM);
+		});
 	}
 
-	@GameTest(structure = Yard.STRUCTURE, maxTicks = 40)
-	public void fallingDripstoneWaitsForTheCoreOptIn(GameTestHelper helper) {
+	@GameTest(structure = Yard.STRUCTURE, maxTicks = 100)
+	public void fallingDripstoneDropsOnThePath(GameTestHelper helper) {
 		Yard y = new Yard(helper);
 		y.fill(2, 0, 2, 8, 0, 8, Blocks.STONE);
 		y.fill(2, 12, 2, 8, 12, 8, Blocks.STONE);
-		y.set(5, 11, 5, Blocks.POINTED_DRIPSTONE.defaultBlockState().setValue(BlockStateProperties.VERTICAL_DIRECTION, Direction.DOWN));
+		y.set(5, 11, 5, Blocks.POINTED_DRIPSTONE.defaultBlockState().setValue(SpeleothemBlock.TIP_DIRECTION, Direction.DOWN)
+				.setValue(SpeleothemBlock.THICKNESS, SpeleothemThickness.TIP));
 		y.walk(5, 1, 5, RouteBook.UNDER);
 		BlockPos holder = y.abs(5, 12, 5);
 		Candidate spot = y.taking(Traps.FALLING_DRIPSTONE.candidates(y.ctx(Yard.NOBODY, y.abs(5, 1, 5))), holder);
+		helper.assertTrue(Traps.FALLING_DRIPSTONE.blocked() == null && spot.clue.contains("gone"), "the clue: " + spot.clue);
 		ArmedTrap armed = AccidentPlannerImpl.build(Traps.FALLING_DRIPSTONE, y.ctx(Yard.NOBODY, holder), spot, y.cfg);
 		ServerPlayer walker = y.player;
-		walker.snapTo(y.absVec(5.5, 1, 5.5), 0, 0);
-		ArmedTrap after = Traps.FALLING_DRIPSTONE.tick(y.ctx(Yard.NOBODY, holder, walker), armed);
-		helper.assertTrue(after != null && !after.isSet(), "sprang without the core opt-in");
-		helper.assertBlockPresent(Blocks.POINTED_DRIPSTONE, new BlockPos(5, 11, 5));
-		helper.assertBlockPresent(Blocks.STONE, new BlockPos(5, 12, 5));
-		y.succeedWithoutDrops();
+		// Looking up at it: in view.
+		y.face(walker, 5.5, 1, 5.5, 0, -60);
+		ArmedTrap seen = Traps.FALLING_DRIPSTONE.tick(y.ctx(Yard.eyesOf(walker), holder, walker), armed);
+		helper.assertTrue(seen != null && !seen.isSet() && y.state(5, 12, 5).is(Blocks.STONE), "the holder went in view");
+		// Looking ahead along the path: the holder goes and the stalactite falls (it may be seen falling, D-038).
+		y.face(walker, 5.5, 1, 5.5, 0, 0);
+		ArmedTrap sprung = Traps.FALLING_DRIPSTONE.tick(y.ctx(Yard.eyesOf(walker), holder, walker), armed);
+		helper.assertTrue(sprung != null && sprung.isSet() && sprung.targets().equals(List.of(holder)), "did not spring under the player");
+		helper.assertTrue(y.state(5, 12, 5).isAir() && y.ledgered("accident:falling_dripstone", Set.of(holder)) == 1, "the holder is not gone and ledgered");
+		helper.assertTrue(y.ledgered("accident:falling_dripstone/dependent", Set.of(y.abs(5, 11, 5))) == 0, "the stalactite was removed instead of falling");
+
+		y.data.setArmed(sprung);
+		AccidentPlannerImpl planner = new AccidentPlannerImpl(server -> y.data, Yard.NOBODY);
+		DamageSources damage = y.level.damageSources();
+		helper.assertTrue(planner.causedBy(walker, damage.fallingStalactite(walker)), "the stalactite on the path was not claimed");
+		helper.assertFalse(planner.causedBy(walker, damage.fall()), "a fall was claimed by the dripstone");
+		y.face(walker, 40.5, 1, 5.5, 0, 0);
+		helper.assertFalse(planner.causedBy(walker, damage.fallingStalactite(walker)), "a stalactite far from the path was claimed");
+		helper.succeedWhen(() -> {
+			helper.assertBlockPresent(Blocks.AIR, new BlockPos(5, 11, 5));
+			helper.assertEntityNotPresent(EntityTypes.FALLING_BLOCK);
+		});
 	}
 
 	@GameTest(structure = Yard.STRUCTURE, maxTicks = 40)
@@ -217,7 +264,7 @@ public class TrapGameTests extends AttributionGameTests {
 		y.succeedWithoutDrops();
 	}
 
-	@GameTest(structure = Yard.STRUCTURE, maxTicks = 40)
+	@GameTest(structure = Yard.STRUCTURE, maxTicks = 40, padding = Yard.BASE_PADDING)
 	public void darkCornerGoesDarkAndComesBackOneOff(GameTestHelper helper) {
 		Yard y = new Yard(helper);
 		y.fill(0, 0, 0, 16, 0, 16, Blocks.STONE);
@@ -247,9 +294,13 @@ public class TrapGameTests extends AttributionGameTests {
 		for (ArmedTrap.SavedBlock torch : armed.saved().subList(1, armed.saved().size())) {
 			helper.assertTrue(y.level.getBlockState(torch.pos()) == torch.state(), "torch at " + torch.pos() + " not back");
 		}
-		// Every torch that came back left the ledger, the moved one too: Ending D must not make a second torch.
+		// Through core's restoreBlock: the torches back in place closed their entries, the moved one is now a move to
+		// where it stands, so Ending D never makes a second torch.
 		List<BlockPos> all = armed.saved().stream().map(ArmedTrap.SavedBlock::pos).toList();
-		helper.assertTrue(CoreGaps.RESTORE_BLOCK || y.ledgered("accident:dark_corner", Set.copyOf(all)) == 0, "restored torches are still in the ledger");
+		List<TraceLedger.Entry> left = TraceLedger.get(y.level.getServer()).entries().stream()
+				.filter(e -> e.cause().equals("accident:dark_corner") && all.contains(e.pos().pos())).toList();
+		helper.assertTrue(left.size() == 1 && left.getFirst().kind() == TraceLedger.Kind.MOVE && left.getFirst().pos().pos().equals(moved.pos())
+				&& left.getFirst().to().orElseThrow().equals(off), "the ledger after the torches came back: " + left);
 		y.succeedWithoutDrops();
 	}
 
@@ -371,34 +422,48 @@ public class TrapGameTests extends AttributionGameTests {
 	}
 
 	@GameTest(structure = Yard.STRUCTURE, maxTicks = 40)
-	public void groveTakesThePillarWhileYouPlaceLeaves(GameTestHelper helper) {
+	public void groveTakesThePillarUnderYouWhileYouLookUp(GameTestHelper helper) {
 		Yard y = new Yard(helper);
 		y.fill(0, 0, 0, 14, 0, 14, Blocks.STONE);
 		for (int h = 1; h <= 9; h++) {
 			y.placed(5, h, 5, Blocks.DIRT);
 		}
 		ServerPlayer climber = y.player;
-		climber.snapTo(y.absVec(5.5, 10, 5.5), 0, 0);
+		y.face(climber, 5.5, 10, 5.5, 0, -45);
 		climber.setOnGround(true);
 		BlockPos grove = y.abs(5, 1, 5);
 		Candidate watch = Candidate.of(grove, List.of(), grove.offset(-10, -2, -10), grove.offset(10, 20, 10), "test grove");
 		ArmedTrap armed = AccidentPlannerImpl.build(Traps.LURE_GROVE, y.ctx(Yard.NOBODY, grove, climber), watch, y.cfg);
 
-		ArmedTrap idle = Traps.LURE_GROVE.tick(y.ctx(Yard.NOBODY, grove, climber), armed);
+		ArmedTrap idle = Traps.LURE_GROVE.tick(y.ctx(Yard.eyesOf(climber), grove, climber), armed);
 		helper.assertTrue(idle != null && !idle.isSet(), "sprang while no leaves were being placed");
 		y.data.lure.groveLeavesTick = y.now();
+		// Looking ahead, not up: the blocks under the feet count as seen.
+		y.face(climber, 5.5, 10, 5.5, 0, 0);
+		ArmedTrap ahead = Traps.LURE_GROVE.tick(y.ctx(Yard.eyesOf(climber), grove, climber), armed);
+		helper.assertTrue(ahead != null && !ahead.isSet(), "took the pillar while the player looked ahead");
+		// Looking up at the canopy, but someone else sees the pillar: nothing.
+		y.face(climber, 5.5, 10, 5.5, 0, -45);
 		ArmedTrap seen = Traps.LURE_GROVE.tick(y.ctx(y.viewer(10.5, 1, 5.5, 90, -20), grove, climber), armed);
-		helper.assertTrue(seen != null && !seen.isSet(), "took the pillar in view");
-		helper.assertBlockPresent(Blocks.DIRT, new BlockPos(5, 3, 5));
+		helper.assertTrue(seen != null && !seen.isSet(), "took the pillar in view of someone else");
+		helper.assertBlockPresent(Blocks.DIRT, new BlockPos(5, 9, 5));
 
-		ArmedTrap sprung = Traps.LURE_GROVE.tick(y.ctx(Yard.NOBODY, grove, climber), armed);
-		helper.assertTrue(sprung != null && sprung.isSet(), "did not spring while placing the last leaves");
-		for (int h = 1; h <= 6; h++) {
+		// D-027: looking up, the blocks strictly under the feet are out of the climber's own view. All of them go.
+		ArmedTrap sprung = Traps.LURE_GROVE.tick(y.ctx(Yard.eyesOf(climber), grove, climber), armed);
+		helper.assertTrue(sprung != null && sprung.isSet() && sprung.targets().size() == 9, "did not take the pillar under the player looking up");
+		for (int h = 1; h <= 9; h++) {
 			helper.assertBlockNotPresent(Blocks.DIRT, new BlockPos(5, h, 5));
 		}
-		for (int h = 7; h <= 9; h++) {
-			helper.assertBlockPresent(Blocks.DIRT, new BlockPos(5, h, 5));
-		}
+		helper.assertTrue(y.ledgered("accident:lure_grove", Set.copyOf(sprung.targets())) == 9, "the pillar is not ledgered");
+
+		y.data.setArmed(sprung);
+		AccidentPlannerImpl planner = new AccidentPlannerImpl(server -> y.data, Yard.NOBODY);
+		DamageSources damage = y.level.damageSources();
+		y.face(climber, 5.5, 1, 5.5, 0, 0);
+		helper.assertTrue(planner.causedBy(climber, damage.fall()), "the fall from the pillar was not claimed");
+		helper.assertFalse(planner.causedBy(climber, damage.drown()), "drowning was claimed by the grove");
+		y.face(climber, 30.5, 1, 30.5, 0, 0);
+		helper.assertFalse(planner.causedBy(climber, damage.fall()), "a fall away from the pillar was claimed");
 		y.succeedWithoutDrops();
 	}
 
