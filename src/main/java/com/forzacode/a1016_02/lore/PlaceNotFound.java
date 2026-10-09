@@ -2,6 +2,7 @@ package com.forzacode.a1016_02.lore;
 
 import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Comparator;
 import java.util.Deque;
 import java.util.LinkedHashSet;
@@ -111,7 +112,9 @@ final class PlaceNotFound {
 				waiting = true;
 				continue;
 			}
-			Optional<Plan> plan = plan(level, placed.pos(), center, config, pos -> Services.watch().wasPlacedByPlayer(level, pos), random);
+			List<BlockPos> keep = NEVER.stream().map(state.fragmentsPlaced()::get).filter(p -> p != null && p.dimension().equals(placed.dimension()))
+					.map(GlobalPos::pos).toList();
+			Optional<Plan> plan = plan(level, placed.pos(), center, config, pos -> Services.watch().wasPlacedByPlayer(level, pos), keep, random);
 			if (plan.isEmpty() || plan.get().needsBlank() && !canBlank) {
 				// No structure here; or its sign could not be blanked yet (core's editSign): never leave a sign with text.
 				continue;
@@ -137,7 +140,7 @@ final class PlaceNotFound {
 	 * is too little (no structure), too much (not a site), not on the surface, or touches something that must stay.
 	 */
 	static Optional<Plan> plan(ServerLevel level, BlockPos anchor, BlockPos center, LoreConfig config, Predicate<BlockPos> playerPlaced,
-			RandomSource random) {
+			Collection<BlockPos> keep, RandomSource random) {
 		int floorY = anchor.getY() - 1;
 		int seed = config.notFoundSeedRadius;
 		int bound = seed + REACH;
@@ -176,6 +179,13 @@ final class PlaceNotFound {
 			minZ = Math.min(minZ, pos.getZ());
 			maxX = Math.max(maxX, pos.getX());
 			maxZ = Math.max(maxZ, pos.getZ());
+		}
+		// Nothing the Ending D chain (or another place that must stay) needs may be in or right beside it.
+		for (BlockPos kept : keep) {
+			if (kept.getX() >= minX - 1 && kept.getX() <= maxX + 1 && kept.getZ() >= minZ - 1 && kept.getZ() <= maxZ + 1
+					&& kept.getY() >= floorY - 1 && kept.getY() <= floorY + MAX_HEIGHT + 1) {
+				return Optional.empty();
+			}
 		}
 		Optional<BlockPos> sign = chooseSign(level, anchor, built);
 		List<BlockPos> remove = new ArrayList<>();

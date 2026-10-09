@@ -51,6 +51,8 @@ public final class Telling {
 	public static final String BOOK_MARKER = "a1016_02:telling";
 	/** The telling count mirrored into {@code HerobrineState} flags as {@code lore:telling_count=<n>}. */
 	public static final String COUNT_FLAG = "lore:telling_count";
+	/** Set once a copy of the list (F06) burnt in lava or fire. */
+	public static final String LIST_BURNED_FLAG = "lore:list_burned";
 	/** Ledger causes of things others left (lore's builds); they are not his traces. */
 	private static final String LEFT_CAUSE = "lore:left/";
 
@@ -328,6 +330,7 @@ public final class Telling {
 	/** The list burnt: attention drops sharply, and he owes the world a pyramid (at most {@link LoreConfig#listPyramidMax}). */
 	static void listBurned(ServerPlayer thrower, GlobalPos where, TellingData data) {
 		Attention.trigger(thrower.level().getServer(), AttentionTrigger.LIST_IN_LAVA);
+		HerobrineState.get(thrower.level().getServer()).setFlag(LIST_BURNED_FLAG, true);
 		TellingData.Burned burned = data.burned();
 		boolean owed = burned.owed() < LoreConfig.get().listPyramidMax;
 		// A new burn far from the last one looks for its own ocean.

@@ -347,6 +347,13 @@ public class LoreTellingTests extends LorePlacementTests {
 		for (String id : List.of("F07", "F13", "F23", "F25", "F28", "F30")) {
 			helper.assertFalse(PlaceNotFound.mayTake(id), id + " of the Ending D chain may be taken");
 		}
+		BlockPos anchor = helper.absolutePos(new BlockPos(2, 1, 2));
+		helper.assertTrue(PlaceNotFound.plan(level, anchor, anchor, config, p -> false, List.of(), RandomSource.create(3)).isPresent(),
+				"the hut is not a structure");
+		helper.assertTrue(PlaceNotFound.plan(level, anchor, anchor, config, p -> false, List.of(helper.absolutePos(new BlockPos(6, 1, 3))),
+				RandomSource.create(3)).isEmpty(), "a place the Ending D chain needs is right beside it, yet it would go");
+		helper.assertTrue(PlaceNotFound.plan(level, anchor, anchor, config, p -> true, List.of(), RandomSource.create(3)).isEmpty(),
+				"the player's own blocks counted as the site");
 		helper.assertTrue(PlaceNotFound.fire(server, state, data, Services.traces().forced(), editor, true, Optional.empty(), RandomSource.create(3),
 				config) == FireResult.SKIPPED, "place not found before Stop.");
 		helper.assertTrue(helper.getLevel().getBlockState(helper.absolutePos(new BlockPos(1, 1, 1))).is(Blocks.COBBLESTONE), "the hut changed early");
