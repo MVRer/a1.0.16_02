@@ -1,0 +1,25 @@
+{
+	"schemaVersion": 1,
+	"id": "a1016_02_gametest",
+	"version": "1.0.0",
+	"name": "a1.0.16_02 game tests",
+	"environment": "*",
+	"entrypoints": {
+		"fabric-gametest": [
+			"com.forzacode.a1016_02.core.CoreGameTests",
+			"com.forzacode.a1016_02.director.DirectorGameTests",
+			"com.forzacode.a1016_02.entity.EntityGameTests",
+			"com.forzacode.a1016_02.atmosphere.AtmosphereGameTests",
+			"com.forzacode.a1016_02.world.WorldGameTests",
+			"com.forzacode.a1016_02.dig.DigGameTests",
+			"com.forzacode.a1016_02.lore.LoreGameTests",
+			"com.forzacode.a1016_02.accident.AccidentGameTests",
+			"com.forzacode.a1016_02.ending.EndingGameTests",
+			"com.forzacode.a1016_02.debug.DebugGameTests"
+		]
+	},
+	"depends": {
+		"a1016_02": "*",
+		"fabric-gametest-api-v1": "*"
+	}
+}

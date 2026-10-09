@@ -16,6 +16,32 @@ fabricApi {
 		client = true
 		modId = "a1016_02"
 	}
+
+	// Game tests: source set "gametest" (its own fabric.mod.json), task runGameTest, wired into check/build.
+	configureTests {
+		createSourceSet = true
+		modId = "a1016_02_gametest"
+		enableGameTests = true
+		enableClientGameTests = false
+		eula = true
+	}
+}
+
+loom {
+	runs {
+		gameTest {
+			property("fabric-api.gametest.report-file", file("build/gametest-report.xml").absolutePath)
+		}
+
+
+		// ./gradlew runDevClient: opens (or creates) the singleplayer world "a1016_dev". See debug.client.DevWorld.
+		devClient {
+			inherit client
+			configName = "Dev Client"
+			property("a1016_02.devWorld", "a1016_dev")
+			property("a1016_02.devSeed", "-4172144997902289642")
+		}
+	}
 }
 
 dependencies {
