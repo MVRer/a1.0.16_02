@@ -30,12 +30,28 @@ import net.minecraft.world.level.block.state.properties.BedPart;
 
 /** "Under you" network game tests. {@link DigGameTests} extends this so they run under dig's registered entrypoint. */
 public class NetworkGameTests {
+	/**
+	 * Tests run side by side and share the site registry and the loaded chunks, so by default a test network takes
+	 * no chest from anywhere (no site lookup, and the nearby-chunk scan starts beyond any view distance): it could
+	 * grab another test's chest or load another test's site chunk. The chest tests open a thin shell that only
+	 * reaches their own site ({@link #onlyOwnSite}).
+	 */
 	static DigConfig testConfig() {
 		DigConfig config = new DigConfig();
 		config.networkShaftAfterNights = 2;
 		config.networkChestAfterNights = 2;
 		config.networkRadius = 22;
+		config.chestSourceSiteRadius = 0;
+		config.chestSourceMinDistance = 100_000;
 		return config;
+	}
+
+	/** Chest sources only at this site's distance from the base: horizontally within it, in 3D no closer. */
+	static void onlyOwnSite(DigConfig config, BlockPos base, BlockPos site) {
+		double dx = site.getX() - base.getX();
+		double dz = site.getZ() - base.getZ();
+		config.chestSourceSiteRadius = (int) Math.ceil(Math.sqrt(dx * dx + dz * dz));
+		config.chestSourceMinDistance = (int) Math.floor(Math.sqrt(site.distSqr(base)));
 	}
 
 	static NetworkGrower.Ctx ctx(DigGround g, Network net, PosSet explored, DigConfig config, RandomSource random, long night) {
@@ -299,6 +315,7 @@ public class NetworkGameTests {
 		g.level.setBlock(far, Blocks.CHEST.defaultBlockState(), Block.UPDATE_CLIENTS);
 		((Container) g.level.getBlockEntity(far)).setItem(4, new ItemStack(Items.BONE, 5));
 		Services.sites().record(SiteType.ABANDONED_BUILD, g.level.dimension(), far, 4);
+		onlyOwnSite(config, net.base, far);
 
 		helper.assertTrue(NetworkChest.tryFetch(ctx(g, net, new PosSet(), config, RandomSource.create(1L), 0)), "no chest moved in");
 		helper.assertTrue(net.alcove.equals(net.chest) && g.level.getBlockState(net.alcove).is(Blocks.CHEST), "chest not in the dead end");
@@ -321,6 +338,7 @@ public class NetworkGameTests {
 		BlockPos far = new BlockPos(chunk.getMiddleBlockX(), spot.getY(), chunk.getMiddleBlockZ());
 		helper.assertTrue(g.level.getChunkSource().getChunkNow(chunk.x(), chunk.z()) == null, "the far chunk is already loaded");
 		Services.sites().record(SiteType.RUINED_HUT, g.level.dimension(), far, 4);
+		onlyOwnSite(config, net.base, far);
 
 		helper.assertFalse(NetworkChest.tryFetch(ctx(g, net, new PosSet(), config, RandomSource.create(1L), 0)), "a chest from an unloaded chunk");
 		helper.assertTrue(g.level.getChunkSource().getChunkNow(chunk.x(), chunk.z()) == null, "the far chunk was loaded in the same tick");
