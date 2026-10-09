@@ -53,6 +53,76 @@ public final class WorldConfig {
 	/** How often the world watcher runs (seconds; a cost setting, not divided by devFastMode). */
 	public double watchSeconds = 5;
 
+	// --- signatures: still burning (D-004) ---
+	/** The camp stands about 2000 blocks from the subject: this band, in unvisited, unloaded chunks. */
+	public int stillBurningMinBlocks = 1800;
+	public int stillBurningMaxBlocks = 2200;
+	/**
+	 * With F21 rolled, lore looks for F21's emptied house at most 1500 blocks from the base, so the camp stays within
+	 * this distance of the base (and as far from the subject as that allows, at least {@link #stillBurningF21MinBlocks}).
+	 */
+	public int stillBurningF21MaxFromBase = 1450;
+	public int stillBurningF21MinBlocks = 900;
+	/** Ticks the furnace still burns once its chunk ticks (16000 is one coal block). Furnaces only tick while loaded. */
+	public int stillBurningLitTicks = 16000;
+	/** Items waiting in the furnace's input (64 take 12800 ticks to smelt). */
+	public int stillBurningInputCount = 64;
+	/** Camp candidates loaded and checked per search; after that the search waits {@link #stillBurningRetryMinutes}. */
+	public int stillBurningCandidates = 6;
+	/** Real minutes before a failed search tries new candidates (a cost setting). */
+	public double stillBurningRetryMinutes = 5;
+
+	// --- signatures: your house, elsewhere (D-005) ---
+	/** The copy stands this far from the base (blocks). Lore puts F27 in it, within 1500 of the base. */
+	public int houseCopyMinDistance = 220;
+	public int houseCopyMaxDistance = 480;
+	/** Player-placed blocks this far (cube) around the first block and the base make up the first shelter. */
+	public int houseCopyCaptureRadius = 12;
+	/** A first shelter needs at least this many shell blocks to be copied, and is cut at the maximum. */
+	public int houseCopyMinShellBlocks = 12;
+	public int houseCopyMaxShellBlocks = 400;
+	/** In-game days between two steps of moving blocks out of the real house. */
+	public double houseCopyStepDays = 1.0;
+	/** Blocks moved per step: a few at a time. */
+	public int houseCopyMovesPerStepMin = 2;
+	public int houseCopyMovesPerStepMax = 5;
+	/** Ending B's finish takes buried local blocks this far (horizontally) around the copy for what the house cannot give. */
+	public int houseCopyFinishSearch = 12;
+	/** ...and from at most this deep under the copy's lowest block (the holes stay sealed underground). */
+	public int houseCopyFinishDepth = 16;
+	/** Copy site candidates checked per search. */
+	public int houseCopyCandidates = 8;
+	/** Real seconds between tries while a step waits for chunks or is in view (a cost setting). */
+	public double houseCopyRetrySeconds = 30;
+
+	// --- signatures: the row of crosses ---
+	/** The hilltop is this far from the subject (blocks), inside loaded land and out of view. */
+	public int crossRowMinDistance = 48;
+	public int crossRowMaxDistance = 200;
+	/** Blocks between two crosses of the row. */
+	public int crossRowSpacing = 4;
+	/** The row keeps this far from the base (blocks). */
+	public int crossRowBaseClearance = 48;
+	/** Buried blocks for the old crosses are taken at most this far around each cross (blocks). */
+	public int crossRowMaterialRadius = 6;
+	/** ...from 3 (always sealed under ground) down to this many blocks under the cross's ground. */
+	public int crossRowMaterialDepth = 10;
+
+	// --- the lone redstone torch (D-033) ---
+	/** At most this many per world, at least this many in-game days apart. */
+	public int loneTorchMax = 3;
+	public int loneTorchMinDays = 7;
+	/** A cave counts once the player has been away from it this many in-game days. */
+	public int loneTorchAwayDays = 1;
+	/** Never within this distance of the base (blocks). */
+	public int loneTorchBaseRadius = 64;
+	/** "Deep": at least this many blocks under the surface. */
+	public int loneTorchMinDepth = 8;
+	/** Dark floor is looked for this far around a remembered cave spot (blocks). */
+	public int loneTorchSearch = 8;
+	/** Cave spots remembered (the oldest are dropped). */
+	public int caveSpotsMax = 128;
+
 	// --- debug ---
 	/** {@code /a1016 world place}: distance band from the player, in blocks. */
 	public int placeMinDistance = 24;

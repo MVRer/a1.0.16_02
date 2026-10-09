@@ -24,7 +24,8 @@ import org.jspecify.annotations.Nullable;
 /**
  * The world workstream's private state ({@code data/a1016_02/world.dat}): the scar salt, the inside of every
  * build (for the emptied house), the light on the mountain while it burns, what the player did at pyramids and
- * bare groves, and where the one-per-world sites (the hut, the core pyramid) were recorded. Server thread only.
+ * bare groves, where the one-per-world sites (the hut, the core pyramid) were recorded, and the signature moments
+ * ({@link SignatureData}). Server thread only.
  */
 public final class WorldData extends SavedData {
 	/** The inside of a build, keyed by its site position. */
@@ -67,7 +68,8 @@ public final class WorldData extends SavedData {
 			Light.CODEC.optionalFieldOf("light").forGetter(d -> Optional.ofNullable(d.light)),
 			GlobalPos.CODEC.listOf().optionalFieldOf("pyramidsDug", List.of()).forGetter(d -> List.copyOf(d.pyramidsDug)),
 			Grove.CODEC.listOf().optionalFieldOf("groves", List.of()).forGetter(d -> List.copyOf(d.groves.values())),
-			Codec.unboundedMap(Codec.STRING, GlobalPos.CODEC).optionalFieldOf("singles", Map.of()).forGetter(d -> Map.copyOf(d.singles))
+			Codec.unboundedMap(Codec.STRING, GlobalPos.CODEC).optionalFieldOf("singles", Map.of()).forGetter(d -> Map.copyOf(d.singles)),
+			SignatureData.CODEC.optionalFieldOf("signatures").forGetter(d -> Optional.of(d.signatures))
 	).apply(i, WorldData::new));
 
 	static final SavedDataType<WorldData> TYPE = new SavedDataType<>(A1016_02.id("world"), WorldData::new, CODEC, null);
@@ -79,15 +81,21 @@ public final class WorldData extends SavedData {
 	private final Set<GlobalPos> pyramidsDug = new HashSet<>();
 	private final Map<GlobalPos, Grove> groves = new HashMap<>();
 	private final Map<String, GlobalPos> singles = new HashMap<>();
+	private final SignatureData signatures;
 
-	WorldData() {
+	/** A fresh world's data (tests make their own to keep the shared one untouched). */
+	public WorldData() {
 		this.salt = ThreadLocalRandom.current().nextLong();
+		this.signatures = new SignatureData();
+		this.signatures.onChange(this::setDirty);
 		setDirty();
 	}
 
 	private WorldData(long salt, List<Build> builds, List<GlobalPos> emptied, Optional<Light> light, List<GlobalPos> pyramidsDug, List<Grove> groves,
-			Map<String, GlobalPos> singles) {
+			Map<String, GlobalPos> singles, Optional<SignatureData> signatures) {
 		this.salt = salt;
+		this.signatures = signatures.orElseGet(SignatureData::new);
+		this.signatures.onChange(this::setDirty);
 		builds.forEach(b -> this.builds.put(b.site(), b));
 		this.emptied.addAll(emptied);
 		this.light = light.orElse(null);
@@ -98,6 +106,11 @@ public final class WorldData extends SavedData {
 
 	public static WorldData get(MinecraftServer server) {
 		return server.getDataStorage().computeIfAbsent(TYPE);
+	}
+
+	/** The signature moments and lone redstone torches of this world. */
+	public SignatureData signatures() {
+		return signatures;
 	}
 
 	/** Random per world, made on the first load: where old scars are depends on it (with the seed and profile). */
