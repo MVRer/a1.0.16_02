@@ -45,6 +45,8 @@ public final class EndingDInit {
 			LastMinute.resume(server, EndingDState.get(server));
 			LastMinute.syncFlag(server); // never left over from a sequence that is not running
 		});
+		// ending:last_minute never outlives a run: cleared before the save (a resume sets it again), then the rest.
+		ServerLifecycleEvents.SERVER_STOPPING.register(LastMinute::clearFlag);
 		ServerLifecycleEvents.SERVER_STOPPED.register(server -> clear());
 		PlayerBlockBreakEvents.BEFORE.register((level, player, pos, state, blockEntity) -> {
 			if (level instanceof ServerLevel serverLevel && player instanceof ServerPlayer serverPlayer) {

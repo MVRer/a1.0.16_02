@@ -44,7 +44,8 @@ public final class AccidentData extends SavedData {
 			GlobalPos.CODEC.optionalFieldOf("cairn").forGetter(d -> Optional.ofNullable(d.cairn)),
 			Codec.STRING.listOf().optionalFieldOf("history", List.of()).forGetter(d -> d.history),
 			RouteBook.CODEC.optionalFieldOf("routes").forGetter(d -> Optional.of(d.routes)),
-			GlobalPos.CODEC.optionalFieldOf("lastCross").forGetter(d -> Optional.ofNullable(d.lastCross))
+			GlobalPos.CODEC.optionalFieldOf("lastCross").forGetter(d -> Optional.ofNullable(d.lastCross)),
+			GlobalPos.CODEC.optionalFieldOf("lastCrossDeath").forGetter(d -> Optional.ofNullable(d.lastCrossDeath))
 	).apply(i, AccidentData::new));
 
 	public static final SavedDataType<AccidentData> TYPE = new SavedDataType<>(A1016_02.id("accident"), AccidentData::new, CODEC, null);
@@ -56,8 +57,9 @@ public final class AccidentData extends SavedData {
 	private @Nullable GlobalPos cairn;
 	private final List<String> history = new ArrayList<>();
 	private final RouteBook routes;
-	/** The bottom of the post of the newest cross built for a marked death. */
+	/** The bottom of the post of the newest cross built for a marked death, and that death's spot. */
 	private @Nullable GlobalPos lastCross;
+	private @Nullable GlobalPos lastCrossDeath;
 	/** Not saved: true while the subject is at the cairn. */
 	public boolean atCairn;
 	/** Not saved: lure tracking for this session. */
@@ -86,8 +88,9 @@ public final class AccidentData extends SavedData {
 	}
 
 	private AccidentData(Optional<ArmedTrap> armed, Optional<ArmedTrap> restoring, List<PendingCross> crosses, int cairnVisits,
-			Optional<GlobalPos> cairn, List<String> history, Optional<RouteBook> routes, Optional<GlobalPos> lastCross) {
+			Optional<GlobalPos> cairn, List<String> history, Optional<RouteBook> routes, Optional<GlobalPos> lastCross, Optional<GlobalPos> lastCrossDeath) {
 		this.lastCross = lastCross.orElse(null);
+		this.lastCrossDeath = lastCrossDeath.orElse(null);
 		this.armed = armed.orElse(null);
 		this.restoring = restoring.orElse(null);
 		this.crosses.addAll(crosses);
@@ -125,8 +128,15 @@ public final class AccidentData extends SavedData {
 		return Optional.ofNullable(lastCross);
 	}
 
-	public void setLastCross(@Nullable GlobalPos base) {
+	/** The marked death the newest cross stands for. */
+	public Optional<GlobalPos> lastCrossDeath() {
+		return Optional.ofNullable(lastCrossDeath);
+	}
+
+	/** The newest cross: the bottom of its post, and the marked death it stands for (both null: none). */
+	public void setLastCross(@Nullable GlobalPos base, @Nullable GlobalPos death) {
 		lastCross = base;
+		lastCrossDeath = base == null ? null : death;
 		setDirty();
 	}
 

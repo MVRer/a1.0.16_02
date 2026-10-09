@@ -96,6 +96,10 @@ public final class LastMinute {
 	private static boolean waveBuilt;
 	private static @Nullable BlockPos origin;
 	private static boolean running;
+	/** The running sequence is the debug preview: purely cosmetic. */
+	private static boolean previewing;
+	/** The server this class last set {@link #FLAG} on, so {@link #reset} can clear it. */
+	private static @Nullable MinecraftServer flagSetOn;
 	/** The tick being played (the server's tick count; tests step it themselves). */
 	private static long clock;
 
@@ -110,13 +114,20 @@ public final class LastMinute {
 		return running;
 	}
 
+	/** The figure this sequence spawned, if any (tests). */
+	static @Nullable HimEntity figure() {
+		return figure;
+	}
+
 	/**
-	 * Starts the sequence. {@code preview} (debug) plays it at the player's spot without completing the ending: no
-	 * flags, no clock change.
+	 * Starts the sequence. {@code preview} (debug) plays it at the player's spot without completing the ending and
+	 * without changing the world: no flags, no clock change, no figure, nothing given back (the footsteps are sounds
+	 * only); only the client effects (the silence, the fog pulling back, the music). Only a real completion gives back.
 	 */
 	public static void start(MinecraftServer server, EndingDState data, boolean preview, BlockPos at) {
 		reset();
 		running = true;
+		previewing = preview;
 		origin = at.immutable();
 		data.set(EndingDState.PREVIEW, preview);
 		data.setLastMinutePhase(Phase.START.ordinal());
@@ -145,18 +156,34 @@ public final class LastMinute {
 	}
 
 	/**
-	 * {@link #FLAG} is set exactly while the footsteps or the leaf wave run (and never left over from a stopped or
-	 * finished sequence). Called on every phase change, on resume and at server start.
+	 * {@link #FLAG} is set exactly while a real (never a preview) sequence's footsteps or leaf wave run, and never left
+	 * over from a stopped, reset or finished one. Called on every phase change, on resume, at server start and stop.
 	 */
 	static void syncFlag(MinecraftServer server) {
-		boolean giving = running && (phase == Phase.FOOTSTEPS || phase == Phase.LEAVES);
-		HerobrineState state = HerobrineState.get(server);
-		if (state.hasFlag(FLAG) != giving) {
-			state.setFlag(FLAG, giving);
-		}
+		setFlag(server, running && !previewing && (phase == Phase.FOOTSTEPS || phase == Phase.LEAVES));
 	}
 
+	private static void setFlag(MinecraftServer server, boolean on) {
+		HerobrineState state = HerobrineState.get(server);
+		if (state.hasFlag(FLAG) != on) {
+			state.setFlag(FLAG, on);
+		}
+		flagSetOn = on ? server : null;
+	}
+
+	/** Server stopping (before the save): the flag never outlives the sequence; a resume sets it again. */
+	static void clearFlag(MinecraftServer server) {
+		setFlag(server, false);
+	}
+
+	/** Stops the sequence (debug {@code step}, tests, server stop) and clears {@link #FLAG} if it set it. */
 	static void reset() {
+		MinecraftServer flagged = flagSetOn;
+		if (flagged != null && flagged.isRunning()) {
+			setFlag(flagged, false);
+		}
+		flagSetOn = null;
+		previewing = false;
 		running = false;
 		phase = Phase.START;
 		footsteps = new ArrayList<>();
@@ -171,7 +198,7 @@ public final class LastMinute {
 		tries = 0;
 	}
 
-	private static void enter(MinecraftServer server, EndingDState data, Phase next) {
+	static void enter(MinecraftServer server, EndingDState data, Phase next) {
 		phase = next;
 		phaseStart = clock;
 		tries = 0;
@@ -208,8 +235,9 @@ public final class LastMinute {
 				if (!preview && !HerobrineState.get(server).hasFlag(EndingDInit.COMPLETE_FLAG)) {
 					complete(server, data, cfg);
 				}
-				footsteps = footstepEntries(server, data);
-				if (footsteps.isEmpty() && preview) {
+				// The preview gives nothing back: its footsteps are sounds only.
+				footsteps = preview ? new ArrayList<>() : footstepEntries(server, data);
+				if (preview) {
 					for (int i = 1; i <= 10; i++) {
 						previewSteps.add(player.blockPosition().above(i * 2).relative(player.getDirection(), i));
 					}
@@ -247,7 +275,7 @@ public final class LastMinute {
 				if (inPhase < EndingDConfig.ticks(cfg.torchDelaySeconds)) {
 					return;
 				}
-				Optional<TraceLedger.Entry> torch = lostTorch(server, data);
+				Optional<TraceLedger.Entry> torch = preview ? Optional.empty() : lostTorch(server, data);
 				if (torch.isEmpty()) {
 					enter(server, data, Phase.CLIMB);
 					return;
@@ -260,7 +288,7 @@ public final class LastMinute {
 			}
 			case CLIMB -> {
 				boolean out = cameOut(player, data, preview);
-				if (figure == null && (out || nearTop(player, data))) {
+				if (!preview && figure == null && (out || nearTop(player, data))) {
 					trySpawn(player, data, cfg);
 				}
 				if (out || inPhase > EndingDConfig.ticks(cfg.climbTimeoutSeconds)) {
@@ -269,6 +297,10 @@ public final class LastMinute {
 				}
 			}
 			case FIGURE -> {
+				if (preview) {
+					enter(server, data, Phase.LEAVES); // no figure in a preview
+					return;
+				}
 				if (figure == null) {
 					if (now % SPAWN_RETRY_TICKS == 0) {
 						trySpawn(player, data, cfg);
@@ -293,7 +325,11 @@ public final class LastMinute {
 			case LEAVES -> {
 				ServerLevel level = player.level();
 				if (!waveBuilt) {
-					buildWave(level, player);
+					if (preview) {
+						waveBuilt = true; // a preview grows nothing back: the wave is empty
+					} else {
+						buildWave(level, player);
+					}
 				}
 				int budget = Math.max(1, cfg.leafWavePerTick);
 				for (int i = 0; i < wave.size() && budget > 0; ) {

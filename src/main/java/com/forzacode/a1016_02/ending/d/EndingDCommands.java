@@ -24,7 +24,8 @@ import net.minecraft.world.item.Items;
 /**
  * {@code /a1016 ending d ...}: {@code status} (the step and what is missing), {@code step <n>} (jump the chain, for
  * testing; 4 and up build the stair now if it is not there, 8 starts the last minute for real), {@code lastminute}
- * (a preview of the last minute where the player stands: no flags, no clock), {@code undo status}, {@code kit}
+ * (a cosmetic preview of the last minute where the player stands: no flags, no clock, no figure, nothing given back;
+ * only the silence, the fog and the music), {@code undo status}, {@code kit}
  * (marked items for steps 5 to 7: a first block and grove planks, debug only).
  */
 public final class EndingDCommands {

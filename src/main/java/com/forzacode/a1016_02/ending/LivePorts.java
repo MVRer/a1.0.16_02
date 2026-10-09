@@ -38,8 +38,6 @@ import net.minecraft.util.RandomSource;
 final class LivePorts implements EndingPorts {
 	/** The figure's Ending A card ({@code entity.Variant.LAST_ONE}). */
 	static final String LAST_SIGHTING_CARD = "sighting_last_one";
-	/** Accident builds a death's cross at most this far from the death (it looks this far for a base). */
-	static final int CROSS_RADIUS = 10;
 
 	@Override
 	public FireResult lastSighting(ServerPlayer player) {
@@ -168,13 +166,8 @@ final class LivePorts implements EndingPorts {
 
 	@Override
 	public Optional<GlobalPos> findCross(MinecraftServer server, GlobalPos death) {
-		return crossFor(Services.deaths().lastCrossPos(server), death);
-	}
-
-	/** The newest cross, if it stands for this death: in its level, within {@link #CROSS_RADIUS} of the spot. */
-	static Optional<GlobalPos> crossFor(Optional<GlobalPos> lastCross, GlobalPos death) {
-		return lastCross.filter(base -> base.dimension().equals(death.dimension()) && Math.abs(base.pos().getX() - death.pos().getX()) <= CROSS_RADIUS
-				&& Math.abs(base.pos().getY() - death.pos().getY()) <= CROSS_RADIUS && Math.abs(base.pos().getZ() - death.pos().getZ()) <= CROSS_RADIUS);
+		// Accident knows which marked death its newest cross stands for: no search radius of our own.
+		return Services.deaths().crossFor(server, death);
 	}
 
 	@Override

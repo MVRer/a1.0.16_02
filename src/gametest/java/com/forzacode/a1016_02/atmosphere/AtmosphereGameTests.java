@@ -71,16 +71,22 @@ public class AtmosphereGameTests extends TamperGameTests {
 		EventCard fogDrift = CardRegistry.get("fog_drift").orElseThrow();
 		EventCard compass = CardRegistry.get("compass_drift").orElseThrow();
 		boolean had = state.hasFlag(Gates.SILENCE_FOREVER_FLAG);
+		boolean hadC = state.hasFlag(Gates.PATH_C_FLAG);
 		try {
-			state.setFlag(Gates.SILENCE_FOREVER_FLAG, true);
-			helper.assertTrue(Gates.quietForGood(level.getServer()), "the gate does not read director:silence_forever");
-			helper.assertFalse(fogDrift.contextFits(player, level) || compass.contextFits(player, level), "a drift card fits in the silence");
-			helper.assertTrue(fogDrift.fire(new FireContext(player, level, false, true, RandomSource.create(1L))) == FireResult.SKIPPED,
-					"a forced fog drift fired in the silence");
-			helper.assertFalse(ActiveEffects.fogSurge(player, 0.6F, 10, 40, 10), "a fog surge was sent in the silence");
-			helper.assertFalse(ActiveEffects.compassDrift(player, 0, 0, 100, 4), "a compass drift was sent in the silence");
+			for (String flag : List.of(Gates.SILENCE_FOREVER_FLAG, Gates.PATH_C_FLAG)) {
+				state.setFlag(Gates.SILENCE_FOREVER_FLAG, false);
+				state.setFlag(Gates.PATH_C_FLAG, false);
+				state.setFlag(flag, true);
+				helper.assertTrue(Gates.quietForGood(level.getServer()), "the gate does not read " + flag);
+				helper.assertFalse(fogDrift.contextFits(player, level) || compass.contextFits(player, level), "a drift card fits with " + flag);
+				helper.assertTrue(fogDrift.fire(new FireContext(player, level, false, true, RandomSource.create(1L))) == FireResult.SKIPPED,
+						"a forced fog drift fired with " + flag);
+				helper.assertFalse(ActiveEffects.fogSurge(player, 0.6F, 10, 40, 10), "a fog surge was sent with " + flag);
+				helper.assertFalse(ActiveEffects.compassDrift(player, 0, 0, 100, 4), "a compass drift was sent with " + flag);
+			}
 		} finally {
 			state.setFlag(Gates.SILENCE_FOREVER_FLAG, had);
+			state.setFlag(Gates.PATH_C_FLAG, hadC);
 		}
 		helper.succeed();
 	}

@@ -26,6 +26,14 @@ public interface DeathMarker {
 		return Optional.empty();
 	}
 
+	/**
+	 * The bottom of the post of the cross built for the marked death at {@code death} (the exact spot the death was
+	 * marked at), once it stands and while it is the newest cross. Default: none.
+	 */
+	default Optional<GlobalPos> crossFor(MinecraftServer server, GlobalPos death) {
+		return Optional.empty();
+	}
+
 	/** Default: marks nothing, counts what the state holds. */
 	final class Stub implements DeathMarker {
 		@Override

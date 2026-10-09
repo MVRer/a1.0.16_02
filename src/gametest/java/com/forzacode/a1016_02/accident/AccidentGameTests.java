@@ -177,6 +177,10 @@ public class AccidentGameTests extends TrapGameTests {
 		java.util.Optional<net.minecraft.core.GlobalPos> base = unseen.lastCrossPos(level.getServer());
 		helper.assertTrue(base.isPresent() && base.get().dimension().equals(level.dimension()) && base.get().pos().closerThan(death, 10)
 				&& level.getBlockState(base.get().pos()).is(Blocks.DIRT) && base.get().pos().getY() == y.abs(0, 2, 0).getY(), "lastCrossPos: " + base);
+		helper.assertTrue(unseen.crossFor(level.getServer(), net.minecraft.core.GlobalPos.of(level.dimension(), death)).equals(base),
+				"crossFor does not give this death's cross");
+		helper.assertTrue(unseen.crossFor(level.getServer(), net.minecraft.core.GlobalPos.of(level.dimension(), death.east())).isEmpty(),
+				"crossFor gave the cross to another death");
 		y.succeedWithoutDrops();
 	}
 

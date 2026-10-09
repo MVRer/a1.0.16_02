@@ -277,27 +277,59 @@ public class EndingDGameTests extends EndingDDangerTests {
 		EndingDConfig cfg = new EndingDConfig();
 		ServerPlayer player = EndingDSupport.player(helper, new Vec3(8.5, 1, 8.5), 0, 0);
 		HerobrineState.Effects effects = state.effects();
+		// A stair block he took: a real last minute would give it back; the preview must not.
+		helper.setBlock(3, 1, 3, Blocks.OAK_STAIRS);
+		BlockPos stair = helper.absolutePos(new BlockPos(3, 1, 3));
+		helper.assertTrue(Services.traces().forced().remove(level, stair, Stair.LOSS_CAUSE), "setup remove failed");
+		TraceLedger.Entry taken = TraceLedger.get(server).entries().stream()
+				.filter(e -> e.cause().equals(Stair.LOSS_CAUSE) && e.pos().pos().equals(stair)).findFirst().orElseThrow();
 		try {
 			LastMinute.start(server, data, true, player.blockPosition());
 			long now = server.getTickCount();
-			boolean flagWhileGiving = false;
-			boolean flagOtherwise = false;
-			for (int i = 0; i < 2000 && LastMinute.running() && LastMinute.phase() != LastMinute.Phase.CLIMB; i++) {
+			boolean flag = false;
+			for (int i = 0; i < 40000 && LastMinute.running(); i++) {
 				LastMinute.tick(server, data, cfg, player, now + i);
-				boolean giving = LastMinute.phase() == LastMinute.Phase.FOOTSTEPS;
-				flagWhileGiving |= giving && state.hasFlag(LastMinute.FLAG);
-				flagOtherwise |= !giving && state.hasFlag(LastMinute.FLAG);
+				flag |= state.hasFlag(LastMinute.FLAG);
+				helper.assertTrue(LastMinute.figure() == null, "a preview spawned him");
 			}
-			helper.assertTrue(LastMinute.phase().ordinal() >= LastMinute.Phase.CLIMB.ordinal(), "the preview stopped at " + LastMinute.phase());
-			helper.assertTrue(flagWhileGiving && !flagOtherwise && !state.hasFlag(LastMinute.FLAG),
-					"ending:last_minute is not set exactly while the stair comes back (D-048)");
+			helper.assertFalse(LastMinute.running(), "the preview did not finish: " + LastMinute.phase());
+			helper.assertFalse(flag || state.hasFlag(LastMinute.FLAG), "a preview set ending:last_minute");
+			helper.assertTrue(TraceLedger.get(server).entries().contains(taken) && level.getBlockState(stair).isAir(), "a preview gave a stair block back");
 			helper.assertFalse(state.hasFlag(EndingDInit.COMPLETE_FLAG) || state.hasFlag(EndingDInit.SILENCE_FOREVER_FLAG), "a preview completed the ending");
 			helper.assertTrue(data.step() == Step.MAP, "a preview moved the chain");
 		} finally {
 			LastMinute.reset();
-			state.setFlag(LastMinute.FLAG, false);
+			Services.traces().forced().restoreBlock(level, taken, stair);
 			com.forzacode.a1016_02.core.ClientEffects.setDuskFog(server, effects.duskFogLevel());
 			com.forzacode.a1016_02.core.ClientEffects.setMusicOff(server, effects.musicOff());
+		}
+		helper.succeed();
+	}
+
+	/** ending:last_minute is set only while a real give-back runs, and reset (the debug step) always clears it. */
+	@GameTest
+	public void theLastMinuteFlagNeverOutlivesTheGiving(GameTestHelper helper) {
+		MinecraftServer server = helper.getLevel().getServer();
+		HerobrineState state = HerobrineState.get(server);
+		EndingDState data = new EndingDState();
+		boolean had = state.hasFlag(LastMinute.FLAG);
+		try {
+			LastMinute.start(server, data, false, helper.absolutePos(BlockPos.ZERO));
+			helper.assertFalse(state.hasFlag(LastMinute.FLAG), "set before the footsteps");
+			LastMinute.enter(server, data, LastMinute.Phase.FOOTSTEPS);
+			helper.assertTrue(state.hasFlag(LastMinute.FLAG), "not set for the footsteps");
+			LastMinute.enter(server, data, LastMinute.Phase.TORCH);
+			helper.assertFalse(state.hasFlag(LastMinute.FLAG), "still set after the footsteps");
+			LastMinute.enter(server, data, LastMinute.Phase.LEAVES);
+			helper.assertTrue(state.hasFlag(LastMinute.FLAG), "not set for the leaf wave");
+			LastMinute.reset();
+			helper.assertFalse(state.hasFlag(LastMinute.FLAG) || LastMinute.running(), "reset left ending:last_minute set");
+			LastMinute.start(server, data, true, helper.absolutePos(BlockPos.ZERO));
+			LastMinute.enter(server, data, LastMinute.Phase.FOOTSTEPS);
+			helper.assertFalse(state.hasFlag(LastMinute.FLAG), "a preview set the flag");
+		} finally {
+			LastMinute.reset();
+			state.setFlag(LastMinute.FLAG, had);
 		}
 		helper.succeed();
 	}

@@ -80,6 +80,12 @@ public final class DeathMarkerImpl implements DeathMarker {
 		return data.apply(server).lastCross();
 	}
 
+	@Override
+	public Optional<GlobalPos> crossFor(MinecraftServer server, GlobalPos death) {
+		AccidentData d = data.apply(server);
+		return d.lastCrossDeath().filter(death::equals).flatMap(at -> d.lastCross());
+	}
+
 	/** Tries every waiting cross. */
 	public void tick(MinecraftServer server) {
 		for (AccidentData.PendingCross cross : List.copyOf(data.apply(server).crosses())) {
@@ -120,7 +126,7 @@ public final class DeathMarkerImpl implements DeathMarker {
 		}
 		d.replaceCross(cross, null);
 		if (HerobrineState.get(server).markedDeaths().stream().anyMatch(m -> m.pos().equals(cross.pos()))) {
-			d.setLastCross(GlobalPos.of(level.dimension(), plan.base().immutable())); // a debug preview is not a marked death
+			d.setLastCross(GlobalPos.of(level.dimension(), plan.base().immutable()), cross.pos()); // a debug preview is not a marked death
 		}
 		d.log("cross (" + cross.cause() + ") stands at " + Candidate.at(plan.base()));
 		A1016_02.LOGGER.info("[a1016] cross for '{}' built at {}", cross.cause(), plan.base());

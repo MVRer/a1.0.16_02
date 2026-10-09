@@ -47,10 +47,13 @@ public final class Gates {
 	 * (and A's last stretch). While it is set no fog surge or drift ever happens, not even a forced one.
 	 */
 	public static final String SILENCE_FOREVER_FLAG = "director:silence_forever";
+	/** The ending's path mirror for Ending C: quiet for good too, whatever the director's flags say. */
+	public static final String PATH_C_FLAG = "ending:path=C";
 
-	/** True while the world is quiet for good ({@link #SILENCE_FOREVER_FLAG}): no surge, no drift. */
+	/** True while the world is quiet for good ({@link #SILENCE_FOREVER_FLAG}, or the path is C): no surge, no drift. */
 	public static boolean quietForGood(MinecraftServer server) {
-		return HerobrineState.get(server).hasFlag(SILENCE_FOREVER_FLAG);
+		HerobrineState state = HerobrineState.get(server);
+		return state.hasFlag(SILENCE_FOREVER_FLAG) || state.hasFlag(PATH_C_FLAG);
 	}
 
 	/** Distant cave sound: alone and still. */

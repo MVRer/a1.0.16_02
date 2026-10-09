@@ -234,25 +234,22 @@ public class EndingWorldTests extends EndingBeatTests {
 	@GameTest
 	public void theCrossComesFromTheDeathMarker(GameTestHelper helper) {
 		MinecraftServer server = helper.getLevel().getServer();
-		GlobalPos base = GlobalPos.of(Level.OVERWORLD, new BlockPos(5, 1, 5));
-		helper.assertTrue(LivePorts.crossFor(Optional.of(base), GlobalPos.of(Level.OVERWORLD, new BlockPos(5, 1, 7))).equals(Optional.of(base)),
-				"the cross of this death was not found");
-		helper.assertTrue(LivePorts.crossFor(Optional.of(base), GlobalPos.of(Level.OVERWORLD, new BlockPos(60, 1, 60))).isEmpty(),
-				"a cross was found far from the death");
-		helper.assertTrue(LivePorts.crossFor(Optional.of(base), GlobalPos.of(Level.NETHER, new BlockPos(5, 1, 7))).isEmpty(),
-				"a cross was found in another dimension");
-		helper.assertTrue(LivePorts.crossFor(Optional.empty(), base).isEmpty(), "a cross was found where none stands");
-		// Live: the real port reads the real death marker.
 		com.forzacode.a1016_02.accident.AccidentData accident = com.forzacode.a1016_02.accident.AccidentData.get(server);
-		Optional<GlobalPos> old = accident.lastCross();
-		GlobalPos here = GlobalPos.of(helper.getLevel().dimension(), helper.absolutePos(new BlockPos(1, 1, 1)));
+		Optional<GlobalPos> oldBase = accident.lastCross();
+		Optional<GlobalPos> oldDeath = accident.lastCrossDeath();
+		GlobalPos base = GlobalPos.of(helper.getLevel().dimension(), helper.absolutePos(new BlockPos(1, 1, 1)));
+		GlobalPos death = GlobalPos.of(base.dimension(), base.pos().offset(2, 0, 3));
 		try {
-			accident.setLastCross(here);
-			helper.assertTrue(Services.deaths().lastCrossPos(server).equals(Optional.of(here)), "DeathMarker.lastCrossPos does not give the newest cross");
-			helper.assertTrue(EndingPorts.LIVE.findCross(server, GlobalPos.of(here.dimension(), here.pos().offset(2, 0, 3))).equals(Optional.of(here)),
-					"the live port did not use the death marker");
+			accident.setLastCross(null, null);
+			helper.assertTrue(EndingPorts.LIVE.findCross(server, death).isEmpty(), "a cross was found where none stands");
+			accident.setLastCross(base, death);
+			helper.assertTrue(Services.deaths().lastCrossPos(server).equals(Optional.of(base)), "DeathMarker.lastCrossPos does not give the newest cross");
+			helper.assertTrue(EndingPorts.LIVE.findCross(server, death).equals(Optional.of(base)), "the live port did not use the death marker");
+			helper.assertTrue(EndingPorts.LIVE.findCross(server, GlobalPos.of(base.dimension(), death.pos().offset(1, 0, 0))).isEmpty(),
+					"another death's cross was taken for this one");
+			helper.assertTrue(EndingPorts.LIVE.findCross(server, GlobalPos.of(Level.NETHER, death.pos())).isEmpty(), "a cross was found in another dimension");
 		} finally {
-			accident.setLastCross(old.orElse(null));
+			accident.setLastCross(oldBase.orElse(null), oldDeath.orElse(null));
 		}
 		helper.succeed();
 	}
