@@ -1,5 +1,9 @@
 package com.forzacode.a1016_02.entity;
 
+import java.util.List;
+
+import com.forzacode.a1016_02.core.TraceService;
+
 import net.fabricmc.fabric.api.gametest.v1.GameTest;
 
 import net.minecraft.gametest.framework.GameTestHelper;
@@ -98,6 +102,37 @@ public class EntityGameTests extends SightingRuleGameTests {
 			cow.discard();
 			helper.succeed();
 		});
+	}
+
+	@GameTest
+	public void aFigureInViewIsNeverRemoved(GameTestHelper helper) {
+		floor(helper);
+		ServerLevel level = helper.getLevel();
+		HimEntity him = figure(helper, Variant.RIDGE, new Vec3(4.5, 1.0, 6.5));
+		Player watcher = helper.makeMockServerPlayer(GameType.SURVIVAL);
+		watcher.snapTo(him.position().add(0.0, 0.0, -6.0), 0.0F, 0.0F); // 6 blocks north (inside the test), looking south at him
+		Player turned = helper.makeMockServerPlayer(GameType.SURVIVAL);
+		turned.snapTo(him.position().add(0.0, 0.0, -6.0), 180.0F, 0.0F); // same place, looking away
+		turned.setYHeadRot(180.0F); // the view vector follows the head
+		Watchers watching = new Watchers(List.of(new Watchers.Watcher(TraceService.Viewer.of(watcher, 8), 128.0)));
+		Watchers lookingAway = new Watchers(List.of(new Watchers.Watcher(TraceService.Viewer.of(turned, 8), 128.0)));
+		Watchers watchingFromPastRender = new Watchers(List.of(new Watchers.Watcher(TraceService.Viewer.of(watcher, 8), 4.0)));
+
+		helper.assertTrue(watching.sees(level, him.viewBox()), "the watcher does not see him: " + watcher.position() + " look " + watcher.getViewVector(1.0F)
+				+ " him " + him.position() + " alive " + him.isAlive());
+		helper.assertFalse(lookingAway.sees(level, him.viewBox()), "the turned watcher sees him");
+		// Edge of the ticking range (his tick) and the frozen sweep: never while he is in view...
+		helper.assertFalse(him.leavesAtTickingEdge(false, watching), "removed at the ticking edge while in view");
+		helper.assertFalse(FigureApi.sweepRemoves(him, false, watching), "swept while frozen in view");
+		helper.assertFalse(watching.beyondRenderDistance(him.position()), "in view counts as past the render distance");
+		// ...but once out of view, or past the watcher's full render distance, he goes.
+		helper.assertTrue(him.leavesAtTickingEdge(false, lookingAway) && FigureApi.sweepRemoves(him, false, lookingAway), "kept out of view");
+		helper.assertTrue(FigureApi.sweepRemoves(him, false, watchingFromPastRender), "kept past the full render distance");
+		// A ticking figure is never swept, and still ticking near the edge he stays.
+		helper.assertFalse(FigureApi.sweepRemoves(him, true, lookingAway) || him.leavesAtTickingEdge(true, lookingAway), "removed while ticking");
+		helper.assertTrue(him.isAlive(), "gone");
+		him.discard();
+		helper.succeed();
 	}
 
 	@GameTest

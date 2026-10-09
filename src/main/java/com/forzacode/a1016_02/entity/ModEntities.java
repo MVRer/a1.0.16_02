@@ -16,7 +16,9 @@ public final class ModEntities {
 
 	/**
 	 * MISC: never counted toward mob caps and never spawned naturally. noSave: never written to disk, so he is gone
-	 * when his chunk unloads. Tracked out to the server view distance, since he lives at the fog edge.
+	 * when his chunk unloads. The tracking range (64 chunks, before the server's broadcast-range scaling) is far past
+	 * any view distance, so it is always capped by the server view distance: a client never drops him while he can
+	 * still be seen.
 	 */
 	public static final EntityType<HimEntity> HIM = Registry.register(
 			BuiltInRegistries.ENTITY_TYPE,
@@ -24,7 +26,7 @@ public final class ModEntities {
 			EntityType.Builder.of(HimEntity::new, MobCategory.MISC)
 					.sized(0.6F, 1.8F)
 					.eyeHeight(1.62F)
-					.clientTrackingRange(32)
+					.clientTrackingRange(64)
 					.noSave()
 					.noLootTable()
 					.fireImmune()

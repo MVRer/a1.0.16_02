@@ -11,7 +11,6 @@ import com.forzacode.a1016_02.core.AttentionTrigger;
 import com.forzacode.a1016_02.core.HerobrineState;
 import com.forzacode.a1016_02.core.ModConfig;
 import com.forzacode.a1016_02.core.Pacing;
-import com.forzacode.a1016_02.core.Services;
 
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
@@ -189,7 +188,9 @@ public class HimEntity extends PathfinderMob {
 		EntityConfig config = EntityConfig.get();
 		List<ServerPlayer> players = level.players().stream().filter(p -> p.isAlive() && !p.isSpectator()).toList();
 
-		boolean seen = !Services.traces().isOutOfView(level, viewBox());
+		// One rule for every removal below: never while in view, unless past everyone's full render distance.
+		Watchers watchers = Watchers.of(level);
+		boolean seen = watchers.sees(level, viewBox());
 		if (seen) {
 			everSeen = true;
 			seenTicks++;
@@ -197,16 +198,13 @@ public class HimEntity extends PathfinderMob {
 		} else {
 			unseenTicks++;
 		}
-		if (!players.isEmpty()) {
-			if (pastFog(players)) {
-				gone(level, "past the fog");
-				return;
-			}
-			if (!tickingAround(level, position(), EDGE_TICK_MARGIN)) {
-				// Any farther and his chunk stops ticking: he would stand frozen. He goes now instead.
-				gone(level, "at the edge of the ticking range");
-				return;
-			}
+		if (watchers.beyondRenderDistance(position())) {
+			gone(level, "past the render distance");
+			return;
+		}
+		if (!players.isEmpty() && leavesAtTickingEdge(tickingAround(level, position(), EDGE_TICK_MARGIN), watchers)) {
+			gone(level, "at the edge of the ticking range, out of view");
+			return;
 		}
 
 		watch(level, players, config);
@@ -411,7 +409,7 @@ public class HimEntity extends PathfinderMob {
 			away = Entity.calculateViewVector(0.0F, holdYaw).horizontal();
 		}
 		away = away.normalize();
-		double reach = from != null ? FogEdge.of(from, false).limit() + 2.0 : Double.MAX_VALUE;
+		double reach = from != null ? FogEdge.of(from, false).renderLimit() + 2.0 : Double.MAX_VALUE;
 		for (double turn : new double[] {0, 30, -30, 60, -60, 90, -90}) {
 			double r = Math.toRadians(turn);
 			Vec3 dir = new Vec3(away.x * Math.cos(r) - away.z * Math.sin(r), 0.0, away.x * Math.sin(r) + away.z * Math.cos(r));
@@ -434,16 +432,15 @@ public class HimEntity extends PathfinderMob {
 		getNavigation().stop();
 	}
 
-	private boolean pastFog(List<ServerPlayer> players) {
-		if (players.isEmpty()) {
-			return false;
-		}
-		for (ServerPlayer player : players) {
-			if (SpotFinder.horizontal(player.position(), position()) <= FogEdge.of(player, false).limit()) {
-				return false;
-			}
-		}
-		return true;
+	/**
+	 * Near the edge of the entity-ticking range his chunk may stop ticking and he would stand frozen. If nobody can see
+	 * him (or he is past everyone's full render distance) he goes; in view he stays, frozen or not, which reads as
+	 * staring, until he is out of view.
+	 *
+	 * @param tickingAround {@link #tickingAround} with {@link #EDGE_TICK_MARGIN} at his position
+	 */
+	public boolean leavesAtTickingEdge(boolean tickingAround, Watchers watchers) {
+		return !tickingAround && watchers.mayRemove(level(), viewBox(), position());
 	}
 
 	private void gone(ServerLevel level, String why) {

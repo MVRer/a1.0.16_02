@@ -13,11 +13,12 @@ import net.minecraft.util.Mth;
  * <p>The render limit is the smaller of the client's requested view distance and the server's, in blocks; vanilla
  * fogs the last tenth of it. The dusk fog ({@link HerobrineState.Effects#duskFogLevel()}) pulls the limit in. The
  * band also stays well inside the simulation (entity-ticking) distance, so he can always walk off without
- * freezing, and never starts closer than {@code Pacing.sightingMinDistance}. He is gone once past {@link #limit}.
+ * freezing, and never starts closer than {@code Pacing.sightingMinDistance}. The pulled-in {@link #limit} is an
+ * estimate of the dusk fog, used only to place him, never to remove him.
  *
  * @param chunks      effective render distance in chunks
  * @param renderLimit the render limit in blocks, where vanilla fog is complete
- * @param limit       the limit pulled in by the dusk fog: past it he is in full fog, and gone
+ * @param limit       the limit pulled in by the dusk fog (an estimate until core shares the fog curve)
  * @param inner       nearest spawn distance (horizontal)
  * @param outer       farthest spawn distance (horizontal)
  */

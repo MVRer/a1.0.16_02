@@ -245,9 +245,9 @@ public final class FigureApi {
 	}
 
 	/**
-	 * A figure whose chunk stopped ticking cannot run his own rules and would stand frozen, so he is removed at once
-	 * (his own tick already removes him before he walks out of the ticking range; this catches the player moving or
-	 * teleporting away). Called every server tick by {@link EntityInit}.
+	 * A figure whose chunk stopped ticking cannot run his own rules: he stands frozen, which reads as staring. Once
+	 * he is out of view (or past everyone's full render distance) he is removed. Called every server tick by
+	 * {@link EntityInit}.
 	 */
 	static void sweep(MinecraftServer server) {
 		int tick = server.getTickCount();
@@ -262,10 +262,16 @@ public final class FigureApi {
 		for (HimEntity him : List.copyOf(LIVE)) {
 			if (him.isRemoved()) {
 				LIVE.remove(him);
-			} else if (him.level() instanceof ServerLevel level && !level.isPositionEntityTicking(him.blockPosition())) {
+			} else if (him.level() instanceof ServerLevel level
+					&& sweepRemoves(him, level.isPositionEntityTicking(him.blockPosition()), Watchers.of(level))) {
 				him.discard();
 				LIVE.remove(him);
 			}
 		}
+	}
+
+	/** The sweep's rule: only a figure that is not ticking, and only out of view or past every full render distance. */
+	public static boolean sweepRemoves(HimEntity him, boolean ticking, Watchers watchers) {
+		return !ticking && watchers.mayRemove(him.level(), him.viewBox(), him.position());
 	}
 }
