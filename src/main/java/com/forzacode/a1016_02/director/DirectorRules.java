@@ -5,6 +5,7 @@ import java.util.Locale;
 import java.util.Map;
 
 import com.forzacode.a1016_02.core.CardTag;
+import com.forzacode.a1016_02.core.HerobrineState;
 import com.forzacode.a1016_02.core.ModConfig;
 import com.forzacode.a1016_02.core.Pacing;
 import com.forzacode.a1016_02.core.Stage;
@@ -80,12 +81,23 @@ public final class DirectorRules {
 	/** In-game day ticks a deck may stay stuck on gated cards before it reshuffles anyway. */
 	public long deckStall;
 
+	// flags set by other workstreams ({@link DirectorFlags}); defaults when no flag is set
+	/** No fire at all while the in-game day is below this ({@link DirectorFlags#FOREVER} for good). */
+	public long silenceUntilDay = DirectorFlags.NO_SILENCE;
+	/** Already applied to the gaps and decay above; kept for the debug lines. */
+	public double paceMultiplier = 1;
+
 	private DirectorRules() {
 	}
 
-	/** The live rules: the loaded config and this world's profile. */
+	/** The rules from the loaded config and this profile, without any {@link DirectorFlags} (dry runs of a profile). */
 	public static DirectorRules current(WorldProfile profile) {
 		return from(ModConfig.pacing(), DirectorConfig.get(), profile);
+	}
+
+	/** The live rules: the loaded config, this world's profile and the director's flags in the shared state. */
+	public static DirectorRules live(HerobrineState state) {
+		return DirectorFlags.apply(current(state.profile()), DirectorFlags.parse(state.flags()));
 	}
 
 	public static DirectorRules from(Pacing pacing, DirectorConfig config, WorldProfile profile) {

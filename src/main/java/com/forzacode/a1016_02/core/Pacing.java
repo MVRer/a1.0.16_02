@@ -45,22 +45,35 @@ public final class Pacing {
 	public double firstAccidentMinHours = 6;
 	/** From Traces on, some whole sessions contain nothing. */
 	public double emptySessionMinMinutes = 45;
-	public double emptySessionChance = 0.25;
+	/**
+	 * Chance per session, from Traces on, that the whole session stays empty: about 1 in 5. With the forced quiets
+	 * this leaves about 40% of Proximity silent in the 20 h dry runs (it was about half at 0.25).
+	 */
+	public double emptySessionChance = 0.2;
 
 	// --- tension and quiet ---
 	public double tensionAmbient = 5;
 	public double tensionMinor = 12;
 	public double tensionMajor = 30;
 	public double tensionSignature = 50;
-	public double tensionThreshold = 60;
+	/**
+	 * Tension that forces a quiet: about 2 h of an active Proximity (a major, three minors and a few ambients). Tuned with the
+	 * multi-seed dry runs (P1-1c) so Proximity lands at the low end of 4b: about 0.8 minors per hour overall
+	 * (1.3 while active) and a major every 2.3 h (early), 3.7 h (slow burn) and 5.3 h (very late).
+	 */
+	public double tensionThreshold = 70;
 	public int quietMinDays = 1;
 	public int quietMaxDays = 4;
 	/** Tension lost per real hour of play outside quiet. */
 	public double tensionDecayPerHour = 5;
-	/** Pity timer: after this much real play time without an event, the draw chance starts to rise. */
-	public double pityStartHours = 1.5;
-	public double pityBonusPerHour = 0.1;
-	public double pityMaxBonus = 0.5;
+	/**
+	 * Pity timer: after this much real play time without any fire (quiets and empty sessions count), the ambient
+	 * and minor odds rise by {@code pityBonusPerHour} per hour, up to {@code pityMaxBonus} (+100% = double), so
+	 * something always comes back after a long silence.
+	 */
+	public double pityStartHours = 1;
+	public double pityBonusPerHour = 0.25;
+	public double pityMaxBonus = 1.0;
 
 	// --- sightings ---
 	public int sightingMinDistance = 24;

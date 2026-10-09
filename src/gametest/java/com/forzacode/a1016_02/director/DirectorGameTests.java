@@ -15,11 +15,14 @@ import java.util.EnumMap;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 
+import com.forzacode.a1016_02.A1016_02;
 import com.forzacode.a1016_02.core.CardTag;
 import com.forzacode.a1016_02.core.FireResult;
+import com.forzacode.a1016_02.core.HerobrineState;
 import com.forzacode.a1016_02.core.ModConfig;
 import com.forzacode.a1016_02.core.Services;
 import com.forzacode.a1016_02.core.Signature;
@@ -38,6 +41,7 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.core.Holder;
 import net.minecraft.core.registries.Registries;
 import net.minecraft.gametest.framework.GameTestHelper;
+import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.util.RandomSource;
 import net.minecraft.world.item.JukeboxSong;
@@ -49,7 +53,9 @@ import net.minecraft.world.level.block.entity.JukeboxBlockEntity;
 /**
  * Director game tests. The pacing proofs replay fixed-seed 20 h playthroughs (every tempo, six seeds, the
  * synthetic deck) through the same {@link DirectorBrain} the live director runs, and check every limit
- * independently of {@link DirectorSim#check}. None of them touch the shared world state.
+ * independently of {@link DirectorSim#check}. The soft-rate floors pool the scripted playthrough (registered deck)
+ * over {@link DirectorApi#tuningSeeds()}. Only {@code liveRulesReadTheFlags} touches the shared world state, and
+ * puts it back.
  */
 public class DirectorGameTests {
 	@GameTest
@@ -419,9 +425,11 @@ public class DirectorGameTests {
 			}
 		}
 
-		// Pressure: Proximity from the first tick, a major already due, short sessions, everything always fits.
+		// Pressure: Proximity from the first tick, a major already due, short sessions, none of them empty,
+		// everything always fits.
 		DirectorRules rules = rules(Tempo.EARLY, Signature.CROSS_ROW);
 		rules.proximityAmbientPerHour = 60;
+		rules.emptySessionChance = 0;
 		DirectorMemory memory = new DirectorMemory();
 		memory.nextMajorDue = 0;
 		DirectorSim.Params params = DirectorTestSupport.params(rules, 3, rules.attentionNeutral, 3);
@@ -693,5 +701,187 @@ public class DirectorGameTests {
 		helper.assertTrue(env.fireCalls == 0 && fresh.history().isEmpty(), "advancing time fired a card");
 		helper.assertTrue(env.stage == Stage.PROXIMITY && env.tension < 50, "time alone did not move the stage or decay tension: " + env.stage + " " + env.tension);
 		helper.succeed();
+	}
+
+	/**
+	 * 4b's rates on the multi-seed average of the scripted playthrough (registered deck, 20 h per seed, code
+	 * defaults): at the low end of every range, never below its floor, and the silence still there. One seed is
+	 * one world's dice, so only the pooled rates are asserted; every run's hard limits hold too.
+	 */
+	@GameTest(maxTicks = 2000)
+	public void softRatesLandAtTheLowEndOfFourB(GameTestHelper helper) {
+		Map<Tier, Long> deck = new EnumMap<>(Tier.class);
+		DirectorApi.registeredCards().forEach(card -> deck.merge(card.tier(), 1L, Long::sum));
+		helper.assertTrue(deck.getOrDefault(Tier.MINOR, 0L) >= 8 && deck.getOrDefault(Tier.MAJOR, 0L) >= 8,
+				"the registered deck is too small for the rates to mean anything: " + deck);
+		for (Tempo tempo : Tempo.values()) {
+			List<DirectorSim.Result> runs = DirectorTestSupport.registryRuns(tempo);
+			DirectorSim.Rates rates = DirectorSim.Rates.of(runs);
+			DirectorRules rules = runs.getFirst().rules;
+			double hour = rules.hourTicks;
+			String at = tempo + " over " + rates.runs() + " seeds: ";
+			A1016_02.LOGGER.info("[a1016] director soft rates {}: {}", tempo, rates.summary());
+			for (DirectorSim.Result run : runs) {
+				helper.assertTrue(run.violations.isEmpty(), at + "seed " + run.params.seed + " broke a limit: " + run.violations);
+			}
+			helper.assertTrue(rates.runs() >= 5, at + "fewer than 5 seeds");
+
+			// Traces: about one ambient per hour; the tempo may shift a rate by 40%, and never above the +50% band.
+			helper.assertTrue(rates.tracesAmbientsPerHour() >= 0.6 * rules.tracesAmbientPerHour
+					&& rates.tracesAmbientsPerHour() <= 1.5 * rules.tracesAmbientPerHour, at + "Traces ambients " + rates.summary());
+
+			// Proximity: one or two minors per active hour; overall at least 0.7 (slow burn) or 0.6 (40% slower).
+			double minorFloor = tempo == Tempo.SLOW_BURN ? 0.7 : 0.6;
+			helper.assertTrue(rates.minorsPerActiveHour() >= rules.minorsPerHourMin && rates.minorsPerActiveHour() <= rules.minorsPerHourMax,
+					at + "minors while active " + rates.summary());
+			helper.assertTrue(rates.minorsPerHour() >= minorFloor && rates.minorsPerHour() <= rules.minorsPerHourMax,
+					at + "minors overall below " + minorFloor + "/h: " + rates.summary());
+
+			// A major every 2 to 4 hours times the tempo, over all the time in Proximity.
+			helper.assertTrue(rates.hoursPerMajor() <= rules.majorEvery.max() / hour && rates.hoursPerMajor() >= rules.majorEvery.min() / hour,
+					at + String.format(Locale.ROOT, "a major every %.2f h, outside %.1f to %.1f h", rates.hoursPerMajor(),
+							rules.majorEvery.min() / hour, rules.majorEvery.max() / hour));
+
+			// Rarity: forced quiets and empty sessions still take a clear share, and from Traces on some whole
+			// 45+ minute sessions have nothing at all.
+			helper.assertTrue(rates.proximityQuietShare() >= 0.3, at + "Proximity is quiet or empty only " + rates.summary());
+			helper.assertTrue(rates.quiets() >= 2 * rates.runs() && rates.emptySessions() >= rates.runs() / 2
+					&& rates.silentSessions() >= rates.runs(), at + "too few silences: " + rates.summary());
+		}
+		helper.succeed();
+	}
+
+	@GameTest
+	public void flagsParseDefensively(GameTestHelper helper) {
+		helper.assertTrue(DirectorFlags.parse(Set.of()).equals(DirectorFlags.Values.NONE), "no flags should mean no silence and pace x1");
+		helper.assertTrue(DirectorFlags.parse(Set.of("lore:f04_done", "ending:last_sighting")).equals(DirectorFlags.Values.NONE),
+				"other workstreams' flags changed the director");
+
+		// Silence: a day, -1 or the literal mean what they say; the latest day wins; bad values are ignored.
+		helper.assertTrue(DirectorFlags.parse(Set.of("director:silence_until_day=12")).silenceUntilDay() == 12, "silence until day 12");
+		helper.assertTrue(DirectorFlags.parse(Set.of("director:silence_until_day=-1")).silenceUntilDay() == DirectorFlags.FOREVER, "-1 is forever");
+		helper.assertTrue(DirectorFlags.parse(Set.of("director:silence_forever")).silenceUntilDay() == DirectorFlags.FOREVER, "the literal is forever");
+		helper.assertTrue(DirectorFlags.parse(Set.of("director:silence_until_day=5", "director:silence_until_day=9")).silenceUntilDay() == 9,
+				"two silences: the later day should win");
+		for (String bad : List.of("director:silence_until_day=", "director:silence_until_day=abc", "director:silence_until_day=-5",
+				"director:silence_until_day=2.5")) {
+			helper.assertTrue(DirectorFlags.parse(Set.of(bad)).equals(DirectorFlags.Values.NONE), "bad flag '" + bad + "' was not ignored");
+		}
+		helper.assertTrue(DirectorFlags.parse(Set.of("director:silence_until_day=abc", "director:silence_until_day=7")).silenceUntilDay() == 7,
+				"a bad silence flag hid a good one");
+		DirectorFlags.Values day3 = DirectorFlags.parse(Set.of("director:silence_until_day=3"));
+		helper.assertTrue(day3.silenced(2) && !day3.silenced(3) && !DirectorFlags.Values.NONE.silenced(0), "silenced(day)");
+
+		// Pace multiplier: 0.25 to 4, the largest wins, anything else is ignored.
+		helper.assertTrue(DirectorFlags.parse(Set.of("director:pace_multiplier=2")).paceMultiplier() == 2, "pace x2");
+		helper.assertTrue(DirectorFlags.parse(Set.of("director:pace_multiplier=0.25")).paceMultiplier() == 0.25, "pace x0.25 (the floor)");
+		helper.assertTrue(DirectorFlags.parse(Set.of("director:pace_multiplier=4")).paceMultiplier() == 4, "pace x4 (the cap)");
+		helper.assertTrue(DirectorFlags.parse(Set.of("director:pace_multiplier=0.5", "director:pace_multiplier=1.5")).paceMultiplier() == 1.5,
+				"two multipliers: the larger should win");
+		for (String bad : List.of("director:pace_multiplier=0.1", "director:pace_multiplier=5", "director:pace_multiplier=NaN",
+				"director:pace_multiplier=Infinity", "director:pace_multiplier=fast", "director:pace_multiplier=")) {
+			helper.assertTrue(DirectorFlags.parse(Set.of(bad)).paceMultiplier() == 1, "bad flag '" + bad + "' was not ignored");
+		}
+
+		// Applied: gaps divided, decay multiplied; join grace, the first-day rule and the first accident never scaled.
+		DirectorRules plain = rules(Tempo.SLOW_BURN, Signature.CROSS_ROW);
+		for (double x : new double[] {2, 0.5, 4}) {
+			DirectorRules paced = DirectorFlags.apply(rules(Tempo.SLOW_BURN, Signature.CROSS_ROW),
+					DirectorFlags.parse(Set.of("director:pace_multiplier=" + x)));
+			String at = "pace x" + x + ": ";
+			helper.assertTrue(Math.abs(paced.minorGap - plain.minorGap / x) <= 1, at + "minor gap " + paced.minorGap);
+			helper.assertTrue(Math.abs(paced.majorGap - plain.majorGap / x) <= 1, at + "major gap " + paced.majorGap);
+			helper.assertTrue(Math.abs(paced.majorEvery.min() - plain.majorEvery.min() / x) <= 1
+					&& Math.abs(paced.majorEvery.max() - plain.majorEvery.max() / x) <= 1, at + "majors every " + paced.majorEvery);
+			helper.assertTrue(Math.abs(paced.tensionDecayPerTick - plain.tensionDecayPerTick * x) < 1e-12, at + "decay " + paced.tensionDecayPerTick);
+			helper.assertTrue(paced.joinGrace == plain.joinGrace && paced.noMajorBeforeDay == plain.noMajorBeforeDay
+					&& paced.firstAccident == plain.firstAccident && paced.minAnyGap == plain.minAnyGap, at + "a protecting limit was scaled");
+		}
+		DirectorRules unflagged = DirectorFlags.apply(rules(Tempo.SLOW_BURN, Signature.CROSS_ROW), DirectorFlags.Values.NONE);
+		helper.assertTrue(unflagged.minorGap == plain.minorGap && unflagged.majorEvery.equals(plain.majorEvery)
+				&& unflagged.silenceUntilDay == DirectorFlags.NO_SILENCE, "no flags changed the rules");
+		helper.succeed();
+	}
+
+	@GameTest
+	public void silenceFlagStopsEveryFire(GameTestHelper helper) {
+		DirectorSim.Result control = flagged(Set.of(), 8);
+		helper.assertTrue(fires(control, e -> e.day() < 5).size() >= 3, "control: too few fires before day 5 to prove the silence");
+
+		DirectorSim.Result untilDay5 = flagged(Set.of("director:silence_until_day=5"), 8);
+		helper.assertTrue(fires(untilDay5, e -> e.day() < 5).isEmpty(), "fired while silenced: " + fires(untilDay5, e -> e.day() < 5));
+		helper.assertTrue(fires(untilDay5, e -> e.day() >= 5).size() >= 5, "pacing did not come back after the silence");
+		helper.assertTrue(untilDay5.violations.isEmpty(), "limits after the silence: " + untilDay5.violations);
+
+		for (String forever : List.of("director:silence_forever", "director:silence_until_day=-1")) {
+			DirectorSim.Result silent = flagged(Set.of(forever), 8);
+			helper.assertTrue(silent.count(Kind.FIRE) == 0, forever + ": " + silent.count(Kind.FIRE) + " fires, fakes included");
+		}
+
+		// The silence is one more gate: the brain says so, and clearing the flag opens it again.
+		DirectorRules rules = DirectorFlags.apply(rules(Tempo.SLOW_BURN, Signature.CROSS_ROW), DirectorFlags.parse(Set.of("director:silence_forever")));
+		DirectorBrain brain = new DirectorBrain(rules, SyntheticDeck.cards(), 10);
+		DirectorMemory memory = DirectorTestSupport.pinned(rules);
+		DirectorBrain.Clock day9 = new DirectorBrain.Clock(5 * rules.hourTicks, 9 * DirectorBrain.DAY_TICKS);
+		helper.assertTrue("silenced for good".equals(brain.globalBlock(memory, day9)), "gate: " + brain.globalBlock(memory, day9));
+		DirectorBrain cleared = new DirectorBrain(rules(Tempo.SLOW_BURN, Signature.CROSS_ROW), SyntheticDeck.cards(), 10);
+		helper.assertTrue(cleared.globalBlock(memory, day9) == null, "cleared flag still blocks: " + cleared.globalBlock(memory, day9));
+		helper.succeed();
+	}
+
+	@GameTest
+	public void paceMultiplierBringsMajorsCloser(GameTestHelper helper) {
+		DirectorSim.Result normal = flagged(Set.of(), 30);
+		DirectorSim.Result fast = flagged(Set.of("director:pace_multiplier=4"), 30);
+		long normalMajors = fires(normal, e -> e.tier() == Tier.MAJOR).size();
+		long fastMajors = fires(fast, e -> e.tier() == Tier.MAJOR).size();
+		helper.assertTrue(fastMajors >= 2 * normalMajors && normalMajors > 0, "majors: x1 " + normalMajors + ", x4 " + fastMajors);
+		DirectorRules fastRules = fast.rules;
+		long closest = Long.MAX_VALUE;
+		long previous = Long.MIN_VALUE / 4;
+		for (Event e : fires(fast, e -> e.tier() == Tier.MAJOR || e.tier() == Tier.SIGNATURE)) {
+			closest = Math.min(closest, e.play() - previous);
+			previous = e.play();
+		}
+		helper.assertTrue(closest >= fastRules.majorGap && closest < normal.rules.majorGap, "x4: closest majors " + closest + " ticks apart");
+		// Join grace and no major on day 0 are replayed by the sim's own check with the unscaled numbers.
+		helper.assertTrue(fast.violations.isEmpty() && fastRules.joinGrace == normal.rules.joinGrace, "x4 limits: " + fast.violations);
+		helper.succeed();
+	}
+
+	@GameTest
+	public void liveRulesReadTheFlags(GameTestHelper helper) {
+		MinecraftServer server = helper.getLevel().getServer();
+		HerobrineState state = HerobrineState.get(server);
+		DirectorImpl director = DirectorInit.director();
+		String silence = "director:silence_until_day=999999";
+		String pace = "director:pace_multiplier=2";
+		boolean hadSilence = state.hasFlag(silence);
+		boolean hadPace = state.hasFlag(pace);
+		try {
+			state.setFlag(silence, true);
+			state.setFlag(pace, true);
+			DirectorRules live = director.rules(server);
+			helper.assertTrue(live.silenceUntilDay == 999_999 && live.paceMultiplier == 2, "live rules ignored the flags");
+			String blocked = DirectorApi.snapshot(server).blocked();
+			helper.assertTrue(blocked != null && blocked.startsWith("silenced"), "snapshot: " + blocked);
+			String lines = String.join("\n", director.debugLines(server));
+			helper.assertTrue(lines.contains("silence until day 999999, pace x2.00"), "debug lines:\n" + lines);
+		} finally {
+			state.setFlag(silence, hadSilence);
+			state.setFlag(pace, hadPace);
+		}
+		DirectorRules cleared = director.rules(server);
+		helper.assertTrue(cleared.silenceUntilDay == DirectorFlags.NO_SILENCE && cleared.paceMultiplier == 1, "the flags outlived their removal");
+		helper.succeed();
+	}
+
+	/** A Proximity run from tick 0, day 0 (every fit lands), with these flags on the rules. */
+	private static DirectorSim.Result flagged(Set<String> flags, double hours) {
+		DirectorRules rules = DirectorFlags.apply(rules(Tempo.SLOW_BURN, Signature.CROSS_ROW), DirectorFlags.parse(flags));
+		DirectorSim.Params params = DirectorTestSupport.params(rules, 5, rules.attentionNeutral, hours);
+		params.fitChance = 1;
+		params.noSpotChance = 0;
+		return DirectorSim.run(rules, SyntheticDeck.cards(), 1000, new DirectorMemory(), Stage.PROXIMITY, 0, new DirectorBrain.Clock(0, 0), params);
 	}
 }

@@ -209,8 +209,9 @@ public final class DirectorImpl implements Director {
 
 	// --- helpers ---
 
+	/** The live rules, rebuilt on every decision tick: config, profile and the {@link DirectorFlags}. */
 	DirectorRules rules(MinecraftServer server) {
-		return DirectorRules.current(HerobrineState.get(server).profile());
+		return DirectorRules.live(HerobrineState.get(server));
 	}
 
 	DirectorBrain brain(MinecraftServer server, DirectorRules rules) {

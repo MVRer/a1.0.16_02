@@ -100,6 +100,8 @@ public final class DirectorSim {
 		public Stage stage;
 		public double tension;
 		public List<String> violations = List.of();
+		/** Per stage: play ticks [all, active], sampled at every director tick after its decision. */
+		private final Map<Stage, long[]> stageTime = new EnumMap<>(Stage.class);
 
 		Result(DirectorRules rules, Params params, DirectorMemory start, DirectorMemory memory, long startPlay, long startDayTicks) {
 			this.rules = rules;
@@ -120,6 +122,18 @@ public final class DirectorSim {
 
 		public long firesOf(Tier tier) {
 			return events.stream().filter(e -> e.kind() == Kind.FIRE && e.tier() == tier).count();
+		}
+
+		/** Play ticks the run spent in this stage. */
+		public long stageTicks(Stage stage) {
+			long[] time = stageTime.get(stage);
+			return time == null ? 0 : time[0];
+		}
+
+		/** Play ticks the run spent in this stage outside quiets and empty sessions. */
+		public long activeTicks(Stage stage) {
+			long[] time = stageTime.get(stage);
+			return time == null ? 0 : time[1];
 		}
 
 		/** Play tick at which the run first entered this stage, or -1. */
@@ -202,6 +216,131 @@ public final class DirectorSim {
 		}
 	}
 
+	/**
+	 * The soft rates of DESIGN.md 4b pooled over several runs: counts summed over time summed, so long and short
+	 * stages weigh by their length. "Active" time leaves out quiets and empty sessions, as the playthrough's rate
+	 * checks do. Majors count the MAJOR tier only (no signatures), as the playthrough does.
+	 *
+	 * @param silentSessions sessions that began in Traces or later, lasted at least {@code emptySessionMin} and
+	 *                       saw nothing fire (rolled empty or not)
+	 */
+	public record Rates(int runs, long hourTicks, long tracesTicks, long tracesActiveTicks, int tracesAmbients, long proximityTicks,
+			long proximityActiveTicks, int proximityMinors, int proximityMajors, int sessionsFromTraces, int emptySessions, int silentSessions,
+			int quiets) {
+		/** Pools these runs. They should share one config (one hour length). */
+		public static Rates of(Collection<Result> results) {
+			int runs = 0;
+			long hourTicks = 1;
+			long tracesTicks = 0;
+			long tracesActive = 0;
+			int tracesAmbients = 0;
+			long proximityTicks = 0;
+			long proximityActive = 0;
+			int minors = 0;
+			int majors = 0;
+			int sessions = 0;
+			int empty = 0;
+			int silent = 0;
+			int quiets = 0;
+			for (Result r : results) {
+				runs++;
+				hourTicks = r.rules.hourTicks;
+				tracesTicks += r.stageTicks(Stage.TRACES);
+				tracesActive += r.activeTicks(Stage.TRACES);
+				proximityTicks += r.stageTicks(Stage.PROXIMITY);
+				proximityActive += r.activeTicks(Stage.PROXIMITY);
+				long openStart = -1;
+				boolean openCounts = false;
+				int openFires = 0;
+				for (Event e : r.events) {
+					switch (e.kind()) {
+						case FIRE -> {
+							openFires++;
+							if (e.stage() == Stage.TRACES && e.tier() == Tier.AMBIENT) {
+								tracesAmbients++;
+							} else if (e.stage() == Stage.PROXIMITY && e.tier() == Tier.MINOR) {
+								minors++;
+							} else if (e.stage() == Stage.PROXIMITY && e.tier() == Tier.MAJOR) {
+								majors++;
+							}
+						}
+						case QUIET -> quiets++;
+						case SESSION_START, SESSION_END -> {
+							if (openStart >= 0 && openCounts && openFires == 0 && e.play() - openStart >= r.rules.emptySessionMin) {
+								silent++;
+							}
+							openStart = -1;
+							if (e.kind() == Kind.SESSION_START) {
+								openStart = e.play();
+								openCounts = e.stage().atLeast(Stage.TRACES);
+								openFires = 0;
+								if (openCounts) {
+									sessions++;
+									empty += e.flag() ? 1 : 0;
+								}
+							}
+						}
+						default -> {
+						}
+					}
+				}
+				if (openStart >= 0 && openCounts && openFires == 0 && r.endPlay - openStart >= r.rules.emptySessionMin) {
+					silent++;
+				}
+			}
+			return new Rates(runs, hourTicks, tracesTicks, tracesActive, tracesAmbients, proximityTicks, proximityActive, minors, majors, sessions,
+					empty, silent, quiets);
+		}
+
+		private double hours(long ticks) {
+			return ticks / (double) hourTicks;
+		}
+
+		private static double per(double count, double hours) {
+			return hours <= 0 ? 0 : count / hours;
+		}
+
+		public double tracesAmbientsPerHour() {
+			return per(tracesAmbients, hours(tracesTicks));
+		}
+
+		public double tracesAmbientsPerActiveHour() {
+			return per(tracesAmbients, hours(tracesActiveTicks));
+		}
+
+		public double minorsPerHour() {
+			return per(proximityMinors, hours(proximityTicks));
+		}
+
+		public double minorsPerActiveHour() {
+			return per(proximityMinors, hours(proximityActiveTicks));
+		}
+
+		/** Hours of Proximity per major, or infinity if none fired. */
+		public double hoursPerMajor() {
+			return proximityMajors == 0 ? Double.POSITIVE_INFINITY : hours(proximityTicks) / proximityMajors;
+		}
+
+		public double activeHoursPerMajor() {
+			return proximityMajors == 0 ? Double.POSITIVE_INFINITY : hours(proximityActiveTicks) / proximityMajors;
+		}
+
+		/** Share of Proximity spent in quiets or empty sessions. */
+		public double proximityQuietShare() {
+			return proximityTicks <= 0 ? 0 : 1 - proximityActiveTicks / (double) proximityTicks;
+		}
+
+		/** One line, every number in {@code Locale.ROOT}. */
+		public String summary() {
+			return String.format(Locale.ROOT,
+					"%d runs | Traces %.1fh: %.2f amb/h (%.2f active) | Proximity %.1fh (%.0f%% quiet or empty): minors %.2f/h (%.2f active), "
+							+ "a major every %.2fh (%.2fh active) | sessions from Traces %d, empty %d, silent 45+ min %d | quiets %d",
+					runs, hours(tracesTicks), tracesAmbientsPerHour(), tracesAmbientsPerActiveHour(), hours(proximityTicks), proximityQuietShare() * 100,
+					minorsPerHour(), minorsPerActiveHour(), hoursPerMajor(), activeHoursPerMajor(), sessionsFromTraces, emptySessions, silentSessions,
+					quiets);
+		}
+	}
+
 	private DirectorSim() {
 	}
 
@@ -235,14 +374,21 @@ public final class DirectorSim {
 			}
 			brain.step(memory, c, env, random, rec);
 			HourRow row = rec.ensureRow(c.playTicks());
-			if (brain.inQuiet(memory, c)) {
+			boolean quiet = brain.inQuiet(memory, c);
+			boolean empty = memory.sessionEmpty && c.playTicks() < memory.sessionEmptyUntil;
+			if (quiet) {
 				row.quietTicks += rules.tickInterval;
 			}
-			if (memory.sessionEmpty && c.playTicks() < memory.sessionEmptyUntil) {
+			if (empty) {
 				row.emptyTicks += rules.tickInterval;
 			}
 			row.stage = env.stage;
 			row.tension = env.tension;
+			long[] time = result.stageTime.computeIfAbsent(env.stage, s -> new long[2]);
+			time[0] += rules.tickInterval;
+			if (!quiet && !empty) {
+				time[1] += rules.tickInterval;
+			}
 		}
 		result.endPlay = c.playTicks();
 		result.stage = env.stage;
@@ -327,6 +473,9 @@ public final class DirectorSim {
 					}
 					if (e.dayTicks() < quietUntil) {
 						broken.add(at + e.cardId() + " fired during a quiet");
+					}
+					if (e.day() < rules.silenceUntilDay) {
+						broken.add(at + e.cardId() + " fired while the director is silenced");
 					}
 					if (emptyUntil > now) {
 						broken.add(at + e.cardId() + " fired in an empty session");

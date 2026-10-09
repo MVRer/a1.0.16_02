@@ -45,6 +45,9 @@ final class DirectorDebug {
 		}
 		String blocked = brain.globalBlock(m, c);
 		lines.add("director: held " + (held.length() == 0 ? "-" : held) + " | now " + (blocked == null ? "open" : blocked));
+		lines.add("director: flags " + new DirectorFlags.Values(rules.silenceUntilDay, rules.paceMultiplier).describe()
+				+ String.format(Locale.ROOT, " (minor gap %s, major gap %s, majors every %s to %s)", dur(rules, rules.minorGap),
+						dur(rules, rules.majorGap), dur(rules, rules.majorEvery.min()), dur(rules, rules.majorEvery.max())));
 
 		StringJoiner next = new StringJoiner(" | ");
 		for (Tier tier : DirectorBrain.PRIORITY) {

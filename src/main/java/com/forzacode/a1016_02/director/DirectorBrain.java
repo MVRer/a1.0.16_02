@@ -36,14 +36,16 @@ import net.minecraft.util.RandomSource;
  * back.</li>
  * <li>A drawn card is held until its context fits; {@code NO_SPOT} and {@code SKIPPED} keep it held. A card held
  * too long goes back into its deck.</li>
- * <li>Gates: join grace, forced quiet, empty sessions, a small gap between any two fires, the minor and major gaps,
+ * <li>Gates: the silence flag ({@link DirectorFlags}: nothing at all fires), join grace, forced quiet, empty
+ * sessions, a small gap between any two fires, the minor and major gaps (divided by the pace multiplier flag),
  * no major (or signature) before {@code noMajorBeforeDay}, no ACCIDENT card before {@code firstAccident}, at most
  * {@code aloneMaxAmbient} ambients in Alone, sightings per day. Every card waits for its own earliest stage and its
  * tier's first stage ({@code minorMinStage}, {@code majorMinStage}, {@code signatureMinStage}).</li>
  * <li>Rates: ambient and minor tiers roll per director tick at their per-hour rate, raised by the pity bonus and
  * spread out by a refractory gap that keeps the mean;
- * majors are scheduled every {@code proximityMajorGap(tempo)} (a slot whose card a stage weight passes over is
- * spent); signatures are due as soon as one is eligible.</li>
+ * majors are scheduled every {@code proximityMajorGap(tempo)}, each slot one gap after the previous slot's due time
+ * (waiting for a slot never delays the next one), never sooner than the shortest gap after a fire (a slot whose
+ * card a stage weight passes over is spent); signatures are due as soon as one is eligible.</li>
  * <li>Every fire adds tension by tier (fakes scaled). At the threshold a quiet of 1 to 4 in-game days starts and
  * tension drops; the threshold is checked after every fire and on every decision tick, so tension other systems
  * raise ({@code Attention.raiseTension}) starts a quiet too. Tension decays outside quiet.</li>
@@ -267,7 +269,7 @@ public final class DirectorBrain {
 					if (tier == Tier.MAJOR && !passedOver.isEmpty()) {
 						// A stage weight passed the slot's card over: the slot is spent, as a probabilistic tier's
 						// tick is. Retrying every tick would re-roll an "almost never" card until it fires.
-						m.nextMajorDue = c.playTicks() + rules.majorEvery.pick(random);
+						scheduleNextMajor(m, c.playTicks(), random);
 					}
 					continue;
 				}
@@ -309,6 +311,9 @@ public final class DirectorBrain {
 	/** Reason nothing at all may fire now, or null. */
 	public String globalBlock(DirectorMemory m, Clock c) {
 		long now = c.playTicks();
+		if (c.day() < rules.silenceUntilDay) {
+			return rules.silenceUntilDay == DirectorFlags.FOREVER ? "silenced for good" : "silenced until day " + rules.silenceUntilDay;
+		}
 		if (m.sessionStart >= 0 && now - m.sessionStart < rules.joinGrace) {
 			return "join grace";
 		}
@@ -616,7 +621,7 @@ public final class DirectorBrain {
 			m.lastMajorOrSignature = now;
 		}
 		if (tier == Tier.MAJOR) {
-			m.nextMajorDue = now + rules.majorEvery.pick(random);
+			scheduleNextMajor(m, now, random);
 		}
 		if (tier == Tier.AMBIENT && stage == Stage.ALONE) {
 			m.aloneAmbientCount++;
@@ -631,6 +636,18 @@ public final class DirectorBrain {
 		env.addTension(rules.tensionFor(tier) * (fake ? rules.fakeTensionFactor : 1), "fired " + card.id());
 		rec.fired(c, card, fake, false, stage, env.tension());
 		checkQuiet(m, c, env, random, rec);
+	}
+
+	/**
+	 * The slot due now was used (fired or spent): the next one is a {@code majorEvery} gap after this slot's due time,
+	 * not after the moment it was used. A slot that waited out a quiet, an empty session or its card's moment
+	 * would otherwise push every later slot back as well, and that silence would count twice (once as silence,
+	 * once as a longer gap): majors drifted about half an hour per slot behind the 4b schedule. The next slot is
+	 * never closer than the shortest gap after now, so a late major is never followed by a hurried one.
+	 */
+	private void scheduleNextMajor(DirectorMemory m, long now, RandomSource random) {
+		long slot = m.nextMajorDue >= 0 && m.nextMajorDue <= now ? m.nextMajorDue : now;
+		m.nextMajorDue = Math.max(slot + rules.majorEvery.pick(random), now + rules.majorEvery.min());
 	}
 
 	/** Tension at the threshold starts a quiet, whatever raised it. A running quiet is never restarted. */

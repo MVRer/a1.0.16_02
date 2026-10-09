@@ -3,6 +3,7 @@ package com.forzacode.a1016_02.director;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
+import java.util.function.LongFunction;
 
 import com.forzacode.a1016_02.core.HerobrineState;
 import com.forzacode.a1016_02.core.Stage;
@@ -62,7 +63,7 @@ public final class DirectorApi {
 	/** Reads the live director state. Changes nothing. */
 	public static Snapshot snapshot(MinecraftServer server) {
 		HerobrineState state = HerobrineState.get(server);
-		DirectorRules rules = DirectorRules.current(state.profile());
+		DirectorRules rules = DirectorRules.live(state);
 		DirectorBrain brain = new DirectorBrain(rules, DirectorImpl.cards(), DirectorConfig.get().historySize);
 		DirectorMemory m = DirectorData.get(server).memory();
 		DirectorBrain.Clock c = DirectorImpl.clock(server);
@@ -116,6 +117,28 @@ public final class DirectorApi {
 				new DirectorBrain.Clock(0, 0), params);
 	}
 
+	/**
+	 * Seeds for multi-seed dry runs (tuning and the soft-rate floors test): the playthrough's default seed first.
+	 * One seed is one world's dice; rates only mean something averaged over several.
+	 */
+	public static List<Long> tuningSeeds() {
+		return List.of(1016L, 1L, 2L, 3L, 7L, 42L, 99_991L, 0xA1016L);
+	}
+
+	/**
+	 * {@link #dryRun} once per seed, each from a fresh state with the profile {@code profiles} gives for that seed
+	 * (for example the seed's rolled profile with a fixed tempo). Pool the rates with {@link DirectorSim.Rates#of}.
+	 * Same arguments and config, same runs.
+	 */
+	public static List<DirectorSim.Result> dryRuns(LongFunction<WorldProfile> profiles, Collection<CardInfo> cards, double hours,
+			Collection<Long> seeds, double attention) {
+		List<DirectorSim.Result> out = new ArrayList<>();
+		for (long seed : seeds) {
+			out.add(dryRun(profiles.apply(seed), cards, hours, seed, attention));
+		}
+		return out;
+	}
+
 	/** Attention at which the stage clock runs at the tempo's own pace. */
 	public static double neutralAttention() {
 		return DirectorConfig.get().attentionNeutral;
@@ -128,7 +151,13 @@ public final class DirectorApi {
 			return new Next("stage (from " + min + ")", -1, due);
 		}
 		long now = c.playTicks();
+		if (rules.silenceUntilDay == DirectorFlags.FOREVER) {
+			return new Next("silence (for good)", -1, due);
+		}
 		Wait wait = new Wait();
+		if (rules.silenceUntilDay != DirectorFlags.NO_SILENCE) {
+			wait.consider("silence", rules.silenceUntilDay * DirectorBrain.DAY_TICKS - c.dayTicks());
+		}
 		if (m.sessionStart >= 0) {
 			wait.consider("join grace", m.sessionStart + rules.joinGrace - now);
 		}

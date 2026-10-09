@@ -17,6 +17,7 @@ import com.forzacode.a1016_02.core.Stage;
 import com.forzacode.a1016_02.core.Tempo;
 import com.forzacode.a1016_02.core.Tier;
 import com.forzacode.a1016_02.core.WorldProfile;
+import com.forzacode.a1016_02.debug.DebugPingCard;
 
 import net.minecraft.util.RandomSource;
 
@@ -52,6 +53,28 @@ class DirectorTestSupport {
 	static DirectorSim.Result fresh(DirectorRules rules, long seed, double attention, double hours) {
 		return DirectorSim.run(rules, SyntheticDeck.cards(), 1000, new DirectorMemory(), Stage.ALONE, 0,
 				new DirectorBrain.Clock(0, 0), params(rules, seed, attention, hours));
+	}
+
+	/**
+	 * The scripted playthrough's dry runs on the code defaults: the registered deck (without the debug ping card,
+	 * whose moment never fits), the seed's rolled profile with this tempo, {@link DirectorApi#tuningSeeds()}, 20 h
+	 * each from a fresh state at neutral attention. Unlike {@code DirectorApi.dryRuns}, a stale config file cannot
+	 * change the numbers.
+	 */
+	static List<DirectorSim.Result> registryRuns(Tempo tempo) {
+		List<CardInfo> deck = DirectorApi.registeredCards().stream().filter(card -> !DebugPingCard.ID.equals(card.id())).toList();
+		List<DirectorSim.Result> out = new ArrayList<>();
+		for (long seed : DirectorApi.tuningSeeds()) {
+			DirectorConfig config = new DirectorConfig();
+			DirectorRules rules = DirectorRules.from(new Pacing(), config, com.forzacode.a1016_02.debug.Playthrough.profile(seed, tempo));
+			DirectorSim.Params params = DirectorSim.Params.from(config, rules);
+			params.hours = HOURS;
+			params.seed = seed;
+			params.attention = config.attentionNeutral;
+			out.add(DirectorSim.run(rules, deck, Math.max(config.historySize, 1), new DirectorMemory(), Stage.ALONE, 0,
+					new DirectorBrain.Clock(0, 0), params));
+		}
+		return out;
 	}
 
 	/** Every tempo times every seed, 20 h each, attention at neutral. Computed once. */
