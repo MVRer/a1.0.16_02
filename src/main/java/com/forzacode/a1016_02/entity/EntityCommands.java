@@ -3,6 +3,7 @@ package com.forzacode.a1016_02.entity;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Locale;
 import java.util.Optional;
 
 import com.forzacode.a1016_02.core.CommandHooks;
@@ -22,8 +23,8 @@ import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.util.RandomSource;
 
 /**
- * {@code /a1016 entity spawn <variant> | clear | info | eyes [<flat|bright|glow> [fogResistance]]}. Debug only
- * (op level 2, like the whole /a1016 tree).
+ * {@code /a1016 entity spawn <variant> | clear | info | eyes [<flat|bright|glow> [fogResistance]] | tune [<key> <value>]}.
+ * Debug only (op level 2, like the whole /a1016 tree). {@code eyes} and {@code tune} save to the config file.
  */
 final class EntityCommands {
 	private EntityCommands() {
@@ -42,7 +43,42 @@ final class EntityCommands {
 								.suggests((ctx, builder) -> SharedSuggestionProvider.suggest(Arrays.stream(EyeStyle.values()).map(EyeStyle::shortName), builder))
 								.executes(ctx -> setEyes(ctx, null))
 								.then(Commands.argument("fogResistance", DoubleArgumentType.doubleArg(0.0, 1.0))
-										.executes(ctx -> setEyes(ctx, DoubleArgumentType.getDouble(ctx, "fogResistance"))))))));
+										.executes(ctx -> setEyes(ctx, DoubleArgumentType.getDouble(ctx, "fogResistance"))))))
+				.then(Commands.literal("tune").executes(EntityCommands::tunings)
+						.then(Commands.argument("key", StringArgumentType.word())
+								.suggests((ctx, builder) -> SharedSuggestionProvider.suggest(EntityTuning.KEYS.stream().map(EntityTuning.Key::name), builder))
+								.then(Commands.argument("value", DoubleArgumentType.doubleArg()).executes(EntityCommands::tune))))));
+	}
+
+	/** Bare {@code tune}: prints every live-tunable value. */
+	private static int tunings(CommandContext<CommandSourceStack> ctx) {
+		String line = "[a1016] entity tune: " + EntityTuning.describe(EntityConfig.get());
+		ctx.getSource().sendSuccess(() -> Component.literal(line), false);
+		return 1;
+	}
+
+	/** Sets one value and saves the config. The figure reads it on his next tick. */
+	private static int tune(CommandContext<CommandSourceStack> ctx) {
+		String name = StringArgumentType.getString(ctx, "key");
+		double value = DoubleArgumentType.getDouble(ctx, "value");
+		Optional<EntityTuning.Key> key = EntityTuning.byName(name);
+		if (key.isEmpty()) {
+			String keys = EntityTuning.KEYS.stream().map(EntityTuning.Key::name).reduce((a, b) -> a + ", " + b).orElse("");
+			ctx.getSource().sendFailure(Component.literal("[a1016] unknown key " + name + " (" + keys + ")"));
+			return 0;
+		}
+		EntityTuning.Key k = key.get();
+		if (!k.accepts(value)) {
+			ctx.getSource().sendFailure(Component.literal(String.format("[a1016] %s must be %s to %s", k.name(), EntityTuning.format(k.min()),
+					EntityTuning.format(k.max()))));
+			return 0;
+		}
+		EntityConfig config = EntityConfig.get();
+		k.set().accept(config, value);
+		config.save();
+		String line = "[a1016] entity tune " + k.name() + " -> " + EntityTuning.format(value) + " (saved)";
+		ctx.getSource().sendSuccess(() -> Component.literal(line), true);
+		return 1;
 	}
 
 	/** Bare {@code eyes}: prints the current style. */
@@ -75,7 +111,7 @@ final class EntityCommands {
 	}
 
 	private static String describeEyes(EntityConfig config) {
-		return String.format("%s, fog resistance %.2f", config.eyeStyle().shortName(), config.eyeFogResistance());
+		return String.format(Locale.ROOT, "%s, fog resistance %.2f", config.eyeStyle().shortName(), config.eyeFogResistance());
 	}
 
 	/** Skips the gates, never the fog edge or the out-of-view rule. */
@@ -91,7 +127,7 @@ final class EntityCommands {
 			ctx.getSource().sendFailure(Component.literal("[a1016] no player to spawn him for"));
 			return 0;
 		}
-		FogEdge edge = FogEdge.of(player, false);
+		FogEdge edge = FogEdge.of(player, variant.get() == Variant.CLOSE);
 		FigureApi.Spawned spawned = FigureApi.spawnAtFogEdge(player, variant.get(), RandomSource.create(), true);
 		String where = spawned.figure() == null ? ""
 				: String.format(" at %s, %d blocks out", spawned.figure().blockPosition().toShortString(),
@@ -116,9 +152,10 @@ final class EntityCommands {
 		lines.add("[a1016] entity: " + out.size() + " out");
 		for (HimEntity him : out) {
 			String dist = player == null ? "?" : String.valueOf(Math.round(SpotFinder.horizontal(player.position(), him.position())));
-			lines.add(String.format(" %s %s at %s (%s blocks) age=%ds seen=%s unseen=%d stare=%d triggered=%s low=%s",
-					him.variant().shortName(), him.phase(), him.blockPosition().toShortString(), dist, him.age() / 20, him.everSeen(),
-					him.unseenTicks(), him.stareTicks(), him.triggered(), him.isLow()));
+			String closed = player == null ? "?" : String.format("%.1f", him.closedBy(player.getUUID()));
+			lines.add(String.format(" %s %s at %s (%s blocks) age=%ds seenFor=%ds unseen=%d stare=%d closed=%s triggered=%s fled=%s low=%s",
+					him.variant().shortName(), him.phase(), him.blockPosition().toShortString(), dist, him.age() / 20,
+					him.seenFor() < 0 ? -1 : him.seenFor() / 20, him.unseenTicks(), him.stareTicks(), closed, him.triggered(), him.fled(), him.isLow()));
 		}
 		EntityData data = EntityData.get(server);
 		String last = data.lastPos() == null ? "-" : data.lastPos().pos().toShortString();
@@ -128,8 +165,10 @@ final class EntityCommands {
 		if (player != null) {
 			HerobrineState state = HerobrineState.get(server);
 			FogEdge edge = FogEdge.of(player, false);
-			lines.add(String.format("fog edge: view=%d chunks limit=%d (duskFog %.2f) band %d..%d time=%d base=%s",
-					edge.chunks(), Math.round(edge.limit()), state.effects().duskFogLevel(), Math.round(edge.inner()), Math.round(edge.outer()),
+			FogEdge close = FogEdge.of(player, true);
+			lines.add(String.format("fog: view=%d chunks, render end=%d, visible end=%d (duskFog %.2f), band %d..%d, close %d..%d, time=%d base=%s",
+					edge.chunks(), Math.round(edge.renderLimit()), Math.round(edge.limit()), state.effects().duskFogLevel(), Math.round(edge.inner()),
+					Math.round(edge.outer()), Math.round(close.inner()), Math.round(close.outer()),
 					SightingGates.timeOfDay(server), Services.watch().base(player).map(b -> b.pos().toShortString()).orElse("-")));
 			StringBuilder gates = new StringBuilder("gates:");
 			for (Variant variant : Variant.values()) {

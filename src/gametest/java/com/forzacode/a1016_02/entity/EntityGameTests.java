@@ -208,6 +208,63 @@ public class EntityGameTests extends SightingRuleGameTests {
 		helper.succeed();
 	}
 
+	@GameTest
+	public void tuneCommandSetsSavesAndRefusesBadValues(GameTestHelper helper) {
+		MinecraftServer server = helper.getLevel().getServer();
+		CommandSourceStack source = server.createCommandSourceStack().withSuppressedOutput();
+		EntityConfig config = EntityConfig.get();
+		double oldApproach = config.approachBlocks;
+		double oldFlee = config.fleeDistance;
+		double oldMin = config.spawnDistanceFractionMin;
+		try {
+			for (EntityTuning.Key key : EntityTuning.KEYS) {
+				String command = "a1016 entity tune " + key.name() + " " + EntityTuning.format(key.get().applyAsDouble(config));
+				ParseResults<CommandSourceStack> parsed = server.getCommands().getDispatcher().parse(command, source);
+				helper.assertTrue(!parsed.getReader().canRead() && parsed.getExceptions().isEmpty(), "does not parse: " + command);
+			}
+			server.getCommands().performPrefixedCommand(source, "a1016 entity tune");
+			server.getCommands().performPrefixedCommand(source, "a1016 entity tune approachBlocks 12.5");
+			server.getCommands().performPrefixedCommand(source, "a1016 entity tune spawnDistanceFractionMin 0.5");
+			helper.assertTrue(config.approachBlocks == 12.5 && config.spawnDistanceFractionMin == 0.5, "not set live");
+			JsonObject saved = savedEntitySection();
+			helper.assertTrue(saved.get("approachBlocks").getAsDouble() == 12.5 && saved.get("spawnDistanceFractionMin").getAsDouble() == 0.5,
+					"not saved: " + saved);
+			// Out of range (he would flee the moment he appears) and unknown keys change nothing.
+			server.getCommands().performPrefixedCommand(source, "a1016 entity tune fleeDistance 30");
+			server.getCommands().performPrefixedCommand(source, "a1016 entity tune runSpeed 3");
+			helper.assertTrue(config.fleeDistance == oldFlee, "an out-of-range flee distance was taken: " + config.fleeDistance);
+			helper.assertTrue(EntityTuning.describe(config).contains("approachBlocks=12.50"), EntityTuning.describe(config));
+		} finally {
+			config.approachBlocks = oldApproach;
+			config.fleeDistance = oldFlee;
+			config.spawnDistanceFractionMin = oldMin;
+			config.save();
+		}
+		helper.succeed();
+	}
+
+	@GameTest
+	public void olderConfigSectionsGetTheNewDefaults(GameTestHelper helper) {
+		EntityConfig defaults = new EntityConfig();
+		helper.assertTrue(defaults.approachBlocks == 10 && defaults.stareConeDegrees == 8 && defaults.stareBackSeconds == 2 && defaults.stareSeconds == 3
+				&& defaults.fleeDistance == 18 && defaults.minSeenSeconds == 3 && defaults.spawnDistanceFractionMin == 0.45
+				&& defaults.spawnDistanceFractionMax == 0.70, "playtest defaults");
+		// A section written before the playtest (no version): the old scaffold values give way, other values stay.
+		EntityConfig old = new EntityConfig();
+		old.approachBlocks = 6;
+		old.stareConeDegrees = 6;
+		old.stareBackSeconds = 1.0;
+		old.baseRadius = 80;
+		helper.assertTrue(old.upgrade(), "an old section was not upgraded");
+		helper.assertTrue(old.approachBlocks == 10 && old.stareConeDegrees == 8 && old.stareBackSeconds == 2 && old.baseRadius == 80,
+				"upgrade: approach " + old.approachBlocks + " cone " + old.stareConeDegrees + " back " + old.stareBackSeconds + " base " + old.baseRadius);
+		// Once upgraded, values tuned later are left alone.
+		old.approachBlocks = 14;
+		helper.assertFalse(old.upgrade(), "upgraded twice");
+		helper.assertTrue(old.approachBlocks == 14, "a later tuning was reset");
+		helper.succeed();
+	}
+
 	private static JsonObject savedEntitySection() {
 		Path path = FabricLoader.getInstance().getConfigDir().resolve(A1016_02.MOD_ID + ".json");
 		try (Reader reader = Files.newBufferedReader(path)) {

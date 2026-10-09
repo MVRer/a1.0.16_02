@@ -10,7 +10,6 @@ import com.forzacode.a1016_02.core.Attention;
 import com.forzacode.a1016_02.core.AttentionTrigger;
 import com.forzacode.a1016_02.core.HerobrineState;
 import com.forzacode.a1016_02.core.ModConfig;
-import com.forzacode.a1016_02.core.Pacing;
 
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
@@ -47,11 +46,12 @@ import net.minecraft.world.phys.Vec3;
 import org.jspecify.annotations.Nullable;
 
 /**
- * The figure. Default Steve, blank white eyes, no glow, no name, no sound, no particles. He cannot be touched,
+ * The figure. Default Steve, blank white eyes, no name, no sound, no particles. He cannot be touched,
  * pushed, hit or attacked, he has no goals at all (so nothing to target or approach anyone with), he is never
- * saved, and he does not count toward mob caps. He stands at the fog edge for a few seconds and always leaves
- * first: stared at (about 2 s) or approached, he ends the sighting the way his {@link Variant} says, then
- * despawns once out of view or past the fog. Unseen, he despawns after a lifetime. He never vanishes in view.
+ * saved, and he does not count toward mob caps. He stands well inside the fog for a few seconds and always leaves
+ * first: stared at (3 s), approached (10 blocks closed since first seen) or come too close to (18 blocks), he ends the
+ * sighting the way his {@link Variant} says, then despawns once out of view or past the fog. Once seen he stays at
+ * least {@code minSeenSeconds} unless he flees. Unseen, he despawns after a lifetime. He never vanishes in view.
  *
  * <p>All behaviour runs in {@link #customServerAiStep} from plain look and move controls; spawn him through
  * {@link FigureApi}.
@@ -91,10 +91,14 @@ public class HimEntity extends PathfinderMob {
 	private int unseenTicks;
 	private int stareTicks;
 	private boolean everSeen;
+	/** {@link #age} when he was first seen, or -1. */
+	private int firstSeenAge = -1;
 	private boolean triggered;
 	private boolean stared;
+	private boolean fled;
 	private @Nullable UUID triggeredBy;
-	private final Map<UUID, Double> startDistance = new HashMap<>();
+	/** Distance each player has closed on him since he was first seen. */
+	private final Map<UUID, Approach> approaches = new HashMap<>();
 
 	// client: the low pose, blended
 	private float low;
@@ -192,6 +196,9 @@ public class HimEntity extends PathfinderMob {
 		Watchers watchers = Watchers.of(level);
 		boolean seen = watchers.sees(level, viewBox());
 		if (seen) {
+			if (!everSeen) {
+				firstSeenAge = age;
+			}
 			everSeen = true;
 			seenTicks++;
 			unseenTicks = 0;
@@ -209,7 +216,9 @@ public class HimEntity extends PathfinderMob {
 
 		watch(level, players, config);
 
-		if (phase == Phase.LEAVING && (everSeen || triggered) && !seen) {
+		// Once seen, he stays for minSeenSeconds whatever happens, unless he fled.
+		boolean mayEnd = SightingRules.mayEndOutOfView(everSeen, seenFor(), ModConfig.realTicks(config.minSeenSeconds), fled);
+		if (mayEnd && phase == Phase.LEAVING && (everSeen || triggered) && !seen) {
 			gone(level, "left and out of view");
 			return;
 		}
@@ -217,7 +226,7 @@ public class HimEntity extends PathfinderMob {
 			setPhase(Phase.LEAVING); // his back to you, he starts walking once you have seen him
 		}
 		long grace = ModConfig.realTicks(variant == Variant.COW && phase == Phase.IDLE ? config.cowGoneAfterUnseenSeconds : config.goneAfterUnseenSeconds);
-		if ((everSeen || triggered) && unseenTicks >= grace) {
+		if (mayEnd && (everSeen || triggered) && unseenTicks >= grace) {
 			gone(level, "out of view");
 			return;
 		}
@@ -225,7 +234,7 @@ public class HimEntity extends PathfinderMob {
 			gone(level, "nobody saw him");
 			return;
 		}
-		if (!triggered && age >= ModConfig.realTicks(config.maxLifetimeSeconds)) {
+		if (mayEnd && !triggered && age >= ModConfig.realTicks(config.maxLifetimeSeconds)) {
 			walkAway(variant.gait() == Variant.Gait.SLOW ? Variant.Gait.SLOW : Variant.Gait.WALK);
 		}
 
@@ -250,16 +259,22 @@ public class HimEntity extends PathfinderMob {
 		}
 	}
 
-	/** Stare and approach: the two ways a sighting ends. */
+	/**
+	 * The three ways a sighting ends ({@link SightingRules#endCause}): coming within the flee distance (any time), and
+	 * once he has been seen for {@code minSeenSeconds}, staring at him for {@code stareSeconds} or closing
+	 * {@code approachBlocks} on him since he was first seen. A single step, strafing or turning never counts.
+	 */
 	private void watch(ServerLevel level, List<ServerPlayer> players, EntityConfig config) {
-		Pacing pacing = ModConfig.pacing();
 		ServerPlayer looker = null;
 		ServerPlayer approacher = null;
+		ServerPlayer near = null;
 		double cosCone = Math.cos(Math.toRadians(config.stareConeDegrees));
 		for (ServerPlayer player : players) {
 			double d = SpotFinder.horizontal(player.position(), position());
-			double start = startDistance.computeIfAbsent(player.getUUID(), k -> d);
-			if (start - d >= config.approachBlocks || d < pacing.sightingMinDistance) {
+			if (d < config.fleeDistance) {
+				near = player;
+			}
+			if (everSeen && approaches.computeIfAbsent(player.getUUID(), k -> new Approach()).update(d, config.approachStepBlocks) >= config.approachBlocks) {
 				approacher = player;
 			}
 			if (looker == null && isLookedAtBy(level, player, cosCone)) {
@@ -267,14 +282,30 @@ public class HimEntity extends PathfinderMob {
 			}
 		}
 		stareTicks = looker != null ? stareTicks + 1 : Math.max(0, stareTicks - 2);
-		if (!stared && looker != null && stareTicks >= pacing.stareTicks()) {
-			stared = true;
-			Attention.trigger(level.getServer(), AttentionTrigger.STARED_AT_HIM);
-			EntityData.get(level.getServer()).recordStared();
-			trigger(looker);
-		} else if (approacher != null) {
-			trigger(approacher);
+		if (triggered) {
+			return;
 		}
+		boolean stareDone = !stared && looker != null && stareTicks >= ModConfig.realTicks(config.stareSeconds);
+		switch (SightingRules.endCause(near != null, stareDone, approacher != null, seenFor(), ModConfig.realTicks(config.minSeenSeconds))) {
+			case FLEE -> {
+				fled = true;
+				trigger(near);
+			}
+			case STARE -> {
+				stared = true;
+				Attention.trigger(level.getServer(), AttentionTrigger.STARED_AT_HIM);
+				EntityData.get(level.getServer()).recordStared();
+				trigger(looker);
+			}
+			case APPROACH -> trigger(approacher);
+			case NONE -> {
+			}
+		}
+	}
+
+	/** Ticks since he was first seen, or -1. */
+	public long seenFor() {
+		return firstSeenAge < 0 ? -1 : age - firstSeenAge;
 	}
 
 	/** The player's crosshair is within the cone around him and nothing solid is in between. */
@@ -506,6 +537,16 @@ public class HimEntity extends PathfinderMob {
 
 	public boolean stared() {
 		return stared;
+	}
+
+	public boolean fled() {
+		return fled;
+	}
+
+	/** Distance this player has closed on him since he was first seen (0 before). */
+	public double closedBy(UUID player) {
+		Approach approach = approaches.get(player);
+		return approach == null ? 0.0 : approach.closed();
 	}
 
 	public int stareTicks() {
