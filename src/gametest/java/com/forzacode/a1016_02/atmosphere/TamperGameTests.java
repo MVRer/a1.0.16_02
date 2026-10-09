@@ -20,7 +20,7 @@ import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
 
 /** MobTamper game tests: freeze, face, silence, expiry, release, unload and the out-of-view move. */
-public class TamperGameTests {
+public class TamperGameTests extends DeadMountainGameTests {
 	static void floor(GameTestHelper helper) {
 		for (int x = 0; x < 8; x++) {
 			for (int z = 0; z < 8; z++) {

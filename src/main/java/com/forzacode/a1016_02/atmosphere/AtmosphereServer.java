@@ -17,7 +17,8 @@ import net.minecraft.server.MinecraftServer;
 
 /**
  * Server side of the atmosphere layer: ticks MobTamper, the timeline and the footstep watcher; turns music off from
- * the subject's first night; sets the dusk fog level for the stage; re-sends running effects on join.
+ * the subject's first night; sets the dusk fog level for the stage; re-sends running effects on join; keeps the dead
+ * mountains' areas and sends each client the ones near it.
  */
 public final class AtmosphereServer {
 	private static final int CHECK_TICKS = 20;
@@ -29,12 +30,16 @@ public final class AtmosphereServer {
 		ServerTickEvents.END_SERVER_TICK.register(AtmosphereServer::tick);
 		ServerEntityEvents.ENTITY_UNLOAD.register((entity, level) -> MobTamperImpl.INSTANCE.onUnload(entity));
 		ServerPlayConnectionEvents.JOIN.register((handler, sender, server) -> ActiveEffects.onJoin(handler.player));
-		ServerPlayConnectionEvents.DISCONNECT.register((handler, server) -> FootstepLateCard.onLeave(handler.player));
+		ServerPlayConnectionEvents.DISCONNECT.register((handler, server) -> {
+			FootstepLateCard.onLeave(handler.player);
+			DeadMountains.onLeave(handler.player);
+		});
 		ServerLifecycleEvents.SERVER_STOPPED.register(server -> {
 			Tasks.clear(server);
 			MobTamperImpl.INSTANCE.clear();
 			ActiveEffects.clear();
 			FootstepLateCard.clear();
+			DeadMountains.clear();
 		});
 		HerobrineEvents.STAGE_CHANGED.register((server, oldStage, newStage) -> applyDuskFog(server, newStage));
 	}
@@ -43,6 +48,7 @@ public final class AtmosphereServer {
 		MobTamperImpl.INSTANCE.tick();
 		Tasks.tick(server);
 		FootstepLateCard.tick(server);
+		DeadMountains.tick(server);
 		if (server.getTickCount() % CHECK_TICKS == 0) {
 			checkFirstNight(server);
 			checkDuskFog(server);

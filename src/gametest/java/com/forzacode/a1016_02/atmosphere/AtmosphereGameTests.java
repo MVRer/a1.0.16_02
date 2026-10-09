@@ -1,6 +1,7 @@
 package com.forzacode.a1016_02.atmosphere;
 
 import java.util.List;
+import java.util.Locale;
 import java.util.UUID;
 
 import com.forzacode.a1016_02.atmosphere.card.AtmosphereCards;
@@ -10,6 +11,7 @@ import com.forzacode.a1016_02.core.CardRegistry;
 import com.forzacode.a1016_02.core.EventCard;
 import com.forzacode.a1016_02.core.FireContext;
 import com.forzacode.a1016_02.core.FireResult;
+import com.forzacode.a1016_02.core.FogLimits;
 import com.forzacode.a1016_02.core.ModConfig;
 import com.forzacode.a1016_02.core.Pacing;
 import com.forzacode.a1016_02.core.Services;
@@ -182,6 +184,49 @@ public class AtmosphereGameTests extends TamperGameTests {
 		}
 		helper.assertTrue(last == 1.0, "silence never fully returns");
 		helper.assertTrue(Curves.silenceVolume(1400, 12, 1200, fade, 0) > Curves.silenceVolume(1400, 12, 1200, fade, 0.45), "ambience does not come back before music");
+		helper.succeed();
+	}
+
+	/**
+	 * Core's server-side fog ({@code FogLimits}, where he may stand) uses atmosphere's live config and lands exactly
+	 * where the client fog ends, for the stage dusk levels at several times of day and view distances, also after the
+	 * config changes.
+	 */
+	@GameTest
+	public void serverFogMatchesClientFog(GameTestHelper helper) {
+		AtmosphereConfig cfg = AtmosphereConfig.get();
+		helper.assertTrue(FogLimits.shape().equals(cfg.fogShape()), "FogLimits does not use atmosphere's shape: " + FogLimits.shape() + " vs " + cfg.fogShape());
+		double minFog = cfg.duskMinFogBlocks;
+		double nightWeight = cfg.duskNightWeight;
+		try {
+			for (double[] shape : new double[][] {{minFog, nightWeight}, {40.0, 0.3}, {12.0, 0.9}}) {
+				cfg.duskMinFogBlocks = shape[0];
+				cfg.duskNightWeight = shape[1];
+				helper.assertTrue(FogLimits.shape().equals(cfg.fogShape()), "FogLimits did not follow a config change: " + FogLimits.shape());
+				for (Stage stage : Stage.values()) {
+					float dusk = cfg.duskFogFor(stage);
+					for (long time : new long[] {0, 6000, 11000, 12000, 12500, 13000, 14500, 18000, 22800, 23900, 24000 * 3 + 13000}) {
+						for (int chunks : new int[] {2, 8, 12, 32}) {
+							FogLimits.Result server = FogLimits.of(chunks, 32, dusk, time);
+							// The client's own math in ClientAtmosphere.applyFog (overworld: vanilla fog ends at the render limit).
+							double client = Curves.fogEnd(server.renderLimit(), cfg.duskMinFogBlocks, Curves.duskAmount(dusk, time, cfg.duskNightWeight));
+							helper.assertTrue(Math.abs(server.fogEnd() - client) < 1.0E-9, String.format(Locale.ROOT,
+									"server fog %.4f != client %.4f (stage %s, t %d, %d chunks, min %.1f, night %.2f)", server.fogEnd(), client, stage, time,
+									chunks, cfg.duskMinFogBlocks, cfg.duskNightWeight));
+						}
+					}
+				}
+			}
+			// Sanity: by day there is no dusk fog, at dusk the heaviest stage pulls it well in.
+			cfg.duskMinFogBlocks = minFog;
+			cfg.duskNightWeight = nightWeight;
+			float heaviest = cfg.duskFogFor(Stage.REMOVAL);
+			helper.assertTrue(FogLimits.of(12, 12, heaviest, 6000).fogEnd() == 192.0 && FogLimits.of(12, 12, heaviest, 13000).fogEnd() < 100.0,
+					"dusk fog by day or not at dusk");
+		} finally {
+			cfg.duskMinFogBlocks = minFog;
+			cfg.duskNightWeight = nightWeight;
+		}
 		helper.succeed();
 	}
 

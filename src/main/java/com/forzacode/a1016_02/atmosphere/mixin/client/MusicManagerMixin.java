@@ -13,7 +13,11 @@ import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
-/** Music off: while it is on, the music manager neither ticks nor starts a track, and stops whatever is playing. */
+/**
+ * Music off: while it is on, the music manager neither ticks nor starts a track, and stops whatever is playing.
+ * Dead mountains: while the player is on one (or just left it), no new track starts and the wait for the next one
+ * starts over; what is playing only fades (in the sound engine).
+ */
 @Mixin(MusicManager.class)
 abstract class MusicManagerMixin {
 	@Shadow
@@ -35,6 +39,12 @@ abstract class MusicManagerMixin {
 	@Inject(method = "startPlaying", at = @At("HEAD"), cancellable = true)
 	private void a1016_02$noStart(Music music, CallbackInfo ci) {
 		if (ClientAtmosphere.musicOff()) {
+			ci.cancel();
+		} else if (ClientAtmosphere.holdMusic()) {
+			if (currentMusic == null) {
+				// Nothing playing: this only rolls a fresh delay, so music does not burst in the moment the player leaves.
+				stopPlaying();
+			}
 			ci.cancel();
 		}
 	}

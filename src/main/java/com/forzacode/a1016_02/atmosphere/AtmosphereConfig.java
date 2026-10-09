@@ -109,6 +109,20 @@ public final class AtmosphereConfig {
 	public int zombieRadius = 48;
 	public double zombieStillSeconds = 20;
 
+	// --- dead mountains: quieter than anywhere else, and no animals ---
+	/** A recorded dead mountain is a cylinder: its site's circle, from this far below the site (its peak)... */
+	public int deadMountainDepthBlocks = 48;
+	/** ...to this far above it. */
+	public int deadMountainHeightBlocks = 64;
+	/** Dead mountains whose edge is within this many blocks of a player are sent to their client (on every chunk change). */
+	public int deadMountainSendBlocks = 160;
+	/** Ticks for ambience and music to fade out once the player stands on a dead mountain. */
+	public int deadMountainFadeOutTicks = 80;
+	/** Ticks for them to come back after leaving it. */
+	public int deadMountainRestoreTicks = 200;
+	/** Natural passive spawns (animals, bats, fish) are refused inside dead mountains. Never removes a mob. */
+	public boolean deadMountainNoAnimals = true;
+
 	// --- MobTamper ---
 	/** How fast a frozen mob turns to face its point, in degrees per tick. */
 	public float tamperTurnDegreesPerTick = 7.0F;
@@ -117,7 +131,7 @@ public final class AtmosphereConfig {
 		return ModConfig.section("atmosphere", AtmosphereConfig.class, AtmosphereConfig::new);
 	}
 
-	/** The dusk fog shape for core's {@link FogLimits} (install with {@code FogLimits.installShape(() -> get().fogShape())}). */
+	/** The dusk fog shape for core's {@link FogLimits}, installed live by {@code AtmosphereInit} ({@code FogLimits.installShape(() -> get().fogShape())}). */
 	public FogLimits.Shape fogShape() {
 		return new FogLimits.Shape(duskMinFogBlocks, duskNightWeight);
 	}

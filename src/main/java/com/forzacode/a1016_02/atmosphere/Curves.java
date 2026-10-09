@@ -51,6 +51,28 @@ public final class Curves {
 		return 0.0;
 	}
 
+	/**
+	 * How much dusk fog applies now (0 to 1): the stage's dusk level (clamped to 0 to 1) times {@link #duskWeight}.
+	 * The client fog uses exactly this, and core's {@code FogLimits} does the same math with the installed shape.
+	 */
+	public static double duskAmount(float duskLevel, long timeOfDay, double nightWeight) {
+		return clamp01(duskLevel) * duskWeight(timeOfDay, nightWeight);
+	}
+
+	/**
+	 * Dead mountain quiet: one tick of the 0 (normal) to 1 (silent) state, rising over {@code fadeOutTicks} while
+	 * inside and falling over {@code restoreTicks} after leaving.
+	 */
+	public static double quietStep(double quiet, boolean inside, int fadeOutTicks, int restoreTicks) {
+		double step = inside ? 1.0 / Math.max(1, fadeOutTicks) : -1.0 / Math.max(1, restoreTicks);
+		return clamp01(quiet + step);
+	}
+
+	/** Volume multiplier for a quiet state: eased, so the sound slips away and comes back without a step. */
+	public static double quietVolume(double quiet) {
+		return 1.0 - smooth(quiet);
+	}
+
 	/** A fog surge's shape over time: a sharp rise over {@code ramp}, a hold, then an eased fade. 0 to 1. */
 	public static double surgeEnvelope(double t, int ramp, int hold, int fade) {
 		if (t < 0.0) {
