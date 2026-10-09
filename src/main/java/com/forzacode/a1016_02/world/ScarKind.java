@@ -19,10 +19,10 @@ public enum ScarKind {
 	TUNNEL("tunnel", SiteType.CUT, false, true, 0.6, Habit.CARVER),
 	STAIR("stair", SiteType.STAIR_BOTTOM, false, true, 0.5, Habit.CARVER),
 	ABANDONED_BUILD("abandoned_build", SiteType.ABANDONED_BUILD, false, true, 1.0, Habit.VISITOR),
-	PANIC_TOWER("panic_tower", SiteType.PANIC_TOWER, false, true, 0.5, Habit.VISITOR, Habit.WATCHER),
+	PANIC_TOWER("panic_tower", SiteType.PANIC_TOWER, false, true, 0.3, Habit.VISITOR, Habit.WATCHER),
 	EMPTIED_HOUSE("emptied_house", SiteType.EMPTIED_HOUSE, false, true, 0.5, Habit.VISITOR, Habit.COLLECTOR),
 	CROSS("cross", SiteType.CROSS, false, true, 0.6, Habit.MOURNER),
-	LONE_LIGHT("lone_light", SiteType.LONE_LIGHT, false, true, 0.8, Habit.MOURNER, Habit.WATCHER),
+	LONE_LIGHT("lone_light", SiteType.LONE_LIGHT, false, true, 0.5, Habit.MOURNER, Habit.WATCHER),
 	OCEAN_PYRAMID("ocean_pyramid", SiteType.OCEAN_PYRAMID, false, true, 3.0, Habit.COLLECTOR),
 	RUINED_HUT("ruined_hut", SiteType.RUINED_HUT, false, false, 0.0);
 

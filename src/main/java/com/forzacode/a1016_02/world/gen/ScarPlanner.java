@@ -8,6 +8,7 @@ import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 
 import com.forzacode.a1016_02.A1016_02;
+import com.forzacode.a1016_02.core.Habit;
 import com.forzacode.a1016_02.core.SiteType;
 import com.forzacode.a1016_02.world.ScarKind;
 import com.forzacode.a1016_02.world.WorldConfig;
@@ -36,6 +37,7 @@ public final class ScarPlanner {
 	/** How far a small scar's blocks can reach past its cell (the stair runs about 130 blocks). */
 	private static final int POINT_REACH = 144;
 	private static final int CACHE_LIMIT = 50_000;
+	private static final int SPOTS_PER_CELL = 4;
 
 	private enum Ground { OCEAN, LAND, HILL, NONE }
 
@@ -355,24 +357,28 @@ public final class ScarPlanner {
 		if (hutPlan.isPresent() && Math.floorDiv(hutPlan.get().anchor().getX(), cell) == cx && Math.floorDiv(hutPlan.get().anchor().getZ(), cell) == cz) {
 			return Optional.empty();
 		}
-		int x = cx * cell + 16 + Hash.below(h ^ 1, cell - 32);
-		int z = cz * cell + 16 + Hash.below(h ^ 2, cell - 32);
-		if (!farFromSpawn(new BoundingBox(new BlockPos(x, 0, z)))) {
-			return Optional.empty();
-		}
-		Ground ground = classify(x, z);
-		List<ScarKind> options = switch (ground) {
-			case OCEAN -> List.of(ScarKind.OCEAN_PYRAMID, ScarKind.LONE_LIGHT);
-			case LAND -> List.of(ScarKind.ABANDONED_BUILD, ScarKind.EMPTIED_HOUSE, ScarKind.PANIC_TOWER, ScarKind.CROSS, ScarKind.LONE_LIGHT,
-					ScarKind.STAIR);
-			case HILL -> List.of(ScarKind.CUT, ScarKind.TUNNEL, ScarKind.CROSS, ScarKind.LONE_LIGHT, ScarKind.STAIR, ScarKind.PANIC_TOWER);
-			case NONE -> List.of();
-		};
-		List<ScarKind> left = new ArrayList<>(options);
-		for (int attempt = 0; attempt < 3 && !left.isEmpty(); attempt++) {
-			ScarKind kind = pickWeighted(left, h ^ (attempt * 0x9E37L + 3));
-			left.remove(kind);
-			ScarPlan plan = planPoint(kind, ground, x, z, Hash.of(h, attempt, kind.ordinal()));
+		// Up to four spots in the cell, one weighted pick each: a kind the terrain does not fit tries again
+		// elsewhere instead of handing its turn to the kinds that always fit (lights, towers).
+		for (int spot = 0; spot < SPOTS_PER_CELL; spot++) {
+			long hs = Hash.of(h, spot);
+			int x = cx * cell + 16 + Hash.below(hs ^ 1, cell - 32);
+			int z = cz * cell + 16 + Hash.below(hs ^ 2, cell - 32);
+			if (!farFromSpawn(new BoundingBox(new BlockPos(x, 0, z)))) {
+				continue;
+			}
+			Ground ground = classify(x, z);
+			List<ScarKind> options = switch (ground) {
+				case OCEAN -> List.of(ScarKind.OCEAN_PYRAMID, ScarKind.LONE_LIGHT);
+				case LAND -> List.of(ScarKind.ABANDONED_BUILD, ScarKind.EMPTIED_HOUSE, ScarKind.PANIC_TOWER, ScarKind.CROSS, ScarKind.LONE_LIGHT,
+						ScarKind.STAIR, ScarKind.CUT, ScarKind.TUNNEL);
+				case HILL -> List.of(ScarKind.CUT, ScarKind.TUNNEL, ScarKind.CROSS, ScarKind.LONE_LIGHT, ScarKind.STAIR, ScarKind.PANIC_TOWER);
+				case NONE -> List.of();
+			};
+			if (options.isEmpty()) {
+				continue;
+			}
+			ScarKind kind = pickWeighted(options, hs ^ 3);
+			ScarPlan plan = planPoint(kind, ground, x, z, Hash.of(hs, kind.ordinal()));
 			if (plan != null && farFromSpawn(plan.footprint())) {
 				return Optional.of(plan);
 			}
@@ -411,7 +417,7 @@ public final class ScarPlanner {
 			return Ground.NONE;
 		}
 		int around = (terrain.ground(x + 24, z) + terrain.ground(x - 24, z) + terrain.ground(x, z + 24) + terrain.ground(x, z - 24)) / 4;
-		return ground - around >= 10 ? Ground.HILL : Ground.LAND;
+		return ground - around >= 8 ? Ground.HILL : Ground.LAND;
 	}
 
 	private @Nullable ScarPlan planPoint(ScarKind kind, Ground ground, int x, int z, long h) {
@@ -431,7 +437,7 @@ public final class ScarPlanner {
 				int half = kind == ScarKind.ABANDONED_BUILD ? 3 : 4;
 				Holder<Biome> biome = terrain.surfaceBiome(x, z);
 				int floor = terrain.ground(x, z);
-				if (Terrain.isDenseWoods(biome) || !flat(x, z, half, floor, 2)) {
+				if (Terrain.isDenseWoods(biome) || !flat(x, z, half, floor, 3)) {
 					yield null;
 				}
 				Builds.Wood wood = Builds.Wood.of(biome);
@@ -449,7 +455,7 @@ public final class ScarPlanner {
 				int start = Hash.below(h, 4);
 				for (int n = 0; n < 4; n++) {
 					Direction dir = Direction.from2DDataValue((start + n) % 4);
-					Carves.Carve carve = Carves.stair(terrain, x, z, dir, true);
+					Carves.Carve carve = Carves.stair(terrain, x, z, dir, Carves.PathCheck.SOLID);
 					if (carve != null) {
 						yield new ScarPlan(kind, carve.site(), carve.size(), carve.blueprint(), null,
 								List.of(ScarPlan.SiteMark.of(SiteType.STAIR_BOTTOM, carve.site(), carve.size())));
@@ -509,38 +515,51 @@ public final class ScarPlanner {
 	}
 
 	private @Nullable ScarPlan planCarve(ScarKind kind, int x, int z, long h) {
-		int[] top = climb(x, z, 8, 6);
+		int[] top = climb(x, z, 16, 6);
 		int peak = terrain.ground(top[0], top[1]);
+		if (peak < terrain.seaLevel() + 8 || terrain.wet(top[0], top[1])) {
+			return null;
+		}
 		Direction first = Hash.unit(h ^ 5) < 0.5 ? Direction.EAST : Direction.SOUTH;
-		for (Direction axis : new Direction[] {first, first.getClockWise()}) {
-			Carves.Carve carve;
-			if (kind == ScarKind.CUT) {
-				carve = Carves.cut(terrain, top[0], top[1], axis, Hash.between(h ^ 6, 6, 14), Hash.between(h ^ 7, 3, 5), 64);
-			} else {
-				int floor = Math.max(terrain.seaLevel() + 2, peak - Hash.between(h ^ 8, 10, 28));
-				carve = Carves.tunnel(terrain, top[0], top[1], axis, floor, 120);
-			}
-			if (carve == null) {
-				continue;
-			}
-			List<ScarPlan.SiteMark> sites = new ArrayList<>();
-			sites.add(ScarPlan.SiteMark.of(SiteType.CUT, carve.site(), carve.size()));
-			Blueprint bp = carve.blueprint();
-			boolean mourner = ctx.habits().contains(com.forzacode.a1016_02.core.Habit.MOURNER);
-			if (kind == ScarKind.TUNNEL && Hash.unit(h ^ 9) < (mourner ? 0.5 : 0.2)) {
-				BlockPos mouth = Hash.unit(h ^ 10) < 0.5 ? carve.endA() : carve.endB();
-				Direction side = axis.getCounterClockWise();
-				int cx = mouth.getX() + side.getStepX() * 2;
-				int cz = mouth.getZ() + side.getStepZ() * 2;
-				if (!terrain.wet(cx, cz)) {
-					Builds.Build cross = Builds.cross(cx, terrain.ground(cx, cz), cz, axis, Builds.Wood.of(terrain.surfaceBiome(cx, cz)), h ^ 11);
-					cross.blueprint().ops().forEach(bp::add);
-					sites.add(ScarPlan.SiteMark.of(SiteType.CROSS, cross.site(), cross.size()));
+		int depth = kind == ScarKind.CUT ? Hash.between(h ^ 6, 6, 14) : Hash.between(h ^ 8, 10, 28);
+		for (int tryDepth : new int[] {depth, depth / 2 + 3}) {
+			for (Direction axis : new Direction[] {first, first.getClockWise()}) {
+				ScarPlan plan = carvePlan(kind, top, peak, axis, tryDepth, h);
+				if (plan != null) {
+					return plan;
 				}
 			}
-			return new ScarPlan(kind, carve.site(), carve.size(), bp, null, sites);
 		}
 		return null;
+	}
+
+	private @Nullable ScarPlan carvePlan(ScarKind kind, int[] top, int peak, Direction axis, int depth, long h) {
+		Carves.Carve carve;
+		if (kind == ScarKind.CUT) {
+			carve = Carves.cut(terrain, top[0], top[1], axis, depth, Hash.between(h ^ 7, 3, 5), 64);
+		} else {
+			int floor = Math.max(terrain.seaLevel() + 2, peak - depth);
+			carve = Carves.tunnel(terrain, top[0], top[1], axis, floor, 120);
+		}
+		if (carve == null) {
+			return null;
+		}
+		List<ScarPlan.SiteMark> sites = new ArrayList<>();
+		sites.add(ScarPlan.SiteMark.of(SiteType.CUT, carve.site(), carve.size()));
+		Blueprint bp = carve.blueprint();
+		boolean mourner = ctx.habits().contains(Habit.MOURNER);
+		if (kind == ScarKind.TUNNEL && Hash.unit(h ^ 9) < (mourner ? 0.5 : 0.2)) {
+			BlockPos mouth = Hash.unit(h ^ 10) < 0.5 ? carve.endA() : carve.endB();
+			Direction side = axis.getCounterClockWise();
+			int cx = mouth.getX() + side.getStepX() * 2;
+			int cz = mouth.getZ() + side.getStepZ() * 2;
+			if (!terrain.wet(cx, cz)) {
+				Builds.Build cross = Builds.cross(cx, terrain.ground(cx, cz), cz, axis, Builds.Wood.of(terrain.surfaceBiome(cx, cz)), h ^ 11);
+				cross.blueprint().ops().forEach(bp::add);
+				sites.add(ScarPlan.SiteMark.of(SiteType.CROSS, cross.site(), cross.size()));
+			}
+		}
+		return new ScarPlan(kind, carve.site(), carve.size(), bp, null, sites);
 	}
 
 	// --- large scars ---
@@ -575,7 +594,7 @@ public final class ScarPlanner {
 				if (Terrain.isWooded(biome)) {
 					wooded.add(new int[] {x, z, y});
 				}
-				if (y >= terrain.seaLevel() + 20 && Terrain.isGrassy(biome)) {
+				if (y >= terrain.seaLevel() + 16 && Terrain.isGrassy(biome)) {
 					hills.add(new int[] {x, z, y});
 				}
 			}
@@ -616,7 +635,7 @@ public final class ScarPlanner {
 		int x = Math.clamp(top[0], minX, minX + span);
 		int z = Math.clamp(top[1], minZ, minZ + span);
 		int peak = terrain.ground(x, z);
-		if (peak < terrain.seaLevel() + 20 || terrain.wet(x, z) || !Terrain.isGrassy(terrain.biome(x, peak, z))) {
+		if (peak < terrain.seaLevel() + 16 || terrain.wet(x, z) || !Terrain.isGrassy(terrain.biome(x, peak, z))) {
 			return null;
 		}
 		int radius = Hash.between(h ^ 4, config.deadMountainMinRadius, config.deadMountainMaxRadius);
@@ -626,7 +645,7 @@ public final class ScarPlanner {
 		BlockPos center = new BlockPos(x, peak + 1, z);
 		sites.add(ScarPlan.SiteMark.of(SiteType.DEAD_MOUNTAIN, center, radius));
 		Blueprint extras = null;
-		boolean mourner = ctx.habits().contains(com.forzacode.a1016_02.core.Habit.MOURNER);
+		boolean mourner = ctx.habits().contains(Habit.MOURNER);
 		if (Hash.unit(h ^ 5) < (mourner ? 0.6 : 0.25)) {
 			Builds.Build cross = Builds.cross(x, peak, z, horizontal(h ^ 6), Builds.Wood.of(terrain.biome(x, peak, z)), h ^ 7);
 			extras = cross.blueprint();

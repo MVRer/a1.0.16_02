@@ -170,14 +170,13 @@ public final class LightOnMountainCard implements EventCard {
 			return;
 		}
 		BlockPos pos = light.pos().pos();
-		boolean loaded = level.hasChunkAt(pos);
 		boolean nextDay = GameClock.day(server) > light.day() || !level.isDarkOutside();
 		boolean close = Services.watch().subject(server).filter(p -> p.level() == level)
 				.map(p -> horizontal(p.position(), pos) < ModConfig.pacing().mountainLightMinDistance).orElse(false);
 		if (!nextDay && !close) {
 			return;
 		}
-		if (loaded && !level.getBlockState(pos).is(Blocks.TORCH)) {
+		if (!level.getBlockState(pos).is(Blocks.TORCH)) {
 			data.setLight(null); // someone took it
 			return;
 		}

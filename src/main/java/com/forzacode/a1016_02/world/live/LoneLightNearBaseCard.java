@@ -26,6 +26,7 @@ import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.util.Mth;
 import net.minecraft.util.RandomSource;
+import net.minecraft.util.Util;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
 
@@ -90,7 +91,7 @@ public final class LoneLightNearBaseCard implements EventCard {
 		WorldConfig config = WorldConfig.get();
 		LiveTerrain terrain = new LiveTerrain(level);
 		List<Builds.LightKind> kinds = new ArrayList<>(List.of(Builds.LightKind.CAVE_TORCH, Builds.LightKind.GLOWSTONE, Builds.LightKind.OCEAN_TORCH));
-		net.minecraft.util.Util.shuffle(kinds, random);
+		Util.shuffle(kinds, random);
 		if (level.isDarkOutside()) {
 			kinds.remove(Builds.LightKind.GLOWSTONE);
 			kinds.addFirst(Builds.LightKind.GLOWSTONE); // seen from the base at night

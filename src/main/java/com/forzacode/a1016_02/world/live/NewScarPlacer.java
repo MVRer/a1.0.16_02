@@ -29,6 +29,7 @@ import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.util.RandomSource;
+import net.minecraft.util.Util;
 import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.biome.Biome;
@@ -46,6 +47,8 @@ import org.jspecify.annotations.Nullable;
  */
 public final class NewScarPlacer {
 	public static final String CAUSE = "world:new_scar";
+	/** At most this many stale chunks are looked at per try. */
+	private static final int MAX_LOOKS = 64;
 
 	/** Where a chunk was last visited (seeded in tests). */
 	@FunctionalInterface
@@ -115,7 +118,10 @@ public final class NewScarPlacer {
 		Terrain terrain = terrain(level);
 		List<Candidate> hills = new ArrayList<>();
 		List<Candidate> groves = new ArrayList<>();
-		for (ChunkPos chunk : stale) {
+		// Each look at a chunk asks the noise a few times: look at a random sample, not every stale chunk.
+		List<ChunkPos> sample = new ArrayList<>(stale);
+		Util.shuffle(sample, random);
+		for (ChunkPos chunk : sample.subList(0, Math.min(MAX_LOOKS, sample.size()))) {
 			int x = chunk.getMiddleBlockX();
 			int z = chunk.getMiddleBlockZ();
 			if (terrain.wet(x, z)) {
@@ -190,7 +196,7 @@ public final class NewScarPlacer {
 
 	private static Outcome bareOneTree(ServerLevel level, List<ChunkPos> stale, Predicate<ChunkPos> allowed, RandomSource random) {
 		List<ChunkPos> shuffled = new ArrayList<>(stale);
-		net.minecraft.util.Util.shuffle(shuffled, random);
+		Util.shuffle(shuffled, random);
 		for (ChunkPos chunk : shuffled.subList(0, Math.min(6, shuffled.size()))) {
 			level.getChunk(chunk.x(), chunk.z());
 			BlockPos trunk = findTree(level, chunk);

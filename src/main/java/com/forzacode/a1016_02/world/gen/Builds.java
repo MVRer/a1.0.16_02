@@ -20,6 +20,7 @@ import net.minecraft.world.level.block.SlabBlock;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.state.properties.DoorHingeSide;
 import net.minecraft.world.level.block.state.properties.DoubleBlockHalf;
+import net.minecraft.world.level.block.state.properties.SlabType;
 import net.minecraft.world.level.levelgen.structure.BoundingBox;
 
 /**
@@ -215,7 +216,7 @@ public final class Builds {
 		}
 		for (int r = -2; r <= 2; r++) {
 			for (int w = -2; w <= 2; w++) {
-				bp.put(f.at(r, 6, w), wood.slab().defaultBlockState().setValue(SlabBlock.TYPE, net.minecraft.world.level.block.state.properties.SlabType.BOTTOM));
+				bp.put(f.at(r, 6, w), wood.slab().defaultBlockState().setValue(SlabBlock.TYPE, SlabType.BOTTOM));
 			}
 		}
 		bp.put(f.at(0, 1, 3), wood.door().defaultBlockState().setValue(DoorBlock.FACING, facing).setValue(DoorBlock.HALF, DoubleBlockHalf.LOWER));

@@ -1,6 +1,7 @@
 package com.forzacode.a1016_02.world;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Optional;
 import java.util.function.Predicate;
@@ -297,7 +298,7 @@ public class WorldGameTests {
 				}
 			}
 		}
-		helper.assertTrue(counts[0] < counts[1] && counts[1] < counts[2], "density does not order the scars: " + java.util.Arrays.toString(counts));
+		helper.assertTrue(counts[0] < counts[1] && counts[1] < counts[2], "density does not order the scars: " + Arrays.toString(counts));
 		WorldConfig config = new WorldConfig();
 		for (Density density : Density.values()) {
 			double expected = config.pointChance(density.ordinal()) * cells;

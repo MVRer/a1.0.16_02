@@ -2,7 +2,9 @@ package com.forzacode.a1016_02.world.gen;
 
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 import com.forzacode.a1016_02.core.TraceBatch;
 
@@ -18,6 +20,7 @@ import net.minecraft.world.level.WorldGenLevel;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.block.state.properties.BlockStateProperties;
 import net.minecraft.world.level.levelgen.structure.BoundingBox;
 
 import org.jspecify.annotations.Nullable;
@@ -189,7 +192,7 @@ public final class Blueprint {
 		if (vegetationOnly) {
 			return Vegetation.dies(state) || Vegetation.isSnowLayer(state);
 		}
-		return state.getFluidState().isEmpty() || !state.getFluidState().isSource() || state.hasProperty(net.minecraft.world.level.block.state.properties.BlockStateProperties.WATERLOGGED);
+		return state.getFluidState().isEmpty() || !state.getFluidState().isSource() || state.hasProperty(BlockStateProperties.WATERLOGGED);
 	}
 
 	/** Air, fluid, snow layers and plants can be filled by a foundation. */
@@ -226,7 +229,7 @@ public final class Blueprint {
 	 * contents cannot go through the batch; call {@link #fillChests} after a successful commit.
 	 */
 	public void queue(ServerLevel level, TraceBatch batch) {
-		java.util.Map<BlockPos, BlockState> planned = new java.util.HashMap<>();
+		Map<BlockPos, BlockState> planned = new HashMap<>();
 		for (Op op : ops) {
 			BlockPos pos = op.pos();
 			switch (op) {
@@ -282,7 +285,7 @@ public final class Blueprint {
 		}
 	}
 
-	private static void place(ServerLevel level, TraceBatch batch, java.util.Map<BlockPos, BlockState> planned, BlockPos pos, BlockState state) {
+	private static void place(ServerLevel level, TraceBatch batch, Map<BlockPos, BlockState> planned, BlockPos pos, BlockState state) {
 		BlockState old = planned.getOrDefault(pos, level.getBlockState(pos));
 		if (old == state) {
 			return;

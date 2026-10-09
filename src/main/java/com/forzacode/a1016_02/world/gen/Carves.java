@@ -4,9 +4,7 @@ import org.jspecify.annotations.Nullable;
 
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
-import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
-import net.minecraft.world.level.levelgen.structure.BoundingBox;
 
 /**
  * Straight lines nature does not make: the stair down to bedrock, the level cut through a hill and the 2x2
@@ -24,12 +22,19 @@ public final class Carves {
 	private Carves() {
 	}
 
+	/** How strictly a stair's path is checked. */
+	public enum PathCheck {
+		/** Solid all the way: no cave, no water, no lava (old scars: it ends in nothing). */
+		SOLID,
+		/** No water or lava; caves are fine (debug placement in real terrain). */
+		NO_FLUID
+	}
+
 	/**
 	 * A 1x1 staircase cut into stone from the ground at (x, z) straight down to the bedrock layer. Returns null if
-	 * the path would open into a cave, water or lava (it must end in nothing). With {@code checkNoise} false the
-	 * caller has checked the blocks itself.
+	 * the path fails the check.
 	 */
-	public static @Nullable Carve stair(Terrain terrain, int x, int z, Direction dir, boolean checkPath) {
+	public static @Nullable Carve stair(Terrain terrain, int x, int z, Direction dir, PathCheck check) {
 		int groundY = terrain.ground(x, z);
 		int bottomFeet = terrain.minY() + 5;
 		if (groundY <= terrain.seaLevel() || terrain.wet(x, z) || groundY - bottomFeet < 16) {
@@ -42,7 +47,7 @@ public final class Carves {
 			int sx = x + dir.getStepX() * i;
 			int sz = z + dir.getStepZ() * i;
 			int feet = groundY - i;
-			if (checkPath && i >= 4 && !solidAround(terrain, sx, feet, sz, dir)) {
+			if (i >= 4 && !pathClear(terrain, sx, feet, sz, check)) {
 				return null;
 			}
 			for (int up = 0; up < STAIR_HEIGHT; up++) {
@@ -66,18 +71,15 @@ public final class Carves {
 		return new Carve(bp, last, 1, top, last, dir);
 	}
 
-	/** True if the stair cell and the blocks around it are solid stone in the terrain (no cave, no fluid). */
-	private static boolean solidAround(Terrain terrain, int x, int feet, int z, Direction dir) {
+	/** True if the stair cell, its floor and its ceiling pass the check in the terrain. */
+	private static boolean pathClear(Terrain terrain, int x, int feet, int z, PathCheck check) {
 		for (int up = -1; up <= STAIR_HEIGHT; up++) {
-			if (!solid(terrain.block(x, feet + up, z))) {
+			BlockState state = terrain.block(x, feet + up, z);
+			if (!state.getFluidState().isEmpty() || check == PathCheck.SOLID && state.isAir()) {
 				return false;
 			}
 		}
 		return true;
-	}
-
-	private static boolean solid(BlockState state) {
-		return !state.isAir() && state.getFluidState().isEmpty();
 	}
 
 	/**
@@ -185,13 +187,4 @@ public final class Carves {
 		return loFound && hiFound ? new int[] {lo, hi} : null;
 	}
 
-	/** The block a stair or tunnel never removes. */
-	public static boolean keeps(BlockState state) {
-		return state.is(Blocks.BEDROCK);
-	}
-
-	/** The rough box of a carve before it is built (for chunk lookups). */
-	public static BoundingBox box(Carve carve) {
-		return carve.blueprint().box();
-	}
 }

@@ -158,11 +158,16 @@ public final class LivePlacer {
 				return null;
 			}
 			case "stair" -> {
-				Carves.Carve carve = Carves.stair(terrain, x, z, facing, true);
-				return carve == null ? null : new Placement(carve.blueprint(), null, SiteType.STAIR_BOTTOM, carve.site(), 1, null);
+				for (int n = 0; n < 4; n++) {
+					Carves.Carve carve = Carves.stair(terrain, x, z, Direction.from2DDataValue((facing.get2DDataValue() + n) % 4), Carves.PathCheck.NO_FLUID);
+					if (carve != null) {
+						return new Placement(carve.blueprint(), null, SiteType.STAIR_BOTTOM, carve.site(), 1, null);
+					}
+				}
+				return null;
 			}
 			case "abandoned_build", "ruined_hut", "emptied_house" -> {
-				if (wet || !flat(terrain, x, z, name.equals("abandoned_build") ? 3 : 4, ground)) {
+				if (wet || !flat(terrain, x, z, name.equals("abandoned_build") ? 3 : 4, ground, 3)) {
 					return null;
 				}
 				Builds.Build build = switch (name) {
@@ -218,9 +223,9 @@ public final class LivePlacer {
 		return new Placement(build.blueprint(), null, type, build.site(), build.size(), null);
 	}
 
-	private static boolean flat(Terrain terrain, int x, int z, int half, int floor) {
+	private static boolean flat(Terrain terrain, int x, int z, int half, int floor, int tolerance) {
 		for (int[] c : new int[][] {{-half, -half}, {half, -half}, {-half, half}, {half, half}}) {
-			if (terrain.wet(x + c[0], z + c[1]) || Math.abs(terrain.ground(x + c[0], z + c[1]) - floor) > 2) {
+			if (terrain.wet(x + c[0], z + c[1]) || Math.abs(terrain.ground(x + c[0], z + c[1]) - floor) > tolerance) {
 				return false;
 			}
 		}
