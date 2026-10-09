@@ -51,6 +51,7 @@ public final class DirectorRules {
 	public double tracesMinorsPerHour;
 	public double minorsPerHourMin;
 	public double minorsPerHourMax;
+	public double rateRefractory;
 	public Pacing.TickRange majorEvery;
 
 	// empty sessions
@@ -117,6 +118,7 @@ public final class DirectorRules {
 		rules.minorsPerHourMin = pacing.proximityMinorsPerHourMin;
 		rules.minorsPerHourMax = Math.max(pacing.proximityMinorsPerHourMin, pacing.proximityMinorsPerHourMax);
 		rules.majorEvery = pacing.proximityMajorGap(profile.tempo());
+		rules.rateRefractory = Math.max(0, Math.min(0.9, config.rateRefractory));
 
 		rules.emptySessionChance = pacing.emptySessionChance;
 		rules.emptySessionMin = pacing.emptySessionTicks();

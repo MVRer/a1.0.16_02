@@ -22,6 +22,11 @@ public final class DirectorConfig {
 	public double tellingAmbientPerHour = 1.5;
 	/** Traces: "a scar or two found while exploring". Proximity and later use Pacing's 1 to 2 per hour. */
 	public double tracesMinorsPerHour = 0.25;
+	/**
+	 * Ambient and minor fires are spread out: after one, the next waits this fraction of the mean interval
+	 * (1 / rate), and the odds afterwards rise to keep the mean. 0 = plain random clumping.
+	 */
+	public double rateRefractory = 0.5;
 	/** First stage that draws minor and major cards. */
 	public String minorMinStage = "TRACES";
 	public String majorMinStage = "PROXIMITY";
@@ -37,8 +42,8 @@ public final class DirectorConfig {
 	// --- tension ---
 	/** A fake still adds tension, scaled by this. */
 	public double fakeTensionFactor = 0.5;
-	/** When a quiet starts, tension drops to this ("high tension buys days of nothing"). */
-	public double tensionAfterQuiet = 15;
+	/** When a quiet starts, tension drops to this: high tension buys days of nothing and is spent. */
+	public double tensionAfterQuiet = 0;
 
 	// --- attention: speeds stages up or slows them down, within the band ---
 	/** Attention at which stages run at the tempo's own pace. */

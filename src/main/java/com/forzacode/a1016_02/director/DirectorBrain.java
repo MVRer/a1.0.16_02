@@ -3,6 +3,7 @@ package com.forzacode.a1016_02.director;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.EnumMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -26,15 +27,17 @@ import net.minecraft.util.RandomSource;
  * <li>Stages move by real play time: ALONE to TRACES at a point rolled inside {@code Pacing.tracesStart(tempo)},
  * TRACES to PROXIMITY inside {@code proximityStart(tempo)}. The stage clock runs faster or slower with attention,
  * within the configured band. TELLING comes only from {@code HerobrineEvents.TELLING}; REMOVAL never from here.</li>
- * <li>One deck per tier, drawn without replacement and weighted by the profile habits and per-stage tag weights.
- * A deck runs out when no undrawn card can be drawn now; only then do its fired cards come back, and the last one
- * fired is never drawn next. Signature cards never come back.</li>
+ * <li>One deck per tier, drawn without replacement and weighted by the profile habits and per-stage tag weights
+ * (a weight below 1 also skips the card for that draw with chance 1 - weight). A deck runs out when no undrawn card
+ * can be drawn now; only then do its fired cards come back, and the last one fired is never drawn next. Signature
+ * cards never come back.</li>
  * <li>A drawn card is held until its context fits; {@code NO_SPOT} and {@code SKIPPED} keep it held. A card held
  * too long goes back into its deck.</li>
  * <li>Gates: join grace, forced quiet, empty sessions, a small gap between any two fires, the minor and major gaps,
  * no major (or signature) before {@code noMajorBeforeDay}, no ACCIDENT card before {@code firstAccident}, at most
  * {@code aloneMaxAmbient} ambients in Alone, sightings per day.</li>
- * <li>Rates: ambient and minor tiers roll per director tick at their per-hour rate, raised by the pity bonus;
+ * <li>Rates: ambient and minor tiers roll per director tick at their per-hour rate, raised by the pity bonus and
+ * spread out by a refractory gap that keeps the mean;
  * majors are scheduled every {@code proximityMajorGap(tempo)}; signatures are due as soon as one is eligible.</li>
  * <li>Every fire adds tension by tier (fakes scaled); at the threshold a quiet of 1 to 4 in-game days starts and
  * tension drops. Tension decays outside quiet.</li>
@@ -382,8 +385,20 @@ public final class DirectorBrain {
 	private boolean due(Tier tier, DirectorMemory m, Clock c, Stage stage, RandomSource random) {
 		return switch (tier) {
 			case AMBIENT, MINOR -> {
-				double perTick = rate(tier, m, stage) * (1 + pity(m, c)) * rules.tickInterval / rules.hourTicks;
-				yield perTick > 0 && random.nextDouble() < 1 - Math.exp(-perTick);
+				double perHour = rate(tier, m, stage);
+				if (perHour <= 0) {
+					yield false;
+				}
+				long last = m.lastFireTier.getOrDefault(tier, DirectorMemory.NEVER);
+				if (last != DirectorMemory.NEVER && rules.rateRefractory > 0) {
+					// Spread fires out: wait part of the mean interval, then raise the odds so the mean stays 1 / rate.
+					if (c.playTicks() - last < rules.rateRefractory * rules.hourTicks / perHour) {
+						yield false;
+					}
+					perHour /= 1 - rules.rateRefractory;
+				}
+				double perTick = perHour * (1 + pity(m, c)) * rules.tickInterval / rules.hourTicks;
+				yield random.nextDouble() < 1 - Math.exp(-perTick);
 			}
 			case MAJOR -> m.nextMajorDue >= 0 && c.playTicks() >= m.nextMajorDue;
 			case SIGNATURE -> true;
@@ -405,21 +420,44 @@ public final class DirectorBrain {
 		return out;
 	}
 
+	/**
+	 * Draws one card. A card whose stage weight is below 1 is skipped for this draw with chance 1 - weight
+	 * ("almost zero" means almost never). When nothing undrawn is left to draw (all fired, gated or skipped), the
+	 * deck has run out: its fired cards come back, except the last one fired.
+	 */
 	private CardInfo draw(Tier tier, DirectorMemory m, Clock c, Stage stage, RandomSource random, Recorder rec) {
-		List<CardInfo> eligible = candidates(tier, m, c, stage);
-		if (eligible.isEmpty() && tier != Tier.SIGNATURE && !m.cycleFired.get(tier).isEmpty()) {
-			// The deck ran out: nothing undrawn can be drawn now. The fired cards come back (the last one still waits a turn).
-			m.cycleFired.get(tier).clear();
-			rec.refilled(c, tier);
-			eligible = candidates(tier, m, c, stage);
-		}
-		if (eligible.isEmpty()) {
-			return null;
-		}
+		Set<String> skipped = new HashSet<>();
+		boolean refilled = false;
 		String givenUp = m.lastGivenUp.get(tier);
-		if (givenUp != null && eligible.size() > 1) {
-			eligible.removeIf(card -> card.id().equals(givenUp));
+		while (true) {
+			List<CardInfo> eligible = candidates(tier, m, c, stage);
+			eligible.removeIf(card -> skipped.contains(card.id()));
+			if (eligible.isEmpty()) {
+				if (refilled || tier == Tier.SIGNATURE || m.cycleFired.get(tier).isEmpty()) {
+					return null;
+				}
+				m.cycleFired.get(tier).clear();
+				rec.refilled(c, tier);
+				refilled = true;
+				continue;
+			}
+			if (givenUp != null && eligible.size() > 1) {
+				eligible.removeIf(card -> card.id().equals(givenUp));
+			}
+			CardInfo picked = weightedPick(eligible, stage, random);
+			if (picked == null) {
+				return null;
+			}
+			double tagWeight = rules.tagWeight(stage, picked);
+			if (tagWeight < 1 && random.nextDouble() >= tagWeight) {
+				skipped.add(picked.id());
+				continue;
+			}
+			return picked;
 		}
+	}
+
+	private CardInfo weightedPick(List<CardInfo> eligible, Stage stage, RandomSource random) {
 		double total = 0;
 		double[] weights = new double[eligible.size()];
 		for (int i = 0; i < weights.length; i++) {
@@ -431,20 +469,13 @@ public final class DirectorBrain {
 			return null;
 		}
 		double roll = random.nextDouble() * total;
-		CardInfo picked = eligible.getLast();
 		for (int i = 0; i < weights.length; i++) {
 			roll -= weights[i];
 			if (roll < 0) {
-				picked = eligible.get(i);
-				break;
+				return eligible.get(i);
 			}
 		}
-		// A tag weight below 1 is also the chance the card is kept at all ("almost zero" means almost never).
-		double tagWeight = rules.tagWeight(stage, picked);
-		if (tagWeight < 1 && random.nextDouble() >= tagWeight) {
-			return null;
-		}
-		return picked;
+		return eligible.getLast();
 	}
 
 	private void releaseStaleHolds(DirectorMemory m, Clock c, Stage stage, Recorder rec) {

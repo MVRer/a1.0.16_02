@@ -208,7 +208,7 @@ public final class DirectorSim {
 		DirectorMemory memory = start.copy();
 		Result result = new Result(rules, params, start.copy(), memory, clock.playTicks(), clock.dayTicks());
 		result.startStage = stage;
-		RandomSource random = RandomSource.create(params.seed);
+		RandomSource random = RandomSource.create(mix(params.seed));
 		SimEnv env = new SimEnv(stage, tension, params, random);
 		DirectorBrain brain = new DirectorBrain(rules, cards, historySize);
 		RecordingRecorder rec = new RecordingRecorder(result, env, rules);
@@ -243,6 +243,14 @@ public final class DirectorSim {
 		result.tension = env.tension;
 		result.violations = check(result, cards);
 		return result;
+	}
+
+	/** SplitMix64 finalizer: nearby seeds (1, 2, 3) give unrelated first rolls, unlike the bare LCG. */
+	static long mix(long seed) {
+		long z = seed + 0x9E3779B97F4A7C15L;
+		z = (z ^ (z >>> 30)) * 0xBF58476D1CE4E5B9L;
+		z = (z ^ (z >>> 27)) * 0x94D049BB133111EBL;
+		return z ^ (z >>> 31);
 	}
 
 	private static long pick(long min, long max, RandomSource random) {
