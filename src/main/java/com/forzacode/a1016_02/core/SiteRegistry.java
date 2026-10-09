@@ -56,6 +56,13 @@ public final class SiteRegistry {
 		static final SavedDataType<Data> TYPE = new SavedDataType<>(A1016_02.id("sites"), Data::new, CODEC, null);
 
 		final List<Site> sites = new ArrayList<>();
+		/**
+		 * Dirty tracking by version, all under LOCK: the storage encodes ({@link #snapshot}) and only later calls
+		 * {@code setDirty(false)}, so a site recorded in between keeps the data dirty and is saved next time.
+		 */
+		private long version;
+		private long savedVersion;
+		private long snapshotVersion;
 
 		Data() {
 		}
@@ -64,9 +71,28 @@ public final class SiteRegistry {
 			this.sites.addAll(sites);
 		}
 
-		private List<Site> snapshot() {
+		List<Site> snapshot() {
 			synchronized (LOCK) {
+				snapshotVersion = version;
 				return List.copyOf(sites);
+			}
+		}
+
+		@Override
+		public void setDirty(boolean dirty) {
+			synchronized (LOCK) {
+				if (dirty) {
+					version++;
+				} else {
+					savedVersion = snapshotVersion;
+				}
+			}
+		}
+
+		@Override
+		public boolean isDirty() {
+			synchronized (LOCK) {
+				return version != savedVersion;
 			}
 		}
 	}

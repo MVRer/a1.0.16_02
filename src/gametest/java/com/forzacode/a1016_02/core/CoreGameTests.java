@@ -23,8 +23,8 @@ import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
 
-/** Core game tests. Same package as core so they can reach package-private setters. */
-public class CoreGameTests {
+/** Core game tests (plus {@link TraceGameTests}). Same package as core so they can reach package-private setters. */
+public class CoreGameTests extends TraceGameTests {
 	@GameTest
 	public void profileRollIsDeterministic(GameTestHelper helper) {
 		Set<WorldProfile> distinct = new HashSet<>();
