@@ -1,5 +1,6 @@
 package com.forzacode.a1016_02.atmosphere;
 
+import java.util.EnumSet;
 import java.util.List;
 
 import com.forzacode.a1016_02.atmosphere.mob.MobTamperImpl;
@@ -12,6 +13,8 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.gametest.framework.GameTestHelper;
 import net.minecraft.util.Mth;
 import net.minecraft.world.entity.EntityTypes;
+import net.minecraft.world.entity.PathfinderMob;
+import net.minecraft.world.entity.ai.goal.Goal;
 import net.minecraft.world.entity.animal.cow.Cow;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.level.GameType;
@@ -29,29 +32,75 @@ public class TamperGameTests extends DeadMountainGameTests {
 		}
 	}
 
-	@GameTest(maxTicks = 200)
+	/**
+	 * Freeze holds a cow still even with a path set; release gives its AI back. Deterministic: the cow's own random
+	 * stroll may idle for a long time, or take the path over and stop short, so a top-priority test goal holding the
+	 * MOVE flag ({@link WalkTo}) walks it to a fixed point instead, and the walk after release is polled, not timed.
+	 */
+	@GameTest(maxTicks = 400)
 	public void tamperFreezeHoldsStillAndReleaseResumes(GameTestHelper helper) {
 		floor(helper);
 		MobTamperImpl tamper = MobTamperImpl.INSTANCE;
 		helper.assertTrue(Services.mobs() == tamper, "the real MobTamper is not installed");
 		Cow cow = helper.spawn(EntityTypes.COW, new BlockPos(1, 1, 1));
 		Vec3 goal = helper.absoluteVec(new Vec3(6.5, 1.0, 6.5));
+		WalkTo walk = new WalkTo(cow, goal);
+		cow.getGoalSelector().addGoal(0, walk);
 		helper.assertTrue(tamper.freeze(cow, 400), "freeze refused");
 		Vec3[] start = {cow.position()};
-		cow.getNavigation().moveTo(goal.x, goal.y, goal.z, 1.2);
+		cow.getNavigation().moveTo(goal.x, goal.y, goal.z, WalkTo.SPEED);
 		helper.startSequence()
 				.thenExecuteAfter(40, () -> {
 					helper.assertTrue(tamper.isFrozen(cow), "not frozen any more");
+					helper.assertTrue(walk.ticks == 0, "goals ran on a frozen cow (" + walk.ticks + " ticks)");
+					helper.assertTrue(cow.getNavigation().isDone(), "a frozen cow kept its path");
 					helper.assertTrue(horizontal(cow.position(), start[0]) < 0.3, "a frozen cow walked " + horizontal(cow.position(), start[0]));
 					tamper.release(cow);
 					helper.assertFalse(tamper.isTampered(cow) || tamper.isFrozen(cow), "release left state behind");
 					helper.assertFalse(tamper.tracked().contains(cow), "release left the cow tracked");
 					start[0] = cow.position();
-					cow.getNavigation().moveTo(goal.x, goal.y, goal.z, 1.2);
+					helper.assertTrue(cow.getNavigation().moveTo(goal.x, goal.y, goal.z, WalkTo.SPEED), "no path for the released cow");
 				})
-				.thenExecuteAfter(60, () -> helper.assertTrue(horizontal(cow.position(), start[0]) > 0.75,
+				// Released: the goals tick again and navigation is no longer stopped every tick.
+				.thenWaitUntil(() -> helper.assertTrue(walk.ticks > 0, "goals did not resume after release"))
+				.thenWaitUntil(() -> helper.assertTrue(horizontal(cow.position(), start[0]) > 0.75,
 						"a released cow did not walk again (" + horizontal(cow.position(), start[0]) + ")"))
 				.thenSucceed();
+	}
+
+	/**
+	 * Test goal: walks its mob to a fixed point and counts its own ticks. At priority 0 with the MOVE flag, no stroll,
+	 * panic or tempt goal can take the path over.
+	 */
+	static final class WalkTo extends Goal {
+		static final double SPEED = 1.2;
+		private final PathfinderMob mob;
+		private final Vec3 target;
+		int ticks;
+
+		WalkTo(PathfinderMob mob, Vec3 target) {
+			this.mob = mob;
+			this.target = target;
+			setFlags(EnumSet.of(Goal.Flag.MOVE));
+		}
+
+		@Override
+		public boolean canUse() {
+			return true;
+		}
+
+		@Override
+		public boolean requiresUpdateEveryTick() {
+			return true;
+		}
+
+		@Override
+		public void tick() {
+			ticks++;
+			if (mob.getNavigation().isDone() && horizontal(mob.position(), target) > 1.0) {
+				mob.getNavigation().moveTo(target.x, target.y, target.z, SPEED);
+			}
+		}
 	}
 
 	@GameTest(maxTicks = 100)
