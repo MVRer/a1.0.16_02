@@ -77,6 +77,10 @@ public final class AtmosphereConfig {
 	/** The needle settles back once the player is this close to where it pointed. */
 	public int compassSettleBlocks = 48;
 
+	// --- night (by the clock, not by sky darkness: a daytime thunderstorm is not night) ---
+	public long nightFrom = 13000;
+	public long nightTo = 23000;
+
 	// --- mobs acting wrong ---
 	public int deadMountainSearchRadius = 192;
 	public int cowSearchRadius = 96;

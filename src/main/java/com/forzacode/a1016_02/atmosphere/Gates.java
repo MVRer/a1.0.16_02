@@ -17,6 +17,15 @@ public final class Gates {
 		return !level.dimensionType().hasFixedTime();
 	}
 
+	/**
+	 * Night by the clock: the level has a day cycle and its time of day is in the configured night window. Unlike
+	 * {@code Level.isDarkOutside()}, a daytime thunderstorm does not count.
+	 */
+	public static boolean isNight(Level level) {
+		AtmosphereConfig cfg = AtmosphereConfig.get();
+		return hasDayCycle(level) && inWindow(timeOfDay(level), cfg.nightFrom, cfg.nightTo);
+	}
+
 	/** True if {@code time} is in {@code [from, to)} on a 24000-tick day; the window may wrap past midnight. */
 	public static boolean inWindow(long time, long from, long to) {
 		long t = Math.floorMod(time, Curves.DAY);

@@ -44,7 +44,7 @@ public final class MiningInTheDarkCard extends AtmosphereCard {
 	public boolean contextFits(ServerPlayer player, ServerLevel world) {
 		MinecraftServer server = world.getServer();
 		Pacing pacing = ModConfig.pacing();
-		return Gates.miningInTheDark(world.isDarkOutside(), Services.watch().isSleeping(player), Services.watch().stillTicks(player),
+		return Gates.miningInTheDark(Gates.isNight(world), Services.watch().isSleeping(player), Services.watch().stillTicks(player),
 				pacing.miningDarkStillTicks(), Services.director().ticksSinceTag(server, CardTag.SOUND), pacing.miningDarkSoundGapTicks(),
 				AtmosphereData.get(server).miningOn(GameClock.day(server)), pacing.miningDarkPerNight);
 	}

@@ -49,10 +49,10 @@ public final class AtmosphereServer {
 		}
 	}
 
-	/** Music goes off the first time it is dark while the subject is online, and is never turned off again by us. */
+	/** Music goes off the first time it is night (by the clock) while the subject is online, and is never turned off again by us. */
 	private static void checkFirstNight(MinecraftServer server) {
 		AtmosphereData data = AtmosphereData.get(server);
-		if (data.musicOffDone() || Services.watch().subject(server).isEmpty() || !server.overworld().isDarkOutside()) {
+		if (data.musicOffDone() || Services.watch().subject(server).isEmpty() || !Gates.isNight(server.overworld())) {
 			return;
 		}
 		data.setMusicOffDone();
