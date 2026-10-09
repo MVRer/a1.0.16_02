@@ -10,6 +10,7 @@ import com.forzacode.a1016_02.core.TraceBatch;
 
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.nbt.CompoundTag;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.WorldGenRegion;
 import net.minecraft.tags.BlockTags;
@@ -19,6 +20,8 @@ import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.WorldGenLevel;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.EntityBlock;
+import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.state.properties.BlockStateProperties;
 import net.minecraft.world.level.levelgen.structure.BoundingBox;
@@ -225,16 +228,16 @@ public final class Blueprint {
 	// --- live ---
 
 	/**
-	 * Queues the blueprint into a trace batch: blocks in the way are removed, then the build is "left". A chest's
-	 * contents cannot go through the batch; call {@link #fillChests} after a successful commit.
+	 * Queues the blueprint into a trace batch: blocks in the way are removed, then the build is "left". A chest is
+	 * left with its contents (block entity data), so nothing is written outside the batch.
 	 */
 	public void queue(ServerLevel level, TraceBatch batch) {
 		Map<BlockPos, BlockState> planned = new HashMap<>();
 		for (Op op : ops) {
 			BlockPos pos = op.pos();
 			switch (op) {
-				case Put put -> place(level, batch, planned, pos, put.state());
-				case Chest chest -> place(level, batch, planned, pos, chest.state());
+				case Put put -> place(level, batch, planned, pos, put.state(), null);
+				case Chest chest -> place(level, batch, planned, pos, chest.state(), chestData(level, chest));
 				case Clear clear -> {
 					BlockState old = planned.getOrDefault(pos, level.getBlockState(pos));
 					if (!old.isAir() && !old.is(Blocks.BEDROCK)) {
@@ -260,7 +263,7 @@ public final class Blueprint {
 						if (!fillable(old)) {
 							break;
 						}
-						place(level, batch, planned, at, f.state());
+						place(level, batch, planned, at, f.state(), null);
 						cursor.move(0, -1, 0);
 					}
 				}
@@ -276,24 +279,31 @@ public final class Blueprint {
 		}
 	}
 
-	/** Fills the chests of a committed live build. */
-	public void fillChests(ServerLevel level) {
-		for (Op op : ops) {
-			if (op instanceof Chest chest) {
-				fill(level.getBlockEntity(chest.pos()), chest.items());
-			}
+	/** A chest's contents as block entity data ({@code saveCustomOnly}), or null if it has none. */
+	private static @Nullable CompoundTag chestData(ServerLevel level, Chest chest) {
+		if (chest.items().isEmpty() || !(chest.state().getBlock() instanceof EntityBlock block)) {
+			return null;
 		}
+		BlockEntity blockEntity = block.newBlockEntity(chest.pos(), chest.state());
+		if (!(blockEntity instanceof Container container)) {
+			return null;
+		}
+		for (int slot = 0; slot < chest.items().size() && slot < container.getContainerSize(); slot++) {
+			container.setItem(slot, chest.items().get(slot).copy());
+		}
+		return blockEntity.saveCustomOnly(level.registryAccess());
 	}
 
-	private static void place(ServerLevel level, TraceBatch batch, Map<BlockPos, BlockState> planned, BlockPos pos, BlockState state) {
+	private static void place(ServerLevel level, TraceBatch batch, Map<BlockPos, BlockState> planned, BlockPos pos, BlockState state,
+			@Nullable CompoundTag data) {
 		BlockState old = planned.getOrDefault(pos, level.getBlockState(pos));
-		if (old == state) {
+		if (old == state && data == null) {
 			return;
 		}
 		if (!old.isAir() && !(old.canBeReplaced() && !old.hasBlockEntity())) {
 			batch.remove(pos);
 		}
-		batch.leave(pos, state);
+		batch.leave(pos, state, data);
 		planned.put(pos, state);
 	}
 }

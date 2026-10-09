@@ -118,11 +118,7 @@ public final class LivePlacer {
 		}
 		TraceBatch batch = Services.traces().batch(level, CAUSE + "/" + name);
 		placement.blueprint().queue(level, batch);
-		if (batch.size() == 0 || !batch.commit()) {
-			return false;
-		}
-		placement.blueprint().fillChests(level);
-		return true;
+		return batch.size() > 0 && batch.commit();
 	}
 
 	private static @Nullable Placement plan(String name, ServerLevel level, LiveTerrain terrain, int x, int z, long h) {
