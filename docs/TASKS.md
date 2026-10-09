@@ -13,7 +13,9 @@ Status values: queued, running, review, fix, merged, blocked. Only the orchestra
 | P1-5 | Dread layer: fog, silence, music off, sound director, mobs acting wrong (client and server) | atmosphere | feat/atmosphere-dread | v0.4-dread | merged | Real MobTamper is on main. Follow-up: dead mountain silence and no animals | Also builds the real MobTamper (D-017) |
 | P1-6 | Fragments: all 30 as data, placement by stage and profile, sites | lore | feat/lore-fragments | v0.5-fragments | fix | Text verified word for word on all 30. Fixing: idempotent place, chunk loads, F19 vs F07, unbreakable F30 | Contract gap to expect: a protected "untouched grove" so new scars avoid it |
 | P1-7 | Telling: sign and book watcher, blank signs, "Stop.", place not found, list updates (F30 unbreakable moved to P1-6) | lore | feat/lore-telling | v0.6-telling | queued, after P1-6 | |
-| P1-8 | Accidents: planner, every trap, death marker (uses atmosphere's MobTamper) | accident | feat/accident-traps | v0.7-accidents | running | Gravel ceiling waits on a core opt-in. Rebases onto main once atmosphere's MobTamper lands |
+| P1-8 | Accidents: planner, every trap, death marker (uses atmosphere's MobTamper) | accident | feat/accident-traps | v0.7-accidents | review | Gravel ceiling and dripstone are written, but spring only after P1-9 lands `removeLettingFall`. Debug `mark` counts toward Ending B |
+| P1-3b | World signatures: still burning, your house elsewhere, row of crosses with a fresh one | world | feat/world-signatures | v0.8 | queued | Follows D-004 and D-005 |
+| P1-9 | Core contract batch (see list below) plus D-022 fog defaults | core (narrow edits in director, atmosphere, world) | feat/core-contracts | (all) | running | |
 | P2-1 | Endings A, B, C, D (full D chain) | ending | feat/ending-endings | v0.8-endings | queued, phase 2 | |
 | P2-2 | Integration: wire all cards, close contract gaps, guardrail pass | (multi) | feat/integration-pass | v1.0 | queued, phase 2 | |
 | P2-3 | Playtest tooling: dev overlay and a 20 h scripted timewarp log | debug | feat/debug-playtest | v1.0 | queued, phase 2 | |
