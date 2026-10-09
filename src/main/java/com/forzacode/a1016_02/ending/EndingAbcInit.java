@@ -40,13 +40,16 @@ public final class EndingAbcInit {
 	static void init() {
 		Director.register(new MissingFirstBlockCard());
 		EndingCommands.register(ENGINE);
+		EndingReads.register();
 
 		ServerLifecycleEvents.SERVER_STARTED.register(server -> EndingConfig.get());
 		ServerLifecycleEvents.SERVER_STOPPED.register(server -> {
 			EndingWatch.clear();
+			EndingReads.clear();
 			ENGINE.reset();
 		});
 		ServerTickEvents.END_SERVER_TICK.register(EndingAbcInit::tick);
+		ServerTickEvents.END_SERVER_TICK.register(EndingReads::tick);
 
 		HerobrineEvents.TELLING.register((player, text, pos, namesHim) -> {
 			if (!Services.watch().isSubject(player)) {
@@ -81,7 +84,8 @@ public final class EndingAbcInit {
 	/** A live context: the subject (or null), the shared state, the ending's state and the config. */
 	static EndingEngine.Ctx ctx(MinecraftServer server, boolean force) {
 		@Nullable ServerPlayer player = Services.watch().subject(server).orElse(null);
-		return new EndingEngine.Ctx(server, player, HerobrineState.get(server), EndingState.get(server), EndingConfig.get(), now(server), RANDOM, force);
+		return new EndingEngine.Ctx(server, player, HerobrineState.get(server), EndingState.get(server), EndingConfig.get(), now(server),
+				GameClock.playTicks(server), RANDOM, force);
 	}
 
 	/** The live context and facts right now (status). */

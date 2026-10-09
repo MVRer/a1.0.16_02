@@ -17,8 +17,6 @@ public final class EndingConfig {
 	public double checkSeconds = 10;
 	/** No path commits on its own before this stage (the third-death rule and debug always can). */
 	public String commitMinStage = "TELLING";
-	/** Ending B on this marked death, whatever the path (DESIGN.md "How death works"). */
-	public int thirdDeath = 3;
 	/** After A or B finish (normal mode) and after any hardcore marked death, the director stays silent for good. */
 	public boolean silenceAfterEnd = true;
 	/** Trap scans are not cheap: the ending tries to arm (or fire the last sighting) at most once per this many real seconds. */
@@ -36,9 +34,6 @@ public final class EndingConfig {
 	public double aSightingMaxDays = 3;
 	/** Fire the last sighting again (if he was never seen) at most this many times. */
 	public int aSightingTries = 3;
-	/** The real quiet after the last sighting. */
-	public int aSilenceMinDays = 5;
-	public int aSilenceMaxDays = 7;
 	/** Trap ids tried in order for the one ordinary accident (centered on the player, so their own mine route). */
 	public List<String> aTraps = new ArrayList<>(List.of("lava_floor", "lava_wall"));
 	/** If the trap's window ran out without a death, arm again after this many days. */
@@ -59,8 +54,12 @@ public final class EndingConfig {
 	public double bEscalateDays = 2;
 	/** Home accidents: when the player is this close to their base, the ending arms a trap there itself. */
 	public int bHomeRadius = 48;
-	/** At most one home accident armed per this many days. */
-	public double bHomeArmDays = 1;
+	/**
+	 * At most one home accident per this much real play time (persisted, so a rejoin does not reset it). Never under
+	 * {@code pacing.majorGapMinutes} (D-045's floor), never in the join grace, never within that floor of the
+	 * director's own last accident, never during the director's quiet.
+	 */
+	public double bHomeArmMinutes = 90;
 	public List<String> bHomeTraps = new ArrayList<>(List.of("dark_corner", "house_fire", "gravel_ceiling", "lava_floor", "missing_rung",
 			"moved_mob"));
 	/** The house: furnishings the player placed within this many blocks of the base, under a roof. */
@@ -96,8 +95,13 @@ public final class EndingConfig {
 	// --- Ending C: "For the record" ---
 	/** No naming, no scar visit and no fog staring for this many days. */
 	public int cQuietDays = 3;
-	/** At least this many fragment items burned (and none held now). */
+	/**
+	 * Every fragment they ever held must have gone into lava or fire, none may be held anywhere (inventory, nested
+	 * shulker boxes and bundles, ender chest, containers around the base), and at least this many were burned.
+	 */
 	public int cMinFragmentsBurned = 1;
+	/** Containers (nested ones too) within this many blocks of the base count as "held". */
+	public int cBaseContainerRadius = 24;
 	/** The house counts as taken apart once the player broke this share of the most blocks they ever had around the base. */
 	public double cHouseTakenFraction = 0.75;
 	/** A house needs at least this many player-placed blocks. */

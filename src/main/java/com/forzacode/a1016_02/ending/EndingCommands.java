@@ -73,8 +73,8 @@ final class EndingCommands {
 				f.stopSeenAt() == EndingState.NEVER ? "not yet" : ago(f, f.stopSeenAt()), f.tellingCount(), f.tellingsSinceStop(), ago(f, f.lastNamedAt()),
 				ago(f, f.lastReadAt()), f.lastTraceVisitDay() < 0 ? "never" : String.format(Locale.ROOT, "%.0f days ago", f.daysSinceTraceVisit()),
 				ago(f, f.lastFogStareAt()), f.markedDeaths()));
-		lines.add(String.format(Locale.ROOT, "  C's work: %d fragments burned, holds one: %s, house %d left of %d, %d broken by them, home %s",
-				f.fragmentsBurned(), f.holdsFragment() ? "yes" : "no", f.houseLeft(), f.housePeak(), f.ownBroken(),
+		lines.add(String.format(Locale.ROOT, "  C's work: held %s, burned %s, unburned %d, holds one now: %s, house %d left of %d, %d broken by them, home %s",
+				data.everHeld(), data.burnedIds(), f.fragmentsUnburned(), f.holdsFragment() ? "yes" : "no", f.houseLeft(), f.housePeak(), f.ownBroken(),
 				data.home().map(h -> h.pos().toShortString()).orElse("-")));
 		if (path == EndingPath.NONE && !data.ended()) {
 			int obey = ModConfig.pacing().obeyDays;
@@ -85,7 +85,8 @@ final class EndingCommands {
 		if (path == EndingPath.B) {
 			lines.add("  B: house " + data.house().map(h -> h.pos().toShortString()).orElse("-") + ", copy "
 					+ (engine.ports().copyExists(server) ? (engine.ports().copyFinished(server) ? "finished" : "growing") : "none") + ", waiting in the doorway "
-					+ data.waiters().size() + ", final trap " + (data.finalArmed() ? "armed" : "not armed") + ", F20 " + (data.f20Placed() ? "placed" : "not yet"));
+					+ data.waiters().size() + ", final trap " + data.finalTrap().map(t -> t.type() + " at " + t.pos().pos().toShortString()).orElse("not armed")
+					+ ", copy box " + engine.finalBounds(snap.ctx()).map(b -> b.box().toString()).orElse("-") + ", F20 " + (data.f20Placed() ? "placed" : "not yet"));
 		}
 		List<String> log = data.log();
 		for (String line : log.subList(Math.max(0, log.size() - 6), log.size())) {

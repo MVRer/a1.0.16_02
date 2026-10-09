@@ -15,6 +15,7 @@ import com.forzacode.a1016_02.core.GameClock;
 import com.forzacode.a1016_02.core.HerobrineState;
 import com.forzacode.a1016_02.core.MobTamper;
 import com.forzacode.a1016_02.core.ModConfig;
+import com.forzacode.a1016_02.core.Pacing;
 import com.forzacode.a1016_02.core.Stage;
 import com.forzacode.a1016_02.core.TraceBatch;
 import com.forzacode.a1016_02.core.TraceService;
@@ -76,10 +77,11 @@ public final class EndingEngine {
 	 *
 	 * @param player the subject, or null if offline
 	 * @param now    {@code GameClock.dayTicks}
+	 * @param play   {@code GameClock.playTicks} (real play time, for the pacing floors)
 	 * @param force  debug: waits are skipped and edits use the forced trace service
 	 */
 	public record Ctx(MinecraftServer server, @Nullable ServerPlayer player, HerobrineState state, EndingState data, EndingConfig cfg, long now,
-			RandomSource random, boolean force) {
+			long play, RandomSource random, boolean force) {
 		long today() {
 			return Math.floorDiv(now, GameClock.TICKS_PER_DAY);
 		}
@@ -93,7 +95,7 @@ public final class EndingEngine {
 		}
 
 		Ctx forced() {
-			return new Ctx(server, player, state, data, cfg, now, random, true);
+			return new Ctx(server, player, state, data, cfg, now, play, random, true);
 		}
 	}
 
@@ -266,7 +268,7 @@ public final class EndingEngine {
 		if (path == EndingPath.A && data.progress(EndingPath.A) == A.ACCIDENT.ordinal()) {
 			data.setDeath(pos, c.now());
 			setBeat(c, EndingPath.A, A.SIGN, "the ordinary accident");
-		} else if (path == EndingPath.B && data.progress(EndingPath.B) == B.FINAL.ordinal() && (data.finalArmed() || insideFinal(c, pos))) {
+		} else if (path == EndingPath.B && data.progress(EndingPath.B) == B.FINAL.ordinal() && isFinalDeath(c, pos)) {
 			toRecord(c, "the final death, inside the copy");
 		}
 		if (fresh) {
@@ -276,7 +278,7 @@ public final class EndingEngine {
 
 	/** The third marked death commits B, whatever the path. */
 	private void thirdDeath(Ctx c, int count) {
-		if (count >= c.cfg().thirdDeath && c.data().path() != EndingPath.B && !c.data().ended()) {
+		if (count >= ModConfig.pacing().endingBMarkedDeaths && c.data().path() != EndingPath.B && !c.data().ended()) {
 			commit(c, EndingPath.B, "marked death " + count + ", the third-death rule");
 		}
 	}
@@ -349,19 +351,22 @@ public final class EndingEngine {
 		}
 	}
 
-	/** Five to seven in-game days of real quiet. */
+	/**
+	 * Five to seven full in-game days of real quiet ({@code pacing.endingAQuietMinDays..MaxDays}), counted from now.
+	 * The director's flag is day-granular, so it stays silent until the first day boundary after the quiet ends.
+	 */
 	private void toQuiet(Ctx c, String why) {
-		EndingConfig cfg = c.cfg();
-		int min = Math.max(0, cfg.aSilenceMinDays);
-		int max = Math.max(min, cfg.aSilenceMaxDays);
-		long until = c.today() + min + c.random().nextInt(max - min + 1);
-		c.data().setSilenceUntilDay(until);
-		DirectorHooks.silenceUntil(c.state(), until);
-		setBeat(c, EndingPath.A, A.QUIET, why + "; quiet until day " + until);
+		Pacing pacing = ModConfig.pacing();
+		int min = Math.max(0, pacing.endingAQuietMinDays);
+		int max = Math.max(min, pacing.endingAQuietMaxDays);
+		long until = c.now() + (min + c.random().nextInt(max - min + 1)) * GameClock.TICKS_PER_DAY;
+		c.data().setQuietUntil(until);
+		DirectorHooks.silenceUntil(c.state(), Math.floorDiv(until + GameClock.TICKS_PER_DAY - 1, GameClock.TICKS_PER_DAY));
+		setBeat(c, EndingPath.A, A.QUIET, why + String.format(Locale.ROOT, "; quiet for %.1f days", (until - c.now()) / (double) GameClock.TICKS_PER_DAY));
 	}
 
 	void aQuiet(Ctx c) {
-		if (c.force() || c.today() >= c.data().silenceUntilDay()) {
+		if (c.force() || c.now() >= c.data().quietUntil()) {
 			// Only the one accident comes now.
 			DirectorHooks.silenceForever(c.state());
 			setBeat(c, EndingPath.A, A.ACCIDENT, "the quiet is over");
@@ -374,11 +379,13 @@ public final class EndingEngine {
 		if (!c.playerActive() || ports.trapArmed()) {
 			return;
 		}
-		if (!c.force() && (data.lastArmAt() != EndingState.NEVER && c.daysSince(data.lastArmAt()) < c.cfg().aRearmDays || !mayTry(c, "a/accident"))) {
+		if (!c.force() && (data.lastArmAt() != EndingState.NEVER && c.daysSince(data.lastArmAt()) < c.cfg().aRearmDays || !mayArm(c, 0)
+				|| !mayTry(c, "a/accident"))) {
 			return;
 		}
 		armFirst(c, c.cfg().aTraps).ifPresent(id -> {
 			data.setLastArmAt(c.now());
+			data.setLastArmPlay(c.play());
 			data.log("A: one ordinary accident in a place they trusted (" + id + ")");
 		});
 	}
@@ -612,7 +619,11 @@ public final class EndingEngine {
 		}
 	}
 
-	/** Accidents closer to home: while the player is near their base, the ending arms one there itself. */
+	/**
+	 * Accidents closer to home: while the player is near their base, the ending arms one there itself, paced like a
+	 * director major (see {@link #mayArm}): at least {@code bHomeArmMinutes} of real play after the ending's last trap
+	 * (never under D-045's hour, persisted across sessions), never in the join grace or the director's quiet.
+	 */
 	void homeAccident(Ctx c) {
 		EndingState data = c.data();
 		EndingConfig cfg = c.cfg();
@@ -623,10 +634,7 @@ public final class EndingEngine {
 		if (!c.player().level().dimension().equals(house.get().dimension()) || horizontal(c.player().blockPosition(), house.get().pos()) > cfg.bHomeRadius) {
 			return;
 		}
-		if (data.lastHomeArmAt() != EndingState.NEVER && c.daysSince(data.lastHomeArmAt()) < cfg.bHomeArmDays) {
-			return;
-		}
-		if (!c.force() && !mayTry(c, "b/home")) {
+		if (!c.force() && (ports.directorQuiet(c.server()) || !mayArm(c, ModConfig.realTicks(cfg.bHomeArmMinutes * 60)) || !mayTry(c, "b/home"))) {
 			return;
 		}
 		List<String> order = new ArrayList<>(cfg.bHomeTraps);
@@ -634,57 +642,94 @@ public final class EndingEngine {
 			Collections.rotate(order, c.random().nextInt(order.size()));
 		}
 		armFirst(c, order).ifPresent(id -> {
-			data.setLastHomeArmAt(c.now());
+			data.setLastHomeArmPlay(c.play());
+			data.setLastArmPlay(c.play());
 			data.log("B: an accident close to home (" + id + ")");
 		});
 	}
 
-	/** The final death happens inside the copy (or in the emptied house if there is no copy). */
+	/**
+	 * The ending may arm a trap now: not in the join grace, at least {@code max(pacing.majorGapMinutes, minGap)} of
+	 * real play since the ending's last trap (kept in {@link EndingState}, so a rejoin does not reset it), and at least
+	 * {@code pacing.majorGapMinutes} since the director's own last accident (D-045's floor between majors).
+	 */
+	boolean mayArm(Ctx c, long minGap) {
+		if (c.force()) {
+			return true;
+		}
+		Pacing pacing = ModConfig.pacing();
+		if (c.player() == null || ports.ticksSinceJoin(c.player()) < pacing.joinGraceTicks()) {
+			return false;
+		}
+		long last = c.data().lastArmPlay();
+		if (last != EndingState.NEVER && c.play() >= last && c.play() - last < Math.max(pacing.majorGapTicks(), minGap)) {
+			return false;
+		}
+		return ports.ticksSinceDirectorAccident(c.server()) >= pacing.majorGapTicks();
+	}
+
+	/**
+	 * The final death happens inside the copy: the player is inside it, and the trap is armed only where every spot
+	 * the planner could pick lies inside it too. Without a copy, the emptied house's own shell takes its place.
+	 */
 	void bFinal(Ctx c) {
 		EndingState data = c.data();
 		EndingConfig cfg = c.cfg();
-		if (data.finalArmed() && !ports.trapArmed()) {
-			data.setFinalArmed(false);
+		Optional<EndingState.Trap> armed = ports.armedTrap(c.server());
+		if (data.finalTrap().isPresent() && !data.finalTrap().equals(armed)) {
+			data.setFinalTrap(null);
 			data.log("B: the final trap's time ran out; it waits for them again");
 		}
-		if (data.finalArmed() || !c.playerActive() || ports.trapArmed()) {
+		if (data.finalTrap().isPresent() || !c.playerActive() || armed.isPresent()) {
 			return;
 		}
-		Optional<GlobalPos> target = finalTarget(c);
-		if (target.isEmpty()) {
+		Optional<Bounds> bounds = finalBounds(c);
+		if (bounds.isEmpty()) {
 			return;
 		}
-		if (!c.force()) {
-			BlockPos at = c.player().blockPosition();
-			if (!c.player().level().dimension().equals(target.get().dimension()) || horizontal(at, target.get().pos()) > cfg.bFinalRadius
-					|| Math.abs(at.getY() - target.get().pos().getY()) > cfg.bFinalRadius || !mayTry(c, "b/final")) {
+		if (!c.force() && (!bounds.get().contains(c.player().level().dimension(), c.player().blockPosition()) || !mayArm(c, 0)
+				|| !mayTry(c, "b/final"))) {
+			return;
+		}
+		for (String id : cfg.bFinalTraps) {
+			if (ports.armTrapInside(c.player(), id, bounds.get())) {
+				data.setFinalTrap(ports.armedTrap(c.server())
+						.orElse(new EndingState.Trap(id, GlobalPos.of(c.player().level().dimension(), c.player().blockPosition()))));
+				data.setLastArmAt(c.now());
+				data.setLastArmPlay(c.play());
+				data.log("B: the final trap, inside the copy (" + id + " at " + data.finalTrap().get().pos().pos().toShortString() + ")");
 				return;
 			}
 		}
-		armFirst(c, cfg.bFinalTraps).ifPresent(id -> {
-			data.setFinalArmed(true);
-			data.setLastArmAt(c.now());
-			data.log("B: the final trap, inside the copy (" + id + ")");
-		});
 	}
 
-	/** Within {@code bFinalRadius} of the copy (or the house): any marked death there is the final one. */
-	private boolean insideFinal(Ctx c, GlobalPos pos) {
-		Optional<GlobalPos> target = finalTarget(c);
-		int r = c.cfg().bFinalRadius;
-		return target.isPresent() && target.get().dimension().equals(pos.dimension()) && horizontal(target.get().pos(), pos.pos()) <= r
-				&& Math.abs(target.get().pos().getY() - pos.pos().getY()) <= r;
-	}
-
-	/** The copy's middle if there is a copy, else the house. */
-	Optional<GlobalPos> finalTarget(Ctx c) {
+	/** The copy's box (every block moved into it); without a copy, the box of the player's own blocks at the house. */
+	Optional<Bounds> finalBounds(Ctx c) {
 		if (ports.copyExists(c.server())) {
-			Optional<GlobalPos> site = ports.copySite(c.server());
-			if (site.isPresent()) {
-				return site;
+			Optional<Bounds> copy = ports.copyBounds(c.server());
+			if (copy.isPresent()) {
+				return copy;
 			}
 		}
-		return c.data().house();
+		Optional<GlobalPos> house = c.data().house();
+		ServerLevel level = house.map(h -> c.server().getLevel(h.dimension())).orElse(null);
+		if (level == null) {
+			return Optional.empty();
+		}
+		return Bounds.around(level.dimension(), ports.watch().placedNear(level, house.get().pos(), c.cfg().houseRadius, s -> !s.isAir()));
+	}
+
+	/**
+	 * B's final death: the planner's own final trap did it (it is still the armed trap when the death is marked, which
+	 * the planner does only for a death it attributes to that trap) and the death is inside the copy.
+	 */
+	private boolean isFinalDeath(Ctx c, GlobalPos pos) {
+		Optional<EndingState.Trap> trap = c.data().finalTrap();
+		if (trap.isEmpty() || !trap.equals(ports.armedTrap(c.server()))) {
+			return false;
+		}
+		Optional<Bounds> bounds = finalBounds(c);
+		return bounds.isPresent() && bounds.get().contains(pos);
 	}
 
 	/** F10 gains its last line, "* removed [PLAYER NAME]". */

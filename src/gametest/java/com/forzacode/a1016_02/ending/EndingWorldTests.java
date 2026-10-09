@@ -3,6 +3,7 @@ package com.forzacode.a1016_02.ending;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 
 import com.forzacode.a1016_02.core.CardRegistry;
@@ -27,6 +28,7 @@ import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.core.GlobalPos;
+import net.minecraft.core.component.DataComponents;
 import net.minecraft.gametest.framework.GameTestHelper;
 import net.minecraft.nbt.NbtOps;
 import net.minecraft.nbt.Tag;
@@ -42,7 +44,10 @@ import net.minecraft.world.entity.item.ItemEntity;
 import net.minecraft.world.entity.monster.zombie.Husk;
 import net.minecraft.world.item.DyeColor;
 import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.ItemStackTemplate;
 import net.minecraft.world.item.Items;
+import net.minecraft.world.item.component.BundleContents;
+import net.minecraft.world.item.component.ItemContainerContents;
 import net.minecraft.world.level.GameType;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.BedBlock;
@@ -50,6 +55,7 @@ import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.DoorBlock;
 import net.minecraft.world.level.block.StandingSignBlock;
+import net.minecraft.world.level.block.entity.LecternBlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.state.properties.BedPart;
 import net.minecraft.world.level.block.state.properties.DoubleBlockHalf;
@@ -255,19 +261,88 @@ public class EndingWorldTests extends EndingBeatTests {
 				data, p -> p == thrower), "a plain book counted");
 		helper.assertFalse(EndingWatch.onItemDestroyed(thrown(level, at, fragment, other), level.damageSources().lava(), data, p -> p == thrower),
 				"someone else's throw counted");
-		helper.assertTrue(data.fragmentsBurned() == 2, "burned count " + data.fragmentsBurned());
-
-		helper.assertFalse(EndingWatch.holdsFragment(thrower), "an empty inventory holds a fragment");
-		thrower.getInventory().setItem(5, fragment.copy());
-		helper.assertTrue(EndingWatch.holdsFragment(thrower), "a fragment in the inventory is not seen");
-		thrower.getInventory().setItem(5, ItemStack.EMPTY);
-		thrower.getEnderChestInventory().setItem(0, fragment.copy());
-		helper.assertTrue(EndingWatch.holdsFragment(thrower), "a fragment in the ender chest is not seen");
+		helper.assertTrue(data.fragmentsBurned() == 2 && data.burnedIds().equals(Set.of("F02")) && data.everHeld().equals(Set.of("F02")),
+				"burned " + data.fragmentsBurned() + " " + data.burnedIds() + " held " + data.everHeld());
+		// A shulker box thrown in burns the fragments in it too.
+		helper.assertTrue(EndingWatch.onItemDestroyed(thrown(level, at, shulkerWith(fragment("F09")), thrower), level.damageSources().lava(), data,
+				p -> p == thrower), "a shulker box with a fragment in it did not count");
+		helper.assertTrue(data.burnedIds().contains("F09"), "the fragment in the shulker box did not burn");
 
 		// The live path through the item mixin: the fragment burns (it is not the subject's, so nothing counts).
 		ItemEntity live = thrown(level, at, fragment, thrower);
 		live.hurtServer(level, level.damageSources().lava(), 10.0F);
 		helper.assertTrue(live.isRemoved(), "the fragment did not burn");
+		helper.succeed();
+	}
+
+	static ItemStack fragment(String id) {
+		return FragmentItems.mark(new ItemStack(Items.WRITTEN_BOOK), id);
+	}
+
+	static ItemStack shulkerWith(ItemStack inside) {
+		ItemStack box = new ItemStack(Items.SHULKER_BOX);
+		box.set(DataComponents.CONTAINER, ItemContainerContents.fromItems(List.of(inside)));
+		return box;
+	}
+
+	static ItemStack bundleWith(ItemStack inside) {
+		ItemStack bundle = new ItemStack(Items.BUNDLE);
+		bundle.set(DataComponents.BUNDLE_CONTENTS, new BundleContents(List.of(ItemStackTemplate.fromNonEmptyStack(inside))));
+		return bundle;
+	}
+
+	/** Held anywhere: the inventory and nested shulker boxes and bundles, the ender chest, and containers at the base. */
+	@GameTest(structure = YARD, maxTicks = 40)
+	public void fragmentsAreFoundWhereverTheyAreKept(GameTestHelper helper) {
+		ServerPlayer player = (ServerPlayer) helper.makeMockServerPlayer(GameType.SURVIVAL);
+		helper.assertTrue(FragmentHoldings.carried(player).isEmpty(), "an empty inventory holds a fragment");
+		player.getInventory().setItem(5, fragment("F02"));
+		helper.assertTrue(FragmentHoldings.carried(player).equals(Set.of("F02")), "a fragment in the inventory is not seen");
+		player.getInventory().setItem(5, shulkerWith(bundleWith(fragment("F05"))));
+		helper.assertTrue(FragmentHoldings.carried(player).equals(Set.of("F05")), "a fragment in a bundle in a shulker box is not seen");
+		player.getInventory().setItem(5, ItemStack.EMPTY);
+		player.getEnderChestInventory().setItem(0, bundleWith(fragment("F08")));
+		helper.assertTrue(FragmentHoldings.carried(player).equals(Set.of("F08")), "a fragment in the ender chest is not seen");
+
+		EndingState data = new EndingState();
+		EndingWatch.sampleHeld(player, data);
+		helper.assertTrue(data.everHeld().equals(Set.of("F08")) && data.unburned().equals(Set.of("F08")), "what they carry is not tracked as held");
+
+		ServerLevel level = helper.getLevel();
+		BlockPos home = helper.absolutePos(new BlockPos(12, 1, 12));
+		helper.assertTrue(FragmentHoldings.stored(level, home, 10).isEmpty(), "an empty yard stores a fragment");
+		helper.setBlock(14, 1, 12, Blocks.CHEST);
+		((Container) level.getBlockEntity(helper.absolutePos(new BlockPos(14, 1, 12)))).setItem(4, shulkerWith(fragment("F11")));
+		helper.setBlock(10, 1, 12, Blocks.LECTERN);
+		LecternBlockEntity lectern = (LecternBlockEntity) level.getBlockEntity(helper.absolutePos(new BlockPos(10, 1, 12)));
+		lectern.setBook(fragment("F12"));
+		helper.assertTrue(FragmentHoldings.stored(level, home, 10).equals(Set.of("F11", "F12")),
+				"fragments in a chest's shulker box and on a lectern at the base are not seen: " + FragmentHoldings.stored(level, home, 10));
+		helper.assertTrue(FragmentHoldings.stored(level, home, 1).isEmpty(), "containers outside the radius count");
+		helper.succeed();
+	}
+
+	/** Every read counts, not only the first: opening a fragment book or map, and looking at a fragment's sign. */
+	@GameTest(structure = YARD, maxTicks = 40)
+	public void everyReadOfAFragmentCounts(GameTestHelper helper) {
+		helper.assertTrue(EndingReads.readable(fragment("F05")).equals(Optional.of("F05")), "a fragment book is not readable");
+		helper.assertTrue(EndingReads.readable(new ItemStack(Items.WRITTEN_BOOK)).isEmpty(), "a plain book reads as a fragment");
+		helper.assertTrue(EndingReads.readable(FragmentItems.mark(new ItemStack(Items.MUSIC_DISC_13), "F12")).isEmpty(), "a disc is read by opening it");
+		EndingState data = new EndingState();
+		EndingReads.noteRead(data, "F05", 1000);
+		EndingReads.noteRead(data, "F05", 50000);
+		helper.assertTrue(data.lastReadAt() == 50000, "reading it again did not count: " + data.lastReadAt());
+
+		ServerPlayer player = (ServerPlayer) helper.makeMockServerPlayer(GameType.SURVIVAL);
+		helper.setBlock(12, 0, 12, Blocks.STONE);
+		helper.setBlock(12, 1, 12, Blocks.OAK_SIGN.defaultBlockState());
+		BlockPos sign = helper.absolutePos(new BlockPos(12, 1, 12));
+		player.snapTo(helper.absoluteVec(new Vec3(12.5, 1, 9.5)), 0, 20);
+		helper.assertTrue(EndingReads.looksAt(player, sign, 4.5, 50), "looking at the sign up close is not reading it");
+		player.snapTo(helper.absoluteVec(new Vec3(12.5, 1, 9.5)), 180, 0);
+		helper.assertFalse(EndingReads.looksAt(player, sign, 4.5, 50), "turned away, it still counts as reading");
+		player.snapTo(helper.absoluteVec(new Vec3(12.5, 1, 2.5)), 0, 0);
+		helper.assertFalse(EndingReads.looksAt(player, sign, 4.5, 50), "from 10 blocks away, it still counts as reading");
 		helper.succeed();
 	}
 
@@ -286,8 +361,12 @@ public class EndingWorldTests extends EndingBeatTests {
 		d.setHome(home);
 		d.setHousePeak(40);
 		d.addOwnBroken();
-		d.addFragmentBurned();
+		d.addHeld("F05");
+		d.addBurned("F02");
 		d.setPath(EndingPath.B, 3000, "kept telling");
+		d.setLastArmPlay(77000);
+		d.setQuietUntil(123456);
+		d.setFinalTrap(new EndingState.Trap("dark_corner", home));
 		d.setProgress(EndingPath.B, B.DOORWAY.ordinal(), 4000);
 		d.setProgress(EndingPath.A, EndingBeats.A.SIGN.ordinal(), 4000);
 		d.setDeath(home, 3500);
@@ -303,8 +382,10 @@ public class EndingWorldTests extends EndingBeatTests {
 		helper.assertTrue(back.progress(EndingPath.B) == B.DOORWAY.ordinal() && back.progress(EndingPath.A) == EndingBeats.A.SIGN.ordinal(),
 				"the progress was not kept: " + back.allProgress());
 		helper.assertTrue(back.stopSeenAt() == 1000 && back.lastNamedAt() == 2000 && back.tellingsSinceStop() == 1, "the watch was not kept");
-		helper.assertTrue(back.home().equals(Optional.of(home)) && back.housePeak() == 40 && back.ownBroken() == 1 && back.fragmentsBurned() == 1,
-				"C's work was not kept");
+		helper.assertTrue(back.home().equals(Optional.of(home)) && back.housePeak() == 40 && back.ownBroken() == 1 && back.fragmentsBurned() == 1
+				&& back.everHeld().equals(Set.of("F02", "F05")) && back.unburned().equals(Set.of("F05")), "C's work was not kept");
+		helper.assertTrue(back.lastArmPlay() == 77000 && back.quietUntil() == 123456
+				&& back.finalTrap().equals(Optional.of(new EndingState.Trap("dark_corner", home))), "the arm memory was not kept");
 		helper.assertTrue(back.deathPos().equals(Optional.of(home)) && back.house().equals(Optional.of(home)) && back.f20Placed(), "the beats were not kept");
 		helper.assertTrue(back.waiters().size() == 1 && back.waiters().getFirst().mob().equals(mob) && back.waiters().getFirst().since() == 4100,
 				"the waiters were not kept");

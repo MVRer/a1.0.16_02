@@ -3,6 +3,8 @@ package com.forzacode.a1016_02.ending;
 import java.util.Locale;
 import java.util.Optional;
 
+import com.forzacode.a1016_02.core.ModConfig;
+
 /**
  * When each path commits, as pure functions of {@link EndingFacts} and the config (tests drive them with a forced
  * clock). Each {@code xWhy} returns why the path does not commit now, or empty if it does.
@@ -86,7 +88,7 @@ public final class EndingRules {
 			return Optional.empty();
 		}
 		return Optional.of(String.format(Locale.ROOT, "tellings %d/%d, after Stop. %d/%d, attention %.0f/%.0f, marked deaths %d/%d", f.tellingCount(),
-				cfg.bTellingCount, f.tellingsSinceStop(), cfg.bTellingsAfterStop, f.attention(), cfg.bAttention, f.markedDeaths(), cfg.thirdDeath));
+				cfg.bTellingCount, f.tellingsSinceStop(), cfg.bTellingsAfterStop, f.attention(), cfg.bAttention, f.markedDeaths(), ModConfig.pacing().endingBMarkedDeaths));
 	}
 
 	/**
@@ -99,6 +101,9 @@ public final class EndingRules {
 		}
 		if (f.fragmentsBurned() < cfg.cMinFragmentsBurned) {
 			return Optional.of("burned " + f.fragmentsBurned() + " of " + cfg.cMinFragmentsBurned + " fragments");
+		}
+		if (f.fragmentsUnburned() > 0) {
+			return Optional.of(f.fragmentsUnburned() + " fragments they held never burned");
 		}
 		if (f.holdsFragment()) {
 			return Optional.of("still holds a fragment");

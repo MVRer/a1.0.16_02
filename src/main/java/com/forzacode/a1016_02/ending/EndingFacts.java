@@ -11,14 +11,15 @@ import com.forzacode.a1016_02.core.Stage;
  * @param tellingCount      every telling so far ({@code LoreApi.tellingCount})
  * @param tellingsSinceStop tellings after "Stop." was first seen
  * @param fragmentsBurned   fragment items the player threw into lava or fire
- * @param holdsFragment     the player carries a fragment item (inventory or ender chest)
+ * @param fragmentsUnburned fragments the player ever held that never went into lava or fire
+ * @param holdsFragment     a fragment item is held anywhere: inventory (nested too), ender chest, containers at the base
  * @param housePeak         the most player-placed blocks ever seen around the home
  * @param houseLeft         player-placed blocks around the home now
  * @param ownBroken         of those, how many the player broke themselves
  */
 public record EndingFacts(Stage stage, boolean stopFired, boolean tellingStarted, long now, long stopSeenAt, long lastTellingAt, long lastNamedAt,
 		long lastReadAt, long lastTraceVisitDay, long lastFogStareAt, int tellingCount, int tellingsSinceStop, double attention, int markedDeaths,
-		int fragmentsBurned, boolean holdsFragment, int housePeak, int houseLeft, int ownBroken) {
+		int fragmentsBurned, int fragmentsUnburned, boolean holdsFragment, int housePeak, int houseLeft, int ownBroken) {
 
 	/** In-game days since {@code at}, or {@link Double#POSITIVE_INFINITY} if it never happened. */
 	public double daysSince(long at) {
@@ -33,7 +34,7 @@ public record EndingFacts(Stage stage, boolean stopFired, boolean tellingStarted
 	/** A copy at another moment (tests move the clock). */
 	public EndingFacts at(long newNow) {
 		return new EndingFacts(stage, stopFired, tellingStarted, newNow, stopSeenAt, lastTellingAt, lastNamedAt, lastReadAt, lastTraceVisitDay,
-				lastFogStareAt, tellingCount, tellingsSinceStop, attention, markedDeaths, fragmentsBurned, holdsFragment, housePeak, houseLeft,
+				lastFogStareAt, tellingCount, tellingsSinceStop, attention, markedDeaths, fragmentsBurned, fragmentsUnburned, holdsFragment, housePeak, houseLeft,
 				ownBroken);
 	}
 }

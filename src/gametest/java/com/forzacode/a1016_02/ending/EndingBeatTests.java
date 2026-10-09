@@ -12,8 +12,10 @@ import com.forzacode.a1016_02.ending.EndingTestSupport.Run;
 
 import net.fabricmc.fabric.api.gametest.v1.GameTest;
 
+import net.minecraft.core.BlockPos;
 import net.minecraft.core.GlobalPos;
 import net.minecraft.gametest.framework.GameTestHelper;
+import net.minecraft.world.level.levelgen.structure.BoundingBox;
 import net.minecraft.world.phys.Vec3;
 
 /**
@@ -53,17 +55,21 @@ public class EndingBeatTests extends EndingRuleTests {
 		helper.assertTrue(r.ports.sightings == 1, "fired twice inside the retry gap");
 
 		r.state.setFlag(EndingEngine.LAST_SIGHTING_SEEN_FLAG, true);
+		long seenAt = r.now;
 		r.tick();
 		helper.assertTrue(r.beat(A.class, EndingPath.A) == A.QUIET, "no quiet after he was seen");
-		long until = r.data.silenceUntilDay();
-		helper.assertTrue(until >= r.today() + 5 && until <= r.today() + 7, "the quiet is not 5 to 7 days: until " + until + " from " + r.today());
-		helper.assertTrue(DirectorHooks.silence(r.state).orElse(0L) == until, "director:silence_until_day is not the quiet's end");
+		long until = r.data.quietUntil();
+		long quiet = until - seenAt;
+		helper.assertTrue(quiet % DAY == 0 && quiet >= 5 * DAY && quiet <= 7 * DAY, "the quiet is not 5 to 7 full days: " + quiet / (double) DAY);
+		long silenceDay = DirectorHooks.silence(r.state).orElse(0L);
+		helper.assertTrue(silenceDay * DAY >= until && (silenceDay - 1) * DAY < until, "director:silence_until_day=" + silenceDay
+				+ " does not cover the quiet to its end (" + until + ")");
 
 		r.ports.armable.add("lava_floor");
-		r.days(4);
+		r.now = until - 100;
 		r.tick();
-		helper.assertTrue(r.beat(A.class, EndingPath.A) == A.QUIET && r.ports.armed.isEmpty(), "the accident came during the quiet");
-		r.now = until * GameClock.TICKS_PER_DAY + 100;
+		helper.assertTrue(r.beat(A.class, EndingPath.A) == A.QUIET && r.ports.armed.isEmpty(), "the accident came before the quiet's last tick");
+		r.now = until;
 		r.tick();
 		helper.assertTrue(r.beat(A.class, EndingPath.A) == A.ACCIDENT, "the quiet did not end");
 		helper.assertTrue(DirectorHooks.silence(r.state).orElse(0L) == DirectorHooks.FOREVER, "other events came back for the accident");
@@ -157,15 +163,23 @@ public class EndingBeatTests extends EndingRuleTests {
 		r.tick();
 		helper.assertTrue(r.beat(B.class, EndingPath.B) == B.FINAL, "the doorway never gave up");
 
+		r.ports.copyBounds = copyBox(r);
 		r.ports.armable.add("dark_corner");
-		r.player.snapTo(Vec3.atBottomCenterOf(r.ports.copySite.pos().offset(0, 0, 60)), 0, 0);
+		r.player.snapTo(Vec3.atBottomCenterOf(r.ports.copySite.pos().offset(0, 0, 6)), 0, 0);
+		r.minutes(2);
 		r.tick();
-		helper.assertTrue(r.ports.armed.isEmpty(), "the final trap was armed away from the copy");
+		helper.assertTrue(r.ports.armed.isEmpty(), "the final trap was armed with the player just outside the copy");
 		r.player.snapTo(Vec3.atBottomCenterOf(r.ports.copySite.pos().offset(2, 0, 1)), 0, 0);
 		before = Untouched.of(r);
-		r.now += 2400;
+		r.ports.spotsInside = false;
+		r.minutes(2);
 		r.tick();
-		helper.assertTrue(r.ports.armed.equals(List.of("dark_corner")) && r.data.finalArmed(), "the final trap was not armed in the copy");
+		helper.assertTrue(r.ports.armed.isEmpty(), "the final trap was armed where the planner could pick a spot outside the copy");
+		r.ports.spotsInside = true;
+		r.minutes(2);
+		r.tick();
+		helper.assertTrue(r.ports.armed.equals(List.of("dark_corner")) && r.data.finalTrap().isPresent(), "the final trap was not armed in the copy");
+		helper.assertTrue(r.ports.copyBounds.contains(r.data.finalTrap().get().pos()), "the final trap is not inside the copy");
 
 		r.engine.onMarkedDeath(r.ctx(), r.ports.copySite, 1, false);
 		helper.assertTrue(r.beat(B.class, EndingPath.B) == B.RECORD && r.ports.f10Finished == 1, "the final death did not finish F10");
@@ -180,41 +194,94 @@ public class EndingBeatTests extends EndingRuleTests {
 		helper.succeed();
 	}
 
+	/** The copy: a 9x6x9 box around its site. */
+	static Bounds copyBox(Run r) {
+		BlockPos site = r.ports.copySite.pos();
+		return new Bounds(r.ports.copySite.dimension(), BoundingBox.fromCorners(site.offset(-4, -1, -4), site.offset(4, 4, 4)));
+	}
+
 	@GameTest
-	public void onlyADeathInsideTheCopyIsBsFinalOne(GameTestHelper helper) {
+	public void onlyTheFinalTrapsDeathInsideTheCopyIsBsFinalOne(GameTestHelper helper) {
 		Run r = new Run(helper);
 		r.ports.copyExists = true;
 		r.ports.copySite = r.at(0, 150, 40);
+		r.ports.copyBounds = copyBox(r);
 		r.commit(EndingPath.B);
 		r.data.setHouse(r.at(0, 150, 0));
 		r.data.setProgress(EndingPath.B, B.FINAL.ordinal(), r.now);
-		r.engine.onMarkedDeath(r.ctx(), r.at(0, 150, 100), 1, false);
-		helper.assertTrue(r.beat(B.class, EndingPath.B) == B.FINAL && r.ports.f10Finished == 0, "a death far from the copy was the final one");
-		r.engine.onMarkedDeath(r.ctx(), r.at(3, 151, 42), 2, false);
-		helper.assertTrue(r.beat(B.class, EndingPath.B) == B.RECORD && r.ports.f10Finished == 1, "a death inside the copy was not the final one");
+		GlobalPos inside = r.at(2, 151, 41);
+
+		// Another trap's death inside the copy: not the final one.
+		r.ports.trapArmed = true;
+		r.ports.armedRef = new EndingState.Trap("lava_floor", inside);
+		r.engine.onMarkedDeath(r.ctx(), inside, 1, false);
+		helper.assertTrue(r.beat(B.class, EndingPath.B) == B.FINAL && r.ports.f10Finished == 0, "another trap's death was the final one");
+		r.ports.trapArmed = false;
+		r.ports.armedRef = null;
+
+		r.ports.armable.add("dark_corner");
+		r.player.snapTo(Vec3.atBottomCenterOf(inside.pos()), 0, 0);
+		r.engine.bFinal(r.ctx());
+		helper.assertTrue(r.data.finalTrap().isPresent(), "the final trap was not armed");
+		EndingState.Trap finalTrap = r.ports.armedRef;
+
+		// The final trap armed, but the death outside the copy: not the final one.
+		r.engine.onMarkedDeath(r.ctx(), r.at(0, 150, 100), 2, false);
+		helper.assertTrue(r.beat(B.class, EndingPath.B) == B.FINAL && r.ports.f10Finished == 0, "a death outside the copy was the final one");
+		// Inside, but the planner holds another trap now: not the final one.
+		r.ports.armedRef = new EndingState.Trap("gravel_ceiling", inside);
+		r.engine.onMarkedDeath(r.ctx(), inside, 2, false);
+		helper.assertTrue(r.beat(B.class, EndingPath.B) == B.FINAL && r.ports.f10Finished == 0, "a death by another trap was the final one");
+		// Inside, by the final trap.
+		r.ports.armedRef = finalTrap;
+		r.engine.onMarkedDeath(r.ctx(), inside, 2, false);
+		helper.assertTrue(r.beat(B.class, EndingPath.B) == B.RECORD && r.ports.f10Finished == 1, "the final trap's death inside the copy was not final");
 		helper.succeed();
 	}
 
 	@GameTest
-	public void endingBArmsAccidentsCloseToHome(GameTestHelper helper) {
+	public void endingBHomeAccidentsKeepTheDirectorsFloors(GameTestHelper helper) {
 		Run r = new Run(helper);
 		r.commit(EndingPath.B);
-		r.data.setHouse(r.at(0, 1, 0));
+		// High in the air: the house beats find nothing to empty, and no other test is in reach.
+		r.data.setHouse(r.at(0, 150, 0));
 		r.ports.armable.add("house_fire");
 		r.player.snapTo(Vec3.atBottomCenterOf(r.at(0, 1, 200).pos()), 0, 0);
 		r.tick();
 		helper.assertTrue(r.ports.armed.isEmpty(), "armed far from home");
 		r.player.snapTo(Vec3.atBottomCenterOf(r.at(10, 1, 10).pos()), 0, 0);
-		r.now += 2400;
+
+		r.ports.sinceJoin = 4 * 1200;
+		r.minutes(2);
 		r.tick();
-		helper.assertTrue(r.ports.armed.equals(List.of("house_fire")), "nothing armed at home: " + r.ports.armed);
+		helper.assertTrue(r.ports.armed.isEmpty(), "armed in the join grace");
+		r.ports.sinceJoin = Long.MAX_VALUE / 2;
+		r.ports.sinceDirectorAccident = 30 * 1200;
+		r.minutes(2);
+		r.tick();
+		helper.assertTrue(r.ports.armed.isEmpty(), "armed half an hour after the director's own accident");
+		r.ports.sinceDirectorAccident = Long.MAX_VALUE / 2;
+		r.ports.directorQuiet = true;
+		r.minutes(2);
+		r.tick();
+		helper.assertTrue(r.ports.armed.isEmpty(), "armed during the director's quiet");
+		r.ports.directorQuiet = false;
+		r.minutes(2);
+		r.tick();
+		helper.assertTrue(r.ports.armed.equals(List.of("house_fire")) && r.data.lastArmPlay() == r.play, "nothing armed at home: " + r.ports.armed);
+
 		r.ports.trapArmed = false;
-		r.now += 2400;
+		r.minutes(60);
 		r.tick();
-		helper.assertTrue(r.ports.armed.size() == 1, "a second home accident inside a day");
-		r.days(r.cfg.bHomeArmDays);
-		r.tick();
-		helper.assertTrue(r.ports.armed.size() == 2, "no home accident the next day");
+		helper.assertTrue(r.ports.armed.size() == 1, "a second home accident within bHomeArmMinutes");
+		// A rejoin (a new session, a fresh engine): the gap is in the saved state, so it still holds.
+		EndingEngine rejoined = new EndingEngine(r.ports);
+		r.minutes(10);
+		rejoined.tick(r.ctx(), r.quiet());
+		helper.assertTrue(r.ports.armed.size() == 1, "a rejoin reset the gap");
+		r.minutes(25);
+		rejoined.tick(r.ctx(), r.quiet());
+		helper.assertTrue(r.ports.armed.size() == 2, "no home accident after the gap");
 		helper.succeed();
 	}
 
@@ -222,7 +289,7 @@ public class EndingBeatTests extends EndingRuleTests {
 	public void endingCGoesSilentAndHisNameUndoesIt(GameTestHelper helper) {
 		Run r = new Run(helper);
 		r.ports.trapArmed = true;
-		r.data.addFragmentBurned();
+		r.data.addBurned("F02");
 		r.commit(EndingPath.C);
 		helper.assertTrue(r.state.stage() == Stage.REMOVAL && r.state.hasFlag("ending:path=C"), "C did not enter Stage 4");
 		helper.assertTrue(DirectorHooks.silence(r.state).orElse(0L) == DirectorHooks.FOREVER, "director:silence_until_day=-1 not set");
@@ -240,7 +307,7 @@ public class EndingBeatTests extends EndingRuleTests {
 		helper.assertTrue(r.data.path() == EndingPath.NONE, "naming him did not undo C");
 		helper.assertTrue(DirectorHooks.silence(r.state).isEmpty(), "the silence stayed after naming him");
 		helper.assertTrue(r.state.stage() == Stage.TELLING, "the stage did not go back to Telling");
-		helper.assertTrue(r.data.fragmentsBurned() == 0 && !r.state.hasFlag("ending:path=C"), "C's work was kept");
+		helper.assertTrue(r.data.fragmentsBurned() == 0 && r.data.everHeld().isEmpty() && !r.state.hasFlag("ending:path=C"), "C's work was kept");
 		helper.succeed();
 	}
 
@@ -353,11 +420,11 @@ public class EndingBeatTests extends EndingRuleTests {
 		long stop = r.now;
 		r.days(1);
 		r.engine.tick(r.ctx(), new EndingFacts(Stage.TELLING, true, true, r.now, stop, stop - 1000, stop - 1000, EndingState.NEVER, -1,
-				EndingState.NEVER, 4, 0, 10, 0, 0, false, 0, 0, 0));
+				EndingState.NEVER, 4, 0, 10, 0, 0, 0, false, 0, 0, 0));
 		helper.assertTrue(r.data.path() == EndingPath.NONE, "A committed one day after Stop.");
 		r.days(2);
 		r.engine.tick(r.ctx(), new EndingFacts(Stage.TELLING, true, true, r.now, stop, stop - 1000, stop - 1000, EndingState.NEVER, -1,
-				EndingState.NEVER, 4, 0, 10, 0, 0, false, 0, 0, 0));
+				EndingState.NEVER, 4, 0, 10, 0, 0, 0, false, 0, 0, 0));
 		helper.assertTrue(r.data.path() == EndingPath.A && r.state.stage() == Stage.REMOVAL, "the tick did not commit A: " + r.data.path());
 		helper.succeed();
 	}

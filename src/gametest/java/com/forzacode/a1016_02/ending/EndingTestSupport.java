@@ -43,7 +43,15 @@ final class EndingTestSupport {
 		final Set<String> armable = new HashSet<>();
 		final List<String> armed = new ArrayList<>();
 		boolean trapArmed;
+		/** The armed trap as the planner would report it. */
+		EndingState.@Nullable Trap armedRef;
+		/** armTrapInside: true if every spot the planner could pick is inside the bounds asked for. */
+		boolean spotsInside = true;
 		int disarms;
+		long sinceJoin = Long.MAX_VALUE / 2;
+		long sinceDirectorAccident = Long.MAX_VALUE / 2;
+		boolean directorQuiet;
+		@Nullable Bounds copyBounds;
 		boolean copyExists;
 		boolean copyFinished;
 		int copyFinishes;
@@ -55,7 +63,6 @@ final class EndingTestSupport {
 		int f10Finished;
 		boolean f20Ready;
 		int f20Calls;
-		int tellingCount;
 		final List<Float> duskFog = new ArrayList<>();
 
 		@Override
@@ -76,7 +83,39 @@ final class EndingTestSupport {
 			}
 			armed.add(trapId);
 			trapArmed = true;
+			armedRef = new EndingState.Trap(trapId, GlobalPos.of(player.level().dimension(), player.blockPosition()));
 			return true;
+		}
+
+		@Override
+		public boolean armTrapInside(ServerPlayer player, String trapId, Bounds bounds) {
+			if (trapArmed || !armable.contains(trapId) || !spotsInside) {
+				return false;
+			}
+			armed.add(trapId);
+			trapArmed = true;
+			armedRef = new EndingState.Trap(trapId, GlobalPos.of(bounds.dimension(), bounds.box().getCenter()));
+			return true;
+		}
+
+		@Override
+		public Optional<EndingState.Trap> armedTrap(MinecraftServer server) {
+			return trapArmed ? Optional.ofNullable(armedRef) : Optional.empty();
+		}
+
+		@Override
+		public long ticksSinceJoin(ServerPlayer player) {
+			return sinceJoin;
+		}
+
+		@Override
+		public long ticksSinceDirectorAccident(MinecraftServer server) {
+			return sinceDirectorAccident;
+		}
+
+		@Override
+		public boolean directorQuiet(MinecraftServer server) {
+			return directorQuiet;
 		}
 
 		@Override
@@ -88,6 +127,7 @@ final class EndingTestSupport {
 		public void disarmTraps() {
 			disarms++;
 			trapArmed = false;
+			armedRef = null;
 		}
 
 		@Override
@@ -109,6 +149,11 @@ final class EndingTestSupport {
 		@Override
 		public Optional<GlobalPos> copySite(MinecraftServer server) {
 			return Optional.ofNullable(copySite);
+		}
+
+		@Override
+		public Optional<Bounds> copyBounds(MinecraftServer server) {
+			return Optional.ofNullable(copyBounds);
 		}
 
 		@Override
@@ -140,11 +185,6 @@ final class EndingTestSupport {
 		public boolean placeF20(MinecraftServer server) {
 			f20Calls++;
 			return f20Ready;
-		}
-
-		@Override
-		public int tellingCount(MinecraftServer server) {
-			return tellingCount;
 		}
 
 		@Override
@@ -186,6 +226,8 @@ final class EndingTestSupport {
 		final RandomSource random = RandomSource.create(42L);
 		/** {@code GameClock.dayTicks}: starts at day 10, noon. */
 		long now = 10 * GameClock.TICKS_PER_DAY + 6000;
+		/** {@code GameClock.playTicks}: 20 hours in. */
+		long play = 20L * 72000;
 
 		Run(GameTestHelper helper) {
 			this.helper = helper;
@@ -195,22 +237,32 @@ final class EndingTestSupport {
 		}
 
 		EndingEngine.Ctx ctx() {
-			return new EndingEngine.Ctx(server, player, state, data, cfg, now, random, false);
+			return new EndingEngine.Ctx(server, player, state, data, cfg, now, play, random, false);
 		}
 
 		long today() {
 			return Math.floorDiv(now, GameClock.TICKS_PER_DAY);
 		}
 
+		/** In-game days pass, and as much real play (a day is 20 real minutes). */
 		void days(double days) {
 			now += Math.round(days * GameClock.TICKS_PER_DAY);
+			play += Math.round(days * GameClock.TICKS_PER_DAY);
+		}
+
+		/** Real play time passes (the in-game clock with it). */
+		void minutes(double minutes) {
+			long ticks = Math.round(minutes * 1200);
+			now += ticks;
+			play += ticks;
 		}
 
 		/** Facts where nothing commits: Stage 3, nothing done. */
 		EndingFacts quiet() {
 			return new EndingFacts(state.stage(), state.stopFired(), state.tellingStarted(), now, data.stopSeenAt(), data.lastTellingAt(),
-					data.lastNamedAt(), data.lastReadAt(), -1, data.lastFogStareAt(), ports.tellingCount, data.tellingsSinceStop(), state.attention(),
-					state.markedDeaths().size(), data.fragmentsBurned(), false, data.housePeak(), data.housePeak(), data.ownBroken());
+					data.lastNamedAt(), data.lastReadAt(), -1, data.lastFogStareAt(), state.tellingCount(), data.tellingsSinceStop(), state.attention(),
+					state.markedDeaths().size(), data.fragmentsBurned(), data.unburned().size(), false, data.housePeak(), data.housePeak(),
+					data.ownBroken());
 		}
 
 		void tick() {
@@ -233,8 +285,9 @@ final class EndingTestSupport {
 	/** A facts record with every field named, for the rule tests. */
 	static EndingFacts facts(Stage stage, boolean stopFired, long now, long stopSeenAt, long lastTellingAt, long lastNamedAt, long lastReadAt,
 			long lastTraceVisitDay, long lastFogStareAt, int tellingCount, int tellingsSinceStop, double attention, int markedDeaths, int burned,
-			boolean holds, int peak, int left, int broken) {
+			int unburned, boolean holds, int peak, int left, int broken) {
 		return new EndingFacts(stage, stopFired, stage.atLeast(Stage.TELLING), now, stopSeenAt, lastTellingAt, lastNamedAt, lastReadAt,
-				lastTraceVisitDay, lastFogStareAt, tellingCount, tellingsSinceStop, attention, markedDeaths, burned, holds, peak, left, broken);
+				lastTraceVisitDay, lastFogStareAt, tellingCount, tellingsSinceStop, attention, markedDeaths, burned, unburned, holds, peak, left,
+				broken);
 	}
 }

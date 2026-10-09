@@ -7,6 +7,8 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
+import java.util.TreeSet;
 import java.util.UUID;
 
 import com.forzacode.a1016_02.A1016_02;
@@ -26,8 +28,9 @@ import org.jspecify.annotations.Nullable;
 /**
  * The ending workstream's saved data ({@code data/a1016_02/ending.dat}): the path ({@link EndingPath}), each path's
  * progress (its beat), what the player did that the commit rules read, and each beat's own memory. Times are
- * {@code GameClock.dayTicks} ("-1" = never). Server thread only; change it through its methods, which mark it dirty.
- * Other workstreams read and change the path through {@link EndingApi}.
+ * {@code GameClock.dayTicks} ("-1" = never) unless named "play" ({@code GameClock.playTicks}). Server thread only;
+ * change it through its methods, which mark it dirty. Other workstreams read and change the path through
+ * {@link EndingApi}.
  */
 public final class EndingState extends SavedData {
 	/** "Never" for every time field. */
@@ -44,8 +47,16 @@ public final class EndingState extends SavedData {
 		).apply(i, Waiter::new));
 	}
 
+	/** A trap the ending armed, as the accident planner holds it: its kind and its spot. */
+	public record Trap(String type, GlobalPos pos) {
+		static final Codec<Trap> CODEC = RecordCodecBuilder.create(i -> i.group(
+				Codec.STRING.fieldOf("type").forGetter(Trap::type),
+				GlobalPos.CODEC.fieldOf("pos").forGetter(Trap::pos)
+		).apply(i, Trap::new));
+	}
+
 	record Run(EndingPath path, long pathSince, String reason, Map<String, Integer> progress, long beatSince, boolean ended, long endedAt,
-			int deathsSeen) {
+			int deathsSeen, long lastArmPlay) {
 		static final Codec<Run> CODEC = RecordCodecBuilder.create(i -> i.group(
 				CoreCodecs.enumCodec(EndingPath.class).optionalFieldOf("path", EndingPath.NONE).forGetter(Run::path),
 				Codec.LONG.optionalFieldOf("pathSince", NEVER).forGetter(Run::pathSince),
@@ -54,12 +65,13 @@ public final class EndingState extends SavedData {
 				Codec.LONG.optionalFieldOf("beatSince", NEVER).forGetter(Run::beatSince),
 				Codec.BOOL.optionalFieldOf("ended", false).forGetter(Run::ended),
 				Codec.LONG.optionalFieldOf("endedAt", NEVER).forGetter(Run::endedAt),
-				Codec.INT.optionalFieldOf("deathsSeen", 0).forGetter(Run::deathsSeen)
+				Codec.INT.optionalFieldOf("deathsSeen", 0).forGetter(Run::deathsSeen),
+				Codec.LONG.optionalFieldOf("lastArmPlay", NEVER).forGetter(Run::lastArmPlay)
 		).apply(i, Run::new));
 	}
 
 	record Watch(long stopSeenAt, long lastTellingAt, long lastNamedAt, long lastReadAt, long lastFogStareAt, int tellingsSinceStop,
-			int fragmentsBurned, int ownBroken, int housePeak, Optional<GlobalPos> home) {
+			int fragmentsBurned, int ownBroken, int housePeak, Optional<GlobalPos> home, Set<String> everHeld, Set<String> burnedIds) {
 		static final Codec<Watch> CODEC = RecordCodecBuilder.create(i -> i.group(
 				Codec.LONG.optionalFieldOf("stopSeenAt", NEVER).forGetter(Watch::stopSeenAt),
 				Codec.LONG.optionalFieldOf("lastTellingAt", NEVER).forGetter(Watch::lastTellingAt),
@@ -70,14 +82,17 @@ public final class EndingState extends SavedData {
 				Codec.INT.optionalFieldOf("fragmentsBurned", 0).forGetter(Watch::fragmentsBurned),
 				Codec.INT.optionalFieldOf("ownBroken", 0).forGetter(Watch::ownBroken),
 				Codec.INT.optionalFieldOf("housePeak", 0).forGetter(Watch::housePeak),
-				GlobalPos.CODEC.optionalFieldOf("home").forGetter(Watch::home)
+				GlobalPos.CODEC.optionalFieldOf("home").forGetter(Watch::home),
+				CoreCodecs.setOf(Codec.STRING).optionalFieldOf("everHeld", Set.of()).forGetter(Watch::everHeld),
+				CoreCodecs.setOf(Codec.STRING).optionalFieldOf("burnedIds", Set.of()).forGetter(Watch::burnedIds)
 		).apply(i, Watch::new));
 	}
 
-	record Beats(long silenceUntilDay, int sightingTries, long lastSightingAt, long lastArmAt, Optional<GlobalPos> deathPos, long deathAt,
-			Optional<GlobalPos> house, boolean copyRequested, boolean finalArmed, long lastHomeArmAt, boolean f20Placed, List<Waiter> waiters) {
+	record Beats(long quietUntil, int sightingTries, long lastSightingAt, long lastArmAt, Optional<GlobalPos> deathPos, long deathAt,
+			Optional<GlobalPos> house, boolean copyRequested, Optional<Trap> finalTrap, long lastHomeArmPlay, boolean f20Placed,
+			List<Waiter> waiters) {
 		static final Codec<Beats> CODEC = RecordCodecBuilder.create(i -> i.group(
-				Codec.LONG.optionalFieldOf("silenceUntilDay", 0L).forGetter(Beats::silenceUntilDay),
+				Codec.LONG.optionalFieldOf("quietUntil", NEVER).forGetter(Beats::quietUntil),
 				Codec.INT.optionalFieldOf("sightingTries", 0).forGetter(Beats::sightingTries),
 				Codec.LONG.optionalFieldOf("lastSightingAt", NEVER).forGetter(Beats::lastSightingAt),
 				Codec.LONG.optionalFieldOf("lastArmAt", NEVER).forGetter(Beats::lastArmAt),
@@ -85,8 +100,8 @@ public final class EndingState extends SavedData {
 				Codec.LONG.optionalFieldOf("deathAt", NEVER).forGetter(Beats::deathAt),
 				GlobalPos.CODEC.optionalFieldOf("house").forGetter(Beats::house),
 				Codec.BOOL.optionalFieldOf("copyRequested", false).forGetter(Beats::copyRequested),
-				Codec.BOOL.optionalFieldOf("finalArmed", false).forGetter(Beats::finalArmed),
-				Codec.LONG.optionalFieldOf("lastHomeArmAt", NEVER).forGetter(Beats::lastHomeArmAt),
+				Trap.CODEC.optionalFieldOf("finalTrap").forGetter(Beats::finalTrap),
+				Codec.LONG.optionalFieldOf("lastHomeArmPlay", NEVER).forGetter(Beats::lastHomeArmPlay),
 				Codec.BOOL.optionalFieldOf("f20Placed", false).forGetter(Beats::f20Placed),
 				Waiter.CODEC.listOf().optionalFieldOf("waiters", List.of()).forGetter(Beats::waiters)
 		).apply(i, Beats::new));
@@ -110,6 +125,7 @@ public final class EndingState extends SavedData {
 	private boolean ended;
 	private long endedAt = NEVER;
 	private int deathsSeen;
+	private long lastArmPlay = NEVER;
 
 	// --- what the player did ---
 	private long stopSeenAt = NEVER;
@@ -122,9 +138,11 @@ public final class EndingState extends SavedData {
 	private int ownBroken;
 	private int housePeak;
 	private @Nullable GlobalPos home;
+	private final Set<String> everHeld = new TreeSet<>();
+	private final Set<String> burnedIds = new TreeSet<>();
 
 	// --- the beats' own memory ---
-	private long silenceUntilDay;
+	private long quietUntil = NEVER;
 	private int sightingTries;
 	private long lastSightingAt = NEVER;
 	private long lastArmAt = NEVER;
@@ -132,8 +150,8 @@ public final class EndingState extends SavedData {
 	private long deathAt = NEVER;
 	private @Nullable GlobalPos house;
 	private boolean copyRequested;
-	private boolean finalArmed;
-	private long lastHomeArmAt = NEVER;
+	private @Nullable Trap finalTrap;
+	private long lastHomeArmPlay = NEVER;
 	private boolean f20Placed;
 	private final List<Waiter> waiters = new ArrayList<>();
 
@@ -153,6 +171,7 @@ public final class EndingState extends SavedData {
 			ended = r.ended();
 			endedAt = r.endedAt();
 			deathsSeen = r.deathsSeen();
+			lastArmPlay = r.lastArmPlay();
 		});
 		watch.ifPresent(w -> {
 			stopSeenAt = w.stopSeenAt();
@@ -165,9 +184,11 @@ public final class EndingState extends SavedData {
 			ownBroken = w.ownBroken();
 			housePeak = w.housePeak();
 			home = w.home().orElse(null);
+			everHeld.addAll(w.everHeld());
+			burnedIds.addAll(w.burnedIds());
 		});
 		beats.ifPresent(b -> {
-			silenceUntilDay = b.silenceUntilDay();
+			quietUntil = b.quietUntil();
 			sightingTries = b.sightingTries();
 			lastSightingAt = b.lastSightingAt();
 			lastArmAt = b.lastArmAt();
@@ -175,8 +196,8 @@ public final class EndingState extends SavedData {
 			deathAt = b.deathAt();
 			house = b.house().orElse(null);
 			copyRequested = b.copyRequested();
-			finalArmed = b.finalArmed();
-			lastHomeArmAt = b.lastHomeArmAt();
+			finalTrap = b.finalTrap().orElse(null);
+			lastHomeArmPlay = b.lastHomeArmPlay();
 			f20Placed = b.f20Placed();
 			waiters.addAll(b.waiters());
 		});
@@ -190,17 +211,17 @@ public final class EndingState extends SavedData {
 	private Run run() {
 		Map<String, Integer> named = new HashMap<>();
 		progress.forEach((p, beat) -> named.put(p.name(), beat));
-		return new Run(path, pathSince, reason, named, beatSince, ended, endedAt, deathsSeen);
+		return new Run(path, pathSince, reason, named, beatSince, ended, endedAt, deathsSeen, lastArmPlay);
 	}
 
 	private Watch watch() {
 		return new Watch(stopSeenAt, lastTellingAt, lastNamedAt, lastReadAt, lastFogStareAt, tellingsSinceStop, fragmentsBurned, ownBroken,
-				housePeak, Optional.ofNullable(home));
+				housePeak, Optional.ofNullable(home), Set.copyOf(everHeld), Set.copyOf(burnedIds));
 	}
 
 	private Beats beats() {
-		return new Beats(silenceUntilDay, sightingTries, lastSightingAt, lastArmAt, Optional.ofNullable(deathPos), deathAt,
-				Optional.ofNullable(house), copyRequested, finalArmed, lastHomeArmAt, f20Placed, List.copyOf(waiters));
+		return new Beats(quietUntil, sightingTries, lastSightingAt, lastArmAt, Optional.ofNullable(deathPos), deathAt, Optional.ofNullable(house),
+				copyRequested, Optional.ofNullable(finalTrap), lastHomeArmPlay, f20Placed, List.copyOf(waiters));
 	}
 
 	// --- path and progress ---
@@ -221,7 +242,7 @@ public final class EndingState extends SavedData {
 
 	/**
 	 * Sets the path and starts it at beat 0 (its progress is reset). The beats' own memory is cleared so a path that
-	 * starts again starts clean; what the player did is kept.
+	 * starts again starts clean; what the player did, A's death for the sign and the last arm's play time are kept.
 	 */
 	void setPath(EndingPath newPath, long now, String why) {
 		path = newPath;
@@ -234,14 +255,14 @@ public final class EndingState extends SavedData {
 	}
 
 	private void clearBeats() {
-		silenceUntilDay = 0;
+		quietUntil = NEVER;
 		sightingTries = 0;
 		lastSightingAt = NEVER;
 		lastArmAt = NEVER;
 		house = null;
 		copyRequested = false;
-		finalArmed = false;
-		lastHomeArmAt = NEVER;
+		finalTrap = null;
+		lastHomeArmPlay = NEVER;
 		waiters.clear();
 	}
 
@@ -303,6 +324,16 @@ public final class EndingState extends SavedData {
 		setDirty();
 	}
 
+	/** {@code GameClock.playTicks} of the ending's last armed trap, whatever the path (kept across path changes). */
+	public long lastArmPlay() {
+		return lastArmPlay;
+	}
+
+	void setLastArmPlay(long play) {
+		lastArmPlay = play;
+		setDirty();
+	}
+
 	// --- what the player did ---
 
 	public long stopSeenAt() {
@@ -338,6 +369,7 @@ public final class EndingState extends SavedData {
 		setDirty();
 	}
 
+	/** The last time they read a fragment (any read, not only the first). */
 	public long lastReadAt() {
 		return lastReadAt;
 	}
@@ -356,13 +388,43 @@ public final class EndingState extends SavedData {
 		setDirty();
 	}
 
+	/** Fragment items thrown into lava or fire. */
 	public int fragmentsBurned() {
 		return fragmentsBurned;
 	}
 
-	void addFragmentBurned() {
+	/** Every fragment id the player has ever held. Unmodifiable. */
+	public Set<String> everHeld() {
+		return Collections.unmodifiableSet(everHeld);
+	}
+
+	/** Every fragment id the player burned. Unmodifiable. */
+	public Set<String> burnedIds() {
+		return Collections.unmodifiableSet(burnedIds);
+	}
+
+	/** They held this fragment. True if it was new. */
+	boolean addHeld(String id) {
+		boolean added = everHeld.add(id);
+		if (added) {
+			setDirty();
+		}
+		return added;
+	}
+
+	/** They threw this fragment into lava or fire (it was theirs, so it was held). */
+	void addBurned(String id) {
 		fragmentsBurned++;
+		everHeld.add(id);
+		burnedIds.add(id);
 		setDirty();
+	}
+
+	/** Fragments they held that never went into the fire. */
+	public Set<String> unburned() {
+		Set<String> left = new TreeSet<>(everHeld);
+		left.removeAll(burnedIds);
+		return left;
 	}
 
 	/** Player-placed blocks around the home that the player broke themselves. */
@@ -400,6 +462,8 @@ public final class EndingState extends SavedData {
 	/** Ending C's reversal: "say his name once and it all starts again". */
 	void resetSilenceWork() {
 		fragmentsBurned = 0;
+		everHeld.clear();
+		burnedIds.clear();
 		ownBroken = 0;
 		housePeak = 0;
 		setDirty();
@@ -407,12 +471,13 @@ public final class EndingState extends SavedData {
 
 	// --- beats ---
 
-	public long silenceUntilDay() {
-		return silenceUntilDay;
+	/** Ending A: when the quiet ends ({@code dayTicks}). */
+	public long quietUntil() {
+		return quietUntil;
 	}
 
-	void setSilenceUntilDay(long day) {
-		silenceUntilDay = day;
+	void setQuietUntil(long at) {
+		quietUntil = at;
 		setDirty();
 	}
 
@@ -476,21 +541,23 @@ public final class EndingState extends SavedData {
 		setDirty();
 	}
 
-	public boolean finalArmed() {
-		return finalArmed;
+	/** Ending B: the final trap armed inside the copy, as the planner holds it. */
+	public Optional<Trap> finalTrap() {
+		return Optional.ofNullable(finalTrap);
 	}
 
-	void setFinalArmed(boolean value) {
-		finalArmed = value;
+	void setFinalTrap(@Nullable Trap trap) {
+		finalTrap = trap;
 		setDirty();
 	}
 
-	public long lastHomeArmAt() {
-		return lastHomeArmAt;
+	/** {@code GameClock.playTicks} of B's last home accident. */
+	public long lastHomeArmPlay() {
+		return lastHomeArmPlay;
 	}
 
-	void setLastHomeArmAt(long at) {
-		lastHomeArmAt = at;
+	void setLastHomeArmPlay(long play) {
+		lastHomeArmPlay = play;
 		setDirty();
 	}
 
