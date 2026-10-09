@@ -2,6 +2,23 @@
 
 One entry per merge, newest first. Run the game from the main checkout (this folder, on `main`).
 
+## READY TO TRY: Telling (naming him, "Stop.", blank signs, place not found)  (merged feat/lore-telling + feat/director-fixes, commit 65a96dd)
+```
+Restart needed: full game restart (new mixins for signs, books and chat)
+See it now:
+  1. Launch "Dev Client". Write "her0brine" (or any spelling of his name) on a sign. /a1016 state shows Stage 3
+     (Telling). /a1016 lore telling shows the count and which signs it remembers.
+  2. "Stop.": walk away so the sign is out of view, then /a1016 fire stop_sign. Go back: line 2 reads "Stop.".
+  3. Write another sign, walk away, /a1016 fire blank_sign. It comes back empty.
+  4. /a1016 lore place F01, visit it, leave, then /a1016 fire place_not_found (only after Stop.): flat dirt and one
+     blank sign where it was.
+  5. Writing a sign near one of his tunnels or pyramids raises attention but does NOT start Stage 3. Only his name does.
+  6. Previews: /a1016 lore listcause lava (what F23 would say), /a1016 lore ending finishf10 | placef20 | stoptocross
+What to look for: he never writes. "Stop." is the team's word, moved onto your sign. The more you tell, the faster
+  things go. Chat counts too.
+Known rough edges: endings (v0.8) are what call finishF10, placeF20 and the Stop.-to-cross move.
+```
+
 ## READY TO TRY: Your missing stacks are under you  (merged feat/dig-followups, commit 4ab44bf)
 ```
 Restart needed: full game restart (Java code)
