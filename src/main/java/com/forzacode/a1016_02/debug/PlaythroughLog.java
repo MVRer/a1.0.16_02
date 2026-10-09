@@ -49,6 +49,10 @@ final class PlaythroughLog {
 				Fmt.dur(limits.joinGrace(), h), Fmt.dur(limits.minorGap(), h), limits.noMajorBeforeDay(), limits.aloneMaxAmbient(),
 				Fmt.hm(limits.firstAccident(), h), limits.tracesAmbientPerHour(), limits.minorsPerHourMin(), limits.minorsPerHourMax(),
 				Fmt.hm(limits.majorEveryMin(), h), Fmt.hm(limits.majorEveryMax(), h)));
+		if (result.params.tellingAtHour >= 0) {
+			lines.add(Fmt.f("telling: the subject names him at %s (simTellingAtHour), so Telling runs from then on", Fmt.hm(Math.round(
+					result.params.tellingAtHour * h), h)));
+		}
 		lines.add(Playthrough.rulesNote(rules));
 		lines.add("");
 		lines.add(Fmt.f("RESULT: %s (hard %d/%d held, soft %d/%d on target)", r.passed() ? "PASS" : "FAIL",
@@ -178,6 +182,7 @@ final class PlaythroughLog {
 			case FIRE -> Fmt.f("%-9s %s%s  tension %.1f", Fmt.lower(e.tier()), e.cardId(), e.fake() ? " (fake)" : "", e.value());
 			case QUIET -> Fmt.f("%s, until day %d (tension was %.1f)", days((e.until() - e.dayTicks()) / DAY_TICKS),
 					Math.floorDiv(e.until(), DAY_TICKS), e.value());
+			case TELLING -> "the subject named him (in " + e.stage() + ")";
 		};
 	}
 

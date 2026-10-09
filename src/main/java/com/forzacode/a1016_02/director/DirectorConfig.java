@@ -100,6 +100,12 @@ public final class DirectorConfig {
 	public double simNoSpotChance = 0.1;
 	public double simSessionMinMinutes = 45;
 	public double simSessionMaxMinutes = 180;
+	/**
+	 * Hours into a dry run at which the subject names him (a naming TELLING), so the run reaches Stage 3 and its
+	 * pacing is exercised. Negative = never, the default: the director never enters Telling on its own (D-041).
+	 * {@code /a1016 director sim} and the scripted playthrough use it; timewarp never does.
+	 */
+	public double simTellingAtHour = -1;
 
 	// --- debug ---
 	/** Fires kept in the history (newest last). */

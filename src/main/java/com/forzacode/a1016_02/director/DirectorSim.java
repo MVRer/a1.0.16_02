@@ -21,10 +21,12 @@ import net.minecraft.util.RandomSource;
 /**
  * Dry runs of {@link DirectorBrain}: no world, no cards fire. Contexts fit by dice, sessions start and end by
  * dice, and everything the brain decides is recorded. Used by {@code /a1016 director sim}, by timewarp's summary
- * and by the game tests. {@link #check} replays the record against every pacing limit.
+ * and by the game tests. {@link #check} replays the record against every pacing limit. The director never enters
+ * Telling on its own (D-041), so a run reaches Stage 3 only when {@link Params#tellingAtHour} names him.
  */
 public final class DirectorSim {
-	public enum Kind { STAGE, SESSION_START, SESSION_END, DRAW, GIVE_UP, REFILL, FIRE, QUIET }
+	/** {@code TELLING}: the subject named him (a dry run's {@link Params#tellingAtHour}). */
+	public enum Kind { STAGE, SESSION_START, SESSION_END, DRAW, GIVE_UP, REFILL, FIRE, QUIET, TELLING }
 
 	/**
 	 * One recorded decision.
@@ -74,6 +76,11 @@ public final class DirectorSim {
 		public double attention;
 		/** Optional per-card override of the context dice (tests). */
 		public Predicate<CardInfo> fits;
+		/**
+		 * Hours into the run at which the subject names him: lore's naming {@code HerobrineEvents.TELLING}, so the
+		 * run reaches Telling and Stage 3's pacing is exercised. Negative: never (the director alone never gets there).
+		 */
+		public double tellingAtHour = -1;
 
 		public static Params from(DirectorConfig config, DirectorRules rules) {
 			Params p = new Params();
@@ -81,6 +88,7 @@ public final class DirectorSim {
 			p.noSpotChance = config.simNoSpotChance;
 			p.sessionMin = Math.max(rules.tickInterval, Math.round(config.simSessionMinMinutes * 60 / 3600.0 * rules.hourTicks));
 			p.sessionMax = Math.max(p.sessionMin, Math.round(config.simSessionMaxMinutes * 60 / 3600.0 * rules.hourTicks));
+			p.tellingAtHour = config.simTellingAtHour;
 			return p;
 		}
 	}
@@ -360,6 +368,8 @@ public final class DirectorSim {
 
 		DirectorBrain.Clock c = clock;
 		long end = clock.playTicks() + Math.round(params.hours * rules.hourTicks);
+		long tellingAt = params.tellingAtHour < 0 ? Long.MAX_VALUE : clock.playTicks() + Math.round(params.tellingAtHour * rules.hourTicks);
+		boolean told = false;
 		rec.ensureRow(c.playTicks());
 		if (!params.continueSession || memory.sessionStart < 0) {
 			brain.onJoin(memory, c, env, random, rec);
@@ -371,6 +381,12 @@ public final class DirectorSim {
 				brain.onLeave(memory, c, rec);
 				brain.onJoin(memory, c, env, random, rec);
 				sessionEnd = c.playTicks() + pick(params.sessionMin, params.sessionMax, random);
+			}
+			if (!told && c.playTicks() >= tellingAt) {
+				// The subject writes his name, as lore's TELLING event reports it to the live director.
+				told = true;
+				rec.named(c);
+				brain.onTelling(memory, c, env, true, rec);
 			}
 			brain.step(memory, c, env, random, rec);
 			HourRow row = rec.ensureRow(c.playTicks());
@@ -433,10 +449,26 @@ public final class DirectorSim {
 		}
 		Set<String> once = new HashSet<>(start.signaturesFired);
 		Event pendingQuiet = null;
+		Stage stage = result.startStage;
+		long namedAt = -1;
 
 		for (Event e : result.events) {
 			String at = time(e.play(), rules) + " ";
 			switch (e.kind()) {
+				case TELLING -> namedAt = e.play();
+				case STAGE -> {
+					// D-041: Telling only from a telling that names him, never Removal from here, never back.
+					if (e.stage() == Stage.TELLING && namedAt != e.play()) {
+						broken.add(at + "Telling started without the subject naming him");
+					}
+					if (e.stage() == Stage.REMOVAL) {
+						broken.add(at + "the director moved into Removal");
+					}
+					if (stage != null && e.stage().level() <= stage.level()) {
+						broken.add(at + "stage went from " + stage + " to " + e.stage());
+					}
+					stage = e.stage();
+				}
 				case SESSION_START -> {
 					sessionStart = e.play();
 					emptyUntil = e.flag() ? e.until() : -1;
@@ -562,6 +594,7 @@ public final class DirectorSim {
 			case FIRE -> String.format(Locale.ROOT, "%-9s %s%s  tension %.1f", e.tier(), e.cardId(), e.fake() ? " (fake)" : "", e.value());
 			case QUIET -> String.format(Locale.ROOT, "%d days, until day %d (tension was %.1f)",
 					(e.until() - e.dayTicks()) / DirectorBrain.DAY_TICKS, Math.floorDiv(e.until(), DirectorBrain.DAY_TICKS), e.value());
+			case TELLING -> "the subject named him (in " + e.stage() + ")";
 		};
 	}
 
@@ -646,6 +679,11 @@ public final class DirectorSim {
 		@Override
 		public void stageChanged(DirectorBrain.Clock c, Stage from, Stage to) {
 			add(Kind.STAGE, c, to, null, null, false, 0, -1, false, from.name());
+		}
+
+		/** The run's naming telling, recorded before the stage change it causes. */
+		void named(DirectorBrain.Clock c) {
+			add(Kind.TELLING, c, env.stage, null, null, false, 0, -1, true, "named him");
 		}
 
 		@Override

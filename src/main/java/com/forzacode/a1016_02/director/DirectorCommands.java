@@ -4,10 +4,13 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Locale;
 
 import com.forzacode.a1016_02.A1016_02;
 import com.forzacode.a1016_02.core.CommandHooks;
+import com.mojang.brigadier.arguments.DoubleArgumentType;
 import com.mojang.brigadier.arguments.IntegerArgumentType;
+import com.mojang.brigadier.builder.LiteralArgumentBuilder;
 import com.mojang.brigadier.context.CommandContext;
 
 import net.minecraft.commands.CommandSourceStack;
@@ -17,8 +20,9 @@ import net.minecraft.server.MinecraftServer;
 
 /**
  * {@code /a1016 director} (state, decks, history), {@code director tick} (one decision now, gates obeyed),
- * {@code director quiet clear}, {@code director sim <hours> [synthetic]} (dry run, log in
- * {@code logs/a1016_director_sim.log}) and {@code director timewarp <days>} (timewarp with its summary).
+ * {@code director quiet clear}, {@code director sim <hours> [synthetic] [telling <atHour>]} (dry run, log in
+ * {@code logs/a1016_director_sim.log}; {@code telling} has the subject name him that many hours in, so the run
+ * reaches Telling) and {@code director timewarp <days>} (timewarp with its summary).
  */
 final class DirectorCommands {
 	static final String SIM_LOG = "a1016_director_sim.log";
@@ -39,8 +43,10 @@ final class DirectorCommands {
 				})))
 				.then(Commands.literal("sim")
 						.then(Commands.argument("hours", IntegerArgumentType.integer(1, 1000))
-								.executes(ctx -> sim(ctx, director, false))
-								.then(Commands.literal("synthetic").executes(ctx -> sim(ctx, director, true)))))
+								.executes(ctx -> sim(ctx, director, false, null))
+								.then(telling(director, false))
+								.then(Commands.literal("synthetic").executes(ctx -> sim(ctx, director, true, null))
+										.then(telling(director, true)))))
 				.then(Commands.literal("timewarp")
 						.then(Commands.argument("days", IntegerArgumentType.integer(1, 3650)).executes(ctx -> {
 							int days = IntegerArgumentType.getInteger(ctx, "days");
@@ -50,10 +56,16 @@ final class DirectorCommands {
 						})))));
 	}
 
-	private static int sim(CommandContext<CommandSourceStack> ctx, DirectorImpl director, boolean synthetic) {
+	/** {@code telling <atHour>}: the subject names him that many hours into the run. */
+	private static LiteralArgumentBuilder<CommandSourceStack> telling(DirectorImpl director, boolean synthetic) {
+		return Commands.literal("telling").then(Commands.argument("atHour", DoubleArgumentType.doubleArg(0, 1000))
+				.executes(ctx -> sim(ctx, director, synthetic, DoubleArgumentType.getDouble(ctx, "atHour"))));
+	}
+
+	private static int sim(CommandContext<CommandSourceStack> ctx, DirectorImpl director, boolean synthetic, Double tellingAtHour) {
 		MinecraftServer server = ctx.getSource().getServer();
 		int hours = IntegerArgumentType.getInteger(ctx, "hours");
-		DirectorSim.Result result = director.simulate(server, hours, synthetic);
+		DirectorSim.Result result = director.simulate(server, hours, synthetic, tellingAtHour);
 		Path path = server.getServerDirectory().resolve("logs").resolve(SIM_LOG);
 		String where;
 		try {
@@ -64,7 +76,8 @@ final class DirectorCommands {
 			A1016_02.LOGGER.error("[a1016] could not write {}", path, e);
 			where = "(log not written: " + e.getMessage() + ")";
 		}
-		send(ctx, List.of("[a1016] director sim " + hours + "h" + (synthetic ? " (synthetic deck)" : "") + ", full log " + where));
+		String named = result.params.tellingAtHour < 0 ? "" : String.format(Locale.ROOT, ", named him at %.1fh", result.params.tellingAtHour);
+		send(ctx, List.of("[a1016] director sim " + hours + "h" + (synthetic ? " (synthetic deck)" : "") + named + ", full log " + where));
 		return send(ctx, result.summary());
 	}
 

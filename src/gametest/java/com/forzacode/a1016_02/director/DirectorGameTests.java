@@ -662,6 +662,120 @@ public class DirectorGameTests {
 		helper.succeed();
 	}
 
+	/**
+	 * The dry run that reaches Telling: every tempo and seed plays 20 h from a fresh world and the subject names him
+	 * at {@code tellingAtHour}. Telling starts on that tick and only then (D-041), the stage never moves on, every
+	 * limit holds in Stage 3 (checked here, independently of {@link DirectorSim#check}, and by it), Stage 3's own
+	 * cards fire, and sightings almost stop: over the same hours, at most a fifth of what the same worlds see when
+	 * nobody names him. The registered deck keeps its limits in Telling too.
+	 */
+	@GameTest
+	public void dryRunReachesTellingAndKeepsItsLimits(GameTestHelper helper) {
+		double tellingAtHour = 10;
+		Signature[] signatures = Signature.values();
+		Set<String> sightingCards = new HashSet<>();
+		SyntheticDeck.cards().stream().filter(c -> c.has(CardTag.SIGHTING)).forEach(c -> sightingCards.add(c.id()));
+		Set<String> tellingOnly = new HashSet<>();
+		SyntheticDeck.cards().stream().filter(c -> c.earliestStage() == Stage.TELLING).forEach(c -> tellingOnly.add(c.id()));
+		int toldSightings = 0;
+		int baselineSightings = 0;
+		int stageThreeFires = 0;
+		int tellingOnlyFires = 0;
+		for (Tempo tempo : Tempo.values()) {
+			for (int i = 0; i < SEEDS.length; i++) {
+				long seed = SEEDS[i];
+				DirectorRules rules = rules(tempo, signatures[i % signatures.length]);
+				DirectorSim.Params params = DirectorTestSupport.params(rules, seed, rules.attentionNeutral, HOURS);
+				params.tellingAtHour = tellingAtHour;
+				DirectorSim.Result told = DirectorSim.run(rules, SyntheticDeck.cards(), 1000, new DirectorMemory(), Stage.ALONE, 0,
+						new DirectorBrain.Clock(0, 0), params);
+				String at = tempo + "/seed " + seed + ": ";
+				long namedAt = Math.round(tellingAtHour * rules.hourTicks);
+
+				List<Event> named = told.events.stream().filter(e -> e.kind() == Kind.TELLING).toList();
+				List<Event> stages = told.events.stream().filter(e -> e.kind() == Kind.STAGE).toList();
+				helper.assertTrue(named.size() == 1 && named.getFirst().play() >= namedAt && named.getFirst().play() < namedAt + rules.tickInterval,
+						at + "not named once at " + tellingAtHour + " h: " + named);
+				helper.assertTrue(!stages.isEmpty() && stages.getLast().stage() == Stage.TELLING && stages.getLast().play() == named.getFirst().play()
+						&& stages.stream().filter(e -> e.stage() == Stage.TELLING).count() == 1, at + "Telling did not start when named, or moved on: " + stages);
+				helper.assertTrue(told.stage == Stage.TELLING && told.stageTicks(Stage.TELLING) >= Math.round((HOURS - tellingAtHour) * rules.hourTicks)
+						- rules.tickInterval, at + "ended in " + told.stage + " after " + told.stageTicks(Stage.TELLING) + " ticks of Telling");
+				helper.assertTrue(told.violations.isEmpty(), at + told.violations);
+
+				// Every limit, independently, over the whole run (Telling included).
+				long session = Long.MIN_VALUE;
+				long quietUntil = -1;
+				Event lastMinor = null;
+				Event lastMajor = null;
+				Map<Long, Integer> sightingsByDay = new HashMap<>();
+				for (Event e : told.events) {
+					switch (e.kind()) {
+						case SESSION_START -> session = e.play();
+						case QUIET -> quietUntil = e.until();
+						case FIRE -> {
+							helper.assertTrue(session == Long.MIN_VALUE || e.play() - session >= rules.joinGrace, at + e.cardId() + " in the join grace");
+							helper.assertTrue(e.dayTicks() >= quietUntil, at + e.cardId() + " fired in a quiet");
+							helper.assertTrue(e.play() < namedAt || e.stage() == Stage.TELLING, at + e.cardId() + " fired in " + e.stage() + " after the telling");
+							if (e.tier() == Tier.MINOR) {
+								helper.assertTrue(lastMinor == null || e.play() - lastMinor.play() >= rules.minorGap, at + "minors too close: " + e.cardId());
+								lastMinor = e;
+							}
+							if (e.tier() == Tier.MAJOR || e.tier() == Tier.SIGNATURE) {
+								helper.assertTrue(lastMajor == null || e.play() - lastMajor.play() >= rules.majorGap, at + "majors too close: " + e.cardId());
+								helper.assertTrue(e.day() >= rules.noMajorBeforeDay, at + "major " + e.cardId() + " on day " + e.day());
+								lastMajor = e;
+							}
+							if (sightingCards.contains(e.cardId())) {
+								int today = sightingsByDay.merge(e.day(), 1, Integer::sum);
+								helper.assertTrue(today <= rules.sightingsPerDayMax, at + today + " sightings on day " + e.day());
+							}
+							if (e.stage() == Stage.TELLING) {
+								stageThreeFires++;
+								tellingOnlyFires += tellingOnly.contains(e.cardId()) ? 1 : 0;
+								toldSightings += sightingCards.contains(e.cardId()) ? 1 : 0;
+							}
+						}
+						default -> {
+						}
+					}
+				}
+
+				// The same world when nobody names him, over the same hours.
+				DirectorSim.Result baseline = fresh(rules, seed, rules.attentionNeutral, HOURS);
+				helper.assertTrue(baseline.events.stream().noneMatch(e -> e.kind() == Kind.TELLING || e.stage() == Stage.TELLING && e.kind() == Kind.STAGE),
+						at + "the baseline reached Telling without a telling");
+				baselineSightings += (int) fires(baseline, e -> e.play() >= namedAt && sightingCards.contains(e.cardId())).size();
+			}
+		}
+		A1016_02.LOGGER.info("[a1016] director Telling dry runs: {} fires in Telling ({} Telling-only), sightings after {} h: {} with Telling, {} without",
+				stageThreeFires, tellingOnlyFires, tellingAtHour, toldSightings, baselineSightings);
+		helper.assertTrue(stageThreeFires >= 100 && tellingOnlyFires > 0, "Stage 3 was not exercised: " + stageThreeFires + " fires in Telling, "
+				+ tellingOnlyFires + " of its own cards");
+		helper.assertTrue(baselineSightings >= 8 && toldSightings * 5 <= baselineSightings,
+				"sightings after " + tellingAtHour + " h: " + toldSightings + " with Telling, " + baselineSightings + " without");
+
+		// The registered deck in Telling: the director's own replay of every limit, naming at a few hours.
+		List<CardInfo> deck = DirectorApi.registeredCards().stream().filter(card -> !com.forzacode.a1016_02.debug.DebugPingCard.ID.equals(card.id()))
+				.toList();
+		for (Tempo tempo : Tempo.values()) {
+			for (double hour : new double[] {2, 8, 14}) {
+				DirectorConfig config = new DirectorConfig();
+				config.simTellingAtHour = hour;
+				DirectorRules rules = DirectorRules.from(new com.forzacode.a1016_02.core.Pacing(), config,
+						com.forzacode.a1016_02.debug.Playthrough.profile(1016L, tempo));
+				DirectorSim.Params params = DirectorSim.Params.from(config, rules);
+				params.hours = HOURS;
+				params.seed = 1016L;
+				params.attention = config.attentionNeutral;
+				DirectorSim.Result run = DirectorSim.run(rules, deck, 1000, new DirectorMemory(), Stage.ALONE, 0, new DirectorBrain.Clock(0, 0), params);
+				String at = tempo + "/registered deck, named at " + hour + " h: ";
+				helper.assertTrue(run.stage == Stage.TELLING && run.stageAt(Stage.TELLING) >= Math.round(hour * rules.hourTicks), at + "ended in " + run.stage);
+				helper.assertTrue(run.violations.isEmpty(), at + run.violations);
+			}
+		}
+		helper.succeed();
+	}
+
 	@GameTest
 	public void forcedFireIsRecorded(GameTestHelper helper) {
 		DirectorRules rules = rules(Tempo.SLOW_BURN, Signature.CROSS_ROW);

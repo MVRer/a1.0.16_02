@@ -86,6 +86,9 @@ public final class Playthrough {
 			if (name.contains("major every")) {
 				return "prox majors";
 			}
+			if (name.startsWith("Telling")) {
+				return "telling sightings";
+			}
 			return "empty";
 		}
 
@@ -121,7 +124,7 @@ public final class Playthrough {
 		PlaythroughCheck.Limits limits = PlaythroughCheck.Limits.of(result.rules, pacing.firstAccidentMinHours, pacing.paceFactor(tempo));
 		PlaythroughCheck.Timeline timeline = PlaythroughCheck.timeline(result.events, result.startPlay, result.endPlay, result.startStage, limits);
 		List<PlaythroughCheck.Check> hard = PlaythroughCheck.hard(result.events, limits, cards, result.violations);
-		List<PlaythroughCheck.Check> soft = PlaythroughCheck.soft(result.events, timeline, limits);
+		List<PlaythroughCheck.Check> soft = PlaythroughCheck.soft(result.events, timeline, limits, cards);
 		return new Report(tempo, seed, hours, profile, attention, registered.size() - deck.size(), limits, Collections.unmodifiableMap(cards), result,
 				timeline, hard, soft);
 	}

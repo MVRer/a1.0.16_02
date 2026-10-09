@@ -249,9 +249,10 @@ final class PlaythroughCheck {
 	/**
 	 * The rates of 4b, "allowing quiet": quiets and empty sessions may make a stage sparser than the target, never
 	 * busier. So a rate is on target when it is not above the band over all the time in the stage, and not below it
-	 * over the active time (neither quiet nor an empty session).
+	 * over the active time (neither quiet nor an empty session). A run that reached Telling (the director config's
+	 * {@code simTellingAtHour}) also gets "Telling: sightings almost none".
 	 */
-	static List<Check> soft(List<Event> events, Timeline timeline, Limits limits) {
+	static List<Check> soft(List<Event> events, Timeline timeline, Limits limits, Map<String, CardInfo> cards) {
 		long h = limits.hourTicks();
 		List<Event> fires = events.stream().filter(e -> e.kind() == Kind.FIRE).toList();
 		List<Check> checks = new ArrayList<>();
@@ -295,7 +296,28 @@ final class PlaythroughCheck {
 			checks.add(soft(emptyName, emptyLater > 0 ? Status.PASS : Status.OFF, Fmt.f("%d of %d sessions (chance %.2f each)", emptyLater,
 					sessionsLater, limits.emptyChance())));
 		}
+
+		// Telling: sightings almost none (DESIGN.md "Sightings"): at most one, or a fifth of Proximity's rate.
+		StageTime telling = timeline.in(Stage.TELLING);
+		if (telling.total() > 0) {
+			String tellingName = "Telling: sightings almost none (at most a fifth of Proximity's rate)";
+			if (telling.total() < h) {
+				checks.add(soft(tellingName, Status.NA, Fmt.f("only %s in Telling", Fmt.hm(telling.total(), h))));
+			} else {
+				long inTelling = sightings(fires, cards, Stage.TELLING);
+				long inProximity = sightings(fires, cards, Stage.PROXIMITY);
+				double tellingRate = inTelling / limits.hours(telling.total());
+				double proximityRate = proximity.total() <= 0 ? 0 : inProximity / limits.hours(proximity.total());
+				boolean ok = inTelling <= 1 || tellingRate * 5 <= proximityRate;
+				checks.add(soft(tellingName, ok ? Status.PASS : Status.OFF, Fmt.f("%.2f/h in Telling (%d in %s), %.2f/h in Proximity (%d in %s)",
+						tellingRate, inTelling, Fmt.hm(telling.total(), h), proximityRate, inProximity, Fmt.hm(proximity.total(), h))));
+			}
+		}
 		return checks;
+	}
+
+	private static long sightings(List<Event> fires, Map<String, CardInfo> cards, Stage stage) {
+		return fires.stream().filter(e -> e.stage() == stage && cards.containsKey(e.cardId()) && cards.get(e.cardId()).has(CardTag.SIGHTING)).count();
 	}
 
 	/** A per-hour rate: not above {@code hi} over all the stage's time, not below {@code lo} over its active time. */

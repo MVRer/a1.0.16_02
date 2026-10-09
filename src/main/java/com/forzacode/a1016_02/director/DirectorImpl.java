@@ -174,6 +174,8 @@ public final class DirectorImpl implements Director {
 		params.continueSession = true;
 		params.singleSession = true;
 		params.attention = state.attention();
+		// The summary shows what time alone does: nobody writes his name during a timewarp.
+		params.tellingAtHour = -1;
 		DirectorSim.Result result = DirectorSim.run(rules, cards(), config.historySize, memory, state.stage(), state.tension(), before, params);
 
 		GameClock.warp(server, days);
@@ -193,11 +195,22 @@ public final class DirectorImpl implements Director {
 
 	/** A deterministic dry run from the current state ({@code /a1016 director sim}). Changes nothing. */
 	public DirectorSim.Result simulate(MinecraftServer server, int hours, boolean synthetic) {
+		return simulate(server, hours, synthetic, null);
+	}
+
+	/**
+	 * As {@link #simulate(MinecraftServer, int, boolean)}, with the subject naming him {@code tellingAtHour} hours
+	 * into the run (null: {@code simTellingAtHour} from the config, negative: never).
+	 */
+	public DirectorSim.Result simulate(MinecraftServer server, int hours, boolean synthetic, @Nullable Double tellingAtHour) {
 		HerobrineState state = HerobrineState.get(server);
 		DirectorRules rules = rules(server);
 		DirectorConfig config = DirectorConfig.get();
 		DirectorSim.Params params = DirectorSim.Params.from(config, rules);
 		params.hours = hours;
+		if (tellingAtHour != null) {
+			params.tellingAtHour = tellingAtHour;
+		}
 		long play = GameClock.playTicks(server);
 		params.seed = server.getWorldGenSettings().options().seed() ^ (play * 0x9E3779B97F4A7C15L) ^ (synthetic ? 0x5EED : 0);
 		params.continueSession = Services.watch().subject(server).isPresent();

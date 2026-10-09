@@ -178,6 +178,42 @@ public class DebugGameTests {
 		helper.succeed();
 	}
 
+	/** A run that reached Telling (simTellingAtHour) is checked for "sightings almost none"; one that did not is not. */
+	@GameTest
+	public void softCheckSightingsInTelling(GameTestHelper helper) {
+		long hour = 72_000;
+		PlaythroughCheck.Limits limits = limits(hour);
+		Map<String, CardInfo> cards = Map.of("sight", new CardInfo("sight", Tier.MINOR, Stage.TRACES, Set.of(), Set.of(CardTag.SIGHTING), true),
+				"scar", new CardInfo("scar", Tier.MINOR, Stage.TRACES, Set.of(), Set.of(CardTag.SCAR), false));
+		List<Event> base = new ArrayList<>();
+		base.add(session(0, Stage.ALONE));
+		base.add(stage(600, Stage.PROXIMITY));
+		for (int i = 0; i < 5; i++) {
+			base.add(fire(i * hour + 30_000, i * hour + 30_000, Stage.PROXIMITY, Tier.MINOR, "sight"));
+		}
+		String name = "Telling: sightings";
+		PlaythroughCheck.Timeline noTelling = PlaythroughCheck.timeline(base, 0, 10 * hour, Stage.ALONE, limits);
+		helper.assertTrue(PlaythroughCheck.soft(base, noTelling, limits, cards).stream().noneMatch(c -> c.name().startsWith(name)),
+				"a run that never reached Telling got the Telling check");
+
+		List<Event> quiet = new ArrayList<>(base);
+		quiet.add(new Event(Kind.TELLING, 5 * hour, 5 * hour, Stage.PROXIMITY, null, null, false, 0, -1, true, "named him"));
+		quiet.add(stage(5 * hour, Stage.TELLING));
+		quiet.add(fire(6 * hour, 6 * hour, Stage.TELLING, Tier.MINOR, "sight"));
+		quiet.add(fire(7 * hour, 7 * hour, Stage.TELLING, Tier.MINOR, "scar"));
+		PlaythroughCheck.Check ok = PlaythroughCheck.soft(quiet, PlaythroughCheck.timeline(quiet, 0, 10 * hour, Stage.ALONE, limits), limits, cards)
+				.stream().filter(c -> c.name().startsWith(name)).findFirst().orElse(null);
+		helper.assertTrue(ok != null && ok.status() == PlaythroughCheck.Status.PASS, "one sighting in 5 h of Telling is almost none: " + ok);
+
+		List<Event> busy = new ArrayList<>(quiet);
+		busy.add(fire(8 * hour, 8 * hour, Stage.TELLING, Tier.MINOR, "sight"));
+		busy.add(fire(9 * hour, 9 * hour, Stage.TELLING, Tier.MINOR, "sight"));
+		PlaythroughCheck.Check off = PlaythroughCheck.soft(busy, PlaythroughCheck.timeline(busy, 0, 10 * hour, Stage.ALONE, limits), limits, cards)
+				.stream().filter(c -> c.name().startsWith(name)).findFirst().orElse(null);
+		helper.assertTrue(off != null && off.status() == PlaythroughCheck.Status.OFF && !off.failed(), "3 sightings in 5 h of Telling passed: " + off);
+		helper.succeed();
+	}
+
 	private static PlaythroughCheck.Limits limits(long hour) {
 		return new PlaythroughCheck.Limits(hour, 600, 6_000, 18_000, 1, 1, 6 * hour, 6, 1.0, 1.0, 1, 2, 2 * hour, 4 * hour, 0.25);
 	}
