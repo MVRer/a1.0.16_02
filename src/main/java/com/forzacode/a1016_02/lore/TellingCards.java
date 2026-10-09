@@ -266,9 +266,10 @@ final class TellingCards {
 		@Override
 		public FireResult fire(FireContext ctx) {
 			MinecraftServer server = ctx.level().getServer();
+			// A debug fire may take a site near the base (it never skips the out-of-view rule).
+			Optional<net.minecraft.core.BlockPos> base = ctx.forced() ? Optional.empty() : Services.watch().base(ctx.player()).map(GlobalPos::pos);
 			return PlaceNotFound.fire(server, HerobrineState.get(server), TellingData.get(server), Services.traces(),
-					SignEdits.editor(Services.traces()), SignEdits.available(), Services.watch().base(ctx.player()).map(GlobalPos::pos),
-					ctx.random(), LoreConfig.get());
+					SignEdits.editor(Services.traces()), SignEdits.available(), base, ctx.random(), LoreConfig.get());
 		}
 	}
 }
