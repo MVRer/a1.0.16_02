@@ -4,6 +4,7 @@ import java.util.Set;
 
 import com.forzacode.a1016_02.atmosphere.ActiveEffects;
 import com.forzacode.a1016_02.atmosphere.AtmosphereConfig;
+import com.forzacode.a1016_02.atmosphere.Gates;
 import com.forzacode.a1016_02.core.CardTag;
 import com.forzacode.a1016_02.core.FireContext;
 import com.forzacode.a1016_02.core.FireResult;
@@ -39,7 +40,8 @@ public final class CompassDriftCard extends AtmosphereCard {
 	@Override
 	public boolean contextFits(ServerPlayer player, ServerLevel world) {
 		GlobalPos spawn = world.getRespawnData().globalPos();
-		return spawn.dimension() == world.dimension() && hasSpawnCompass(player) && !ActiveEffects.compassActive(player);
+		return !Gates.quietForGood(world.getServer()) && spawn.dimension() == world.dimension() && hasSpawnCompass(player)
+				&& !ActiveEffects.compassActive(player);
 	}
 
 	@Override
@@ -58,8 +60,8 @@ public final class CompassDriftCard extends AtmosphereCard {
 			double dist = cfg.compassDriftMinBlocks + ctx.random().nextDouble() * Math.max(1, cfg.compassDriftMaxBlocks - cfg.compassDriftMinBlocks);
 			target = at.add(Math.cos(angle) * dist, 0, Math.sin(angle) * dist);
 		}
-		ActiveEffects.compassDrift(player, Mth.floor(target.x), Mth.floor(target.z), AtmosphereConfig.ticks(cfg.compassDriftSeconds), cfg.compassSettleBlocks);
-		return FireResult.FIRED;
+		return ActiveEffects.compassDrift(player, Mth.floor(target.x), Mth.floor(target.z), AtmosphereConfig.ticks(cfg.compassDriftSeconds),
+				cfg.compassSettleBlocks) ? FireResult.FIRED : FireResult.SKIPPED;
 	}
 
 	/** The nearest recorded site in range and well off the spawn line, if any. */

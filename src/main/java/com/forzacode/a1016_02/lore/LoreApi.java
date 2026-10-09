@@ -40,6 +40,19 @@ public final class LoreApi {
 		return HerobrineState.get(server).tellingCount();
 	}
 
+	/**
+	 * F30's twin signs, once lore placed them: one on the oldest poplar of the untouched grove, its twin on bedrock
+	 * under the seed pyramid (where Ending D's team stair goes down to). Each is empty until placed.
+	 */
+	public record TwinSigns(Optional<GlobalPos> grove, Optional<GlobalPos> bedrock) {
+	}
+
+	/** Where F30's twin signs stand ({@link TwinSigns}). */
+	public static TwinSigns twinSigns(MinecraftServer server) {
+		LoreData data = LoreData.get(server);
+		return new TwinSigns(data.anchor(UnbreakableSigns.ANCHORS[0]), data.anchor(UnbreakableSigns.ANCHORS[1]));
+	}
+
 	/** Where the "Stop." sign (F03) stands, once it fired and while it still exists. */
 	public static Optional<GlobalPos> stopSign(MinecraftServer server) {
 		return TellingData.get(server).stopSign();

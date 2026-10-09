@@ -276,6 +276,30 @@ public class RushAndDimensionGameTests extends SightingRuleGameTests {
 		});
 	}
 
+	/** Ending D's last minute (FigureApi "no run"): the same elytra chase, and he never runs, rushes or goes under. */
+	@GameTest(maxTicks = 60, padding = 16)
+	public void withNoRunHeNeverRunsFromTheChaser(GameTestHelper helper) {
+		Chased chase = elytraChase(helper);
+		HimEntity him = chase.him;
+		FigureApi.setNoRun(him, true);
+		boolean[] ran = {false};
+		helper.onEachTick(() -> {
+			if (!him.isRemoved()) {
+				ran[0] |= him.gait() == Variant.Gait.RUN || him.outrunning() || him.rush() != null || him.phase() == HimEntity.Phase.GOING_UNDER;
+			}
+		});
+		helper.runAfterDelay(30, () -> {
+			helper.assertTrue(him.noRun(), "the option was lost");
+			helper.assertFalse(ran[0] || chase.rushing || him.rushed(), "he ran, rushed or went under with no run set");
+			him.walkAway(Variant.Gait.RUN);
+			helper.assertTrue(him.isRemoved() || him.gait() != Variant.Gait.RUN, "walkAway(RUN) made him run");
+			if (!him.isRemoved()) {
+				him.discard();
+			}
+			helper.succeed();
+		});
+	}
+
 	@GameTest
 	public void dimensionCardsOnlyFitInTheirDimension(GameTestHelper helper) {
 		ServerLevel overworld = helper.getLevel();

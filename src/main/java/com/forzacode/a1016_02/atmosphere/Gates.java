@@ -1,5 +1,8 @@
 package com.forzacode.a1016_02.atmosphere;
 
+import com.forzacode.a1016_02.core.HerobrineState;
+
+import net.minecraft.server.MinecraftServer;
 import net.minecraft.world.level.Level;
 
 /** The deterministic context gates of atmosphere's cards, as pure functions so the game tests can pin them down. */
@@ -37,6 +40,17 @@ public final class Gates {
 	/** Fog drift: never during combat. */
 	public static boolean fogDrift(long ticksSinceCombat, long noCombatTicks) {
 		return ticksSinceCombat >= noCombatTicks;
+	}
+
+	/**
+	 * The director's "silent for good" flag ({@code director.DirectorFlags.SILENCE_FOREVER}), set by Endings C and D
+	 * (and A's last stretch). While it is set no fog surge or drift ever happens, not even a forced one.
+	 */
+	public static final String SILENCE_FOREVER_FLAG = "director:silence_forever";
+
+	/** True while the world is quiet for good ({@link #SILENCE_FOREVER_FLAG}): no surge, no drift. */
+	public static boolean quietForGood(MinecraftServer server) {
+		return HerobrineState.get(server).hasFlag(SILENCE_FOREVER_FLAG);
 	}
 
 	/** Distant cave sound: alone and still. */

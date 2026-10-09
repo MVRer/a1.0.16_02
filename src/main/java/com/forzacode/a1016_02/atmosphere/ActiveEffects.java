@@ -26,9 +26,15 @@ public final class ActiveEffects {
 	private ActiveEffects() {
 	}
 
-	public static void fogSurge(ServerPlayer player, float strength, int rampTicks, int holdTicks, int fadeTicks) {
+	/** Sends a fog surge (and remembers it for a relog). False, and nothing sent, once the world is quiet for good. */
+	public static boolean fogSurge(ServerPlayer player, float strength, int rampTicks, int holdTicks, int fadeTicks) {
+		if (Gates.quietForGood(player.level().getServer())) {
+			SURGES.remove(player.getUUID());
+			return false;
+		}
 		ClientEffects.fogSurge(player, strength, rampTicks, holdTicks, fadeTicks);
 		SURGES.put(player.getUUID(), new Surge(player.level().getServer().getTickCount(), new ClientEffects.FogSurge(strength, rampTicks, holdTicks, fadeTicks)));
+		return true;
 	}
 
 	public static void silence(ServerPlayer player, int ticks, int fadeTicks) {
@@ -37,10 +43,15 @@ public final class ActiveEffects {
 		AtmosphereData.get(server).setSilence(player.getUUID(), GameClock.playTicks(server), ticks, fadeTicks);
 	}
 
-	public static void compassDrift(ServerPlayer player, int x, int z, int ticks, int settleBlocks) {
-		CompassDriftPayload.send(player, new CompassDriftPayload(x, z, Math.max(0, ticks), settleBlocks));
+	/** Sends a compass drift (and remembers it). False, and nothing sent, once the world is quiet for good. */
+	public static boolean compassDrift(ServerPlayer player, int x, int z, int ticks, int settleBlocks) {
 		MinecraftServer server = player.level().getServer();
+		if (Gates.quietForGood(server)) {
+			return false;
+		}
+		CompassDriftPayload.send(player, new CompassDriftPayload(x, z, Math.max(0, ticks), settleBlocks));
 		AtmosphereData.get(server).setCompass(player.getUUID(), GameClock.playTicks(server), Math.max(0, ticks), x, z, settleBlocks);
+		return true;
 	}
 
 	public static boolean compassActive(ServerPlayer player) {
@@ -70,7 +81,7 @@ public final class ActiveEffects {
 			ClientEffects.silence(player, (int) silenceLeft, t.silenceFade());
 		}
 		long compassLeft = t.compassLeft(now);
-		if (compassLeft > 0) {
+		if (compassLeft > 0 && !Gates.quietForGood(server)) {
 			CompassDriftPayload.send(player, new CompassDriftPayload(t.compassX(), t.compassZ(), (int) compassLeft, t.compassSettle()));
 		}
 	}

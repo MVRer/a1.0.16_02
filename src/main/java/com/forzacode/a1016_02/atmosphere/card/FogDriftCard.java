@@ -26,7 +26,8 @@ public final class FogDriftCard extends AtmosphereCard {
 
 	@Override
 	public boolean contextFits(ServerPlayer player, ServerLevel world) {
-		return Gates.fogDrift(Services.watch().ticksSinceCombat(player), AtmosphereConfig.ticks(cfg().fogDriftNoCombatSeconds));
+		return !Gates.quietForGood(world.getServer())
+				&& Gates.fogDrift(Services.watch().ticksSinceCombat(player), AtmosphereConfig.ticks(cfg().fogDriftNoCombatSeconds));
 	}
 
 	@Override
@@ -37,7 +38,6 @@ public final class FogDriftCard extends AtmosphereCard {
 		}
 		float strength = (float) (cfg.fogDriftStrengthMin + ctx.random().nextDouble() * (cfg.fogDriftStrengthMax - cfg.fogDriftStrengthMin));
 		int hold = (int) ModConfig.pacing().fogDrift().pick(ctx.random());
-		ActiveEffects.fogSurge(ctx.player(), strength, cfg.fogDriftRampTicks, hold, cfg.fogDriftFadeTicks);
-		return FireResult.FIRED;
+		return ActiveEffects.fogSurge(ctx.player(), strength, cfg.fogDriftRampTicks, hold, cfg.fogDriftFadeTicks) ? FireResult.FIRED : FireResult.SKIPPED;
 	}
 }

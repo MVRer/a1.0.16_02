@@ -148,6 +148,11 @@ public class HimEntity extends PathfinderMob {
 	private @Nullable Rush rush;
 	private @Nullable UUID rushTarget;
 	private boolean rushed;
+	/**
+	 * Ending D's last minute ({@link FigureApi#setNoRun}): he never runs, never rushes past anyone and never goes
+	 * under; when he leaves, he walks. Not saved (the figure never is).
+	 */
+	private boolean noRun;
 	/** Whether a player could see him when his own rules removed him (they never should). */
 	private boolean seenWhenRemoved;
 	/** Why his own rules removed him, or null while he is out. */
@@ -297,7 +302,7 @@ public class HimEntity extends PathfinderMob {
 			rushStep(level, players, config);
 			return;
 		}
-		if (!rushed && variant.mayRush() && nearest != null && nearestChase != null
+		if (!rushed && !noRun && variant.mayRush() && nearest != null && nearestChase != null
 				&& SightingRules.rushes(nearest.position().distanceTo(position()), config.rushTriggerDistance, nearestChase.speed(), closing,
 						config.outrunFactor, config.maxRunSpeed, config.closeInFastSpeed)
 				&& startRush(level, nearest, nearestChase, config)) {
@@ -395,7 +400,7 @@ public class HimEntity extends PathfinderMob {
 	private void leaveOrGoUnder(ServerLevel level, double nearestDistance, double closing, EntityConfig config) {
 		if (!goUnderRolled) {
 			goUnderRolled = true;
-			if (variant.mayGoUnder() && !fled && !outrunning && onGround() && getRandom().nextDouble() < config.goUnderChance()) {
+			if (!noRun && variant.mayGoUnder() && !fled && !outrunning && onGround() && getRandom().nextDouble() < config.goUnderChance()) {
 				int[] depths = config.goUnderDepths();
 				double seconds = (depths[1] + GoUnder.COVER + 1) * Math.max(0.05, config.goUnderDigSeconds);
 				Optional<GoUnder.Plan> plan = SightingRules.wouldBeReached(nearestDistance, closing, seconds) ? Optional.empty()
@@ -642,12 +647,39 @@ public class HimEntity extends PathfinderMob {
 		return SightingRules.approachBlocks(config.approachBlocks, config.approachSpawnFraction, spawnDistance);
 	}
 
-	/** He leaves now, at the adaptive run. */
+	/** He leaves now, at the adaptive run (with {@link #noRun}: he leaves now, walking). */
 	private void breakIntoRun() {
+		setLow(false);
+		if (noRun) {
+			gait = walkGait();
+			setPhase(Phase.LEAVING);
+			return;
+		}
 		gait = Variant.Gait.RUN;
 		outrunning = true;
-		setLow(false);
 		setPhase(Phase.LEAVING);
+	}
+
+	/** His walking pace: his variant's slow walk, or a walk. */
+	private Variant.Gait walkGait() {
+		return variant.gait() == Variant.Gait.SLOW ? Variant.Gait.SLOW : Variant.Gait.WALK;
+	}
+
+	/** Ending D's last minute: he never runs, rushes past or goes under; he walks ({@link FigureApi#setNoRun}). */
+	void setNoRun(boolean value) {
+		noRun = value;
+		if (value && gait == Variant.Gait.RUN) {
+			gait = walkGait();
+		}
+	}
+
+	public boolean noRun() {
+		return noRun;
+	}
+
+	/** How he moves when he leaves. */
+	public Variant.Gait gait() {
+		return gait;
 	}
 
 	/** His run speed this tick in blocks per second (D-036), from the chasing player's recent speed. */
@@ -767,7 +799,7 @@ public class HimEntity extends PathfinderMob {
 			return;
 		}
 		triggered = true;
-		gait = leaveGait;
+		gait = noRun && leaveGait == Variant.Gait.RUN ? walkGait() : leaveGait;
 		setLow(false);
 		setPhase(Phase.LEAVING);
 	}

@@ -271,13 +271,13 @@ public final class LastMinute {
 				} else {
 					lastSeenAt = figure.position();
 					if (!walkedAway && figure.everSeen() && figure.seenFor() >= EndingDConfig.ticks(cfg.figureStareSeconds)) {
-						FigureApi.walkAway(figure);
+						FigureApi.walkAway(figure, true);
 						walkedAway = true;
 					}
 				}
 				if (inPhase > EndingDConfig.ticks(cfg.figureTimeoutSeconds)) {
 					if (figure != null && !figure.isRemoved()) {
-						FigureApi.walkAway(figure);
+						FigureApi.walkAway(figure, true);
 					}
 					enter(server, data, Phase.LEAVES);
 				}
@@ -441,6 +441,8 @@ public final class LastMinute {
 		Optional<HimEntity> him = FigureApi.spawnAt(level, Variant.ACROSS_WATER, spot.get().feet(), spot.get().yaw());
 		if (him.isPresent()) {
 			figure = him.get();
+			// "He doesn't run. He turns and walks into the bare grove behind him."
+			FigureApi.setNoRun(figure, true);
 			grove = spot.get().grove();
 			lastSeenAt = figure.position();
 			A1016_02.LOGGER.info("[a1016] ending d: he stands on the far shore at {}, {} blocks out{}", BlockPos.containing(spot.get().feet()).toShortString(),

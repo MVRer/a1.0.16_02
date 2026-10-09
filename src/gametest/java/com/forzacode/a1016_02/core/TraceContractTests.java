@@ -296,6 +296,36 @@ public class TraceContractTests extends CoreContractTests {
 		helper.succeed();
 	}
 
+	/** TraceService.undo takes an entry back exactly once, out of view, and closes it (and drops its reverse edit). */
+	@GameTest
+	public void undoTakesBackOnceAndClosesTheEntry(GameTestHelper helper) {
+		ServerLevel level = helper.getLevel();
+		TraceService traces = Services.traces();
+		String cause = "test:undo/" + helper.absolutePos(BlockPos.ZERO).toShortString();
+		floor(helper, Blocks.STONE);
+		helper.setBlock(2, 1, 2, Blocks.OAK_PLANKS);
+		BlockPos removedAt = helper.absolutePos(new BlockPos(2, 1, 2));
+		BlockPos from = helper.absolutePos(new BlockPos(5, 0, 5));
+		BlockPos to = helper.absolutePos(new BlockPos(5, 1, 5));
+		helper.assertTrue(traces.remove(level, removedAt, cause) && traces.move(level, from, to, cause + "/move")
+				&& traces.convert(level, helper.absolutePos(new BlockPos(1, 0, 6)), Blocks.DIRT.defaultBlockState(), cause + "/convert"), "setup failed");
+		TraceLedger.Entry removed = entries(level, cause).getFirst();
+		TraceLedger.Entry moved = entries(level, cause + "/move").getFirst();
+		TraceLedger.Entry converted = entries(level, cause + "/convert").getFirst();
+
+		TraceService watched = traces.watchedBy(List.of(viewerAt(helper, new Vec3(2.5, 1.0, 0.5), 0.0F, 20.0F)));
+		helper.assertTrue(watched.undo(level, removed, cause + "/undo") == TraceService.UndoResult.IN_VIEW, "undone in view");
+		for (TraceLedger.Entry entry : List.of(removed, moved, converted)) {
+			helper.assertTrue(traces.undo(level, entry, cause + "/undo") == TraceService.UndoResult.DONE, entry.kind() + " was not undone");
+			helper.assertTrue(traces.undo(level, entry, cause + "/undo") == TraceService.UndoResult.BLOCKED, entry.kind() + " was undone twice");
+		}
+		helper.assertTrue(level.getBlockState(removedAt).is(Blocks.OAK_PLANKS) && level.getBlockState(from).is(Blocks.STONE) && level.getBlockState(to).isAir()
+				&& level.getBlockState(helper.absolutePos(new BlockPos(1, 0, 6))).is(Blocks.STONE), "not everything is back");
+		helper.assertTrue(entries(level, cause).isEmpty() && entries(level, cause + "/move").isEmpty() && entries(level, cause + "/convert").isEmpty()
+				&& entries(level, cause + "/undo").isEmpty(), "the ledger kept an undone entry or a reverse edit");
+		helper.succeed();
+	}
+
 	/** D-048: Ending D's last minute gives back in view, only while ending:last_minute is set, and never twice. */
 	@GameTest
 	public void restoreVisiblyGivesBackInViewOnlyInTheLastMinute(GameTestHelper helper) {

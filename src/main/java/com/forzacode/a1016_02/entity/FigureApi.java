@@ -191,6 +191,23 @@ public final class FigureApi {
 		him.walkAway(him.variant().gait() == Variant.Gait.SLOW ? Variant.Gait.SLOW : Variant.Gait.WALK);
 	}
 
+	/**
+	 * The "no run" option (Ending D's last minute: "He doesn't run"): with {@code noRun} he never breaks into a run,
+	 * never rushes past a chaser (D-037) and never goes under (D-030); whatever ends his sighting, he walks away. His
+	 * other rules stay (he leaves once seen, never despawns in view). Set it right after spawning him.
+	 */
+	public static void setNoRun(HimEntity him, boolean noRun) {
+		him.setNoRun(noRun);
+	}
+
+	/** {@link #walkAway(HimEntity)}, and with {@code noRun} he keeps walking whatever happens ({@link #setNoRun}). */
+	public static void walkAway(HimEntity him, boolean noRun) {
+		if (noRun) {
+			him.setNoRun(true);
+		}
+		walkAway(him);
+	}
+
 	/** Debug only: removes every figure at once, in view or not. Returns how many. */
 	public static int clear(MinecraftServer server) {
 		List<HimEntity> out = active(server);

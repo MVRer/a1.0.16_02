@@ -62,6 +62,29 @@ public class AtmosphereGameTests extends TamperGameTests {
 		helper.succeed();
 	}
 
+	/** After Endings C and D (director:silence_forever) no fog surge or drift ever happens, not even forced. */
+	@GameTest
+	public void noSurgeOrDriftOnceQuietForGood(GameTestHelper helper) {
+		ServerLevel level = helper.getLevel();
+		com.forzacode.a1016_02.core.HerobrineState state = com.forzacode.a1016_02.core.HerobrineState.get(level.getServer());
+		ServerPlayer player = (ServerPlayer) helper.makeMockServerPlayer(GameType.SURVIVAL);
+		EventCard fogDrift = CardRegistry.get("fog_drift").orElseThrow();
+		EventCard compass = CardRegistry.get("compass_drift").orElseThrow();
+		boolean had = state.hasFlag(Gates.SILENCE_FOREVER_FLAG);
+		try {
+			state.setFlag(Gates.SILENCE_FOREVER_FLAG, true);
+			helper.assertTrue(Gates.quietForGood(level.getServer()), "the gate does not read director:silence_forever");
+			helper.assertFalse(fogDrift.contextFits(player, level) || compass.contextFits(player, level), "a drift card fits in the silence");
+			helper.assertTrue(fogDrift.fire(new FireContext(player, level, false, true, RandomSource.create(1L))) == FireResult.SKIPPED,
+					"a forced fog drift fired in the silence");
+			helper.assertFalse(ActiveEffects.fogSurge(player, 0.6F, 10, 40, 10), "a fog surge was sent in the silence");
+			helper.assertFalse(ActiveEffects.compassDrift(player, 0, 0, 100, 4), "a compass drift was sent in the silence");
+		} finally {
+			state.setFlag(Gates.SILENCE_FOREVER_FLAG, had);
+		}
+		helper.succeed();
+	}
+
 	@GameTest
 	public void gatesHold(GameTestHelper helper) {
 		// Fog drift: never during combat.

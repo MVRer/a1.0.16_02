@@ -17,7 +17,7 @@ import com.forzacode.a1016_02.core.SiteRegistry;
 import com.forzacode.a1016_02.core.SiteType;
 import com.forzacode.a1016_02.core.TraceBatch;
 import com.forzacode.a1016_02.core.TraceService;
-import com.forzacode.a1016_02.lore.LoreData;
+import com.forzacode.a1016_02.lore.LoreApi;
 
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
@@ -53,7 +53,7 @@ public final class Stair {
 	/** The stair losing blocks: put back in the last minute. */
 	public static final String LOSS_CAUSE = "ending:d/stair";
 	public static final String FLOOD_CAUSE = "ending:d/flood";
-	/** The twin's anchor in lore's data. */
+	/** The twin's anchor name in lore's data (read through {@code LoreApi.twinSigns}, never directly). */
 	public static final String TWIN_ANCHOR = "F30/bedrock";
 
 	/** The spiral's eight cells round the axis, in walking order (each one orthogonally next to the one before). */
@@ -78,9 +78,9 @@ public final class Stair {
 		return Optional.ofNullable(HerobrineState.get(server).fragmentsPlaced().get("F07"));
 	}
 
-	/** F30's twin on bedrock, once lore placed it. */
+	/** F30's twin on bedrock, once lore placed it ({@code LoreApi.twinSigns}). */
 	public static Optional<GlobalPos> twin(MinecraftServer server) {
-		return LoreData.get(server).anchor(TWIN_ANCHOR);
+		return LoreApi.twinSigns(server).bedrock();
 	}
 
 	/**

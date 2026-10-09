@@ -79,8 +79,10 @@ final class AtmosphereCommands {
 			return fail(ctx, "no player");
 		}
 		AtmosphereConfig cfg = AtmosphereConfig.get();
-		ActiveEffects.fogSurge(player.get(), strength, cfg.fogDriftRampTicks, seconds * 20, cfg.fogDriftFadeTicks);
-		return ok(ctx, String.format(Locale.ROOT, "fog surge %.2f for %ds -> %s", strength, seconds, player.get().getName().getString()));
+		if (!ActiveEffects.fogSurge(player.get(), strength, cfg.fogDriftRampTicks, seconds * 20, cfg.fogDriftFadeTicks)) {
+			return fail(ctx, "no fog surge: the world is quiet for good (" + Gates.SILENCE_FOREVER_FLAG + ")");
+		}
+		return ok(ctx,String.format(Locale.ROOT, "fog surge %.2f for %ds -> %s", strength, seconds, player.get().getName().getString()));
 	}
 
 	private static int dusk(CommandContext<CommandSourceStack> ctx) {

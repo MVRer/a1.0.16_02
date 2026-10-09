@@ -779,6 +779,42 @@ public final class TraceService {
 		return true;
 	}
 
+	// --- taking back ---
+
+	/** What {@link #undo} did. */
+	public enum UndoResult {
+		/** Undone: the entry is closed (gone from the ledger), so it is never undone twice. */
+		DONE,
+		/** Not now: something it would change is in view (or vetoed, or the container is full). Try again later. */
+		IN_VIEW,
+		/** Its chunk (or a move's other end) is not loaded. Nothing is loaded here: load it and try again. */
+		UNLOADED,
+		/** Cannot be undone as things stand: already undone, taken or built over since, or worn by a mob. */
+		BLOCKED
+	}
+
+	/** The default cause of {@link #undo}'s reverse edits. */
+	public static final String UNDO_CAUSE = "core:undo";
+
+	/** {@link #undo(ServerLevel, TraceLedger.Entry, String)} with {@link #UNDO_CAUSE}. */
+	public UndoResult undo(ServerLevel level, TraceLedger.Entry entry) {
+		return undo(level, entry, UNDO_CAUSE);
+	}
+
+	/**
+	 * Takes back one ledger entry of this level exactly once, out of view like every edit: REMOVE through
+	 * {@link #restoreBlock} at its own spot (it must be replaceable, without a block entity, and the block must
+	 * survive there), REMOVE_STACK through {@link #restoreStack} into its own container, and MOVE, CONVERT, MOVE_STACK
+	 * and sign text (BLOCK_ENTITY) by the reverse edit under {@code cause}; the undone entry and the entry the reverse
+	 * edit wrote are both dropped (neighbours it broke stay ledgered as {@code <cause>/dependent}). Nothing is created:
+	 * a moved block or stack goes back only while it is still where it was moved; a conversion is not undone where the
+	 * player has built or dug since. EQUIP is never undone. Never loads a chunk. Which entries to undo (and which to
+	 * keep, like what others left) is the caller's choice.
+	 */
+	public UndoResult undo(ServerLevel level, TraceLedger.Entry entry, String cause) {
+		return TraceUndo.undo(this, level, entry, cause);
+	}
+
 	/** A large edit checked and applied as one. See {@link TraceBatch}. */
 	public TraceBatch batch(ServerLevel level, String cause) {
 		return new TraceBatch(this, level, cause);

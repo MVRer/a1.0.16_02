@@ -257,6 +257,31 @@ public class LoreTellingTests extends LorePlacementTests {
 		helper.succeed();
 	}
 
+	/** LoreApi gives F30's twin signs' places (Ending D reads the bedrock twin there, not lore's data). */
+	@GameTest
+	public void loreApiGivesTheTwinSigns(GameTestHelper helper) {
+		MinecraftServer server = helper.getLevel().getServer();
+		LoreData data = LoreData.get(server);
+		Optional<GlobalPos> grove = data.anchor("F30/grove");
+		Optional<GlobalPos> bedrock = data.anchor("F30/bedrock");
+		GlobalPos a = GlobalPos.of(helper.getLevel().dimension(), helper.absolutePos(new BlockPos(1, 1, 1)));
+		GlobalPos b = GlobalPos.of(helper.getLevel().dimension(), helper.absolutePos(new BlockPos(2, 1, 2)));
+		try {
+			data.removeAnchor("F30/grove");
+			data.removeAnchor("F30/bedrock");
+			helper.assertTrue(LoreApi.twinSigns(server).grove().isEmpty() && LoreApi.twinSigns(server).bedrock().isEmpty(), "twins before they are placed");
+			data.setAnchor("F30/grove", a);
+			data.setAnchor("F30/bedrock", b);
+			LoreApi.TwinSigns twins = LoreApi.twinSigns(server);
+			helper.assertTrue(twins.grove().equals(Optional.of(a)) && twins.bedrock().equals(Optional.of(b)), "the twins are not where lore placed them");
+			helper.assertTrue(com.forzacode.a1016_02.ending.d.Stair.twin(server).equals(Optional.of(b)), "Ending D does not read the bedrock twin from LoreApi");
+		} finally {
+			grove.ifPresentOrElse(g -> data.setAnchor("F30/grove", g), () -> data.removeAnchor("F30/grove"));
+			bedrock.ifPresentOrElse(g -> data.setAnchor("F30/bedrock", g), () -> data.removeAnchor("F30/bedrock"));
+		}
+		helper.succeed();
+	}
+
 	/** The live index follows the ledger as he edits: a new edit is a trace at once. */
 	@GameTest
 	public void theTraceIndexFollowsTheLedger(GameTestHelper helper) {
