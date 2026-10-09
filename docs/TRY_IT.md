@@ -2,6 +2,26 @@
 
 One entry per merge, newest first. Run the game from the main checkout (this folder, on `main`).
 
+## READY TO TRY: Diggers and "Under you"  (merged feat/dig-diggers, commit dc44d5c)
+```
+Restart needed: full game restart (new Java code)
+See it now:
+  1. Launch "Dev Client", then /a1016 stage 2
+  2. Under you: place a bed near spawn, /time set night, sleep in it. Then /a1016 dig network grow 8,
+     /a1016 dig network info and /a1016 dig network reveal. Dig down at the x/z it prints, or break the
+     block under your bed to find the shaft that stops one block below it.
+  3. Tunnels: /a1016 dig tunnel plain, /a1016 dig tunnel tunnel_that_grows (needs a hillside or cave wall
+     40-72 blocks from your base), /a1016 dig tunnel tunnel_into_mine (dig a 2-high tunnel first, walk 32+
+     blocks away and face away).
+  4. Cards: /a1016 fire torches_gone | torches_behind_you | mining_that_moves | trees_stripped |
+     under_you_sound | under_you_footstep | under_you_stack
+What to look for: clean 2x2 cuts through stone that nobody dug. Nothing changes while you look. The network
+  stays at least 3 blocks from anything you dug, so you only break into it by digging close.
+Known rough edges: the dark chest under your base only appears once a far abandoned build or hut exists to
+  take it from (world, v0.3). Until then, taken stacks wait in the ledger. tunnel_that_grows returns
+  "no spot" on flat ground.
+```
+
 ## READY TO TRY: The figure (all sighting variants)  (merged feat/entity-figure, commit 54e5a45)
 ```
 Restart needed: full game restart (new entity, model and renderer)
