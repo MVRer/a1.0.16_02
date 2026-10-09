@@ -2,6 +2,22 @@
 
 One entry per merge, newest first. Run the game from the main checkout (this folder, on `main`).
 
+## READY TO TRY: Final integration (everything wired together)  (merged feat/integration-final, commit 8130486)
+```
+Restart needed: full game restart (Java code across workstreams)
+See it now:
+  1. Ending D's last minute is now meant to be WATCHED: in a real completion, the stair blocks climb back one at a time
+     and the leaves come back in one red and orange wave in front of you (D-048). The debug preview
+     (/a1016 ending d lastminute) is now cosmetic only: music, fog, no world changes.
+  2. After Ending C or D, fog surges and drift never happen again; the house copy stops for good after D and pauses
+     during C.
+  3. /a1016 debug playthrough 20   now runs with all 70 real cards. Every hard limit holds for every tempo.
+What to look for: nothing new to fire. This is the glue: endings, director, entity, lore and accident now talk
+  through proper hooks instead of workarounds.
+Known rough edges: the very-late tempo runs rare (about 0.5 minors/h overall, a major every about 6 h; D-054). Your
+  playtests decide.
+```
+
 ## READY TO TRY: Dusk fog that creeps in  (merged feat/atmosphere-dusk-ease, commit 6ecfc75)
 ```
 Restart needed: full game restart (client fog code). Your config needs no changes.
