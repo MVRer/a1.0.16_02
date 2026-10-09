@@ -11,7 +11,7 @@ Status values: queued, running, review, fix, merged, blocked. Only the orchestra
 | P1-3 | Old scars (worldgen) and the live new-scar placer | world | feat/world-scars | v0.3-traces | merged | 2 review rounds. Later task: signatures (still burning, house elsewhere, cross row). Follow-ups: dead mountain silence and no animals (atmosphere), new pyramid when the list goes into lava (lore-telling) |
 | P1-4 | Live diggers and the "Under you" network | dig | feat/dig-diggers | v0.3-traces | merged | 2 review rounds plus a flaky-test fix. Contract asks: restoreStack, SiteRegistry.update | Records TUNNEL_END and UNDER_BASE sites |
 | P1-5 | Dread layer: fog, silence, music off, sound director, mobs acting wrong (client and server) | atmosphere | feat/atmosphere-dread | v0.4-dread | merged | Real MobTamper is on main. Follow-up: dead mountain silence and no animals | Also builds the real MobTamper (D-017) |
-| P1-6 | Fragments: all 30 as data, placement by stage and profile, sites | lore | feat/lore-fragments | v0.5-fragments | running | Contract gap to expect: a protected "untouched grove" so new scars avoid it |
+| P1-6 | Fragments: all 30 as data, placement by stage and profile, sites | lore | feat/lore-fragments | v0.5-fragments | review | Contract gap to expect: a protected "untouched grove" so new scars avoid it |
 | P1-7 | Telling: sign and book watcher, blank signs, "Stop.", place not found, list updates, unbreakable F30 | lore | feat/lore-telling | v0.6-telling | queued, after P1-6 | |
 | P1-8 | Accidents: planner, every trap, death marker (uses atmosphere's MobTamper) | accident | feat/accident-traps | v0.7-accidents | running | Gravel ceiling waits on a core opt-in. Rebases onto main once atmosphere's MobTamper lands |
 | P2-1 | Endings A, B, C, D (full D chain) | ending | feat/ending-endings | v0.8-endings | queued, phase 2 | |
@@ -41,7 +41,10 @@ Status values: queued, running, review, fix, merged, blocked. Only the orchestra
 - Document the flags `ending:last_sighting` and `entity:last_sighting_seen` (entity)
 - `MobTamper`/`installMobTamper` Javadoc names atmosphere as the owner, and `MobTamper.isTampered(Mob)` (atmosphere)
 - A TraceService opt-in that lets a falling block drop, for the gravel ceiling (accident)
-- A protected "untouched grove" area that new scars avoid (lore, expected)
+- A protected "untouched grove" area that new scars avoid: world's new-scar placer must skip `UntouchedGrove.contains` (lore)
+- `leave` with block entity data plus `leaveStack`; flag `lore:still_burning` for D-004 (lore)
+- Ending D's undo must skip ledger causes `lore:left/*` (lore, for P2-1)
+- world records its hut and core-pyramid sites at server start, not only when generated (lore)
 - `TraceService.restoreStack(level, ledgerEntry, toPos)` to move ledgered stacks into the network chest later (dig)
 - `SiteRegistry.update(site, pos, size)` so the growing tunnel's TUNNEL_END stays current (dig)
 - Read access to the profile salt for worldgen hashing; world keeps its own salt for now (world)
