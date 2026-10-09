@@ -28,7 +28,7 @@ Status values: queued, running, review, fix, merged, blocked. Only the orchestra
 | P1-5c | Fix the flaky atmosphere tamper test (released cow doesn't always walk) | atmosphere | feat/atmosphere-flaky | - | merged | Test-only. 6/6 on the branch, 2/2 with --rerun-tasks on main |
 | P2-1a | Endings A, B, C, Stage 4 entry, the third-death rule | ending | feat/ending-abc | v0.8-endings | review | Uses the director flags `director:silence_until_day` and `director:pace_multiplier` (coming in P1-1c) |
 | P2-1b | Ending D: the full chain, the last minute, the afterward, the sting | ending (ending/d/**) | feat/ending-d | v0.8-endings | running | Owns ending/d/** only; builds the team's stair under F07 if missing |
-| P2-2a | Integration cleanup: audit literals moved to config, Locale.ROOT, retire stale Pacing fields, world camp distance, director sim reaching Telling, lore contract asks | multi (not ending) | feat/integration-cleanup | v1.0 | running | From the guardrail audit (no blockers) |
+| P2-2a | Integration cleanup: audit literals moved to config, Locale.ROOT, retire stale Pacing fields, world camp distance, director sim reaching Telling, lore contract asks | multi (not ending) | feat/integration-cleanup | v1.0 | review | From the guardrail audit (no blockers) |
 | P2-2b | Final integration: wire the endings in, full guardrail pass, 20 h sim | (multi) | feat/integration-final | v1.0 | queued (after P2-1a and P2-1b) | |
 | P2-3 | Playtest tooling: dev overlay and a 20 h scripted timewarp log | debug | feat/debug-playtest | v1.0 | merged | Narrow exception: one public read-only DirectorApi |
 
