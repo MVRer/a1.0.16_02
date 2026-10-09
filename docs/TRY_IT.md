@@ -2,6 +2,22 @@
 
 One entry per merge, newest first. Run the game from the main checkout (this folder, on `main`).
 
+## READY TO TRY: He uses your real fog, and you can't outrun him  (merged feat/entity-fogdistance, commit ae5c20f)
+```
+Restart needed: full game restart (new client-to-server fog report and Java code)
+See it now:
+  1. Launch "Dev Client". Render Distance 6. /a1016 stage 2, /time set 13000, /a1016 atmosphere fog dusk 0.6
+  2. /a1016 fire sighting_close   then   /a1016 entity info   (shows "reported fog end" from your client and the
+     distance he spawned at; in testing: fog end 55, close spawn 24)
+  3. /a1016 fire sighting_walks_away, then sprint after him: he keeps about 10% ahead of you, up to 9 blocks/s.
+  4. Tune live: /a1016 entity tune  (normalFractionMin/Max 0.55-0.75, closeFractionMin/Max 0.35-0.50,
+     closeMinDistance/closeMaxDistance 16-28, minDistance 12, outrunFactor 1.1, maxRunSpeed 9)
+What to look for: he should now always be inside what you can see, never lost in the fog, at a distance that
+  feels the same whatever the fog level.
+Known rough edges: flying after him in creative still catches him (the close-chase rush, D-037, is next).
+  If your fog ends closer than 12 blocks, he doesn't spawn at all.
+```
+
 ## READY TO TRY: Core update (contract batch)  (merged feat/core-contracts, commit 3e434ee)
 ```
 Restart needed: full game restart (core Java code)
