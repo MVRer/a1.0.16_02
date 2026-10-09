@@ -72,6 +72,14 @@ public final class WorldSites {
 		singles = Map.copyOf(recorded);
 	}
 
+	/**
+	 * Publishes the one-per-world sites this world already recorded, synchronously at server start, before any chunk
+	 * generates: a hut moved by a profile reroll then never records a second site, even before the warm-up runs.
+	 */
+	public static void loadSingles(MinecraftServer server) {
+		setSingles(WorldData.get(server).singles());
+	}
+
 	/** True if a different site was already recorded for this one-per-world key (after a profile reroll moved it). Any thread. */
 	public static boolean isOtherSingle(String key, GlobalPos pos) {
 		GlobalPos recorded = singles.get(key);

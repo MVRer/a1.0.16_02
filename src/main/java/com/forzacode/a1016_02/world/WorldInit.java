@@ -52,6 +52,8 @@ public final class WorldInit {
 		});
 
 		ServerLifecycleEvents.SERVER_STARTING.register(server -> {
+			// Before any chunk generates: worldgen must know which hut and core pyramid this world already recorded.
+			WorldSites.loadSingles(server);
 			try {
 				ScarContext.refresh(server);
 			} catch (RuntimeException e) {

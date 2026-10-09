@@ -366,8 +366,9 @@ public final class ScarPlanner {
 	 * Records the hut's and the core pyramid's sites as soon as they are planned (server start), not only when
 	 * their chunks generate, so lore can plan around them early. Once per world: where each was recorded goes into
 	 * {@link WorldData}, so a later start or a profile reroll (which moves the plans) records nothing new, and the
-	 * hut's chunk records no second hut when it generates ({@link WorldSites#isOtherSingle}). Generating the chunk
-	 * of the recorded one records nothing twice either ({@link WorldSites#record} skips a site it already has).
+	 * hut's chunk records no second hut when it generates ({@link WorldSites#isOtherSingle}; the recorded positions
+	 * reach worldgen at server start, before any chunk generates, through {@link WorldSites#loadSingles}).
+	 * Generating the chunk of the recorded one records nothing twice either ({@link WorldSites#record} skips it).
 	 * Server thread; skipped if this planner's snapshot is no longer current.
 	 */
 	public void recordOneOffSites() {
