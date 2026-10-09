@@ -14,6 +14,8 @@ public final class EntityConfig {
 	/** Depth of the spawn band just inside the limit, as a fraction of the limit. */
 	public double fogBandFraction = 0.10;
 	public double fogBandMinBlocks = 6;
+	/** The ridge, the trunk, the shore and a known place need the right terrain, so their band is this deep. */
+	public double terrainBandFraction = 0.25;
 	/** He stands at least this far inside the limit. */
 	public double edgeMarginBlocks = 2;
 	/** Hard cap on the spawn distance, whatever the render distance. */

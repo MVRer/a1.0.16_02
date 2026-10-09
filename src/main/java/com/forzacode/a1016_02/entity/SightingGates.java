@@ -47,7 +47,7 @@ public final class SightingGates {
 		if (!player.isAlive() || player.isSpectator() || player.isSleeping()) {
 			return Optional.of("player busy");
 		}
-		if (!FigureApi.active(server).isEmpty()) {
+		if (FigureApi.anyOut(server)) {
 			return Optional.of("he is already out");
 		}
 		long time = timeOfDay(server);

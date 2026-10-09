@@ -1,8 +1,11 @@
 package com.forzacode.a1016_02.entity;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
+import java.util.WeakHashMap;
 import java.util.function.Predicate;
 
 import com.forzacode.a1016_02.A1016_02;
@@ -44,6 +47,8 @@ public final class FigureApi {
 	}
 
 	private static final int SWEEP_INTERVAL = 100;
+	/** Figures spawned through this API, for the cheap "is he out?" gate. Removed ones are pruned on read. */
+	private static final Set<HimEntity> LIVE = Collections.newSetFromMap(new WeakHashMap<>());
 
 	private FigureApi() {
 	}
@@ -64,6 +69,7 @@ public final class FigureApi {
 		if (!Services.traces().isOutOfView(level, him.getBoundingBox().inflate(0.1)) || !level.addFreshEntity(him)) {
 			return Optional.empty();
 		}
+		LIVE.add(him);
 		A1016_02.LOGGER.debug("[a1016] figure ({}) at {}", variant.shortName(), BlockPos.containing(feet).toShortString());
 		return Optional.of(him);
 	}
@@ -101,7 +107,13 @@ public final class FigureApi {
 		return new Spawned(FireResult.FIRED, him.get());
 	}
 
-	/** Every figure that is out, in every level. */
+	/** True if a figure spawned through this API is out. Cheap; used by the gates. */
+	public static boolean anyOut(MinecraftServer server) {
+		LIVE.removeIf(him -> him.isRemoved() || him.level().getServer() != server);
+		return !LIVE.isEmpty();
+	}
+
+	/** Every figure that is out, in every level (including any made with /summon). */
 	public static List<HimEntity> active(MinecraftServer server) {
 		List<HimEntity> found = new ArrayList<>();
 		for (ServerLevel level : server.getAllLevels()) {
@@ -142,7 +154,9 @@ public final class FigureApi {
 				&& !SightingGates.nearBase(player, pos, config.baseRadius)
 				&& (!spacing || data.farEnough(GlobalPos.of(level.dimension(), pos), pacing.sightingMinSpacing));
 		Predicate<AABB> hidden = box -> Services.traces().isOutOfView(level, box);
-		SpotFinder.Query q = new SpotFinder.Query(level, player.position(), player.getEyePosition(), edge.inner(), edge.outer(),
+		double inner = variant.spot() == Variant.Spot.OPEN || variant.spot() == Variant.Spot.LIGHT ? edge.inner()
+				: Math.min(edge.inner(), Math.max(pacing.sightingMinDistance, edge.outer() * (1.0 - config.terrainBandFraction)));
+		SpotFinder.Query q = new SpotFinder.Query(level, player.position(), player.getEyePosition(), inner, edge.outer(),
 				pacing.sightingMinDistance, ModEntities.HIM.getDimensions(), hidden, allowed, random, config.spotSamples);
 		return switch (variant.spot()) {
 			case OPEN -> SpotFinder.open(q);
@@ -150,7 +164,11 @@ public final class FigureApi {
 			case TRUNK -> SpotFinder.trunk(q, base -> Services.sites().find(SiteType.BARE_GROVE, GlobalPos.of(level.dimension(), base), 24).isEmpty() ? 0.0 : 2.0);
 			case LIGHT -> SpotFinder.light(q, SightingGates.lights(player, edge.outer()), config.lightSearchRadius, config.lightEdgeMin, config.lightEdgeMax);
 			case SHORE -> SpotFinder.shore(q, config.waterFractionMin);
-			case KNOWN -> SpotFinder.scored(q, feet -> knownPlace(player, level, BlockPos.containing(feet), config));
+			case KNOWN -> {
+				Optional<SpotFinder.Spot> known = SpotFinder.scored(q, feet -> knownPlace(player, level, BlockPos.containing(feet), config));
+				// Debug in a fresh world: nowhere at the fog edge is known yet, so any spot there will do.
+				yield known.isEmpty() && forced ? SpotFinder.open(q) : known;
+			}
 		};
 	}
 
