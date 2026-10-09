@@ -14,15 +14,39 @@ import net.minecraft.world.level.Level;
  * <p>The un-pulled render limit is vanilla's: the effective render distance (the smaller of the client's and the
  * server's view distance, at least 2 chunks) times 16; vanilla fog ends exactly there in the overworld. The dusk fog
  * ({@code HerobrineState.Effects.duskFogLevel}) pulls it in with atmosphere's client curve: weighted by the time of
- * day ({@link #duskWeight}, none by day, full at dusk, {@code duskNightWeight} at night), then geometric toward
- * {@code duskMinFogBlocks} ({@link #fogEnd}). Fog surges (short, per player) are not included. Fixed-time dimensions
- * get no dusk fog. Atmosphere owns the shape: it installs its config with {@link #installShape}; until then
+ * day ({@link #duskWeight}: none by day, easing in slowly from the shape's start to full at its peak, easing to
+ * {@code duskNightWeight} for the night, faded before sunrise), then geometric toward {@code duskMinFogBlocks}
+ * ({@link #fogEnd}). Fog surges (short, per player) and the client's easing between dusk levels (at most
+ * {@code duskLevelChangeSeconds} after a change; the client's own fog report covers it) are not included. Fixed-time
+ * dimensions get no dusk fog. Atmosphere owns the shape: it installs its config with {@link #installShape}; until then
  * {@link Shape#DEFAULT} matches atmosphere's defaults.
  */
 public final class FogLimits {
-	/** The dusk fog shape (atmosphere's {@code duskMinFogBlocks} and {@code duskNightWeight}). */
-	public record Shape(double duskMinFogBlocks, double duskNightWeight) {
+	/**
+	 * The dusk fog shape (atmosphere's {@code duskMinFogBlocks}, {@code duskNightWeight} and the {@code duskFog...}
+	 * timing). Times are times of day (0 is sunrise, 12000 sunset): the fog starts building at {@code duskStart}, is
+	 * full from {@code duskPeak} to {@code duskHoldUntil}, eases to the night weight by {@code duskNightFrom}, starts
+	 * fading at {@code duskFadeFrom} and is gone at {@code duskEnd}. {@code duskEaseExponent} shapes every ease
+	 * ({@link #ease}). The constructor puts the times in that order inside one day and the exponent in 1 to 8.
+	 */
+	public record Shape(double duskMinFogBlocks, double duskNightWeight, long duskStart, long duskPeak, long duskHoldUntil, long duskNightFrom,
+			long duskFadeFrom, long duskEnd, double duskEaseExponent) {
 		public static final Shape DEFAULT = new Shape(24.0, 0.55);
+
+		public Shape {
+			duskStart = Math.clamp(duskStart, 0L, DAY);
+			duskPeak = Math.clamp(duskPeak, duskStart, DAY);
+			duskHoldUntil = Math.clamp(duskHoldUntil, duskPeak, DAY);
+			duskNightFrom = Math.clamp(duskNightFrom, duskHoldUntil, DAY);
+			duskFadeFrom = Math.clamp(duskFadeFrom, duskNightFrom, DAY);
+			duskEnd = Math.clamp(duskEnd, duskFadeFrom, DAY);
+			duskEaseExponent = Double.isNaN(duskEaseExponent) ? 3.0 : Math.clamp(duskEaseExponent, 1.0, 8.0);
+		}
+
+		/** This fog end and night weight with the default timing (from 9000, full 13000 to 13800, night by 16000, fading 19500 to 23500, exponent 3). */
+		public Shape(double duskMinFogBlocks, double duskNightWeight) {
+			this(duskMinFogBlocks, duskNightWeight, 9000L, 13000L, 13800L, 16000L, 19500L, 23500L, 3.0);
+		}
 	}
 
 	/**
@@ -66,7 +90,7 @@ public final class FogLimits {
 	public static Result of(int clientChunks, int serverChunks, float duskFogLevel, long dayTime, Shape shape) {
 		int chunks = effectiveChunks(clientChunks, serverChunks);
 		double renderLimit = chunks * 16.0;
-		double amount = clamp01(duskFogLevel) * duskWeight(dayTime, shape.duskNightWeight());
+		double amount = clamp01(duskFogLevel) * duskWeight(dayTime, shape);
 		return new Result(chunks, renderLimit, fogEnd(renderLimit, shape.duskMinFogBlocks(), amount));
 	}
 
@@ -82,33 +106,51 @@ public final class FogLimits {
 		return of(player.requestedViewDistance(), server.getPlayerList().getViewDistance(), dusk, level.getDefaultClockTime());
 	}
 
-	/**
-	 * How much of the dusk fog applies at a time of day (0 is sunrise, 12000 sunset): none by day, rising through
-	 * sunset to 1 at dusk (12500 to 13800), easing to {@code nightWeight} for the night, gone by sunrise. The same
-	 * curve as atmosphere's client fog.
-	 */
+	/** {@link #duskWeight(long, Shape)} with the default timing and this night weight. */
 	public static double duskWeight(long timeOfDay, double nightWeight) {
-		double t = Math.floorMod(timeOfDay, DAY);
-		double night = clamp01(nightWeight);
-		if (t < 10500) {
+		return duskWeight(timeOfDay, new Shape(Shape.DEFAULT.duskMinFogBlocks(), nightWeight));
+	}
+
+	/**
+	 * How much of the dusk fog applies at a time of day (0 is sunrise, 12000 sunset), 0 to 1: none by day; from
+	 * {@code duskStart} it eases in ({@link #ease}: barely anything for the first minutes) to 1 at {@code duskPeak};
+	 * holds to {@code duskHoldUntil}; eases to the night weight by {@code duskNightFrom}; from {@code duskFadeFrom} it
+	 * fades, the rise played backwards, to nothing at {@code duskEnd}. Continuous everywhere. The same curve as
+	 * atmosphere's client fog ({@code Curves.duskWeight}).
+	 */
+	public static double duskWeight(long timeOfDay, Shape shape) {
+		long t = Math.floorMod(timeOfDay, DAY);
+		double night = clamp01(shape.duskNightWeight());
+		double p = shape.duskEaseExponent();
+		if (t < shape.duskStart() || t >= shape.duskEnd()) {
 			return 0.0;
 		}
-		if (t < 12500) {
-			return smooth((t - 10500) / 2000.0);
+		if (t < shape.duskPeak()) {
+			return ease(span(t, shape.duskStart(), shape.duskPeak()), p);
 		}
-		if (t < 13800) {
+		if (t < shape.duskHoldUntil()) {
 			return 1.0;
 		}
-		if (t < 15500) {
-			return lerp(smooth((t - 13800) / 1700.0), 1.0, night);
+		if (t < shape.duskNightFrom()) {
+			return lerp(ease(1.0 - span(t, shape.duskHoldUntil(), shape.duskNightFrom()), p), night, 1.0);
 		}
-		if (t < 22000) {
+		if (t < shape.duskFadeFrom()) {
 			return night;
 		}
-		if (t < 23500) {
-			return lerp(smooth((t - 22000) / 1500.0), night, 0.0);
-		}
-		return 0.0;
+		return night * ease(1.0 - span(t, shape.duskFadeFrom(), shape.duskEnd()), p);
+	}
+
+	/**
+	 * The dusk fog's ease, 0 to 1 over {@code x} 0 to 1: {@code x^p * (p + 1 - p * x)}. It starts like {@code x^p}
+	 * (with {@code p} 3, a fifth of the way in it is at 3%) and lands flat on 1. {@code p} 2 is a smoothstep.
+	 */
+	public static double ease(double x, double p) {
+		double v = clamp01(x);
+		return clamp01(Math.pow(v, p) * (p + 1.0 - p * v));
+	}
+
+	private static double span(long t, long from, long to) {
+		return to > from ? (double) (t - from) / (to - from) : 1.0;
 	}
 
 	/**
@@ -124,11 +166,6 @@ public final class FogLimits {
 
 	private static double clamp01(double value) {
 		return value < 0.0 ? 0.0 : Math.min(1.0, value);
-	}
-
-	private static double smooth(double t) {
-		double x = clamp01(t);
-		return x * x * (3.0 - 2.0 * x);
 	}
 
 	private static double lerp(double t, double a, double b) {

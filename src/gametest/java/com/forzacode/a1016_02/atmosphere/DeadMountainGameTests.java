@@ -35,7 +35,7 @@ import net.minecraft.world.level.block.Blocks;
  * a cold slope), and wolves, foxes, goats, rabbits and armadillos spawn on those. So natural passive spawns are
  * refused inside the recorded areas too ({@link DeadMountains#refusesSpawn}).
  */
-public class DeadMountainGameTests {
+public class DeadMountainGameTests extends DuskFogGameTests {
 	/** Ground a dead mountain can have once its grass is dirt. */
 	private static final List<Block> KEPT_GROUND = List.of(Blocks.DIRT, Blocks.COARSE_DIRT, Blocks.PODZOL, Blocks.ROOTED_DIRT, Blocks.STONE,
 			Blocks.GRAVEL, Blocks.SNOW_BLOCK, Blocks.SAND, Blocks.MOSS_BLOCK);

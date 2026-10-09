@@ -7,7 +7,9 @@ import com.forzacode.a1016_02.atmosphere.CompassDriftPayload;
 import com.forzacode.a1016_02.atmosphere.Curves;
 import com.forzacode.a1016_02.atmosphere.DeadMountains;
 import com.forzacode.a1016_02.atmosphere.DeadMountainsPayload;
+import com.forzacode.a1016_02.atmosphere.DuskLevel;
 import com.forzacode.a1016_02.core.ClientEffects;
+import com.forzacode.a1016_02.core.FogLimits;
 import com.forzacode.a1016_02.core.client.ClientEffectsClient;
 
 import net.minecraft.client.Camera;
@@ -50,7 +52,10 @@ public final class ClientAtmosphere implements ClientEffectsClient.Handler {
 	private long ticks;
 
 	private boolean musicOff;
-	private float duskLevel;
+	/** The dusk fog level drawn: set by the server, eased between levels. */
+	private final DuskLevel dusk = new DuskLevel();
+	/** The fog being shaped this frame. */
+	private final Curves.Fog frame = new Curves.Fog();
 
 	private ClientEffects.@Nullable FogSurge surge;
 	private long surgeStart;
@@ -92,13 +97,19 @@ public final class ClientAtmosphere implements ClientEffectsClient.Handler {
 
 	@Override
 	public void duskFog(ClientEffects.DuskFog effect) {
-		duskLevel = effect.level();
+		setDusk(effect.level());
 	}
 
 	@Override
 	public void sync(ClientEffects.Sync effect) {
 		setMusicOff(effect.musicOff());
-		duskLevel = effect.duskFogLevel();
+		setDusk(effect.duskFogLevel());
+	}
+
+	/** The first level after joining applies at once; later ones ease in over {@code duskLevelChangeSeconds}. */
+	private void setDusk(float level) {
+		AtmosphereConfig cfg = AtmosphereConfig.get();
+		dusk.set(level, cfg.duskHazeFullLevel, ticks, AtmosphereConfig.ticks(cfg.duskLevelChangeSeconds));
 	}
 
 	void deadMountains(DeadMountainsPayload payload) {
@@ -122,7 +133,7 @@ public final class ClientAtmosphere implements ClientEffectsClient.Handler {
 	void reset() {
 		boolean hadSilence = silence != null || deadVolume != 1.0F;
 		musicOff = false;
-		duskLevel = 0.0F;
+		dusk.reset();
 		surge = null;
 		silence = null;
 		compass = null;
@@ -254,17 +265,26 @@ public final class ClientAtmosphere implements ClientEffectsClient.Handler {
 		return factor >= 1.0F ? 1.0F : Math.max(MIN_VOLUME, factor);
 	}
 
-	/** Pulls the world fog in for the dusk level and any fog surge. Atmospheric fog only (not water, lava, snow). */
+	/**
+	 * Pulls the world fog in for the dusk level and any fog surge. Atmospheric fog only (not water, lava, snow). The
+	 * dusk fog grows continuously out of vanilla's ({@link Curves#applyDusk}); surges keep their v0.4 shape on top.
+	 */
 	public static void applyFog(FogData fog, Camera camera, @Nullable ClientLevel level, float partialTick) {
 		if (level == null || camera.getFluidInCamera() != FogType.NONE) {
 			return;
 		}
 		ClientAtmosphere self = INSTANCE;
 		AtmosphereConfig cfg = AtmosphereConfig.get();
+		double now = self.ticks + partialTick;
+		double duskLevel = self.dusk.level(now);
 		double dusk = 0.0;
-		if (self.duskLevel > 0.0F && !level.dimensionType().hasFixedTime()) {
+		double haze = 0.0;
+		if (duskLevel > 0.0 && !level.dimensionType().hasFixedTime()) {
 			// The same amount and curve core's FogLimits uses on the server (game test: serverFogMatchesClientFog).
-			dusk = Curves.duskAmount(self.duskLevel, level.getDefaultClockTime(), cfg.duskNightWeight);
+			FogLimits.Shape shape = cfg.fogShape();
+			long time = level.getDefaultClockTime();
+			dusk = Curves.duskAmount(duskLevel, time, shape);
+			haze = Curves.duskHaze(time, shape) * self.dusk.haze(now);
 		}
 		double surgeAmount = 0.0;
 		ClientEffects.FogSurge s = self.surge;
@@ -272,26 +292,19 @@ public final class ClientAtmosphere implements ClientEffectsClient.Handler {
 			double t = self.ticks - self.surgeStart + partialTick;
 			surgeAmount = s.strength() * Curves.surgeEnvelope(t, s.rampTicks(), s.holdTicks(), s.fadeTicks());
 		}
-		if (dusk < 1.0E-3 && surgeAmount < 1.0E-3) {
+		if (dusk <= 0.0 && haze <= 0.0 && surgeAmount < 1.0E-3) {
 			return;
 		}
-		boolean renderLimited = fog.renderDistanceEnd <= fog.environmentalEnd;
-		double base = renderLimited ? fog.renderDistanceEnd : fog.environmentalEnd;
-		double baseStart = renderLimited ? fog.renderDistanceStart : fog.environmentalStart;
-		if (base <= 1.0) {
-			return;
-		}
-		double end = Curves.fogEnd(Curves.fogEnd(base, cfg.duskMinFogBlocks, dusk), cfg.surgeMinFogBlocks, surgeAmount);
-		double heavy = Curves.combine(dusk, surgeAmount);
-		double startFraction = Curves.lerp(heavy, Curves.clamp01(baseStart / base), Curves.clamp01(cfg.heavyFogStartFraction));
-		float e = (float) end;
-		float st = (float) (end * startFraction);
-		fog.environmentalEnd = Math.min(fog.environmentalEnd, e);
-		fog.environmentalStart = Math.min(fog.environmentalStart, st);
-		fog.renderDistanceEnd = Math.min(fog.renderDistanceEnd, e);
-		fog.renderDistanceStart = Math.min(fog.renderDistanceStart, st);
-		fog.skyEnd = Math.min(fog.skyEnd, e);
-		fog.cloudEnd = Math.min(fog.cloudEnd, e);
+		Curves.Fog f = self.frame.set(fog.environmentalStart, fog.environmentalEnd, fog.renderDistanceStart, fog.renderDistanceEnd, fog.skyEnd,
+				fog.cloudEnd);
+		Curves.applyDusk(f, dusk, haze, cfg.duskMinFogBlocks, cfg.heavyFogStartFraction);
+		Curves.applySurge(f, surgeAmount, cfg.surgeMinFogBlocks, cfg.heavyFogStartFraction);
+		fog.environmentalStart = (float) f.environmentalStart;
+		fog.environmentalEnd = (float) f.environmentalEnd;
+		fog.renderDistanceStart = (float) f.renderDistanceStart;
+		fog.renderDistanceEnd = (float) f.renderDistanceEnd;
+		fog.skyEnd = (float) f.skyEnd;
+		fog.cloudEnd = (float) f.cloudEnd;
 	}
 
 	/** Where the local player's spawn compass points: the drift target while a drift runs. */

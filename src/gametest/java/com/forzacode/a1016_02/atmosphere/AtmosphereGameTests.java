@@ -152,15 +152,32 @@ public class AtmosphereGameTests extends TamperGameTests {
 		helper.assertTrue(Curves.duskWeight(6000, 0.55) == 0.0 && Curves.duskWeight(0, 0.55) == 0.0, "dusk fog by day");
 		helper.assertTrue(Curves.duskWeight(13000, 0.55) == 1.0, "dusk fog peaks at dusk");
 		helper.assertTrue(Math.abs(Curves.duskWeight(18000, 0.55) - 0.55) < 1.0E-9, "dusk fog at night");
+		// It eases in from 9000 so slowly that the first real minute is hardly there, and gets going toward deep dusk.
+		helper.assertTrue(Curves.duskWeight(9000, 0.55) == 0.0 && Curves.duskWeight(9600, 0.55) < 0.02 && Curves.duskWeight(10200, 0.55) < 0.1,
+				"dusk fog is not slow to start");
+		helper.assertTrue(Curves.duskWeight(12000, 0.55) > 0.6, "dusk fog is not there by sunset");
 		double previous = 0.0;
-		for (long t = 10500; t <= 12500; t += 100) {
+		for (long t = 8800; t <= 13000; t += 100) {
 			double w = Curves.duskWeight(t, 0.55);
-			helper.assertTrue(w >= previous && w - previous < 0.15, "dusk fog jumps at " + t);
+			helper.assertTrue(w >= previous && w - previous < 0.05, "dusk fog jumps at " + t);
 			previous = w;
 		}
+		for (long t = 13000; t <= 24000; t += 100) {
+			double w = Curves.duskWeight(t, 0.55);
+			helper.assertTrue(w <= previous && previous - w < 0.05, "dusk fog drops at " + t);
+			previous = w;
+		}
+		helper.assertTrue(Curves.duskWeight(23500, 0.55) == 0.0, "dusk fog not gone before sunrise");
 		for (long t = 0; t < 24000; t += 250) {
 			helper.assertTrue(Curves.duskWeight(t, 0.55) <= Curves.duskWeight(13000, 0.55), "dusk fog stronger than at dusk at " + t);
 		}
+		// The timing is the config's: start, peak and ease exponent move the curve; nonsense is put in order.
+		FogLimits.Shape early = new FogLimits.Shape(24, 0.55, 6000, 9000, 9500, 12000, 18000, 20000, 2.0);
+		helper.assertTrue(Curves.duskWeight(5999, early) == 0.0 && Curves.duskWeight(9000, early) == 1.0
+				&& Math.abs(Curves.duskWeight(7500, early) - 0.5) < 1.0E-9, "dusk fog timing not configurable");
+		FogLimits.Shape messy = new FogLimits.Shape(24, 0.55, 13000, 9000, -5, 30000, 20000, 19000, Double.NaN);
+		helper.assertTrue(messy.duskPeak() == 13000 && messy.duskHoldUntil() == 13000 && messy.duskNightFrom() == 24000
+				&& messy.duskEnd() == 24000 && messy.duskEaseExponent() == 3.0, "dusk fog timing not put in order: " + messy);
 
 		// Surge: sharp rise, hold, eased fade, then nothing.
 		helper.assertTrue(Curves.surgeEnvelope(0, 16, 100, 100) == 0.0 && Curves.surgeEnvelope(16, 16, 100, 100) == 1.0
@@ -198,35 +215,59 @@ public class AtmosphereGameTests extends TamperGameTests {
 		helper.assertTrue(FogLimits.shape().equals(cfg.fogShape()), "FogLimits does not use atmosphere's shape: " + FogLimits.shape() + " vs " + cfg.fogShape());
 		double minFog = cfg.duskMinFogBlocks;
 		double nightWeight = cfg.duskNightWeight;
+		long[] timing = {cfg.duskFogStart, cfg.duskFogPeak, cfg.duskFogHoldUntil, cfg.duskFogNightFrom, cfg.duskFogFadeFrom, cfg.duskFogEnd};
+		double exponent = cfg.duskFogEaseExponent;
 		try {
-			for (double[] shape : new double[][] {{minFog, nightWeight}, {40.0, 0.3}, {12.0, 0.9}}) {
+			for (double[] shape : new double[][] {{minFog, nightWeight, exponent, 0}, {40.0, 0.3, 2.0, 1}, {12.0, 0.9, 4.5, 2}, {24.0, 0.0, 3.0, 3}}) {
 				cfg.duskMinFogBlocks = shape[0];
 				cfg.duskNightWeight = shape[1];
+				cfg.duskFogEaseExponent = shape[2];
+				// The default timing, an earlier and shorter one, a later one, and one put in order by the shape.
+				long[] times = switch ((int) shape[3]) {
+					case 1 -> new long[] {7000, 11000, 11500, 14000, 21000, 22000};
+					case 2 -> new long[] {11000, 13500, 14000, 18000, 20000, 23999};
+					case 3 -> new long[] {12000, 10000, 15000, 14000, 22000, 21000};
+					default -> timing;
+				};
+				cfg.duskFogStart = times[0];
+				cfg.duskFogPeak = times[1];
+				cfg.duskFogHoldUntil = times[2];
+				cfg.duskFogNightFrom = times[3];
+				cfg.duskFogFadeFrom = times[4];
+				cfg.duskFogEnd = times[5];
 				helper.assertTrue(FogLimits.shape().equals(cfg.fogShape()), "FogLimits did not follow a config change: " + FogLimits.shape());
 				for (Stage stage : Stage.values()) {
 					float dusk = cfg.duskFogFor(stage);
-					for (long time : new long[] {0, 6000, 11000, 12000, 12500, 13000, 14500, 18000, 22800, 23900, 24000 * 3 + 13000}) {
+					for (long time = 0; time <= 24000 * 2; time += 100) {
 						for (int chunks : new int[] {2, 8, 12, 32}) {
 							FogLimits.Result server = FogLimits.of(chunks, 32, dusk, time);
-							// The client's own math in ClientAtmosphere.applyFog (overworld: vanilla fog ends at the render limit).
-							double client = Curves.fogEnd(server.renderLimit(), cfg.duskMinFogBlocks, Curves.duskAmount(dusk, time, cfg.duskNightWeight));
-							helper.assertTrue(Math.abs(server.fogEnd() - client) < 1.0E-9, String.format(Locale.ROOT,
-									"server fog %.4f != client %.4f (stage %s, t %d, %d chunks, min %.1f, night %.2f)", server.fogEnd(), client, stage, time,
-									chunks, cfg.duskMinFogBlocks, cfg.duskNightWeight));
+							// The client's own math in ClientAtmosphere.applyFog, from vanilla's overworld fog.
+							Curves.Fog fog = DuskFogGameTests.vanilla(server.renderLimit(), false);
+							Curves.applyDusk(fog, Curves.duskAmount(dusk, time, cfg.fogShape()), Curves.duskHaze(time, cfg.fogShape()), cfg.duskMinFogBlocks,
+									cfg.heavyFogStartFraction);
+							helper.assertTrue(Math.abs(server.fogEnd() - fog.end()) < 1.0E-9, String.format(Locale.ROOT,
+									"server fog %.4f != client %.4f (stage %s, t %d, %d chunks, min %.1f, night %.2f, shape %s)", server.fogEnd(), fog.end(),
+									stage, time, chunks, cfg.duskMinFogBlocks, cfg.duskNightWeight, cfg.fogShape()));
+							helper.assertTrue(FogLimits.duskWeight(time, cfg.fogShape()) == Curves.duskWeight(time, cfg.fogShape()), "dusk weight differs at " + time);
 						}
 					}
 				}
 			}
-			// Sanity: by day there is no dusk fog, at dusk the heaviest stage pulls it well in.
-			cfg.duskMinFogBlocks = minFog;
-			cfg.duskNightWeight = nightWeight;
-			float heaviest = cfg.duskFogFor(Stage.REMOVAL);
-			helper.assertTrue(FogLimits.of(12, 12, heaviest, 6000).fogEnd() == 192.0 && FogLimits.of(12, 12, heaviest, 13000).fogEnd() < 100.0,
-					"dusk fog by day or not at dusk");
 		} finally {
 			cfg.duskMinFogBlocks = minFog;
 			cfg.duskNightWeight = nightWeight;
+			cfg.duskFogEaseExponent = exponent;
+			cfg.duskFogStart = timing[0];
+			cfg.duskFogPeak = timing[1];
+			cfg.duskFogHoldUntil = timing[2];
+			cfg.duskFogNightFrom = timing[3];
+			cfg.duskFogFadeFrom = timing[4];
+			cfg.duskFogEnd = timing[5];
 		}
+		// Sanity: by day there is no dusk fog, at dusk the heaviest stage pulls it well in.
+		float heaviest = cfg.duskFogFor(Stage.REMOVAL);
+		helper.assertTrue(FogLimits.of(12, 12, heaviest, 6000).fogEnd() == 192.0 && FogLimits.of(12, 12, heaviest, 13000).fogEnd() < 100.0,
+				"dusk fog by day or not at dusk");
 		helper.succeed();
 	}
 

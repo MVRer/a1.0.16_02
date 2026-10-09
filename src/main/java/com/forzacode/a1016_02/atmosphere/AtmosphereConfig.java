@@ -18,6 +18,33 @@ public final class AtmosphereConfig {
 	public double duskMinFogBlocks = 24;
 	/** Share of the dusk fog that stays through the night (it peaks at dusk). */
 	public double duskNightWeight = 0.55;
+	/**
+	 * When the dusk fog starts building (time of day: 0 is sunrise, 12000 sunset, 24000 the next sunrise). It eases in
+	 * so slowly ({@link #duskFogEaseExponent}) that the first minutes are hardly there.
+	 */
+	public long duskFogStart = 9000;
+	/** When it is full (deep dusk). */
+	public long duskFogPeak = 13000;
+	/** It stays full until here... */
+	public long duskFogHoldUntil = 13800;
+	/** ...then eases to {@link #duskNightWeight}, reached here. */
+	public long duskFogNightFrom = 16000;
+	/** The night fog starts fading here... */
+	public long duskFogFadeFrom = 19500;
+	/** ...and is gone here, before sunrise. The fade is the rise played backwards. */
+	public long duskFogEnd = 23500;
+	/**
+	 * How late the dusk fog's eases happen ({@code x^p * (p + 1 - p * x)}, 1 to 8): 2 is a smoothstep, 3 starts like a
+	 * cubic (a fifth of the way in, 3% of the fog), higher waits even longer and then comes faster.
+	 */
+	public double duskFogEaseExponent = 3.0;
+	/** Real seconds over which the client eases to a new dusk fog level. The first level after joining applies at once. */
+	public double duskLevelChangeSeconds = 90;
+	/**
+	 * Dusk level from which the close-in haze is whole (every stage level is). A level below it gets that share of the
+	 * haze, so fog arriving from level 0 brings its haze gradually.
+	 */
+	public double duskHazeFullLevel = 0.15;
 	/** Fog end distance in blocks at fog surge strength 1. */
 	public double surgeMinFogBlocks = 10;
 	/** Fog start as a share of the fog end when the fog is at its heaviest (the old close-in fog). */
@@ -143,7 +170,8 @@ public final class AtmosphereConfig {
 
 	/** The dusk fog shape for core's {@link FogLimits}, installed live by {@code AtmosphereInit} ({@code FogLimits.installShape(() -> get().fogShape())}). */
 	public FogLimits.Shape fogShape() {
-		return new FogLimits.Shape(duskMinFogBlocks, duskNightWeight);
+		return new FogLimits.Shape(duskMinFogBlocks, duskNightWeight, duskFogStart, duskFogPeak, duskFogHoldUntil, duskFogNightFrom, duskFogFadeFrom,
+				duskFogEnd, duskFogEaseExponent);
 	}
 
 	public float duskFogFor(Stage stage) {
