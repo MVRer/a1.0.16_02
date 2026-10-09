@@ -12,12 +12,12 @@ import net.minecraft.util.Mth;
  *
  * <p>The render limit is the smaller of the client's requested view distance and the server's, in blocks; vanilla
  * fogs the last tenth of it. The dusk fog ({@link HerobrineState.Effects#duskFogLevel()}) pulls the limit in. The
- * band is capped by the simulation distance so he can still walk away, and never starts closer than
- * {@code Pacing.sightingMinDistance}.
+ * band also stays well inside the simulation (entity-ticking) distance, so he can always walk off without
+ * freezing, and never starts closer than {@code Pacing.sightingMinDistance}. He is gone once past {@link #limit}.
  *
  * @param chunks      effective render distance in chunks
  * @param renderLimit the render limit in blocks, where vanilla fog is complete
- * @param limit       the limit pulled in by the dusk fog
+ * @param limit       the limit pulled in by the dusk fog: past it he is in full fog, and gone
  * @param inner       nearest spawn distance (horizontal)
  * @param outer       farthest spawn distance (horizontal)
  */
@@ -44,7 +44,7 @@ public record FogEdge(int chunks, double renderLimit, double limit, double inner
 		double limit = renderLimit * (1.0 - pull);
 		double outer = Math.min(limit - config.edgeMarginBlocks, config.maxSpawnDistance);
 		if (simulationChunks > 0) {
-			outer = Math.min(outer, (simulationChunks - 1) * 16.0);
+			outer = Math.min(outer, tickingReach(simulationChunks));
 		}
 		double depth = Math.max(config.fogBandMinBlocks, outer * config.fogBandFraction);
 		if (atMaxDistance) {
@@ -55,8 +55,12 @@ public record FogEdge(int chunks, double renderLimit, double limit, double inner
 		return new FogEdge(chunks, renderLimit, limit, inner, outer);
 	}
 
-	/** A point farther than this from every player is past the fog (fully hidden by it). */
-	public double pastFog() {
-		return renderLimit;
+	/**
+	 * Farthest spawn distance that stays inside the entity-ticking range with room to spare: the range is at least
+	 * {@code (simulation - 1)} chunks around the player's chunk, and the spot needs {@link HimEntity#SPAWN_TICK_MARGIN}
+	 * more blocks of it plus half a chunk of slack.
+	 */
+	public static double tickingReach(int simulationChunks) {
+		return (simulationChunks - 1) * 16.0 - HimEntity.SPAWN_TICK_MARGIN - 8.0;
 	}
 }

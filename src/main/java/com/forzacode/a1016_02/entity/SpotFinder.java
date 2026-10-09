@@ -47,14 +47,11 @@ public final class SpotFinder {
 	 * @param inner       nearest horizontal distance
 	 * @param outer       farthest horizontal distance
 	 * @param minDistance never closer than this to the eyes, whatever the band says
-	 * @param hidden      true if a box is out of view of every player
+	 * @param hidden      true if a box (his {@link HimEntity#viewBox}) is out of view of every player
 	 * @param allowed     extra rule for a feet block (loaded and ticking, not at the base, far from the last sighting)
 	 */
 	public record Query(ServerLevel level, Vec3 feet, Vec3 eye, double inner, double outer, double minDistance, EntityDimensions dims,
 			Predicate<AABB> hidden, Predicate<BlockPos> allowed, RandomSource random, int samples) {
-		AABB box(Vec3 at) {
-			return dims.makeBoundingBox(at);
-		}
 	}
 
 	private static final int OPEN_ENOUGH = 16;
@@ -151,9 +148,8 @@ public final class SpotFinder {
 	}
 
 	/**
-	 * At the edge of a light's glow (block light within {@code [minLight, maxLight]} at his feet), anywhere from the
-	 * minimum distance out to the band's outer edge. Prefers spots where facing the light turns his back or side to
-	 * the player.
+	 * At the edge of a light's glow (block light within {@code [minLight, maxLight]} at his feet), and that edge in the
+	 * band like every other spot. Prefers spots where facing the light turns his back or side to the player.
 	 */
 	public static Optional<Spot> light(Query q, List<BlockPos> lights, int radius, int minLight, int maxLight) {
 		ServerLevel level = q.level();
@@ -171,7 +167,7 @@ public final class SpotFinder {
 						continue;
 					}
 					int blockLight = level.getBrightness(LightLayer.BLOCK, BlockPos.containing(feet));
-					if (blockLight < minLight || blockLight > maxLight || !valid(q, feet, q.minDistance(), q.outer())) {
+					if (blockLight < minLight || blockLight > maxLight || !valid(q, feet, q.inner(), q.outer())) {
 						continue;
 					}
 					Vec3 toLight = lightCenter.subtract(feet).horizontal().normalize();
@@ -318,16 +314,20 @@ public final class SpotFinder {
 		return reachesShore ? water / (double) (n - 1) : 0.0;
 	}
 
+	/**
+	 * In the band, no part of his rendered model ({@link HimEntity#viewBox}) closer than the minimum distance to the
+	 * eyes, allowed, and that whole box out of view.
+	 */
 	private static boolean valid(Query q, Vec3 feet, double inner, double outer) {
 		double h = horizontal(q.feet(), feet);
 		if (h < inner - 0.5 || h > outer + 0.5) {
 			return false;
 		}
-		AABB box = q.box(feet);
-		if (box.getCenter().distanceTo(q.eye()) < q.minDistance() || feet.distanceTo(q.eye()) < q.minDistance()) {
+		AABB view = HimEntity.viewBox(feet);
+		if (view.distanceToSqr(q.eye()) < q.minDistance() * q.minDistance()) {
 			return false;
 		}
-		return q.allowed().test(BlockPos.containing(feet)) && q.hidden().test(box.inflate(0.1));
+		return q.allowed().test(BlockPos.containing(feet)) && q.hidden().test(view);
 	}
 
 	private static List<Vec3> ring(Query q, int perAngle) {

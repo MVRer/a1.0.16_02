@@ -1,5 +1,6 @@
 package com.forzacode.a1016_02.entity;
 
+import java.util.List;
 import java.util.Optional;
 
 import com.forzacode.a1016_02.core.GameClock;
@@ -16,6 +17,7 @@ import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.levelgen.Heightmap;
+import net.minecraft.world.phys.Vec3;
 
 /**
  * The context gates of a sighting (DESIGN.md "Sightings"): fog or dusk, never in clear daylight, never during
@@ -83,8 +85,8 @@ public final class SightingGates {
 				return Optional.of("too close to the last sighting");
 			}
 		}
-		if (variant == Variant.IN_THE_LIGHT && lights(player, FogEdge.of(player, false).outer()).isEmpty()) {
-			return Optional.of("no lone light in range");
+		if (variant == Variant.IN_THE_LIGHT && lights(player, FigureApi.band(player, variant), EntityConfig.get().lightSearchRadius).isEmpty()) {
+			return Optional.of("no lone light at the fog edge");
 		}
 		return Optional.empty();
 	}
@@ -112,11 +114,15 @@ public final class SightingGates {
 		return dx * dx + dz * dz < (long) radius * radius;
 	}
 
-	/** LONE_LIGHT sites within {@code range} of the player, nearest first. */
-	public static java.util.List<BlockPos> lights(ServerPlayer player, double range) {
+	/**
+	 * LONE_LIGHT sites whose glow edge ({@code radius} blocks around them) can reach into the band, nearest first.
+	 * The spot finder still checks that his feet are in the band.
+	 */
+	public static List<BlockPos> lights(ServerPlayer player, FigureApi.Band band, int radius) {
 		GlobalPos here = GlobalPos.of(player.level().dimension(), player.blockPosition());
-		return Services.sites().find(SiteType.LONE_LIGHT, here, (int) Math.ceil(range) + 8).stream()
+		return Services.sites().find(SiteType.LONE_LIGHT, here, (int) Math.ceil(band.outer()) + radius).stream()
 				.map(site -> site.pos())
+				.filter(pos -> SpotFinder.horizontal(player.position(), Vec3.atBottomCenterOf(pos)) >= band.inner() - radius)
 				.toList();
 	}
 }

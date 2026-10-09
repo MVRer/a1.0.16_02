@@ -34,8 +34,6 @@ import net.minecraft.world.entity.Mob;
 import net.minecraft.world.entity.PathfinderMob;
 import net.minecraft.world.entity.ai.attributes.AttributeSupplier;
 import net.minecraft.world.entity.ai.attributes.Attributes;
-import net.minecraft.world.entity.ai.util.DefaultRandomPos;
-import net.minecraft.world.entity.ai.util.LandRandomPos;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.level.ClipContext;
 import net.minecraft.world.level.Explosion;
@@ -43,6 +41,7 @@ import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.levelgen.Heightmap;
 import net.minecraft.world.level.pathfinder.PathType;
+import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.HitResult;
 import net.minecraft.world.phys.Vec3;
 
@@ -64,8 +63,19 @@ public class HimEntity extends PathfinderMob {
 
 	private static final EntityDataAccessor<Boolean> DATA_LOW = SynchedEntityData.defineId(HimEntity.class, EntityDataSerializers.BOOLEAN);
 	private static final float CLIENT_RISE_STEP = 1.0F / 15.0F;
-	private static final int VIEW_CHECK_INTERVAL = 2;
 	private static final double BASE_SPEED = 0.25;
+	/**
+	 * Half-width and height of the box the view checks use. The rendered model reaches about 0.49 to the sides
+	 * (shoulders and sleeves), 0.74 behind in the low pose (0.78 at a corner, any yaw) and 1.91 up (hat layer).
+	 */
+	public static final double VIEW_HALF_WIDTH = 0.9;
+	public static final double VIEW_HEIGHT = 2.1;
+	/** He only appears this far inside the entity-ticking range, in blocks. */
+	public static final int SPAWN_TICK_MARGIN = 24;
+	/** A leave target has to be this far inside the entity-ticking range. */
+	public static final int LEAVE_TICK_MARGIN = 20;
+	/** Closer than this to the edge of the entity-ticking range, he is gone (he would freeze past it). */
+	public static final int EDGE_TICK_MARGIN = 16;
 
 	public enum Phase { IDLE, RISING, STARE_BACK, HIDING, LEAVING }
 
@@ -122,10 +132,26 @@ public class HimEntity extends PathfinderMob {
 		setYHeadRot(yaw);
 		setYBodyRot(yaw);
 		setXRot(0.0F);
-		phase = variant.walksFromStart() ? Phase.LEAVING : Phase.IDLE;
+		phase = Phase.IDLE;
 		if (level() instanceof ServerLevel serverLevel) {
 			bornTick = serverLevel.getServer().getTickCount();
 		}
+	}
+
+	/** The box every view check uses: the rendered model in any pose and yaw, plus a margin. */
+	public static AABB viewBox(Vec3 feet) {
+		return new AABB(feet.x - VIEW_HALF_WIDTH, feet.y - 0.1, feet.z - VIEW_HALF_WIDTH, feet.x + VIEW_HALF_WIDTH, feet.y + VIEW_HEIGHT, feet.z + VIEW_HALF_WIDTH);
+	}
+
+	public AABB viewBox() {
+		return viewBox(position());
+	}
+
+	/** True if {@code pos} and the points {@code margin} blocks from it along x and z are all entity-ticking. */
+	public static boolean tickingAround(ServerLevel level, Vec3 pos, int margin) {
+		BlockPos c = BlockPos.containing(pos);
+		return level.isPositionEntityTicking(c) && level.isPositionEntityTicking(c.offset(margin, 0, 0)) && level.isPositionEntityTicking(c.offset(-margin, 0, 0))
+				&& level.isPositionEntityTicking(c.offset(0, 0, margin)) && level.isPositionEntityTicking(c.offset(0, 0, -margin));
 	}
 
 	@Override
@@ -152,30 +178,46 @@ public class HimEntity extends PathfinderMob {
 	@Override
 	protected void customServerAiStep(ServerLevel level) {
 		super.customServerAiStep(level);
-		if (age == 0 && bornTick < 0) {
-			holdYaw = getYRot(); // made without setup (/summon): keep the facing he was given
+		if (age == 0) {
+			FigureApi.track(this);
+			if (bornTick < 0) {
+				holdYaw = getYRot(); // made without setup (/summon): keep the facing he was given
+			}
 		}
 		age++;
 		phaseTicks++;
 		EntityConfig config = EntityConfig.get();
 		List<ServerPlayer> players = level.players().stream().filter(p -> p.isAlive() && !p.isSpectator()).toList();
 
-		if (age % VIEW_CHECK_INTERVAL == 0) {
-			if (Services.traces().isOutOfView(level, getBoundingBox())) {
-				unseenTicks += VIEW_CHECK_INTERVAL;
-			} else {
-				everSeen = true;
-				seenTicks += VIEW_CHECK_INTERVAL;
-				unseenTicks = 0;
-			}
+		boolean seen = !Services.traces().isOutOfView(level, viewBox());
+		if (seen) {
+			everSeen = true;
+			seenTicks++;
+			unseenTicks = 0;
+		} else {
+			unseenTicks++;
 		}
-		if (age % 20 == 0 && pastFog(players)) {
-			gone(level, "past the fog");
-			return;
+		if (!players.isEmpty()) {
+			if (pastFog(players)) {
+				gone(level, "past the fog");
+				return;
+			}
+			if (!tickingAround(level, position(), EDGE_TICK_MARGIN)) {
+				// Any farther and his chunk stops ticking: he would stand frozen. He goes now instead.
+				gone(level, "at the edge of the ticking range");
+				return;
+			}
 		}
 
 		watch(level, players, config);
 
+		if (phase == Phase.LEAVING && (everSeen || triggered) && !seen) {
+			gone(level, "left and out of view");
+			return;
+		}
+		if (phase == Phase.IDLE && variant.walksFromStart() && everSeen) {
+			setPhase(Phase.LEAVING); // his back to you, he starts walking once you have seen him
+		}
 		long grace = ModConfig.realTicks(variant == Variant.COW && phase == Phase.IDLE ? config.cowGoneAfterUnseenSeconds : config.goneAfterUnseenSeconds);
 		if ((everSeen || triggered) && unseenTicks >= grace) {
 			gone(level, "out of view");
@@ -354,7 +396,10 @@ public class HimEntity extends PathfinderMob {
 		}
 	}
 
-	/** Walks straight away from the player where it can, otherwise to any reachable spot away from him. */
+	/**
+	 * Walks away from the player toward a point that is inside the entity-ticking range and no farther than just
+	 * past the fog edge (where he is gone). Tries straight away first, then turns up to 90 degrees.
+	 */
 	private void steerAway(ServerLevel level, @Nullable ServerPlayer from, double speed) {
 		if (--repathCooldown > 0 && !getNavigation().isDone()) {
 			return;
@@ -366,23 +411,27 @@ public class HimEntity extends PathfinderMob {
 			away = Entity.calculateViewVector(0.0F, holdYaw).horizontal();
 		}
 		away = away.normalize();
-		Vec3 ahead = position().add(away.scale(12.0));
-		int x = Mth.floor(ahead.x);
-		int z = Mth.floor(ahead.z);
-		if (level.hasChunkAt(x, z)) {
+		double reach = from != null ? FogEdge.of(from, false).limit() + 2.0 : Double.MAX_VALUE;
+		for (double turn : new double[] {0, 30, -30, 60, -60, 90, -90}) {
+			double r = Math.toRadians(turn);
+			Vec3 dir = new Vec3(away.x * Math.cos(r) - away.z * Math.sin(r), 0.0, away.x * Math.sin(r) + away.z * Math.cos(r));
+			Vec3 ahead = position().add(dir.scale(12.0));
+			Vec3 rel = ahead.subtract(origin).horizontal();
+			if (rel.length() > reach) {
+				ahead = origin.add(rel.normalize().scale(reach));
+			}
+			if (!tickingAround(level, ahead, LEAVE_TICK_MARGIN)) {
+				continue;
+			}
+			int x = Mth.floor(ahead.x);
+			int z = Mth.floor(ahead.z);
 			int y = level.getHeight(Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, x, z);
 			if (getNavigation().moveTo(x + 0.5, y, z + 0.5, speed)) {
 				return;
 			}
 		}
-		Vec3 target = LandRandomPos.getPosAway(this, 16, 7, origin);
-		if (target == null) {
-			target = DefaultRandomPos.getPosAway(this, 16, 7, origin);
-		}
-		if (target != null && getNavigation().moveTo(target.x, target.y, target.z, speed)) {
-			return;
-		}
-		getMoveControl().setWantedPosition(getX() + away.x * 6.0, getY(), getZ() + away.z * 6.0, speed);
+		// Nowhere to go inside both limits: he stands, and is gone as soon as he is out of view.
+		getNavigation().stop();
 	}
 
 	private boolean pastFog(List<ServerPlayer> players) {
@@ -390,7 +439,7 @@ public class HimEntity extends PathfinderMob {
 			return false;
 		}
 		for (ServerPlayer player : players) {
-			if (SpotFinder.horizontal(player.position(), position()) <= FogEdge.of(player, false).pastFog() + 4.0) {
+			if (SpotFinder.horizontal(player.position(), position()) <= FogEdge.of(player, false).limit()) {
 				return false;
 			}
 		}

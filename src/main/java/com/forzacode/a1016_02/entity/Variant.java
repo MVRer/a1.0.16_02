@@ -115,7 +115,7 @@ public enum Variant {
 		return fake;
 	}
 
-	/** True if he starts out walking away (and keeps walking until he is gone). */
+	/** True if he stands with his back to you and walks off, slowly, once you have seen him. */
 	public boolean walksFromStart() {
 		return facing == Facing.AWAY;
 	}

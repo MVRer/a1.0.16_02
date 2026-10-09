@@ -46,27 +46,44 @@ public final class FigureApi {
 	public record Spawned(FireResult result, @Nullable HimEntity figure) {
 	}
 
-	private static final int SWEEP_INTERVAL = 100;
-	/** Figures spawned through this API, for the cheap "is he out?" gate. Removed ones are pruned on read. */
+	/**
+	 * The spawn band for a variant around a player.
+	 *
+	 * @param inner nearest horizontal distance, never under {@code Pacing.sightingMinDistance}
+	 * @param outer farthest horizontal distance, inside the fog edge and the entity-ticking range
+	 */
+	public record Band(double inner, double outer) {
+	}
+
+	private static final int SWEEP_INTERVAL = 5;
+	private static final int FULL_SWEEP_INTERVAL = 100;
+	/** Every figure seen alive (spawned here or by /summon), for the cheap gate and the sweep. Pruned on read. */
 	private static final Set<HimEntity> LIVE = Collections.newSetFromMap(new WeakHashMap<>());
 
 	private FigureApi() {
 	}
 
 	/**
-	 * Spawns him with his feet at {@code feet}, facing {@code yaw}. Refused (empty) if any part of him would be in
-	 * view of a player, so he never pops in on screen.
+	 * Spawns him with his feet at {@code feet}, facing {@code yaw}. Refused (empty) if any part of his rendered model
+	 * would be in view of a player or closer than {@code Pacing.sightingMinDistance} (24) to any player's eyes, or if
+	 * the spot is not entity-ticking. He never pops in on screen and never appears close.
 	 *
 	 * @param anchor the trunk or light he relates to, or null
 	 */
 	public static Optional<HimEntity> spawnAt(ServerLevel level, Variant variant, Vec3 feet, float yaw, @Nullable BlockPos anchor) {
+		AABB view = HimEntity.viewBox(feet);
+		List<Vec3> eyes = level.players().stream().map(p -> p.getEyePosition()).toList();
+		if (tooClose(eyes, view, ModConfig.pacing().sightingMinDistance) || !level.isPositionEntityTicking(BlockPos.containing(feet))
+				|| !Services.traces().isOutOfView(level, view)) {
+			return Optional.empty();
+		}
 		HimEntity him = ModEntities.HIM.create(level, EntitySpawnReason.EVENT);
 		if (him == null) {
 			return Optional.empty();
 		}
 		him.snapTo(feet.x, feet.y, feet.z, yaw, 0.0F);
 		him.setup(variant, yaw, anchor);
-		if (!Services.traces().isOutOfView(level, him.getBoundingBox().inflate(0.1)) || !level.addFreshEntity(him)) {
+		if (!level.addFreshEntity(him)) {
 			return Optional.empty();
 		}
 		LIVE.add(him);
@@ -76,6 +93,16 @@ public final class FigureApi {
 
 	public static Optional<HimEntity> spawnAt(ServerLevel level, Variant variant, Vec3 feet, float yaw) {
 		return spawnAt(level, variant, feet, yaw, null);
+	}
+
+	/** True if any of the eyes is closer than {@code min} to the box. */
+	public static boolean tooClose(List<Vec3> eyes, AABB box, double min) {
+		for (Vec3 eye : eyes) {
+			if (box.distanceToSqr(eye) < min * min) {
+				return true;
+			}
+		}
+		return false;
 	}
 
 	/**
@@ -107,7 +134,11 @@ public final class FigureApi {
 		return new Spawned(FireResult.FIRED, him.get());
 	}
 
-	/** True if a figure spawned through this API is out. Cheap; used by the gates. */
+	static void track(HimEntity him) {
+		LIVE.add(him);
+	}
+
+	/** True if a figure is out. Cheap; used by the gates. */
 	public static boolean anyOut(MinecraftServer server) {
 		LIVE.removeIf(him -> him.isRemoved() || him.level().getServer() != server);
 		return !LIVE.isEmpty();
@@ -147,22 +178,21 @@ public final class FigureApi {
 		MinecraftServer server = level.getServer();
 		EntityConfig config = EntityConfig.get();
 		Pacing pacing = ModConfig.pacing();
-		FogEdge edge = FogEdge.of(player, HerobrineState.get(server).stage() == Stage.ALONE);
+		Band band = band(player, variant);
 		EntityData data = EntityData.get(server);
 		boolean spacing = !forced && variant != Variant.LAST_ONE;
-		Predicate<BlockPos> allowed = pos -> level.isPositionEntityTicking(pos)
+		Predicate<BlockPos> allowed = pos -> HimEntity.tickingAround(level, Vec3.atBottomCenterOf(pos), HimEntity.SPAWN_TICK_MARGIN)
 				&& !SightingGates.nearBase(player, pos, config.baseRadius)
 				&& (!spacing || data.farEnough(GlobalPos.of(level.dimension(), pos), pacing.sightingMinSpacing));
 		Predicate<AABB> hidden = box -> Services.traces().isOutOfView(level, box);
-		double inner = variant.spot() == Variant.Spot.OPEN || variant.spot() == Variant.Spot.LIGHT ? edge.inner()
-				: Math.min(edge.inner(), Math.max(pacing.sightingMinDistance, edge.outer() * (1.0 - config.terrainBandFraction)));
-		SpotFinder.Query q = new SpotFinder.Query(level, player.position(), player.getEyePosition(), inner, edge.outer(),
+		SpotFinder.Query q = new SpotFinder.Query(level, player.position(), player.getEyePosition(), band.inner(), band.outer(),
 				pacing.sightingMinDistance, ModEntities.HIM.getDimensions(), hidden, allowed, random, config.spotSamples);
 		return switch (variant.spot()) {
 			case OPEN -> SpotFinder.open(q);
 			case RIDGE -> SpotFinder.ridge(q, config.ridgeMinRise);
 			case TRUNK -> SpotFinder.trunk(q, base -> Services.sites().find(SiteType.BARE_GROVE, GlobalPos.of(level.dimension(), base), 24).isEmpty() ? 0.0 : 2.0);
-			case LIGHT -> SpotFinder.light(q, SightingGates.lights(player, edge.outer()), config.lightSearchRadius, config.lightEdgeMin, config.lightEdgeMax);
+			case LIGHT -> SpotFinder.light(q, SightingGates.lights(player, band, config.lightSearchRadius), config.lightSearchRadius,
+					config.lightEdgeMin, config.lightEdgeMax);
 			case SHORE -> SpotFinder.shore(q, config.waterFractionMin);
 			case KNOWN -> {
 				Optional<SpotFinder.Spot> known = SpotFinder.scored(q, feet -> knownPlace(player, level, BlockPos.containing(feet), config));
@@ -170,6 +200,22 @@ public final class FigureApi {
 				yield known.isEmpty() && forced ? SpotFinder.open(q) : known;
 			}
 		};
+	}
+
+	/**
+	 * Where the variant may stand around this player: just inside the fog edge. The cow (and everything in Alone)
+	 * keeps to the narrow band at the edge; the others, which need the right terrain or room to walk off, may stand
+	 * a little deeper in the fog band ({@code terrainBandFraction}).
+	 */
+	public static Band band(ServerPlayer player, Variant variant) {
+		boolean alone = HerobrineState.get(player.level().getServer()).stage() == Stage.ALONE;
+		FogEdge edge = FogEdge.of(player, alone);
+		if (alone || variant == Variant.COW) {
+			return new Band(edge.inner(), edge.outer());
+		}
+		double min = ModConfig.pacing().sightingMinDistance;
+		double deeper = Math.max(min, edge.outer() * (1.0 - EntityConfig.get().terrainBandFraction));
+		return new Band(Math.min(edge.inner(), deeper), edge.outer());
 	}
 
 	/**
@@ -199,20 +245,26 @@ public final class FigureApi {
 	}
 
 	/**
-	 * A figure in a chunk that stopped ticking cannot run his own rules. Every few seconds, those past their unseen
-	 * lifetime and out of view are removed. Called every server tick by {@link EntityInit}.
+	 * A figure whose chunk stopped ticking cannot run his own rules and would stand frozen, so he is removed at once
+	 * (his own tick already removes him before he walks out of the ticking range; this catches the player moving or
+	 * teleporting away). Called every server tick by {@link EntityInit}.
 	 */
 	static void sweep(MinecraftServer server) {
-		if (server.getTickCount() % SWEEP_INTERVAL != 0) {
+		int tick = server.getTickCount();
+		if (tick % FULL_SWEEP_INTERVAL == 0) {
+			for (ServerLevel level : server.getAllLevels()) {
+				LIVE.addAll(level.getEntities(ModEntities.HIM, HimEntity::isAlive));
+			}
+		}
+		if (tick % SWEEP_INTERVAL != 0 || LIVE.isEmpty()) {
 			return;
 		}
-		long lifetime = ModConfig.realTicks(EntityConfig.get().unseenLifetimeSeconds);
-		for (ServerLevel level : server.getAllLevels()) {
-			for (HimEntity him : level.getEntities(ModEntities.HIM, HimEntity::isAlive)) {
-				boolean stale = him.bornTick() < 0 || server.getTickCount() - him.bornTick() > lifetime;
-				if (stale && !level.isPositionEntityTicking(him.blockPosition()) && Services.traces().isOutOfView(level, him.getBoundingBox())) {
-					him.discard();
-				}
+		for (HimEntity him : List.copyOf(LIVE)) {
+			if (him.isRemoved()) {
+				LIVE.remove(him);
+			} else if (him.level() instanceof ServerLevel level && !level.isPositionEntityTicking(him.blockPosition())) {
+				him.discard();
+				LIVE.remove(him);
 			}
 		}
 	}

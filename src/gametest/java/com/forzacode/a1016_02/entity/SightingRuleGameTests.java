@@ -48,6 +48,8 @@ public class SightingRuleGameTests {
 						helper.assertTrue(edge.inner() >= min, "band starts closer than " + min + ": " + what);
 						helper.assertTrue(edge.outer() >= edge.inner(), "empty band: " + what);
 						helper.assertTrue(edge.outer() <= Math.max(edge.limit(), min + 2.0) + 1.0E-6, "band past the pulled-in limit: " + what);
+						helper.assertTrue(sim <= 0 || edge.outer() <= Math.max(FogEdge.tickingReach(sim), min + 2.0) + 1.0E-6,
+								"band reaches the edge of the ticking range: " + what);
 					}
 				}
 			}
@@ -73,7 +75,7 @@ public class SightingRuleGameTests {
 
 		// Sanity: a figure ahead at 30 blocks (raised above any test structure) is in view, so the check is not vacuous.
 		Vec3 ahead = viewer.position().add(0.0, 12.0, 30.0);
-		helper.assertFalse(hidden.test(ModEntities.HIM.getDimensions().makeBoundingBox(ahead)), "a figure straight ahead counts as hidden");
+		helper.assertFalse(hidden.test(HimEntity.viewBox(ahead)), "a figure straight ahead counts as hidden");
 
 		// A tiny render distance and full dusk fog: the band collapses to the minimum distance, never closer.
 		FogEdge tight = FogEdge.compute(2, 2, 0, 1.0F, false, min, new EntityConfig());
@@ -84,10 +86,10 @@ public class SightingRuleGameTests {
 				Optional<SpotFinder.Spot> spot = SpotFinder.open(q);
 				helper.assertTrue(spot.isPresent(), "no spot on open flat ground in band " + edge);
 				Vec3 feet = spot.get().pos();
-				AABB box = ModEntities.HIM.getDimensions().makeBoundingBox(feet);
-				helper.assertTrue(TraceService.isOutOfView(level, box, viewers, NEAR, CONE), "spawned in view at " + feet);
-				helper.assertTrue(feet.distanceTo(viewer.getEyePosition()) >= min && SpotFinder.horizontal(feet, viewer.position()) >= min - 0.5,
-						"spawned closer than " + min + ": " + feet);
+				AABB model = HimEntity.viewBox(feet);
+				helper.assertTrue(model.contains(feet.add(0.49, 1.4, 0.0)) && model.contains(feet.add(-0.55, 0.3, -0.55)), "view box misses the model");
+				helper.assertTrue(TraceService.isOutOfView(level, model, viewers, NEAR, CONE), "spawned in view at " + feet);
+				helper.assertTrue(Math.sqrt(model.distanceToSqr(viewer.getEyePosition())) >= min, "spawned closer than " + min + ": " + feet);
 			}
 		}
 		helper.succeed();
@@ -178,6 +180,65 @@ public class SightingRuleGameTests {
 				&& decoded.sightings() == 1 && decoded.fakes() == 1 && decoded.stared() == 1
 				&& decoded.lastPos() != null && decoded.lastPos().pos().equals(new BlockPos(500, 70, -9)), "record lost on save: " + encoded);
 		helper.succeed();
+	}
+
+	@GameTest
+	public void viewBoxCoversTheModelInEveryPose(GameTestHelper helper) {
+		Vec3 feet = new Vec3(10.5, 64.0, -3.5);
+		AABB box = HimEntity.viewBox(feet);
+		// Model extremes in blocks (player scale 0.9375, outer layers included), facing south: standing shoulders and
+		// sleeves, swinging hands, the hat; low on all fours the legs 0.74 behind and the head 0.38 in front.
+		double[][] extremes = {
+				{0.49, 1.40, 0.0}, {-0.49, 1.40, 0.0}, {0.40, 0.90, 0.50}, {0.0, 1.91, 0.0}, {0.27, 1.91, 0.27},
+				{0.25, 0.0, 0.74}, {-0.25, 0.72, 0.74}, {0.50, 0.0, 0.10}, {0.28, 1.13, -0.38}, {-0.28, 0.65, -0.38}};
+		for (int yaw = 0; yaw < 360; yaw += 5) {
+			double r = Math.toRadians(yaw);
+			for (double[] p : extremes) {
+				Vec3 rotated = new Vec3(p[0] * Math.cos(r) - p[2] * Math.sin(r), p[1], p[0] * Math.sin(r) + p[2] * Math.cos(r));
+				helper.assertTrue(box.deflate(0.05).contains(feet.add(rotated)), "the view box misses " + rotated + " at yaw " + yaw);
+			}
+		}
+		helper.succeed();
+	}
+
+	@GameTest
+	public void spawnAtKeepsTheMinimumDistance(GameTestHelper helper) {
+		int min = ModConfig.pacing().sightingMinDistance;
+		Vec3 feet = new Vec3(0.5, 64.0, 0.5);
+		AABB box = HimEntity.viewBox(feet);
+		helper.assertTrue(FigureApi.tooClose(List.of(new Vec3(0.5, 65.6, min - 0.5)), box, min), "a player 23 blocks off is not too close");
+		helper.assertTrue(FigureApi.tooClose(List.of(new Vec3(100, 65, 100), new Vec3(min, 65.6, 0.5)), box, min),
+				"one far player hides a near one");
+		helper.assertFalse(FigureApi.tooClose(List.of(new Vec3(0.5, 65.6, min + 1.5)), box, min), "a player 25 blocks off is too close");
+		helper.assertFalse(FigureApi.tooClose(List.of(), box, min), "nobody is too close");
+		helper.succeed();
+	}
+
+	@GameTest(skyAccess = true, maxTicks = 100)
+	public void lightSpotsStayInTheFogBand(GameTestHelper helper) {
+		ServerLevel level = helper.getLevel();
+		for (int x = 0; x < 8; x++) {
+			for (int z = 0; z < 8; z++) {
+				helper.setBlock(x, 0, z, net.minecraft.world.level.block.Blocks.STONE);
+			}
+		}
+		helper.setBlock(4, 1, 4, net.minecraft.world.level.block.Blocks.TORCH);
+		BlockPos light = helper.absolutePos(new BlockPos(4, 1, 4));
+		loadAround(level, light, 2);
+		Vec3 player = Vec3.atBottomCenterOf(light).add(-30.0, 0.0, 0.0);
+		Vec3 eye = player.add(0.0, 1.62, 0.0);
+		int min = ModConfig.pacing().sightingMinDistance;
+		helper.succeedWhen(() -> {
+			SpotFinder.Query band = new SpotFinder.Query(level, player, eye, 26.0, 34.0, min, ModEntities.HIM.getDimensions(),
+					box -> true, level::isLoaded, RandomSource.create(7), 48);
+			Optional<SpotFinder.Spot> spot = SpotFinder.light(band, List.of(light), 9, 3, 7);
+			helper.assertTrue(spot.isPresent(), "no spot at the edge of the glow yet");
+			double d = SpotFinder.horizontal(player, spot.get().pos());
+			helper.assertTrue(d >= 25.5 && d <= 34.5, "light spot outside the band: " + d);
+			SpotFinder.Query beyond = new SpotFinder.Query(level, player, eye, 60.0, 70.0, min, ModEntities.HIM.getDimensions(),
+					box -> true, level::isLoaded, RandomSource.create(7), 48);
+			helper.assertTrue(SpotFinder.light(beyond, List.of(light), 9, 3, 7).isEmpty(), "a light nearer than the fog band gave a spot");
+		});
 	}
 
 	/** Loads (generates if needed) the chunks around a position so terrain checks see real ground. */
