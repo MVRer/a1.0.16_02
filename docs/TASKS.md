@@ -16,7 +16,7 @@ Status values: queued, running, review, fix, merged, blocked. Only the orchestra
 | P1-6 | Fragments: all 30 as data, placement by stage and profile, sites | lore | feat/lore-fragments | v0.5-fragments | merged | Text verified word for word on all 30. Fixing: idempotent place, chunk loads, F19 vs F07, unbreakable F30 | Contract gap to expect: a protected "untouched grove" so new scars avoid it |
 | P1-7 | Telling: sign and book watcher, blank signs, "Stop.", place not found, list updates (F30 unbreakable moved to P1-6) | lore | feat/lore-telling | v0.6-telling | merged | Uses editSign, veto and ProtectedAreas. Contract asks: an int telling count in HerobrineState, a ledgered book-text edit |
 | P1-8 | Accidents: planner, every trap, death marker (uses atmosphere's MobTamper) | accident | feat/accident-traps | v0.7-accidents | merged | Fixing false-positive kills (dark corner, house fire, no bed), unloaded window, debug mark preview, torch undo | Gravel ceiling and dripstone are written, but spring only after P1-9 lands `removeLettingFall`. Debug `mark` counts toward Ending B |
-| P1-3b | World signatures: still burning, your house elsewhere, row of crosses with a fresh one. Plus the rare redstone torch card (D-033) | world | feat/world-signatures | v0.8 | running | Follows D-004 and D-005 |
+| P1-3b | World signatures: still burning, your house elsewhere, row of crosses with a fresh one. Plus the rare redstone torch card (D-033) | world | feat/world-signatures | v0.8 | review | Follows D-004 and D-005 |
 | P1-9 | Core contract batch (see list below) plus D-022 fog defaults | core (narrow edits in director, atmosphere, world) | feat/core-contracts | (all) | merged | Added: figureDig/figureFill (D-030), restoreBlock (accident), veto hook (lore F30, replaces the lore mixin into TraceEdit) |
 | P1-8b | "The zombie has your sword" (D-032), plus void and lava bridge accidents and the enderman on your bridge (D-034) | accident | feat/accident-sword | v0.8 | running | Also turns on gravel ceiling, dripstone and restoreBlock (CoreGaps removed) |
 | P1-4b | Dig follow-ups: restoreStack into the network chest, SiteRegistry.update | dig | feat/dig-followups | - | merged | The tunnel stops growing once lore claims its end |
@@ -42,6 +42,12 @@ Status values: queued, running, review, fix, merged, blocked. Only the orchestra
 
 ## Tuning from playtests (apply as code defaults on the next atmosphere touch)
 - `fogDriftStrengthMin` 0.45, `fogDriftStrengthMax` 0.7 (D-022). Already set in Mariano's run/config.
+
+## Cross-workstream follow-ups for P2-1 (ending) and P2-2 (integration)
+- lore: when `lore:still_burning` is set, put F21 in the EMPTIED_HOUSE next to the lit furnace, whatever the distance (F21's 1500 max conflicts with still burning's ~2000). Never build a second one.
+- ending D undo: skip ledger causes `lore:left/*` and the `world:still_burning` REMOVE entries (terrain cleared for the camp)
+- entity: retire `Pacing.sightingMinDistance` and `Pacing.stareSeconds` (entity has its own now)
+- director: the 20 h sims never reach Telling; add a sim that does
 
 ## Core contract batch: MERGED (P1-9). Remaining follow-ups per workstream:
 - entity: FogEdge uses `FogLimits` (or the client-reported fog end); goes-under uses `startFigureDig`/`figureDug` (vertical limit is horizontal-only; keep fills within the column)
