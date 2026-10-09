@@ -2,6 +2,19 @@
 
 One entry per merge, newest first. Run the game from the main checkout (this folder, on `main`).
 
+## READY TO TRY: Integration cleanup  (merged feat/integration-cleanup, commit fb2b57e)
+```
+Restart needed: full game restart (Java code; old config keys are dropped quietly)
+See it now:
+  1. /a1016 state   numbers now print with dots ("12.5"), never commas.
+  2. /a1016 world signature still_burning now   in worlds with F21, the camp is now 1800-2200 blocks out
+     ("nobody for 2000 blocks"). This replaces the 900-1450 note in the world signatures entry below.
+  3. /a1016 director sim 20 telling 8   a dry run where you name him at hour 8: sightings almost vanish after
+     (3 against 61 in the same worlds without telling).
+What to look for: behaviour otherwise unchanged. Every gameplay timing is now in config, so tuning and devFastMode reach it.
+Known rough edges: none new.
+```
+
 ## READY TO TRY: The zombie has your sword, bridges over the void and lava, gravel and dripstone  (merged feat/accident-sword, commit b0b283e)
 ```
 Restart needed: full game restart (Java code)
