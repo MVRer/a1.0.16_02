@@ -9,7 +9,7 @@ Status values: queued, running, review, fix, merged, blocked. Only the orchestra
 | P1-2 | The figure: model, white eyes, fog-edge spawn out of view, all sighting variants, stare then leave, despawn | entity | feat/entity-figure | v0.2-figure | merged | 3 review rounds. Rule: never despawn while in view. Contract asks: shared fog-end helper, document ending:last_sighting | Starts from the HimEntity prototype (D-001) |
 | P1-2b | Eye style toggle (flat / bright / glow), switchable live | entity | feat/entity-eyes | v0.6 | merged | Default BRIGHT plus eye fog resistance (D-023). Also sighting visibility and approach tuning (D-029) |
 | P1-2d | Real fog distance from the client; closer close band (D-035); adaptive outrun speed (D-036) | entity | feat/entity-fogdistance | v0.6 | merged | Playtest fix. A flying chaser can still catch him; D-037 covers that |
-| P1-2c | "Goes under" exit (D-030), Nether and End sightings (D-034), close-chase rush past (D-037) | entity | feat/entity-goes-under | v0.8 | review | |
+| P1-2c | "Goes under" exit (D-030), Nether and End sightings (D-034), close-chase rush past (D-037) | entity | feat/entity-goes-under | v0.8 | fix | Review PASS; fixing the in-view refill, persisting the shaft on unload, the dirt clue, rush walls |
 | P1-3 | Old scars (worldgen) and the live new-scar placer | world | feat/world-scars | v0.3-traces | merged | 2 review rounds. Later task: signatures (still burning, house elsewhere, cross row). Follow-ups: dead mountain silence and no animals (atmosphere), new pyramid when the list goes into lava (lore-telling) |
 | P1-4 | Live diggers and the "Under you" network | dig | feat/dig-diggers | v0.3-traces | merged | 2 review rounds plus a flaky-test fix. Contract asks: restoreStack, SiteRegistry.update | Records TUNNEL_END and UNDER_BASE sites |
 | P1-5 | Dread layer: fog, silence, music off, sound director, mobs acting wrong (client and server) | atmosphere | feat/atmosphere-dread | v0.4-dread | merged | Real MobTamper is on main. Follow-up: dead mountain silence and no animals | Also builds the real MobTamper (D-017) |
@@ -26,7 +26,8 @@ Status values: queued, running, review, fix, merged, blocked. Only the orchestra
 | P1-1c | Director pacing tuning with the playthrough tool: SLOW_BURN minors 0.42/h overall, VERY_LATE 1 major in 12 h of Proximity. Bring the soft rates to 4b's low end; hard limits stay | director | feat/director-tuning | v1.0 | running | Rarity stays the product (D-020). Narrow exception: Pacing default numbers |
 | P1-6b | Lore: F21 only in world's still-burning camp (D-004); never a second furnace | lore | feat/lore-stillburning | v0.8 | merged | Follow-up for P2-2: raise `WorldConfig.stillBurningF21MaxFromBase` (1450) and `stillBurningF21MinBlocks` (900) to about 2000 |
 | P1-5c | Fix the flaky atmosphere tamper test (released cow doesn't always walk) | atmosphere | feat/atmosphere-flaky | - | merged | Test-only. 6/6 on the branch, 2/2 with --rerun-tasks on main |
-| P2-1 | Endings A, B, C, D (full D chain) | ending | feat/ending-endings | v0.8-endings | queued, phase 2 | |
+| P2-1a | Endings A, B, C, Stage 4 entry, the third-death rule | ending | feat/ending-abc | v0.8-endings | running | Uses the director flags `director:silence_until_day` and `director:pace_multiplier` (coming in P1-1c) |
+| P2-1b | Ending D: the full chain, the last minute, the afterward, the sting | ending (ending/d/**) | feat/ending-d | v0.8-endings | queued (spawn next) | |
 | P2-2 | Integration: wire all cards, close contract gaps, guardrail pass | (multi) | feat/integration-pass | v1.0 | queued, phase 2 | |
 | P2-3 | Playtest tooling: dev overlay and a 20 h scripted timewarp log | debug | feat/debug-playtest | v1.0 | merged | Narrow exception: one public read-only DirectorApi |
 
@@ -40,7 +41,7 @@ Status values: queued, running, review, fix, merged, blocked. Only the orchestra
 | v0.5-fragments | P1-6 merged | tagged (pacing check: director 20 h game tests green) |
 | v0.6-telling | P1-7 merged | tagged (pacing check: director 20 h game tests green) |
 | v0.7-accidents | P1-8 merged | tagged (pacing check: director 20 h game tests green) |
-| v0.8-endings | P2-1 merged | |
+| v0.8-endings | P2-1a and P2-1b merged | |
 | v1.0 | P2-2 and P2-3 merged, 20 h simulation passes | |
 
 ## Tuning from playtests (apply as code defaults on the next atmosphere touch)
