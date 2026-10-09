@@ -74,7 +74,12 @@ public final class TraceLedger extends SavedData {
 		return Collections.unmodifiableList(entries);
 	}
 
+	/** Adds an entry. An empty item stack cannot be saved, so it is dropped from the entry. */
 	void add(Entry entry) {
+		if (entry.stack().filter(ItemStack::isEmpty).isPresent()) {
+			entry = new Entry(entry.kind(), entry.cause(), entry.day(), entry.pos(), entry.to(), entry.state(), entry.blockEntity(),
+					Optional.empty(), entry.slot(), entry.toSlot());
+		}
 		entries.add(entry);
 		setDirty();
 	}

@@ -295,14 +295,20 @@ public final class TraceService {
 		return execute(level, cause, List.of(new TraceBatch.Leave(pos.immutable(), state)));
 	}
 
-	/** Takes up to {@code count} items out of a container slot. The removed stack is kept in the ledger. */
+	/**
+	 * Takes up to {@code count} items out of a container slot. The removed stack is kept in the ledger.
+	 * False if {@code count <= 0} or the slot is empty or missing.
+	 */
 	public boolean removeStack(ServerLevel level, BlockPos pos, int slot, int count, String cause) {
-		if (!(level.getBlockEntity(pos) instanceof Container container) || slot < 0 || slot >= container.getContainerSize()
+		if (count <= 0 || !(level.getBlockEntity(pos) instanceof Container container) || slot < 0 || slot >= container.getContainerSize()
 				|| container.getItem(slot).isEmpty() || !allowed(level, List.of(pos))) {
 			return false;
 		}
 		ItemStack removed = container.removeItem(slot, count);
 		container.setChanged();
+		if (removed.isEmpty()) {
+			return false;
+		}
 		logStack(level, TraceLedger.Kind.REMOVE_STACK, pos, null, removed, slot, -1, cause);
 		return true;
 	}
@@ -349,7 +355,7 @@ public final class TraceService {
 				return false;
 			}
 		}
-		if (edit.isEmpty() || !edit.expand() || !allowed(level, edit.checkedPositions())) {
+		if (edit.isEmpty() || !edit.expand() || edit.touchesAttachedEntity() || !allowed(level, edit.checkedPositions())) {
 			return false;
 		}
 		edit.apply();

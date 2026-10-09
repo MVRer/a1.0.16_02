@@ -8,10 +8,15 @@ import net.fabricmc.fabric.api.gametest.v1.GameTest;
 
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
+import net.minecraft.core.GlobalPos;
 import net.minecraft.gametest.framework.GameTestHelper;
+import net.minecraft.nbt.NbtOps;
+import net.minecraft.nbt.Tag;
+import net.minecraft.resources.RegistryOps;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.Container;
 import net.minecraft.world.entity.EntityTypes;
+import net.minecraft.world.entity.decoration.ItemFrame;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
@@ -144,6 +149,52 @@ public class TraceGameTests {
 			helper.assertEntityNotPresent(EntityTypes.ITEM);
 			helper.succeed();
 		});
+	}
+
+	@GameTest
+	public void attachedEntitiesRefuseTheEdit(GameTestHelper helper) {
+		ServerLevel level = helper.getLevel();
+		BlockPos support = helper.absolutePos(new BlockPos(3, 2, 3));
+		helper.setBlock(3, 2, 3, Blocks.STONE);
+		helper.assertTrue(level.addFreshEntity(new ItemFrame(level, support.south(), Direction.SOUTH)), "frame not added");
+		helper.setBlock(6, 2, 6, Blocks.STONE);
+
+		helper.assertFalse(Services.traces().remove(level, support, "test:frame"), "removed a block holding an item frame");
+		helper.assertFalse(Services.traces().move(level, support, helper.absolutePos(new BlockPos(3, 5, 3)), "test:frame"), "moved it");
+		helper.assertBlockPresent(Blocks.STONE, new BlockPos(3, 2, 3));
+		helper.assertTrue(Services.traces().remove(level, helper.absolutePos(new BlockPos(6, 2, 6)), "test:frame"), "a free block was refused");
+		helper.runAfterDelay(5, () -> {
+			helper.assertEntityPresent(EntityTypes.ITEM_FRAME);
+			helper.assertEntityNotPresent(EntityTypes.ITEM);
+			helper.succeed();
+		});
+	}
+
+	@GameTest
+	public void removeStackRejectsEmptyAndLedgerSaves(GameTestHelper helper) {
+		ServerLevel level = helper.getLevel();
+		BlockPos chest = helper.absolutePos(new BlockPos(2, 1, 2));
+		helper.setBlock(2, 1, 2, Blocks.CHEST);
+		Container container = (Container) level.getBlockEntity(chest);
+		container.setItem(0, new ItemStack(Items.COAL, 5));
+		TraceService traces = Services.traces();
+
+		helper.assertFalse(traces.removeStack(level, chest, 0, 0, "test:stack"), "count 0 accepted");
+		helper.assertFalse(traces.removeStack(level, chest, 0, -2, "test:stack"), "negative count accepted");
+		helper.assertFalse(traces.removeStack(level, chest, 1, 3, "test:stack"), "empty slot accepted");
+		helper.assertTrue(traces.removeStack(level, chest, 0, 2, "test:stack") && container.getItem(0).getCount() == 3, "valid removal failed");
+
+		TraceLedger ledger = TraceLedger.get(level.getServer());
+		ledger.add(new TraceLedger.Entry(TraceLedger.Kind.REMOVE_STACK, "test:empty", 0, GlobalPos.of(level.dimension(), chest),
+				Optional.empty(), Optional.empty(), Optional.empty(), Optional.of(ItemStack.EMPTY), 0, -1));
+		helper.assertTrue(ledger.entries().stream().noneMatch(e -> e.stack().filter(ItemStack::isEmpty).isPresent()), "empty stack in the ledger");
+
+		// What the storage does on save: encode, and it must load back.
+		RegistryOps<Tag> ops = level.registryAccess().createSerializationContext(NbtOps.INSTANCE);
+		Tag saved = TraceLedger.CODEC.encodeStart(ops, ledger).getOrThrow();
+		TraceLedger loaded = TraceLedger.CODEC.parse(ops, saved).getOrThrow();
+		helper.assertTrue(loaded.entries().size() == ledger.entries().size(), "ledger did not round-trip");
+		helper.succeed();
 	}
 
 	@GameTest

@@ -21,6 +21,7 @@ import net.minecraft.core.GlobalPos;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.util.ProblemReporter;
+import net.minecraft.world.entity.decoration.BlockAttachedEntity;
 import net.minecraft.world.level.LevelReader;
 import net.minecraft.world.level.ScheduledTickAccess;
 import net.minecraft.world.level.block.Block;
@@ -29,6 +30,7 @@ import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.material.Fluid;
 import net.minecraft.world.level.storage.TagValueInput;
+import net.minecraft.world.phys.AABB;
 import net.minecraft.world.ticks.BlackholeTickAccess;
 import net.minecraft.world.ticks.LevelTickAccess;
 import net.minecraft.world.ticks.ScheduledTick;
@@ -154,6 +156,28 @@ final class TraceEdit {
 		}
 		reshaped.removeAll(changes.keySet());
 		return true;
+	}
+
+	/**
+	 * True if an item frame, painting or leash knot touches a block this edit changes. Those pop off with a drop
+	 * and a sound a few seconds later, so the edit is refused.
+	 */
+	boolean touchesAttachedEntity() {
+		AABB bounds = null;
+		for (BlockPos pos : changes.keySet()) {
+			bounds = bounds == null ? new AABB(pos) : bounds.minmax(new AABB(pos));
+		}
+		if (bounds == null) {
+			return false;
+		}
+		for (BlockAttachedEntity entity : level.getEntitiesOfClass(BlockAttachedEntity.class, bounds.inflate(1.0))) {
+			for (BlockPos pos : changes.keySet()) {
+				if (entity.getBoundingBox().intersects(new AABB(pos).inflate(0.1))) {
+					return true;
+				}
+			}
+		}
+		return false;
 	}
 
 	/** Every block whose look changes: edits, broken dependents and reshaped neighbours. */
