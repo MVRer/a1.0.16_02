@@ -94,6 +94,19 @@ public class AtmosphereGameTests extends TamperGameTests {
 
 		// Away from home.
 		helper.assertTrue(Gates.away(false, 0, 24) && Gates.away(true, 24 * 24, 24) && !Gates.away(true, 23 * 23, 24), "away");
+
+		// Night is by the clock (a daytime thunderstorm is not night).
+		AtmosphereConfig cfg = AtmosphereConfig.get();
+		helper.assertTrue(Gates.inWindow(18000, cfg.nightFrom, cfg.nightTo) && !Gates.inWindow(6000, cfg.nightFrom, cfg.nightTo)
+				&& !Gates.inWindow(12000, cfg.nightFrom, cfg.nightTo), "night window");
+
+		// Scans of an area that is not loaded find nothing (and never load it).
+		BlockPos far = new BlockPos(29_000_000 - 64, 64, 29_000_000 - 64);
+		helper.assertFalse(WorldScan.areaLoaded(helper.getLevel(), far, 8), "a far-away area counts as loaded");
+		helper.assertTrue(WorldScan.areaLoaded(helper.getLevel(), helper.absolutePos(new BlockPos(3, 1, 3)), 4), "the test area counts as unloaded");
+		helper.assertTrue(WorldScan.houseWalls(helper.getLevel(), far, 8).isEmpty() && DoorLeftOpenCard.closedPlacedDoors(helper.getLevel(), far, 8).isEmpty(),
+				"scanned an unloaded area");
+		helper.assertFalse(helper.getLevel().hasChunk(far.getX() >> 4, far.getZ() >> 4), "a scan loaded the chunk");
 		helper.succeed();
 	}
 
