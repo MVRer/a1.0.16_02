@@ -9,7 +9,7 @@ Status values: queued, running, review, fix, merged, blocked. Only the orchestra
 | P1-2 | The figure: model, white eyes, fog-edge spawn out of view, all sighting variants, stare then leave, despawn | entity | feat/entity-figure | v0.2-figure | queued, wave 1 | Starts from the HimEntity prototype (D-001) |
 | P1-3 | Old scars (worldgen) and the live new-scar placer | world | feat/world-scars | v0.3-traces | queued, wave 1 | Records sites in SiteRegistry for lore |
 | P1-4 | Live diggers and the "Under you" network | dig | feat/dig-diggers | v0.3-traces | queued, wave 1 | Records TUNNEL_END and UNDER_BASE sites |
-| P1-5 | Dread layer: fog, silence, music off, sound director, mobs acting wrong (client and server) | atmosphere | feat/atmosphere-dread | v0.4-dread | queued, wave 1 | Mob behavior goes through MobTamper (real impl comes with P1-8) |
+| P1-5 | Dread layer: fog, silence, music off, sound director, mobs acting wrong (client and server) | atmosphere | feat/atmosphere-dread | v0.4-dread | queued, wave 1 | Also builds the real MobTamper (D-017) |
 | P1-6 | Fragments: all 30 as data, placement by stage and profile, sites | lore | feat/lore-fragments | v0.5-fragments | queued, wave 2 | |
 | P1-7 | Telling: sign and book watcher, blank signs, "Stop.", place not found, list updates, unbreakable F30 | lore | feat/lore-telling | v0.6-telling | queued, after P1-6 | |
 | P1-8 | Accidents: planner, every trap, mob tamperer, death marker | accident | feat/accident-traps | v0.7-accidents | queued, wave 2 | |
