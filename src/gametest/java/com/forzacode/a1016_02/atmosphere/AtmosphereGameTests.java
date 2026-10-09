@@ -1,6 +1,7 @@
 package com.forzacode.a1016_02.atmosphere;
 
 import java.util.List;
+import java.util.UUID;
 
 import com.forzacode.a1016_02.atmosphere.card.AtmosphereCards;
 import com.forzacode.a1016_02.atmosphere.card.CowWhereNothingSpawnsCard;
@@ -20,6 +21,9 @@ import net.fabricmc.fabric.api.gametest.v1.GameTest;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.GlobalPos;
 import net.minecraft.gametest.framework.GameTestHelper;
+import net.minecraft.nbt.NbtOps;
+import net.minecraft.nbt.Tag;
+import net.minecraft.resources.RegistryOps;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.util.RandomSource;
@@ -103,6 +107,27 @@ public class AtmosphereGameTests extends TamperGameTests {
 		helper.assertTrue(data.miningOn(night) == 1 && data.miningOn(night + 1) == 0, "per-night count");
 		helper.assertFalse(Gates.miningInTheDark(true, true, 0, 0, Long.MAX_VALUE, 0, data.miningOn(night), Math.min(perNight, 1)),
 				"mining allowed again the same night");
+		helper.succeed();
+	}
+
+	@GameTest
+	public void transientEffectsSurviveASave(GameTestHelper helper) {
+		RegistryOps<Tag> ops = helper.getLevel().registryAccess().createSerializationContext(NbtOps.INSTANCE);
+		AtmosphereData data = new AtmosphereData();
+		UUID player = UUID.randomUUID();
+		data.setSilence(player, 1000, 1200, 400);
+		data.setCompass(player, 1100, 1200, -300, 450, 48);
+		data.setDuskStage(2);
+		data.recordMining(5);
+		Tag encoded = AtmosphereData.CODEC.encodeStart(ops, data).getOrThrow();
+		AtmosphereData decoded = AtmosphereData.CODEC.parse(ops, encoded).getOrThrow();
+		AtmosphereData.Transient t = decoded.transientOf(player).orElseThrow();
+		helper.assertTrue(t.silenceLeft(1600) == 600 && t.silenceLeft(2200) == 0, "silence left after reload");
+		helper.assertTrue(t.compassLeft(1600) == 700 && t.compassX() == -300 && t.compassZ() == 450 && t.compassSettle() == 48, "compass after reload");
+		helper.assertTrue(decoded.duskStage() == 2 && decoded.miningOn(5) == 1, "dusk stage / mining count after reload");
+		data.setSilence(player, 5000, 0, 0);
+		data.setCompass(player, 5000, 0, 0, 0, 0);
+		helper.assertTrue(data.transientOf(player).isEmpty(), "ended effects are not dropped");
 		helper.succeed();
 	}
 
