@@ -2,7 +2,9 @@
 	"required": true,
 	"package": "com.forzacode.a1016_02.director.mixin",
 	"compatibilityLevel": "JAVA_25",
-	"mixins": [],
+	"mixins": [
+		"JukeboxSongPlayerMixin"
+	],
 	"client": [],
 	"server": [],
 	"injectors": {
