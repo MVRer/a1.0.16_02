@@ -4,6 +4,8 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Function;
 
 import com.forzacode.a1016_02.A1016_02;
@@ -15,6 +17,7 @@ import com.forzacode.a1016_02.core.TraceService;
 
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
+import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.util.RandomSource;
 import net.minecraft.world.entity.Entity;
@@ -40,9 +43,14 @@ import org.jspecify.annotations.Nullable;
  * its own. Core only checks that a fill is within 3 blocks of the column horizontally; here every dig and every fill
  * is in his own column, and fills only go into the top 2 blocks of the shaft he dug.
  *
- * <p>The clue: if the top was grass (or podzol, mycelium), the dirt dug from under it goes back on top instead, so the
- * patch comes back as bare dirt. The grass block itself stays dug (in the ledger, for Ending D). The block under the
- * top is never sand or gravel (it would fall into the open shaft).
+ * <p>The clue: the top always comes back as bare dirt. If the top was grass (or sand...), a dirt block dug from lower
+ * in the shaft goes back on top instead; the grass block itself stays dug (in the ledger, for Ending D). A shaft with
+ * no dirt in it is never chosen. The block under the top is never sand or gravel (it would fall into the open shaft).
+ *
+ * <p>An open shaft is saved ({@link PendingDig} in {@link EntityData}) from the first block dug until it is covered.
+ * If he goes before it is covered (he could not finish, the server stopped, his chunk unloaded, he was cleared),
+ * every block still missing goes back where it came from, but only once those cells, the opening included, are out
+ * of view ({@link #refillPending} for a shaft whose figure is gone). The cover over him is the only change in view.
  *
  * <p>Only natural ground: dirt, grass, sand, gravel, stone (and the sandstone under sand), with no fluid in or beside
  * the shaft, no block entity, nothing a player placed, nothing protected; only in the overworld (never the End's void,
@@ -241,23 +249,19 @@ public final class GoUnder {
 
 	/**
 	 * Which dug blocks go back where (pure). Only blocks of this shaft ({@link Plan#inShaft}) are used, and only the
-	 * top {@link #COVER} positions of the shaft are filled, lower first. The top gets a bare dirt block of the shaft if
-	 * the top was grassy (the clue), else its own block. The one under it gets the nearest other block that does not
-	 * fall, grass last. Empty if there is nothing to cover with.
+	 * top {@link #COVER} positions of the shaft are filled, lower first. The top always gets a bare dirt block of the
+	 * shaft (the clue, D-030): its own if it was dirt, else the highest dirt he dug. The one under it gets the nearest
+	 * other block that does not fall, grass last. Empty if there is no dirt to bring up or nothing to put under it:
+	 * then there is no going under there, and the sighting ends the ordinary way.
 	 *
 	 * @param dug every block this dig took that is still missing (for a live dig, {@link TraceService#figureDug})
 	 */
 	public static <T> List<Fill<T>> choose(Plan plan, List<T> dug, Function<T, BlockPos> posOf, Function<T, @Nullable BlockState> stateOf) {
 		List<T> own = dug.stream().filter(t -> stateOf.apply(t) != null && plan.inShaft(posOf.apply(t))).toList();
 		BlockPos top = plan.top();
-		T topItem = own.stream().filter(t -> posOf.apply(t).equals(top)).findFirst().orElse(null);
-		T forTop = null;
-		if (topItem != null && grassy(stateOf.apply(topItem))) {
-			forTop = own.stream().filter(t -> bareDirt(stateOf.apply(t))).max(Comparator.comparingInt(t -> posOf.apply(t).getY())).orElse(null);
-		}
-		if (forTop == null) {
-			forTop = topItem;
-		}
+		T forTop = own.stream().filter(t -> bareDirt(stateOf.apply(t)))
+				.max(Comparator.<T>comparingInt(t -> posOf.apply(t).equals(top) ? 1 : 0).thenComparingInt(t -> posOf.apply(t).getY()))
+				.orElse(null);
 		if (forTop == null) {
 			return List.of();
 		}
@@ -310,6 +314,9 @@ public final class GoUnder {
 	/** Every block he took, top first, as it was (for tests and the info line). */
 	private final List<Dug> taken = new ArrayList<>();
 
+	/** Digs whose figure is still out and working on them: {@link #refillPending} leaves them to him. */
+	private static final Set<String> LIVE = ConcurrentHashMap.newKeySet();
+
 	private GoUnder(Plan plan, TraceService.FigureDig dig) {
 		this.plan = plan;
 		this.dig = dig;
@@ -317,7 +324,30 @@ public final class GoUnder {
 
 	/** Starts one dig at {@code plan}: a new figure-dig session in core. Changes nothing yet. */
 	static GoUnder begin(ServerLevel level, Plan plan) {
-		return new GoUnder(plan, Services.traces().startFigureDig(level, plan.top(), CAUSE));
+		GoUnder session = new GoUnder(plan, Services.traces().startFigureDig(level, plan.top(), CAUSE));
+		LIVE.add(session.dig.id());
+		return session;
+	}
+
+	/** His figure is gone: an open shaft is now {@link #refillPending}'s (its record stays). */
+	void release() {
+		LIVE.remove(dig.id());
+	}
+
+	/** Every figure is gone with its server: their open shafts are {@link #refillPending}'s. */
+	static void clearLive() {
+		LIVE.clear();
+	}
+
+	/** True while the figure of this dig is still out. */
+	static boolean live(String digId) {
+		return LIVE.contains(digId);
+	}
+
+	/** The saved record of this open shaft: every block dug so far, as it was. */
+	private PendingDig pending() {
+		List<PendingDig.Cell> cells = taken.stream().map(d -> new PendingDig.Cell(d.pos(), d.state())).toList();
+		return new PendingDig(dig.id(), dig.dimension(), dig.column(), dig.cause(), plan.top(), plan.depth(), cells);
 	}
 
 	public Plan plan() {
@@ -399,6 +429,7 @@ public final class GoUnder {
 					}
 					taken.add(new Dug(pos.immutable(), state));
 					dug++;
+					EntityData.get(level.getServer()).putPendingDig(pending()); // saved until covered or put back
 					timer = 0;
 				}
 			}
@@ -432,6 +463,8 @@ public final class GoUnder {
 					timer = 0;
 					if (filled >= fills.size()) {
 						status = Status.COVERED;
+						EntityData.get(level.getServer()).removePendingDig(dig.id());
+						release();
 					}
 				}
 			}
@@ -453,21 +486,68 @@ public final class GoUnder {
 	}
 
 	/**
-	 * He is being removed with the shaft still open (past the render distance, a debug clear, or he gave up): every
-	 * block of the dig that is still missing goes back where it came from, the deepest first. Best effort; a block
-	 * that cannot go back stays dug.
+	 * He is going with the shaft still open (he gave up, or was removed): every block of the dig that is still missing
+	 * goes back where it came from, the deepest first, and the saved record goes. The caller has checked that those
+	 * cells ({@link #openCells}), the opening included, are out of view; if they are not, it leaves the shaft to
+	 * {@link #refillPending}. Best effort; a block that cannot go back stays dug.
 	 */
 	void putBack(ServerLevel level) {
 		if (!open()) {
 			return;
 		}
-		TraceService traces = Services.traces();
-		for (TraceLedger.Entry entry : traces.figureDug(level, dig)) { // newest (deepest) first
-			BlockPos pos = entry.pos().pos();
-			if (plan.inShaft(pos)) {
-				traces.figureFill(level, dig, entry, pos);
-			}
-		}
+		putBack(level, dig, plan, null);
 		status = Status.PUT_BACK;
+		EntityData.get(level.getServer()).removePendingDig(dig.id());
+		release();
+	}
+
+	/** The cells to put back: every block of this dig still missing, in its shaft. View-check these first. */
+	List<BlockPos> openCells(ServerLevel level) {
+		return openEntries(level, dig, plan, null).stream().map(e -> e.pos().pos()).toList();
+	}
+
+	/** This dig's blocks still missing, in its shaft (and, for a saved record, among its recorded cells), deepest first. */
+	private static List<TraceLedger.Entry> openEntries(ServerLevel level, TraceService.FigureDig dig, Plan plan, @Nullable PendingDig record) {
+		return Services.traces().figureDug(level, dig).stream()
+				.filter(e -> plan.inShaft(e.pos().pos()) && (record == null || record.recorded(e.pos().pos())))
+				.toList();
+	}
+
+	/** Every missing block back at its own spot, the deepest first. The caller has checked the cells are out of view. */
+	private static void putBack(ServerLevel level, TraceService.FigureDig dig, Plan plan, @Nullable PendingDig record) {
+		TraceService traces = Services.traces();
+		for (TraceLedger.Entry entry : openEntries(level, dig, plan, record)) {
+			traces.figureFill(level, dig, entry, entry.pos().pos());
+		}
+	}
+
+	/**
+	 * Saved shafts whose figure is gone (D-030; the server stopped, a chunk unloaded, he was cleared): once the shaft's
+	 * chunk is loaded and every cell still missing, the opening included, is out of view, they go back where they came
+	 * from, from that dig's own session, only into its own column. Called by {@link FigureApi#sweep}.
+	 */
+	static void refillPending(MinecraftServer server) {
+		EntityData data = EntityData.get(server);
+		for (PendingDig record : data.pendingDigs()) {
+			if (live(record.id())) {
+				continue;
+			}
+			ServerLevel level = server.getLevel(record.dimension());
+			if (level == null || !record.cells().stream().allMatch(c -> level.isLoaded(c.pos()))) {
+				continue; // waits for its chunk
+			}
+			List<TraceLedger.Entry> open = openEntries(level, record.dig(), record.plan(), record);
+			if (open.isEmpty()) {
+				data.removePendingDig(record.id());
+				continue;
+			}
+			List<BlockPos> cells = open.stream().map(e -> e.pos().pos()).toList();
+			if (!Services.traces().isOutOfView(level, cells)) {
+				continue; // waits until nobody sees the shaft
+			}
+			putBack(level, record.dig(), record.plan(), record);
+			data.removePendingDig(record.id());
+			A1016_02.LOGGER.debug("[a1016] put back an open shaft at {} ({} blocks)", record.top().toShortString(), cells.size());
+		}
 	}
 }

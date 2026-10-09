@@ -228,7 +228,8 @@ public class EntityGameTests extends GoUnderGameTests {
 				helper.assertTrue(!parsed.getReader().canRead() && parsed.getExceptions().isEmpty(), "does not parse: " + command);
 			}
 			for (String name : List.of("minDistance", "closeFractionMin", "closeFractionMax", "normalFractionMin", "normalFractionMax", "outrunFactor",
-					"maxRunSpeed")) {
+					"maxRunSpeed", "goUnderChance", "goUnderDigSeconds", "goUnderMinDepth", "goUnderMaxDepth", "rushTriggerDistance", "rushPassOffset",
+					"rushMaxSeconds", "amongMobsRadius")) {
 				helper.assertTrue(EntityTuning.byName(name).isPresent(), name + " is not tunable");
 			}
 			server.getCommands().performPrefixedCommand(source, "a1016 entity tune");
@@ -248,6 +249,12 @@ public class EntityGameTests extends GoUnderGameTests {
 			server.getCommands().performPrefixedCommand(source, "a1016 entity tune closeMinDistance 4");
 			server.getCommands().performPrefixedCommand(source, "a1016 entity tune outrunFactor 0.9");
 			server.getCommands().performPrefixedCommand(source, "a1016 entity tune runSpeed 3");
+			// A pass closer than 1.5 blocks, a shaft too shallow to cover him: refused.
+			double oldOffset = config.rushPassOffset;
+			int oldMinDepth = config.goUnderMinDepth;
+			server.getCommands().performPrefixedCommand(source, "a1016 entity tune rushPassOffset 1");
+			server.getCommands().performPrefixedCommand(source, "a1016 entity tune goUnderMinDepth 2");
+			helper.assertTrue(config.rushPassOffset == oldOffset && config.goUnderMinDepth == oldMinDepth, "an unsafe rush or dig tuning was taken");
 			helper.assertTrue(config.fleeDistance == oldFlee, "an out-of-range flee distance was taken: " + config.fleeDistance);
 			helper.assertTrue(config.minDistance == 10, "a minimum distance under 8 blocks was taken: " + config.minDistance);
 			helper.assertTrue(config.closeMinDistance == oldCloseMin, "a close clamp under 8 blocks was taken: " + config.closeMinDistance);

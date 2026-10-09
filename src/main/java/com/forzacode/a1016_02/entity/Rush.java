@@ -28,6 +28,15 @@ public final class Rush {
 	/** A planned path follows a chaser at constant velocity at most this many ticks. */
 	static final int PLAN_TICKS = 80;
 
+	/** One simulated tick: where he ends it, and where the player is then. */
+	public record Step(Vec3 him, Vec3 player) {
+		/** Horizontal unit vector from the player to him (out of the pass), or zero. */
+		public Vec3 outward() {
+			Vec3 out = flat(him.subtract(player));
+			return out.lengthSqr() > 1.0E-8 ? out.normalize() : Vec3.ZERO;
+		}
+	}
+
 	/** Horizontal unit vector from the player to him when the rush began. */
 	private final Vec3 axis;
 	/** +1 or -1: the side of the player he passes on. */
@@ -63,12 +72,13 @@ public final class Rush {
 
 	/**
 	 * Plans a rush: the drift-away side first, then the other, the first whose whole path (simulated with the
-	 * player at constant velocity) is {@code walkable}. Empty if neither side is, or they are too close already to
-	 * pass outside the offset.
+	 * player at constant velocity) is {@code clear}: ground all the way, and room on the outer side of the pass, so
+	 * no wall can hold him inside the offset. Empty if neither side is, or they are too close already to pass outside
+	 * the offset: then he runs away instead.
 	 *
 	 * @param stepLength his speed in blocks per tick
 	 */
-	public static Optional<Rush> plan(Vec3 him, Vec3 player, Vec3 playerVelocity, double offset, double stepLength, Predicate<List<Vec3>> walkable) {
+	public static Optional<Rush> plan(Vec3 him, Vec3 player, Vec3 playerVelocity, double offset, double stepLength, Predicate<List<Step>> clear) {
 		if (flat(him.subtract(player)).length() < Math.max(MIN_OFFSET, offset)) {
 			return Optional.empty();
 		}
@@ -78,8 +88,8 @@ public final class Rush {
 			if (rush == null) {
 				return Optional.empty();
 			}
-			List<Vec3> path = rush.copy().simulate(him, player, playerVelocity, stepLength, offset + 4.0);
-			if (!path.isEmpty() && walkable.test(path)) {
+			List<Step> path = rush.copy().simulate(him, player, playerVelocity, stepLength, offset + 4.0);
+			if (!path.isEmpty() && clear.test(path)) {
 				return Optional.of(rush);
 			}
 		}
@@ -135,14 +145,14 @@ public final class Rush {
 	 * His positions tick by tick if the player keeps {@code playerVelocity}: until he has passed and is
 	 * {@code behind} blocks from them, at most {@link #PLAN_TICKS}. Steps this rush (call it on a copy).
 	 */
-	public List<Vec3> simulate(Vec3 him, Vec3 player, Vec3 playerVelocity, double stepLength, double behind) {
-		List<Vec3> path = new ArrayList<>();
+	public List<Step> simulate(Vec3 him, Vec3 player, Vec3 playerVelocity, double stepLength, double behind) {
+		List<Step> path = new ArrayList<>();
 		Vec3 h = him;
 		Vec3 p = player;
 		for (int i = 0; i < PLAN_TICKS; i++) {
 			p = p.add(flat(playerVelocity));
 			h = step(h, p, playerVelocity, stepLength);
-			path.add(h);
+			path.add(new Step(h, p));
 			if (passed && flat(h.subtract(p)).length() >= behind) {
 				break;
 			}

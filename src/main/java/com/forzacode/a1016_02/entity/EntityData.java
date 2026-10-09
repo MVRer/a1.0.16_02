@@ -1,5 +1,7 @@
 package com.forzacode.a1016_02.entity;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Optional;
 
 import com.forzacode.a1016_02.A1016_02;
@@ -26,7 +28,8 @@ public final class EntityData extends SavedData {
 			Codec.STRING.optionalFieldOf("lastVariant", "").forGetter(d -> d.lastVariant),
 			Codec.INT.optionalFieldOf("sightings", 0).forGetter(d -> d.sightings),
 			Codec.INT.optionalFieldOf("fakes", 0).forGetter(d -> d.fakes),
-			Codec.INT.optionalFieldOf("stared", 0).forGetter(d -> d.stared)
+			Codec.INT.optionalFieldOf("stared", 0).forGetter(d -> d.stared),
+			PendingDig.CODEC.listOf().optionalFieldOf("pendingDigs", List.of()).forGetter(d -> List.copyOf(d.pendingDigs))
 	).apply(i, EntityData::new));
 
 	public static final SavedDataType<EntityData> TYPE = new SavedDataType<>(A1016_02.id("entity"), EntityData::new, CODEC, null);
@@ -38,11 +41,14 @@ public final class EntityData extends SavedData {
 	private int sightings;
 	private int fakes;
 	private int stared;
+	/** Goes-under shafts dug but not covered or put back yet (D-030). */
+	private final List<PendingDig> pendingDigs = new ArrayList<>();
 
 	public EntityData() {
 	}
 
-	private EntityData(Optional<GlobalPos> lastPos, long lastDay, int countOnLastDay, String lastVariant, int sightings, int fakes, int stared) {
+	private EntityData(Optional<GlobalPos> lastPos, long lastDay, int countOnLastDay, String lastVariant, int sightings, int fakes, int stared,
+			List<PendingDig> pendingDigs) {
 		this.lastPos = lastPos.orElse(null);
 		this.lastDay = lastDay;
 		this.countOnLastDay = countOnLastDay;
@@ -50,6 +56,26 @@ public final class EntityData extends SavedData {
 		this.sightings = sightings;
 		this.fakes = fakes;
 		this.stared = stared;
+		this.pendingDigs.addAll(pendingDigs);
+	}
+
+	/** Records (or updates, by dig id) a shaft that is open. */
+	public void putPendingDig(PendingDig dig) {
+		pendingDigs.removeIf(d -> d.id().equals(dig.id()));
+		pendingDigs.add(dig);
+		setDirty();
+	}
+
+	/** The shaft is covered or put back. */
+	public void removePendingDig(String id) {
+		if (pendingDigs.removeIf(d -> d.id().equals(id))) {
+			setDirty();
+		}
+	}
+
+	/** Open shafts, oldest first. */
+	public List<PendingDig> pendingDigs() {
+		return List.copyOf(pendingDigs);
 	}
 
 	public static EntityData get(MinecraftServer server) {

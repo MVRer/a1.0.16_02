@@ -168,55 +168,111 @@ public class RushAndDimensionGameTests extends SightingRuleGameTests {
 		Vec3 player = new Vec3(0, 0, 9);
 		Vec3 v = new Vec3(0, 0, -1.5);
 		helper.assertTrue(Rush.plan(origin, player, v, 2.0, step, path -> true).isPresent(), "no rush on open ground");
-		Optional<Rush> eastOnly = Rush.plan(origin, player, v, 2.0, step, path -> path.stream().allMatch(p -> p.x >= -0.3));
+		Optional<Rush> eastOnly = Rush.plan(origin, player, v, 2.0, step, path -> path.stream().allMatch(s -> s.him().x >= -0.3));
 		helper.assertTrue(eastOnly.isPresent() && eastOnly.get().side() == 1, "did not take the open side: " + eastOnly.map(Rush::side).orElse(0));
 		helper.assertTrue(Rush.plan(origin, player, v, 2.0, step, path -> false).isEmpty(), "a rush with nowhere to run");
 		helper.assertTrue(Rush.plan(origin, new Vec3(0.5, 0, 1.0), v, 2.0, step, path -> true).isEmpty(), "a rush from inside the offset");
 		helper.succeed();
 	}
 
-	@GameTest(maxTicks = 120, padding = 16)
-	public void theRushPassesBesideTheChaserAndIsGoneOnlyOutOfView(GameTestHelper helper) {
+	/** What an in-world chase did, recorded each tick until he is gone. */
+	private static final class Chased {
+		final HimEntity him;
+		final List<ServerPlayer> players;
+		double closest = Double.MAX_VALUE;
+		double towardPlayer;
+		double minX = Double.MAX_VALUE;
+		double maxX = -Double.MAX_VALUE;
+		boolean passed;
+		boolean rushing;
+		Vec3 last;
+
+		Chased(HimEntity him, List<ServerPlayer> players) {
+			this.him = him;
+			this.players = players;
+			this.last = him.position();
+		}
+	}
+
+	/**
+	 * A stone floor (plus {@code walls}, 3 high, on whole x columns), him at x 3.5 near the north edge, and an elytra
+	 * flyer 13 blocks south coming straight at him at 30 blocks a second, looking ahead.
+	 */
+	private static Chased elytraChase(GameTestHelper helper, int... walls) {
 		for (int x = 0; x < 8; x++) {
 			for (int z = 0; z < 8; z++) {
 				helper.setBlock(x, 0, z, Blocks.STONE);
 			}
 		}
-		ServerLevel level = helper.getLevel();
-		int serverChunks = level.getServer().getPlayerList().getViewDistance();
-		// An elytra flyer 13 blocks south of him, coming straight at him at 30 blocks a second, looking ahead.
+		for (int x : walls) {
+			for (int z = 0; z < 8; z++) {
+				for (int y = 1; y <= 3; y++) {
+					helper.setBlock(x, y, z, Blocks.STONE);
+				}
+			}
+		}
 		ServerPlayer flyer = mockPlayer(helper, helper.absoluteVec(new Vec3(3.5, 1.5, 14.5)), 180.0F, 10.0F);
 		List<ServerPlayer> players = List.of(flyer);
-		HimEntity him = watchedFigure(helper, Variant.RIDGE, new Vec3(3.5, 1.0, 1.5), 0.0F, players);
+		Chased chase = new Chased(watchedFigure(helper, Variant.RIDGE, new Vec3(3.5, 1.0, 1.5), 0.0F, players), players);
+		HimEntity him = chase.him;
 		double startZ = him.getZ();
-		double[] closest = {Double.MAX_VALUE};
-		double[] farthestTowardPlayer = {0.0};
-		boolean[] passed = {false};
-		boolean[] rushing = {false};
-		Vec3[] last = {him.position()};
 		helper.onEachTick(() -> {
 			if (him.isRemoved()) {
 				return;
 			}
-			closest[0] = Math.min(closest[0], flat(him.position(), flyer.position()));
+			chase.closest = Math.min(chase.closest, flat(him.position(), flyer.position()));
 			place(flyer, flyer.position().add(0.0, 0.0, -1.5), 180.0F, 10.0F);
-			closest[0] = Math.min(closest[0], flat(him.position(), flyer.position()));
+			chase.closest = Math.min(chase.closest, flat(him.position(), flyer.position()));
 			if (him.rush() != null) {
-				rushing[0] = true;
-				passed[0] |= him.rush().passed();
+				chase.rushing = true;
+				chase.passed |= him.rush().passed();
+				chase.minX = Math.min(chase.minX, him.getX() - helper.absoluteVec(Vec3.ZERO).x);
+				chase.maxX = Math.max(chase.maxX, him.getX() - helper.absoluteVec(Vec3.ZERO).x);
 			}
-			farthestTowardPlayer[0] = Math.max(farthestTowardPlayer[0], him.getZ() - startZ);
-			last[0] = him.position();
+			chase.towardPlayer = Math.max(chase.towardPlayer, him.getZ() - startZ);
+			chase.last = him.position();
 		});
+		return chase;
+	}
+
+	/** He passed beside the flyer, never within the offset, and was gone only out of view. */
+	private static void assertCleanRush(GameTestHelper helper, Chased chase) {
+		HimEntity him = chase.him;
+		int serverChunks = helper.getLevel().getServer().getPlayerList().getViewDistance();
+		helper.assertTrue(him.isRemoved(), "still out: " + him.phase() + " at " + him.position());
+		helper.assertTrue(him.rushed() && chase.rushing, "he never rushed");
+		helper.assertTrue(chase.passed, "he never got past the player");
+		helper.assertTrue(chase.towardPlayer > 1.0, "he did not run at the player: " + chase.towardPlayer);
+		helper.assertTrue(chase.closest >= Rush.MIN_OFFSET, "he came within " + chase.closest + " blocks of the player");
+		helper.assertFalse(him.seenWhenRemoved(), "removed while in view");
+		helper.assertTrue("rushed past, out of view".equals(him.goneWhy()), "gone because " + him.goneWhy());
+		helper.assertFalse(Watchers.of(chase.players, serverChunks).sees(helper.getLevel(), HimEntity.viewBox(chase.last)), "in view where he was removed");
+	}
+
+	@GameTest(maxTicks = 120, padding = 16)
+	public void theRushPassesBesideTheChaserAndIsGoneOnlyOutOfView(GameTestHelper helper) {
+		Chased chase = elytraChase(helper);
+		helper.succeedWhen(() -> assertCleanRush(helper, chase));
+	}
+
+	@GameTest(maxTicks = 120, padding = 16)
+	public void theRushTakesTheSideWithRoom(GameTestHelper helper) {
+		// A wall on the east, where he would pass by default: with no room beside his line there, he passes on the west.
+		Chased chase = elytraChase(helper, 6);
 		helper.succeedWhen(() -> {
-			helper.assertTrue(him.isRemoved(), "still out: " + him.phase() + " at " + him.position());
-			helper.assertTrue(him.rushed() && rushing[0], "he never rushed");
-			helper.assertTrue(passed[0], "he never got past the player");
-			helper.assertTrue(farthestTowardPlayer[0] > 1.0, "he did not run at the player: " + farthestTowardPlayer[0]);
-			helper.assertTrue(closest[0] >= Rush.MIN_OFFSET, "he came within " + closest[0] + " blocks of the player");
-			helper.assertFalse(him.seenWhenRemoved(), "removed while in view");
-			helper.assertTrue("rushed past, out of view".equals(him.goneWhy()), "gone because " + him.goneWhy());
-			helper.assertFalse(Watchers.of(players, serverChunks).sees(level, HimEntity.viewBox(last[0])), "in view where he was removed");
+			assertCleanRush(helper, chase);
+			helper.assertTrue(chase.maxX <= 3.6, "he passed on the side of the wall: x up to " + chase.maxX);
+		});
+	}
+
+	@GameTest(maxTicks = 120, padding = 16)
+	public void noRushWithoutRoomToPass(GameTestHelper helper) {
+		// A corridor too narrow to pass the flyer 1.5 blocks or more to either side: he does not rush, he runs.
+		Chased chase = elytraChase(helper, 1, 6);
+		helper.succeedWhen(() -> {
+			helper.assertTrue(chase.him.rushed(), "the chase never got close enough to try");
+			helper.assertFalse(chase.rushing, "he rushed down a corridor with no room to pass: x " + chase.minX + ".." + chase.maxX);
+			helper.assertTrue(chase.him.phase() == HimEntity.Phase.LEAVING || chase.him.isRemoved(), "he did not run: " + chase.him.phase());
 		});
 	}
 

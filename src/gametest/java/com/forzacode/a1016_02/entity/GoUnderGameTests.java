@@ -13,8 +13,10 @@ import net.fabricmc.fabric.api.gametest.v1.GameTest;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.GlobalPos;
 import net.minecraft.gametest.framework.GameTestHelper;
+import net.minecraft.nbt.NbtOps;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.entity.Entity;
 import net.minecraft.world.level.GameType;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.Block;
@@ -163,6 +165,117 @@ public class GoUnderGameTests extends RushAndDimensionGameTests {
 		});
 	}
 
+	@GameTest(skyAccess = true, maxTicks = 300, padding = 8)
+	public void aStuckDigWaitsUntilTheOpeningIsOutOfView(GameTestHelper helper) {
+		ground(helper, Blocks.STONE, Blocks.GRASS_BLOCK);
+		ServerLevel level = helper.getLevel();
+		BlockPos top = helper.absolutePos(new BlockPos(3, 6, 3));
+		List<BlockState> before = new ArrayList<>();
+		for (int k = 0; k < 6; k++) {
+			before.add(level.getBlockState(top.below(k)));
+		}
+		// 5 blocks east, looking down at the hole: once he is 4 deep his body is hidden, the opening is not.
+		ServerPlayer watcher = mockPlayer(helper, helper.absoluteVec(new Vec3(8.5, 7.0, 3.5)), 90.0F, 35.0F);
+		List<ServerPlayer> players = new ArrayList<>(List.of(watcher));
+		HimEntity him = watchedFigure(helper, Variant.RIDGE, SHAFT_FEET, 0.0F, players);
+		int serverChunks = level.getServer().getPlayerList().getViewDistance();
+		long[] stuckAt = {-1};
+		boolean[] blocked = {false};
+		boolean[] movedAway = {false};
+		List<String> problems = new ArrayList<>();
+		helper.runAfterDelay(3, () -> {
+			helper.assertTrue(GoUnder.check(level, top, 6, 6).ok(), "the column does not allow 6 deep");
+			him.startGoUnder(level, new GoUnder.Plan(top, 6));
+		});
+		helper.onEachTick(() -> {
+			GoUnder dig = him.goUnder();
+			if (dig == null) {
+				return;
+			}
+			if (!blocked[0] && dig.dugCount() == 4) {
+				helper.setBlock(3, 2, 3, Blocks.BEDROCK); // the 5th block changes under him: he cannot finish
+				blocked[0] = true;
+			}
+			if (dig.status() == GoUnder.Status.STUCK && stuckAt[0] < 0) {
+				stuckAt[0] = helper.getTick();
+				Watchers watching = Watchers.of(players, serverChunks);
+				if (watching.sees(level, him.viewBox()) || !watching.seesAny(level, dig.openCells(level))) {
+					problems.add("the test does not hide his body while showing the opening");
+				}
+			}
+			if (stuckAt[0] >= 0 && !movedAway[0]) {
+				if (him.isRemoved() || !level.getBlockState(top).isAir()) {
+					problems.add("the shaft was put back while its opening was in view");
+				}
+				if (helper.getTick() >= stuckAt[0] + 40) {
+					place(watcher, helper.absoluteVec(new Vec3(3.5, 7.0, -12.0)), 180.0F, 0.0F);
+					movedAway[0] = true;
+				}
+			}
+		});
+		helper.succeedWhen(() -> {
+			helper.assertTrue(problems.isEmpty(), String.join("; ", problems));
+			helper.assertTrue(movedAway[0] && him.isRemoved(), "not gone after the watcher left: " + (him.goUnder() == null ? "" : him.goUnder().status()));
+			helper.assertFalse(him.seenWhenRemoved(), "removed while in view");
+			GoUnder dig = him.goUnder();
+			helper.assertTrue(dig.status() == GoUnder.Status.PUT_BACK && dig.dugCount() == 4, "status " + dig.status() + " dug " + dig.dugCount());
+			for (int k = 0; k < 4; k++) {
+				helper.assertTrue(level.getBlockState(top.below(k)) == before.get(k), "not put back as it was at " + k + ": " + level.getBlockState(top.below(k)));
+			}
+			helper.assertTrue(Services.traces().figureDug(level, dig.dig()).isEmpty(), "blocks still dug");
+			helper.assertTrue(EntityData.get(level.getServer()).pendingDigs().stream().noneMatch(d -> d.id().equals(dig.dig().id())), "still saved as open");
+		});
+	}
+
+	@GameTest(skyAccess = true, maxTicks = 300, padding = 8)
+	public void anOpenShaftIsSavedAndPutBackAfterAnUnload(GameTestHelper helper) {
+		ground(helper, Blocks.STONE, Blocks.GRASS_BLOCK);
+		ServerLevel level = helper.getLevel();
+		BlockPos top = helper.absolutePos(new BlockPos(3, 6, 3));
+		List<BlockState> before = new ArrayList<>();
+		for (int k = 0; k < 6; k++) {
+			before.add(level.getBlockState(top.below(k)));
+		}
+		HimEntity him = watchedFigure(helper, Variant.RIDGE, SHAFT_FEET, 0.0F, List.of());
+		boolean[] unloaded = {false};
+		String[] id = {null};
+		List<String> problems = new ArrayList<>();
+		helper.runAfterDelay(3, () -> him.startGoUnder(level, new GoUnder.Plan(top, 6)));
+		helper.onEachTick(() -> {
+			GoUnder dig = him.goUnder();
+			if (unloaded[0] || dig == null || dig.dugCount() < 3) {
+				return;
+			}
+			id[0] = dig.dig().id();
+			EntityData data = EntityData.get(level.getServer());
+			PendingDig saved = data.pendingDigs().stream().filter(d -> d.id().equals(id[0])).findFirst().orElse(null);
+			if (saved == null || saved.cells().size() != 3 || !saved.top().equals(top) || saved.depth() != 6
+					|| !saved.cells().getFirst().state().is(Blocks.GRASS_BLOCK) || !saved.cells().stream().allMatch(c -> saved.plan().inShaft(c.pos()))) {
+				problems.add("not saved with its cells: " + saved);
+			}
+			// Survives a save (server stop) as it is.
+			EntityData decoded = EntityData.CODEC.parse(NbtOps.INSTANCE, EntityData.CODEC.encodeStart(NbtOps.INSTANCE, data).getOrThrow()).getOrThrow();
+			if (!decoded.pendingDigs().contains(saved)) {
+				problems.add("lost on save: " + decoded.pendingDigs());
+			}
+			// His chunk unloads mid-dig: no world edits then, the shaft stays open and saved, no longer his.
+			him.remove(Entity.RemovalReason.UNLOADED_TO_CHUNK);
+			unloaded[0] = true;
+			if (!level.getBlockState(top).isAir() || data.pendingDigs().stream().noneMatch(d -> d.id().equals(id[0])) || GoUnder.live(id[0])) {
+				problems.add("the unload edited the world or dropped the record");
+			}
+		});
+		helper.succeedWhen(() -> {
+			helper.assertTrue(problems.isEmpty(), String.join("; ", problems));
+			helper.assertTrue(unloaded[0], "never unloaded");
+			// Nobody can see it (the test level has no players), so the next sweep puts it back from its own dig.
+			for (int k = 0; k < 6; k++) {
+				helper.assertTrue(level.getBlockState(top.below(k)) == before.get(k), "not put back at " + k + ": " + level.getBlockState(top.below(k)));
+			}
+			helper.assertTrue(EntityData.get(level.getServer()).pendingDigs().stream().noneMatch(d -> d.id().equals(id[0])), "still saved as open");
+		});
+	}
+
 	@GameTest
 	public void goesUnderRefusesGroundHeMayNotDig(GameTestHelper helper) {
 		ServerLevel level = helper.getLevel();
@@ -185,9 +298,13 @@ public class GoUnderGameTests extends RushAndDimensionGameTests {
 		for (int y = 1; y <= 6; y++) {
 			helper.setBlock(5, y, 6, Blocks.SAND); // all sand: nothing that stays put under the top
 		}
+		for (int y = 0; y <= 5; y++) {
+			helper.setBlock(3, y, 3, Blocks.STONE); // grass over stone: no dirt to bring up as the clue
+		}
+		helper.setBlock(3, 6, 3, Blocks.GRASS_BLOCK);
 		List<BlockState> before = new ArrayList<>();
 		List<BlockPos> tops = List.of(new BlockPos(1, 6, 1), new BlockPos(3, 6, 1), new BlockPos(5, 6, 1), new BlockPos(1, 6, 5), new BlockPos(3, 6, 5),
-				new BlockPos(5, 6, 6));
+				new BlockPos(5, 6, 6), new BlockPos(3, 6, 3));
 		for (BlockPos t : tops) {
 			for (int k = 0; k <= 6; k++) {
 				before.add(level.getBlockState(helper.absolutePos(t.below(k))));
@@ -250,16 +367,26 @@ public class GoUnderGameTests extends RushAndDimensionGameTests {
 		// Bare dirt on top (the clue), from just under the grass; the next dirt under it, never the gravel.
 		helper.assertTrue(fills.get(1).item().pos().pos().equals(top.below(1)) && fills.get(1).item().state().orElseThrow().is(Blocks.DIRT), "top " + fills.get(1));
 		helper.assertTrue(fills.get(0).item().pos().pos().equals(top.below(2)), "under the top " + fills.get(0));
-		// Stone ground comes back as itself; sand on top keeps sand on top, with something under it that stays put.
-		List<TraceLedger.Entry> rock = List.of(entry(cause, top, Blocks.STONE), entry(cause, top.below(1), Blocks.STONE), entry(cause, top.below(2), Blocks.ANDESITE),
-				entry(cause, top.below(3), Blocks.STONE));
-		List<GoUnder.Fill<TraceLedger.Entry>> rockFills = GoUnder.chooseEntries(new GoUnder.Plan(top, 4), rock);
-		helper.assertTrue(rockFills.get(1).item().pos().pos().equals(top) && rockFills.get(0).item().pos().pos().equals(top.below(1)), "rock " + rockFills);
-		List<TraceLedger.Entry> beach = List.of(entry(cause, top, Blocks.SAND), entry(cause, top.below(1), Blocks.SAND), entry(cause, top.below(2), Blocks.SAND),
-				entry(cause, top.below(3), Blocks.SANDSTONE));
-		List<GoUnder.Fill<TraceLedger.Entry>> beachFills = GoUnder.chooseEntries(new GoUnder.Plan(top, 4), beach);
-		helper.assertTrue(beachFills.get(1).item().state().orElseThrow().is(Blocks.SAND) && beachFills.get(0).item().state().orElseThrow().is(Blocks.SANDSTONE),
-				"beach " + beachFills);
+		// No dirt in the shaft, no bare dirt to bring up: no going under there (grass over stone or sand, rock, beach).
+		for (List<Block> shaft : List.of(List.of(Blocks.GRASS_BLOCK, Blocks.STONE, Blocks.STONE, Blocks.STONE),
+				List.of(Blocks.GRASS_BLOCK, Blocks.SAND, Blocks.SAND, Blocks.SANDSTONE), List.of(Blocks.STONE, Blocks.STONE, Blocks.ANDESITE, Blocks.STONE),
+				List.of(Blocks.SAND, Blocks.SAND, Blocks.SAND, Blocks.SANDSTONE))) {
+			List<TraceLedger.Entry> noDirt = new ArrayList<>();
+			for (int k = 0; k < shaft.size(); k++) {
+				noDirt.add(entry(cause, top.below(k), shaft.get(k)));
+			}
+			helper.assertTrue(GoUnder.chooseEntries(new GoUnder.Plan(top, 4), noDirt).isEmpty(), "covered without bare dirt on top: " + shaft);
+		}
+		// Sand over dirt: the dirt comes up on top, something that stays put under it.
+		List<TraceLedger.Entry> sandOverDirt = List.of(entry(cause, top, Blocks.SAND), entry(cause, top.below(1), Blocks.SAND),
+				entry(cause, top.below(2), Blocks.DIRT), entry(cause, top.below(3), Blocks.STONE));
+		List<GoUnder.Fill<TraceLedger.Entry>> sandFills = GoUnder.chooseEntries(new GoUnder.Plan(top, 4), sandOverDirt);
+		helper.assertTrue(sandFills.get(1).item().state().orElseThrow().is(Blocks.DIRT) && !GoUnder.falls(sandFills.get(0).item().state().orElseThrow()),
+				"sand over dirt " + sandFills);
+		// A dirt top brings up its own block.
+		List<TraceLedger.Entry> dirtTop = List.of(entry(cause, top, Blocks.COARSE_DIRT), entry(cause, top.below(1), Blocks.DIRT),
+				entry(cause, top.below(2), Blocks.DIRT), entry(cause, top.below(3), Blocks.STONE));
+		helper.assertTrue(GoUnder.chooseEntries(new GoUnder.Plan(top, 4), dirtTop).get(1).item().pos().pos().equals(top), "dirt top");
 		// Nothing that stays put: no cover, so no going under there.
 		List<TraceLedger.Entry> dunes = List.of(entry(cause, top, Blocks.SAND), entry(cause, top.below(1), Blocks.SAND), entry(cause, top.below(2), Blocks.GRAVEL),
 				entry(cause, top.below(3), Blocks.SAND));

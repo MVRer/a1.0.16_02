@@ -80,6 +80,8 @@ public class HimEntity extends PathfinderMob {
 	static final double BASE_SPEED = 0.25;
 	/** He steps up a full block without jumping, so a run never stalls on one-block terrain (horses do the same). */
 	static final double STEP_HEIGHT = 1.0;
+	/** The rush: room he needs beside each point of the pass, on the side away from the player, in blocks. */
+	private static final double RUSH_CLEARANCE = 0.75;
 	/** Leaving: a fresh path at least this often, and the path he follows reaches this many seconds of travel ahead. */
 	private static final int REPATH_TICKS = 40;
 	private static final double LEAVE_AHEAD_SECONDS = 2.5;
@@ -443,7 +445,7 @@ public class HimEntity extends PathfinderMob {
 		return BlockPos.containing(getX(), getY() - 0.2, getZ());
 	}
 
-	private void startGoUnder(ServerLevel level, GoUnder.Plan plan) {
+	void startGoUnder(ServerLevel level, GoUnder.Plan plan) {
 		goUnder = GoUnder.begin(level, plan);
 		triggered = true;
 		setLow(false);
@@ -464,13 +466,14 @@ public class HimEntity extends PathfinderMob {
 				}
 			}
 			case STUCK -> {
-				// A block of the shaft changed under him: he waits in the hole, and once nobody can see him the shaft
-				// is put back as it was (remove).
-				if (watchers.mayRemove(level, viewBox(), position())) {
+				// A block of the shaft changed under him: he waits in the hole until nobody can see him or any cell of
+				// the shaft (the opening included), then it is put back as it was and he is gone (onRemoval).
+				if (watchers.mayRemove(level, viewBox(), position()) && !watchers.seesAny(level, goUnder.openCells(level))) {
 					gone(level, "could not finish going under, out of view");
 				}
 			}
 			case ABANDONED -> {
+				goUnder.release();
 				goUnder = null; // nothing was dug: he leaves the ordinary way
 				setPhase(Phase.LEAVING);
 			}
@@ -523,7 +526,7 @@ public class HimEntity extends PathfinderMob {
 	private boolean startRush(ServerLevel level, ServerPlayer chaser, Chase chase, EntityConfig config) {
 		rushed = true;
 		double step = config.maxRunSpeed / 20.0;
-		Optional<Rush> plan = Rush.plan(position(), chaser.position(), chase.velocity(), config.rushPassOffset(), step, path -> walkable(level, path));
+		Optional<Rush> plan = Rush.plan(position(), chaser.position(), chase.velocity(), config.rushPassOffset(), step, path -> clearPass(level, path));
 		if (plan.isEmpty()) {
 			A1016_02.LOGGER.debug("[a1016] figure ({}): no safe pass by the chaser, he runs", variant.shortName());
 			if (phase != Phase.LEAVING || gait != Variant.Gait.RUN) {
@@ -543,17 +546,47 @@ public class HimEntity extends PathfinderMob {
 		return true;
 	}
 
-	/** Every point of the path has ground he can run on, within a step up or a short drop of the one before. */
-	private boolean walkable(ServerLevel level, List<Vec3> path) {
+	/**
+	 * The planned pass has room: every move along it is over ground he can run on (a step up or a short drop at
+	 * most, no wall, no water), and beside each point, on the side away from the player, there is room for him too
+	 * ({@link #RUSH_CLEARANCE}), so nothing can hold him inside the pass offset.
+	 */
+	private boolean clearPass(ServerLevel level, List<Rush.Step> path) {
+		Vec3 from = position();
 		double y = getY();
-		for (Vec3 point : path) {
-			Vec3 feet = SpotFinder.standNear(level, point.x, point.z, y, 1, 2, getDimensions(getPose()));
+		for (Rush.Step step : path) {
+			Vec3 feet = clearMove(level, from, step.him(), y);
 			if (feet == null) {
 				return false;
 			}
+			Vec3 out = step.him().add(step.outward().scale(RUSH_CLEARANCE));
+			if (SpotFinder.standNear(level, out.x, out.z, feet.y, 1, 2, getDimensions(getPose())) == null) {
+				return false;
+			}
+			from = step.him();
 			y = feet.y;
 		}
 		return true;
+	}
+
+	/**
+	 * Where his feet end if he moves from {@code from} to {@code to}: every point of the way (each fifth of a block)
+	 * has room and ground for him within a step up or a short drop; null if anything (a wall, water, a drop) is in the
+	 * way.
+	 */
+	private @Nullable Vec3 clearMove(ServerLevel level, Vec3 from, Vec3 to, double y) {
+		Vec3 d = Rush.flat(to.subtract(from));
+		int samples = Math.max(1, (int) Math.ceil(d.length() / 0.2));
+		Vec3 feet = null;
+		for (int i = 1; i <= samples; i++) {
+			Vec3 at = from.add(d.scale(i / (double) samples));
+			feet = SpotFinder.standNear(level, at.x, at.z, y, 1, 2, getDimensions(getPose()));
+			if (feet == null) {
+				return null;
+			}
+			y = feet.y;
+		}
+		return feet;
 	}
 
 	/**
@@ -570,8 +603,11 @@ public class HimEntity extends PathfinderMob {
 		}
 		double step = config.maxRunSpeed / 20.0;
 		Vec3 next = rush.step(position(), target.position(), chase.velocity(), step);
-		if (SpotFinder.standNear(level, next.x, next.z, getY(), 1, 3, getDimensions(getPose())) == null) {
-			endRush(); // a wall, water or a drop ahead
+		if (clearMove(level, position(), next, getY()) == null) {
+			// A wall, water or a drop in the way: the move could end short, inside the offset. He does not take it,
+			// and runs away instead.
+			setDeltaMovement(0.0, getDeltaMovement().y, 0.0);
+			endRush();
 			return;
 		}
 		getNavigation().stop();
@@ -1217,15 +1253,20 @@ public class HimEntity extends PathfinderMob {
 	}
 
 	/**
-	 * Removed while going under with the shaft open (past the render distance, a debug clear, or a dig he could not
-	 * finish): the blocks he dug go back where they were first ({@link GoUnder#putBack}). Never on a chunk unload.
+	 * Gone while going under with the shaft open (a dig he could not finish, past the render distance, a debug clear):
+	 * the blocks he dug go back where they were, but only if nobody can see any of those cells, the opening included
+	 * ({@link GoUnder#putBack}). Otherwise, and on a chunk unload or server stop (no world edits then), the saved
+	 * shaft is put back later by {@link GoUnder#refillPending} once it is out of view.
 	 */
 	@Override
-	public void remove(RemovalReason reason) {
-		if (goUnder != null && (reason == RemovalReason.DISCARDED || reason == RemovalReason.KILLED) && level() instanceof ServerLevel serverLevel) {
-			goUnder.putBack(serverLevel);
+	public void onRemoval(RemovalReason reason) {
+		super.onRemoval(reason);
+		if (goUnder != null && level() instanceof ServerLevel serverLevel) {
+			if (reason.shouldDestroy() && goUnder.open() && !watchers(serverLevel).seesAny(serverLevel, goUnder.openCells(serverLevel))) {
+				goUnder.putBack(serverLevel);
+			}
+			goUnder.release();
 		}
-		super.remove(reason);
 	}
 
 	@Override

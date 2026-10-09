@@ -67,6 +67,7 @@ public final class FigureApi {
 	/** Among endermen or piglins he never stands closer than this (horizontally) to one of them. */
 	static final double AMONG_MIN_GAP = 1.5;
 	private static final int SWEEP_INTERVAL = 5;
+	private static final int PENDING_DIG_INTERVAL = 20;
 	private static final int FULL_SWEEP_INTERVAL = 100;
 	/** Every figure seen alive (spawned here or by /summon), for the cheap gate and the sweep. Pruned on read. */
 	private static final Set<HimEntity> LIVE = Collections.newSetFromMap(new WeakHashMap<>());
@@ -279,6 +280,9 @@ public final class FigureApi {
 	 */
 	static void sweep(MinecraftServer server) {
 		int tick = server.getTickCount();
+		if (tick % PENDING_DIG_INTERVAL == 0) {
+			GoUnder.refillPending(server); // shafts left open by a figure that is gone, once out of view (D-030)
+		}
 		if (tick % FULL_SWEEP_INTERVAL == 0) {
 			for (ServerLevel level : server.getAllLevels()) {
 				LIVE.addAll(level.getEntities(ModEntities.HIM, HimEntity::isAlive));

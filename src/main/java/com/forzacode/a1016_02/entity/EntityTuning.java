@@ -44,8 +44,17 @@ final class EntityTuning {
 			new Key("closeInFastSpeed", 0.5, 10.0, c -> c.closeInFastSpeed, (c, v) -> c.closeInFastSpeed = v),
 			// Goes under (D-030): the share of leaving sightings that dig down instead, where the ground allows.
 			new Key("goUnderChance", 0.0, 1.0, c -> c.goUnderChance, (c, v) -> c.goUnderChance = v),
-			// The close-chase rush (D-037): how close a chaser he cannot outrun gets before he turns and runs past them.
-			new Key("rushTriggerDistance", 2.0, 32.0, c -> c.rushTriggerDistance, (c, v) -> c.rushTriggerDistance = v));
+			// Seconds per block dug or put back, and how deep he sinks (whole blocks, 4 to 8: he has to be under the cover).
+			new Key("goUnderDigSeconds", 0.1, 2.0, c -> c.goUnderDigSeconds, (c, v) -> c.goUnderDigSeconds = v),
+			new Key("goUnderMinDepth", GoUnder.MIN_DEPTH, GoUnder.MAX_DEPTH, c -> c.goUnderMinDepth, (c, v) -> c.goUnderMinDepth = (int) Math.round(v)),
+			new Key("goUnderMaxDepth", GoUnder.MIN_DEPTH, GoUnder.MAX_DEPTH, c -> c.goUnderMaxDepth, (c, v) -> c.goUnderMaxDepth = (int) Math.round(v)),
+			// The close-chase rush (D-037): how close a chaser he cannot outrun gets before he turns and runs past them,
+			// how far beside them he passes (never under 1.5), and how long the rush may take before he just runs.
+			new Key("rushTriggerDistance", 2.0, 32.0, c -> c.rushTriggerDistance, (c, v) -> c.rushTriggerDistance = v),
+			new Key("rushPassOffset", Rush.MIN_OFFSET, 6.0, c -> c.rushPassOffset, (c, v) -> c.rushPassOffset = v),
+			new Key("rushMaxSeconds", 0.5, 10.0, c -> c.rushMaxSeconds, (c, v) -> c.rushMaxSeconds = v),
+			// The End and the Nether (D-034): an enderman or zombified piglin within this many blocks of his spot.
+			new Key("amongMobsRadius", 2.0, 16.0, c -> c.amongMobsRadius, (c, v) -> c.amongMobsRadius = v));
 
 	private EntityTuning() {
 	}

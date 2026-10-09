@@ -1,12 +1,14 @@
 package com.forzacode.a1016_02.entity;
 
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.List;
 
 import com.forzacode.a1016_02.core.ModConfig;
 import com.forzacode.a1016_02.core.Pacing;
 import com.forzacode.a1016_02.core.TraceService;
 
+import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.level.Level;
@@ -44,6 +46,16 @@ public record Watchers(List<Watcher> all) {
 		Pacing pacing = ModConfig.pacing();
 		List<TraceService.Viewer> viewers = all.stream().map(Watcher::viewer).toList();
 		return !TraceService.isOutOfView(level, box, viewers, pacing.viewNearBlocks, pacing.viewConeDegrees);
+	}
+
+	/**
+	 * The rule of {@code TraceService.isOutOfView(level, positions)} for blocks: true if any watcher is near any of
+	 * them or can see one (an open shaft's cells, its opening included).
+	 */
+	public boolean seesAny(Level level, Collection<BlockPos> cells) {
+		Pacing pacing = ModConfig.pacing();
+		List<TraceService.Viewer> viewers = all.stream().map(Watcher::viewer).toList();
+		return !TraceService.positionsOutOfView(level, cells, viewers, pacing.viewNearBlocks, pacing.viewConeDegrees);
 	}
 
 	/** True if someone is there and he is farther (horizontally) than every watcher's full render distance. */
