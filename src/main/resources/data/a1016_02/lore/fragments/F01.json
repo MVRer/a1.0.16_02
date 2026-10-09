@@ -13,6 +13,7 @@
 		"site": "RUINED_HUT",
 		"origin": "spawn",
 		"min_distance": 300,
-		"max_distance": 800
+		"max_distance": 800,
+		"site_min_distance": 300
 	}
 }
