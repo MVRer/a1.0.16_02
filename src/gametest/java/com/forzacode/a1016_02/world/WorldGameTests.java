@@ -48,7 +48,7 @@ import net.minecraft.world.level.levelgen.structure.BoundingBox;
  * 8x8x8 test area (scar shapes are built with small sizes) and no player is added, so other tests' view checks
  * are untouched.
  */
-public class WorldGameTests {
+public class WorldGameTests extends WorldSignatureTests {
 	private static final long TODAY = 10;
 
 	private static BlockState leaves() {
