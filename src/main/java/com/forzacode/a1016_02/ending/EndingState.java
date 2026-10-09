@@ -459,11 +459,12 @@ public final class EndingState extends SavedData {
 		setDirty();
 	}
 
-	/** Ending C's reversal: "say his name once and it all starts again". */
+	/**
+	 * Ending C's reversal: "say his name once and it all starts again". The house has to be taken apart again (and the
+	 * quiet days start over from the naming), but the fragments are never forgotten: every fragment ever held must
+	 * still be burned for C, and the ones already burned stay burned (they are gone from the world).
+	 */
 	void resetSilenceWork() {
-		fragmentsBurned = 0;
-		everHeld.clear();
-		burnedIds.clear();
 		ownBroken = 0;
 		housePeak = 0;
 		setDirty();

@@ -311,6 +311,9 @@ public class EndingBeatTests extends EndingRuleTests {
 		Run r = new Run(helper);
 		r.ports.trapArmed = true;
 		r.data.addBurned("F02");
+		r.data.addHeld("F05");
+		r.data.setHousePeak(40);
+		r.data.addOwnBroken();
 		r.commit(EndingPath.C);
 		helper.assertTrue(r.state.stage() == Stage.REMOVAL && r.state.hasFlag("ending:path=C"), "C did not enter Stage 4");
 		helper.assertTrue(DirectorHooks.silence(r.state).orElse(0L) == DirectorHooks.FOREVER, "director:silence_until_day=-1 not set");
@@ -328,7 +331,11 @@ public class EndingBeatTests extends EndingRuleTests {
 		helper.assertTrue(r.data.path() == EndingPath.NONE, "naming him did not undo C");
 		helper.assertTrue(DirectorHooks.silence(r.state).isEmpty(), "the silence stayed after naming him");
 		helper.assertTrue(r.state.stage() == Stage.TELLING, "the stage did not go back to Telling");
-		helper.assertTrue(r.data.fragmentsBurned() == 0 && r.data.everHeld().isEmpty() && !r.state.hasFlag("ending:path=C"), "C's work was kept");
+		helper.assertTrue(r.data.ownBroken() == 0 && r.data.housePeak() == 0 && !r.state.hasFlag("ending:path=C"), "C's house work was kept");
+		// Every fragment ever held must still be burned for C: naming him forgets none of them.
+		helper.assertTrue(r.data.everHeld().equals(java.util.Set.of("F02", "F05")) && r.data.burnedIds().equals(java.util.Set.of("F02"))
+				&& r.data.unburned().equals(java.util.Set.of("F05")) && r.data.fragmentsBurned() == 1, "naming him forgot the fragments: held "
+						+ r.data.everHeld() + ", burned " + r.data.burnedIds());
 		helper.succeed();
 	}
 
