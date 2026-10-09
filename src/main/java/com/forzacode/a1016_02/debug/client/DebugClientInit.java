@@ -6,5 +6,6 @@ public final class DebugClientInit {
 	}
 
 	public static void init() {
+		DevWorld.init();
 	}
 }

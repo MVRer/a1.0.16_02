@@ -39,7 +39,9 @@ loom {
 			inherit client
 			configName = "Dev Client"
 			property("a1016_02.devWorld", "a1016_dev")
-			property("a1016_02.devSeed", "-4172144997902289642")
+			property("a1016_02.devSeed", "-4180345853331630785")
+			// A fixed name keeps the same player (and so the same subject) across launches.
+			programArgs("--username", "Dev")
 		}
 	}
 }
