@@ -1,6 +1,8 @@
 package com.forzacode.a1016_02.ending.d;
 
 import com.forzacode.a1016_02.core.CommandHooks;
+import com.forzacode.a1016_02.ending.EndingApi;
+import com.forzacode.a1016_02.ending.EndingPath;
 
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerEntityEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
@@ -77,8 +79,13 @@ public final class EndingDInit {
 		}
 		if (data.step() == Step.AFTERWARD) {
 			Afterward.tick(server, data, cfg);
-		} else if (server.getTickCount() % Math.max(1, cfg.checkTicks) == 0) {
+		} else if (server.getTickCount() % Math.max(1, cfg.checkTicks) == 0 && !EndingApi.ended(server)) {
+			// The chain only runs while the story goes on (an ending that already finished leaves nothing to bury).
+			Step before = data.step();
 			Chain.check(server, data, cfg);
+			if (data.step() != before && data.step().atLeast(Step.GROVE)) {
+				EndingApi.setProgress(server, EndingPath.D, data.step().number());
+			}
 		}
 	}
 
@@ -86,6 +93,7 @@ public final class EndingDInit {
 		Marks.clear();
 		Grove.clear();
 		Cairn.clear();
+		Camp.clear();
 		Chain.clear();
 		Stair.clear();
 		LastMinute.reset();

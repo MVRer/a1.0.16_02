@@ -36,7 +36,7 @@ import net.minecraft.world.level.material.Fluids;
 
 /**
  * Step 4, under the seed: the team's stair to bedrock under the F07 pyramid. If it is not there it is built early,
- * as soon as F28 is read, as something left by others ({@value #CAUSE}, never undone), out of view, a few levels per
+ * as soon as F28 is read, as something left by others ({@value #CAUSE}: never his trace, never undone), out of view, a few levels per
  * batch: a spiral stair one block wide round a stone pillar whose axis runs from the seed sign down to F30's twin,
  * into a small bedrock chamber around the twin (lore places the twin; this only builds around it). Then lore is asked
  * to put F25 at the bottom if it has not placed it elsewhere (a STAIR_BOTTOM site plus {@code FragmentService.place}).
@@ -45,8 +45,11 @@ import net.minecraft.world.level.material.Fluids;
  * loses blocks while they are in the chamber, so the way out shrinks (steps 5 to 7, {@value #LOSS_CAUSE}).
  */
 public final class Stair {
-	/** The team's build: never undone. */
-	public static final String CAUSE = "ending:d/left/stair";
+	/**
+	 * The team's build, left by others (D-041): under {@code lore:left/}, so lore never counts it as his traces and the
+	 * undo never takes it apart.
+	 */
+	public static final String CAUSE = "lore:left/ending-d/stair";
 	/** The stair losing blocks: put back in the last minute. */
 	public static final String LOSS_CAUSE = "ending:d/stair";
 	public static final String FLOOD_CAUSE = "ending:d/flood";

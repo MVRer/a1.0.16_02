@@ -5,9 +5,11 @@ import java.util.Optional;
 import java.util.Set;
 
 import com.forzacode.a1016_02.core.HerobrineState;
+import com.forzacode.a1016_02.core.ProtectedAreas;
 import com.forzacode.a1016_02.core.Services;
 import com.forzacode.a1016_02.core.TraceLedger;
 import com.forzacode.a1016_02.lore.LoreData;
+import com.forzacode.a1016_02.lore.UntouchedGrove;
 
 import net.fabricmc.fabric.api.gametest.v1.GameTest;
 
@@ -27,6 +29,7 @@ import net.minecraft.world.level.block.StairBlock;
 import net.minecraft.world.level.block.entity.SignBlockEntity;
 import net.minecraft.world.level.block.entity.SignText;
 import net.minecraft.world.level.block.entity.SignTextSlot;
+import net.minecraft.world.level.levelgen.structure.BoundingBox;
 import net.minecraft.world.phys.Vec3;
 
 /**
@@ -74,7 +77,8 @@ public class EndingDGameTests extends EndingDDangerTests {
 		helper.assertBlockPresent(Blocks.STONE, new BlockPos(EndingDSupport.AX + 3, 6, EndingDSupport.AZ + 3));
 		helper.assertBlockPresent(Blocks.STONE, new BlockPos(EndingDSupport.AX, 19, EndingDSupport.AZ));
 		helper.assertBlockPresent(Blocks.SAND, new BlockPos(EndingDSupport.AX, 20, EndingDSupport.AZ));
-		// What the team built stays for good.
+		// What the team built stays for good, and is left by others: lore never counts it as his traces (D-041).
+		helper.assertTrue(Stair.CAUSE.startsWith("lore:left/"), "the stair is not ledgered as left by others");
 		TraceLedger.get(level.getServer()).entries().stream().filter(e -> e.cause().startsWith(Stair.CAUSE)
 				&& plan.chamberBox().inflatedBy(2).isInside(e.pos().pos())).forEach(e -> helper.assertTrue(
 						Undo.skipReason(level.getServer(), e).isPresent(), "the undo would take the stair apart"));
@@ -87,11 +91,14 @@ public class EndingDGameTests extends EndingDDangerTests {
 		MinecraftServer server = level.getServer();
 		LoreData lore = LoreData.get(server);
 		Optional<GlobalPos> oldGrove = lore.anchor(LoreData.GROVE);
+		Optional<ProtectedAreas.Area> oldArea = Services.protectedAreas().get(UntouchedGrove.AREA_ID);
 		HerobrineState state = HerobrineState.get(server);
 		GlobalPos oldCairn = state.fragmentsPlaced().get("F13");
 		EndingDState data = new EndingDState();
 		try {
 			lore.setAnchor(LoreData.GROVE, GlobalPos.of(level.dimension(), helper.absolutePos(new BlockPos(8, 1, 8))));
+			Services.protectedAreas().protect(UntouchedGrove.AREA_ID, level.dimension(),
+					BoundingBox.fromCorners(helper.absolutePos(new BlockPos(0, 0, 0)), helper.absolutePos(new BlockPos(13, 11, 13))));
 			ServerPlayer player = EndingDSupport.player(helper, new Vec3(8.5, 1, 8.5), 0, 0);
 
 			// 1. The map: read, and in the grove.
@@ -107,6 +114,15 @@ public class EndingDGameTests extends EndingDDangerTests {
 			BlockPos log = helper.absolutePos(new BlockPos(10, 1, 10));
 			helper.assertTrue(Grove.cutLog(level, data, log, Blocks.POPLAR_LOG.defaultBlockState()), "a poplar log in the grove did not count");
 			helper.assertFalse(Grove.cutLog(level, data, log, Blocks.OAK_LOG.defaultBlockState()), "an oak log counted");
+			// Outside the protected area, or carried in and placed: not grove wood.
+			helper.setBlock(15, 1, 15, Blocks.POPLAR_LOG);
+			helper.assertFalse(Grove.cutLog(level, data, helper.absolutePos(new BlockPos(15, 1, 15)), Blocks.POPLAR_LOG.defaultBlockState()),
+					"a log outside the grove's protected area counted");
+			helper.setBlock(11, 1, 11, Blocks.POPLAR_LOG);
+			BlockPos carriedLog = helper.absolutePos(new BlockPos(11, 1, 11));
+			Services.watch().onPlaced(player, level, carriedLog, Blocks.POPLAR_LOG.defaultBlockState());
+			helper.assertFalse(Grove.cutLog(level, data, carriedLog, Blocks.POPLAR_LOG.defaultBlockState()), "a log carried into the grove counted");
+			helper.assertTrue(data.groveLogs() == 1, "expected one grove log, counted " + data.groveLogs());
 			ItemEntity drop = new ItemEntity(level, log.getX() + 0.5, log.getY() + 0.5, log.getZ() + 0.5, new ItemStack(Items.POPLAR_LOG));
 			level.addFreshEntity(drop);
 			helper.assertTrue(Marks.has(drop.getItem(), Marks.GROVE_WOOD), "the log's drop is not grove wood");
@@ -137,6 +153,8 @@ public class EndingDGameTests extends EndingDDangerTests {
 			helper.assertTrue(data.step() == Step.UNDER_SEED, "carrying it away did not count");
 		} finally {
 			oldGrove.ifPresentOrElse(g -> lore.setAnchor(LoreData.GROVE, g), () -> lore.removeAnchor(LoreData.GROVE));
+			oldArea.ifPresentOrElse(a -> Services.protectedAreas().protect(a.id(), a.dimension(), a.box()),
+					() -> Services.protectedAreas().unprotect(UntouchedGrove.AREA_ID));
 			state.setFragmentPlaced("F13", oldCairn);
 			Cairn.clear();
 			Grove.clear();

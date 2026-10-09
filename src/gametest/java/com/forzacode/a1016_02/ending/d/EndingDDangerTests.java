@@ -15,6 +15,7 @@ import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.util.RandomSource;
 import net.minecraft.world.entity.EntityTypes;
+import net.minecraft.world.entity.monster.Creeper;
 import net.minecraft.world.entity.monster.spider.Spider;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.StairBlock;
@@ -130,6 +131,31 @@ public class EndingDDangerTests extends EndingDUndoTests {
 		helper.assertTrue(Services.traces().forced().restoreBlock(level, lost, torch), "the torch did not come back");
 		helper.assertTrue(level.getBlockState(torch).is(Blocks.WALL_TORCH), "the torch is not back on the wall");
 		helper.assertTrue(LastMinute.lostTorch(server, data).filter(e -> e.pos().pos().equals(torch)).isEmpty(), "the torch could come back twice");
+		helper.succeed();
+	}
+
+	@GameTest(structure = EndingDSupport.YARD, maxTicks = 40)
+	public void creepersGoIntoTheTentsOnlyUnseen(GameTestHelper helper) {
+		ServerLevel level = helper.getLevel();
+		EndingDSupport.fill(helper, 0, 0, 0, 15, 0, 15, Blocks.DIRT);
+		// A tent: a roof over a 3x3 floor, open at the sides.
+		EndingDSupport.fill(helper, 10, 3, 10, 12, 3, 12, Blocks.OAK_PLANKS);
+		Creeper creeper = helper.spawn(EntityTypes.CREEPER, new BlockPos(2, 1, 2));
+		BlockPos camp = helper.absolutePos(new BlockPos(8, 1, 8));
+		EndingDConfig cfg = new EndingDConfig();
+		cfg.campRadius = 7;
+		helper.assertFalse(Camp.tentSpots(level, camp, cfg.campRadius).isEmpty(), "the tent was not found");
+		Vec3 start = creeper.position();
+		helper.assertFalse(Camp.creepersIntoTents(level, camp, EndingDSupport.EVERYONE, cfg, RandomSource.create(2)), "a creeper was moved in view");
+		helper.assertTrue(creeper.position().equals(start), "the creeper moved in view");
+		helper.assertTrue(Camp.creepersIntoTents(level, camp, EndingDSupport.NOBODY, cfg, RandomSource.create(2)), "no creeper went into the tent");
+		BlockPos at = creeper.blockPosition();
+		helper.assertTrue(at.getX() >= helper.absolutePos(new BlockPos(10, 1, 10)).getX() && at.getX() <= helper.absolutePos(new BlockPos(12, 1, 12)).getX()
+				&& at.getZ() >= helper.absolutePos(new BlockPos(10, 1, 10)).getZ() && at.getZ() <= helper.absolutePos(new BlockPos(12, 1, 12)).getZ(),
+				"the creeper is not under the tent: " + at.toShortString());
+		helper.assertTrue(Services.mobs().isTampered(creeper), "the creeper is not silenced");
+		Services.mobs().release(creeper);
+		creeper.discard();
 		helper.succeed();
 	}
 

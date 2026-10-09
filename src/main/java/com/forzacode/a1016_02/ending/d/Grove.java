@@ -47,6 +47,13 @@ public final class Grove {
 		return UntouchedGrove.contains(server, pos);
 	}
 
+	/** True if this block is inside the untouched grove's protected area and no player placed it there. */
+	public static boolean grewInGrove(ServerLevel level, BlockPos pos) {
+		boolean inside = Services.protectedAreas().get(UntouchedGrove.AREA_ID)
+				.filter(area -> area.dimension().equals(level.dimension()) && area.box().isInside(pos)).isPresent();
+		return inside && !Services.watch().wasPlacedByPlayer(level, pos);
+	}
+
 	public static boolean isPoplarLog(BlockState state) {
 		return state.is(Blocks.POPLAR_LOG) || state.is(Blocks.POPLAR_WOOD);
 	}
@@ -58,9 +65,12 @@ public final class Grove {
 		}
 	}
 
-	/** The subject cut this block: a poplar log in the grove counts and its drop is grove wood. True if it counted. */
+	/**
+	 * The subject cut this block: a poplar log that grew in the untouched grove (inside its protected area, and not
+	 * placed by a player: a log carried in does not count) counts, and its drop is grove wood. True if it counted.
+	 */
 	public static boolean cutLog(ServerLevel level, EndingDState data, BlockPos pos, BlockState state) {
-		if (!isPoplarLog(state) || !contains(level.getServer(), GlobalPos.of(level.dimension(), pos))) {
+		if (!isPoplarLog(state) || !grewInGrove(level, pos)) {
 			return false;
 		}
 		data.addGroveLog();

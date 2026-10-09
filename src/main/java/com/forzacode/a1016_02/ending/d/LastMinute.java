@@ -14,6 +14,9 @@ import com.forzacode.a1016_02.core.Services;
 import com.forzacode.a1016_02.core.SiteRegistry;
 import com.forzacode.a1016_02.core.SoundCues;
 import com.forzacode.a1016_02.core.TraceLedger;
+import com.forzacode.a1016_02.ending.DirectorHooks;
+import com.forzacode.a1016_02.ending.EndingApi;
+import com.forzacode.a1016_02.ending.EndingPath;
 import com.forzacode.a1016_02.entity.FigureApi;
 import com.forzacode.a1016_02.entity.HimEntity;
 import com.forzacode.a1016_02.entity.Variant;
@@ -304,9 +307,13 @@ public final class LastMinute {
 	 */
 	static void complete(MinecraftServer server, EndingDState data, EndingDConfig cfg) {
 		HerobrineState state = HerobrineState.get(server);
+		// The path becomes D (Stage 4; whatever A, B or C was doing stops), then the story ends: nothing more is armed.
+		EndingApi.commitD(server, "his cross");
+		EndingApi.setProgress(server, EndingPath.D, Step.LAST_MINUTE.number());
+		EndingApi.endStory(server, "no longer with us");
 		state.setFlag(EndingDInit.COMPLETE_FLAG, true);
-		state.setFlag(EndingDInit.SILENCE_FOREVER_FLAG, true);
-		// TODO(ending): set the path to D through ending.EndingApi once it is on main.
+		// The director's silence for good, through the ending's writer (whatever the ending's own config says).
+		DirectorHooks.silenceForever(state);
 		data.setCompleteDay(GameClock.day(server));
 		Sting.refresh(server);
 		if (cfg.forceDawn) {

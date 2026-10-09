@@ -51,6 +51,7 @@ public final class Chain {
 		Step step = data.step();
 		switch (step) {
 			case MAP -> {
+				Camp.danger(player, view, cfg);
 				if (read.test("F28") && inGrove(player)) {
 					advance(server, data, step);
 				}
