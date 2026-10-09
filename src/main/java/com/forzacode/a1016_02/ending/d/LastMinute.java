@@ -168,7 +168,7 @@ public final class LastMinute {
 				if (player.connection != null) {
 					ClientEffects.silence(player, (int) EndingDConfig.ticks(cfg.silenceSeconds), cfg.silenceFadeTicks);
 				}
-				if (!preview) {
+				if (!preview && !HerobrineState.get(server).hasFlag(EndingDInit.COMPLETE_FLAG)) {
 					complete(server, data, cfg);
 				}
 				footsteps = footstepEntries(server, data);

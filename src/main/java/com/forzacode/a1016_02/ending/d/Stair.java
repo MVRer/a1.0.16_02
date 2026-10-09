@@ -241,7 +241,11 @@ public final class Stair {
 			plan = planned.get();
 			data.setStair(plan);
 		}
-		return buildSegment(level, data, plan, traces, cfg);
+		Attempt attempt = buildSegment(level, data, plan, traces, cfg);
+		if (attempt.status() == Status.DONE) {
+			data.stair().ifPresent(done -> recordSite(level, done));
+		}
+		return attempt;
 	}
 
 	/** Builds the next segment of this plan (or finishes it). */
@@ -337,16 +341,18 @@ public final class Stair {
 
 	/** The stair is done: a STAIR_BOTTOM site at the chamber, for lore's F25. */
 	private static void finish(ServerLevel level, EndingDState data, StairPlan plan) {
-		StairPlan done = plan.completed();
-		data.setStair(done);
-		BlockPos corner = new BlockPos(plan.axisX() + plan.half(), bedrockTop(level, plan.axisX() + plan.half(), plan.axisZ() + plan.half(), plan.twin().getY() + 4) + 1,
-				plan.axisZ() + plan.half());
-		GlobalPos site = GlobalPos.of(level.dimension(), corner);
-		if (Services.sites().find(SiteType.STAIR_BOTTOM, site, 4).isEmpty()) {
-			Services.sites().record(SiteType.STAIR_BOTTOM, level.dimension(), corner, 2);
-		}
+		data.setStair(plan.completed());
 		A1016_02.LOGGER.info("[a1016] ending d: the team's stair goes down to bedrock under the seed at {} ({} steps)", plan.twin().toShortString(),
 				plan.stairs().size());
+	}
+
+	/** The finished stair's bottom as a STAIR_BOTTOM site (once), so lore can put F25 there. */
+	static void recordSite(ServerLevel level, StairPlan plan) {
+		BlockPos corner = new BlockPos(plan.axisX() + plan.half(), bedrockTop(level, plan.axisX() + plan.half(), plan.axisZ() + plan.half(),
+				plan.bedrockSearchTop()) + 1, plan.axisZ() + plan.half());
+		if (Services.sites().find(SiteType.STAIR_BOTTOM, GlobalPos.of(level.dimension(), corner), 4).isEmpty()) {
+			Services.sites().record(SiteType.STAIR_BOTTOM, level.dimension(), corner, 2);
+		}
 	}
 
 	/** F25 at the bottom if lore has not placed it elsewhere: asks lore to place it near the chamber (once it can). */
@@ -359,6 +365,10 @@ public final class Stair {
 			return;
 		}
 		List<SiteRegistry.Site> sites = Services.sites().find(SiteType.STAIR_BOTTOM, GlobalPos.of(level.dimension(), plan.twin()), plan.half() + 4);
+		if (sites.isEmpty()) {
+			recordSite(level, plan);
+			sites = Services.sites().find(SiteType.STAIR_BOTTOM, GlobalPos.of(level.dimension(), plan.twin()), plan.half() + 4);
+		}
 		BlockPos hint = sites.isEmpty() ? plan.twin() : sites.getFirst().pos();
 		Services.fragments().place("F25", level, hint);
 	}
@@ -374,8 +384,8 @@ public final class Stair {
 
 	/**
 	 * Step 4's danger: the stairwell floods. Once the player is well down the stair, one block between the open sea
-	 * and the hole they dug through the pyramid's floor is taken, out of view, and the sea comes down after them (how
-	 * dyl4n_m drowned). Deniable: the sea got in. The clue: one block missing from the pyramid's side.
+	 * and the hole they dug through the pyramid's floor is taken, out of view, and the sea comes down after them (the
+	 * way one on the list drowned). Deniable: the sea got in. The clue: one block missing from the pyramid's side.
 	 */
 	public static boolean flood(ServerPlayer player, StairPlan plan, View view) {
 		ServerLevel level = player.level();

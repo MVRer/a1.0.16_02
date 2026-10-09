@@ -15,6 +15,8 @@ import com.forzacode.a1016_02.core.TraceService;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 
+import org.jspecify.annotations.Nullable;
+
 /**
  * After the last minute, for good: the fog stays gone and the music on; every removal in the ledger is undone, the
  * newest first (the oldest last), a few entries every couple of ticks, each out of view (blocks go back to the house,
@@ -29,7 +31,7 @@ public final class Afterward {
 	private static int passSkipped;
 	private static long restUntil;
 	private static long nextRegrow;
-	private static final Undo.ChunkRequests LOADS = new Undo.ChunkRequests(2);
+	private static Undo.@Nullable ChunkRequests loads;
 
 	private Afterward() {
 	}
@@ -90,7 +92,10 @@ public final class Afterward {
 				budget++;
 				continue;
 			}
-			Undo.Result result = Undo.undo(server, entry, traces, LOADS);
+			if (loads == null) {
+				loads = new Undo.ChunkRequests(Math.max(1, cfg.chunkLoadsPerTick));
+			}
+			Undo.Result result = Undo.undo(server, entry, traces, loads);
 			switch (result) {
 				case DONE -> {
 					passDone++;
@@ -152,6 +157,7 @@ public final class Afterward {
 	}
 
 	public static void clear() {
+		loads = null;
 		cursor = -1;
 		passDone = passWaiting = passBlocked = passSkipped = 0;
 		restUntil = 0;
