@@ -2,6 +2,16 @@
 
 One entry per merge, newest first. Run the game from the main checkout (this folder, on `main`).
 
+## READY TO TRY: Death-marker crosses are proper Latin crosses  (merged feat/accident-cross-shape, commit 7909b67)
+```
+Restart needed: full game restart (Java code)
+See it now:
+  1. Launch "Dev Client". /a1016 accident mark fell   (a preview cross goes up behind you; nothing is recorded)
+What to look for: 5 to 6 tall, 1 block above the arms, a long foot below, built only from the ground right there
+  (dirt, stone, whatever was around), never glass.
+Known rough edges: the world's crosses (worldgen, the cross row, glass memorials) land in the next merge.
+```
+
 ## READY TO TRY: Final integration (everything wired together)  (merged feat/integration-final, commit 8130486)
 ```
 Restart needed: full game restart (Java code across workstreams)
