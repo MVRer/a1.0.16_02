@@ -7,6 +7,7 @@ import java.util.function.Predicate;
 import com.forzacode.a1016_02.core.CardRegistry;
 import com.forzacode.a1016_02.core.CardTag;
 import com.forzacode.a1016_02.core.EventCard;
+import com.forzacode.a1016_02.core.FogLimits;
 import com.forzacode.a1016_02.core.Habit;
 import com.forzacode.a1016_02.core.ModConfig;
 import com.forzacode.a1016_02.core.Stage;
@@ -38,6 +39,12 @@ public class SightingRuleGameTests extends FogAndRunGameTests {
 	/** Atmosphere's default: fog end at full dusk fog. */
 	private static final double DUSK_MIN = 24;
 
+	/** A band at dusk (time 13000, where the dusk fog applies in full) with atmosphere's default shape. */
+	static FogEdge edge(int clientChunks, int serverChunks, int simulationChunks, double duskFog, double reported, boolean close, EntityConfig config) {
+		FogLimits.Result fog = FogLimits.of(clientChunks, serverChunks, (float) duskFog, 13000L, new FogLimits.Shape(DUSK_MIN, 0.55));
+		return FogEdge.compute(fog, simulationChunks, reported, close, config);
+	}
+
 	private static boolean near(double a, double b) {
 		return Math.abs(a - b) < 1.0E-6;
 	}
@@ -52,7 +59,7 @@ public class SightingRuleGameTests extends FogAndRunGameTests {
 				for (int sim : new int[] {0, 2, 6, 12}) {
 					for (boolean close : new boolean[] {false, true}) {
 						for (double reported : new double[] {Double.NaN, 6, 14, 20, 30, 55, 120, 400}) {
-							FogEdge edge = FogEdge.compute(chunks, 32, sim, dusk, DUSK_MIN, reported, close, config);
+							FogEdge edge = edge(chunks, 32, sim, dusk, reported, close, config);
 							String what = "chunks=" + chunks + " dusk=" + dusk + " sim=" + sim + " close=" + close + " reported=" + reported + " -> " + edge;
 							helper.assertTrue(edge.inner() >= min, "band starts closer than " + min + ": " + what);
 							helper.assertTrue(edge.outer() >= edge.inner() + 2.0 - 1.0E-6, "band thinner than 2 blocks: " + what);
@@ -72,26 +79,26 @@ public class SightingRuleGameTests extends FogAndRunGameTests {
 			}
 		}
 		// 12 chunks, no dusk fog, no report yet: 0.55 to 0.75 of the 192-block fog end.
-		FogEdge vanilla = FogEdge.compute(12, 12, 0, 0.0, DUSK_MIN, Double.NaN, false, config);
+		FogEdge vanilla = edge(12, 12, 0, 0.0, Double.NaN, false, config);
 		helper.assertTrue(near(vanilla.inner(), 0.55 * 192) && near(vanilla.outer(), 0.75 * 192) && !vanilla.fromClient(),
 				"12 chunks should put him 106 to 144 blocks out: " + vanilla);
-		FogEdge client = FogEdge.compute(6, 12, 0, 0.0, DUSK_MIN, Double.NaN, false, config);
+		FogEdge client = edge(6, 12, 0, 0.0, Double.NaN, false, config);
 		helper.assertTrue(client.chunks() == 6 && client.outer() <= 0.75 * 96 + 1.0E-6, "the client's smaller view distance wins: " + client);
-		// The estimate follows atmosphere's dusk fog: half of it closes 192 in to sqrt(192 * 24), all of it to 24.
-		FogEdge half = FogEdge.compute(12, 12, 0, 0.5, DUSK_MIN, Double.NaN, false, config);
+		// The estimate (core's FogLimits) follows the dusk fog: half of it closes 192 in to sqrt(192 * 24), all of it to 24.
+		FogEdge half = edge(12, 12, 0, 0.5, Double.NaN, false, config);
 		helper.assertTrue(near(half.limit(), Math.sqrt(192 * DUSK_MIN)) && half.outer() < half.limit(), "half dusk fog: " + half);
-		FogEdge dusk = FogEdge.compute(12, 12, 0, 1.0, DUSK_MIN, Double.NaN, false, config);
+		FogEdge dusk = edge(12, 12, 0, 1.0, Double.NaN, false, config);
 		helper.assertTrue(near(dusk.limit(), DUSK_MIN) && near(dusk.inner(), 0.55 * DUSK_MIN) && dusk.seeable(), "full dusk fog: " + dusk);
 		// The client's report wins over the estimate. Mariano's playtest: dusk fog 0.6 at dusk draws the fog end at
 		// 192 * (24 / 192)^0.6, about 55 blocks; he stands 30 to 41 blocks out, the close one 19 to 28.
 		double fogEnd = 192 * Math.pow(DUSK_MIN / 192, 0.6);
-		FogEdge reported = FogEdge.compute(12, 12, 0, 0.0, DUSK_MIN, fogEnd, false, config);
+		FogEdge reported = edge(12, 12, 0, 0.0, fogEnd, false, config);
 		helper.assertTrue(reported.fromClient() && near(reported.limit(), fogEnd) && near(reported.inner(), 0.55 * fogEnd)
 				&& near(reported.outer(), 0.75 * fogEnd), "the reported fog end is not used: " + reported);
-		FogEdge reportedClose = FogEdge.compute(12, 12, 0, 0.0, DUSK_MIN, fogEnd, true, config);
+		FogEdge reportedClose = edge(12, 12, 0, 0.0, fogEnd, true, config);
 		helper.assertTrue(near(reportedClose.inner(), 0.35 * fogEnd) && near(reportedClose.outer(), 0.50 * fogEnd), "close in dusk fog: " + reportedClose);
 		// Fog so thick (a surge, blindness, under water) that 12 blocks out is past it: no sighting can be seen.
-		helper.assertFalse(FogEdge.compute(12, 12, 0, 0.0, DUSK_MIN, 14.0, false, config).seeable(), "a sighting in 14-block fog");
+		helper.assertFalse(edge(12, 12, 0, 0.0, 14.0, false, config).seeable(), "a sighting in 14-block fog");
 		helper.succeed();
 	}
 
@@ -208,10 +215,10 @@ public class SightingRuleGameTests extends FogAndRunGameTests {
 
 		// A tiny render distance and full dusk fog, or a client reporting thick fog: the band collapses to the minimum
 		// distance, never closer.
-		FogEdge tight = FogEdge.compute(2, 2, 0, 1.0, DUSK_MIN, Double.NaN, false, new EntityConfig());
-		for (FogEdge edge : List.of(tight, FogEdge.compute(3, 3, 0, 0.0, DUSK_MIN, Double.NaN, false, new EntityConfig()),
-				FogEdge.compute(12, 12, 0, 0.0, DUSK_MIN, 20.0, true, new EntityConfig()),
-				FogEdge.compute(12, 12, 0, 0.0, DUSK_MIN, Double.NaN, true, new EntityConfig()))) {
+		FogEdge tight = edge(2, 2, 0, 1.0, Double.NaN, false, new EntityConfig());
+		for (FogEdge edge : List.of(tight, edge(3, 3, 0, 0.0, Double.NaN, false, new EntityConfig()),
+				edge(12, 12, 0, 0.0, 20.0, true, new EntityConfig()),
+				edge(12, 12, 0, 0.0, Double.NaN, true, new EntityConfig()))) {
 			for (long seed = 1; seed <= 4; seed++) {
 				SpotFinder.Query q = new SpotFinder.Query(level, viewer.position(), viewer.getEyePosition(), edge.inner(), edge.outer(), min,
 						ModEntities.HIM.getDimensions(), hidden, level::isLoaded, RandomSource.create(seed), 48);

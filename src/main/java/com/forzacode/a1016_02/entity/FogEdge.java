@@ -1,11 +1,7 @@
 package com.forzacode.a1016_02.entity;
 
-import com.forzacode.a1016_02.atmosphere.AtmosphereConfig;
-import com.forzacode.a1016_02.atmosphere.Curves;
-import com.forzacode.a1016_02.core.HerobrineState;
+import com.forzacode.a1016_02.core.FogLimits;
 
-import net.minecraft.server.MinecraftServer;
-import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.util.Mth;
 
@@ -14,10 +10,8 @@ import net.minecraft.util.Mth;
  * draws, so he reads as a hazy but clear shape, never a speck lost in the fog.
  *
  * <p>The fog end ({@link #limit}) is the one the player's client reports ({@link ReportedFog}: vanilla fog, the dusk
- * fog and fog surges included) while that report is fresh. Until one arrives it is the server's estimate: vanilla's
- * render-distance fog end (the smaller of the client's requested view distance and the server's, in blocks) pulled in
- * by the dusk fog the way atmosphere's client pulls it in, {@code Curves.fogEnd(renderEnd, duskMinFogBlocks,
- * duskFogLevel * duskWeight(time of day))}, surges left out.
+ * fog and fog surges included) while that report is fresh. Until one arrives it is core's estimate,
+ * {@link FogLimits#of(ServerPlayer)}: the render-distance fog end pulled in by the dusk fog, surges left out.
  *
  * <p>Every variant but the close one stands {@code normalFractionMin..Max} of the fog end away. The close one stands
  * {@code closeFractionMin..Max} of it, clamped to {@code closeMinDistance..closeMaxDistance} blocks. Either band stays
@@ -27,7 +21,7 @@ import net.minecraft.util.Mth;
  *
  * @param chunks      effective render distance in chunks
  * @param renderLimit vanilla's render-distance fog end in blocks, where fog is complete without any other fog
- * @param estimate    the server's estimate of the visible fog end
+ * @param estimate    core's estimate of the visible fog end ({@link FogLimits.Result#fogEnd})
  * @param reported    the client's fresh report, NaN if there is none
  * @param limit       the fog end the band uses: {@code reported} if known, else {@code estimate}
  * @param inner       nearest spawn distance (horizontal)
@@ -42,59 +36,23 @@ public record FogEdge(int chunks, double renderLimit, double estimate, double re
 
 	/** @param close the close variant's band */
 	public static FogEdge of(ServerPlayer player, boolean close) {
-		ServerLevel level = player.level();
-		MinecraftServer server = level.getServer();
-		AtmosphereConfig atmosphere = AtmosphereConfig.get();
-		int requested = player.requestedViewDistance();
-		int serverChunks = server.getPlayerList().getViewDistance();
-		double reported = ReportedFog.fresh(player, renderLimit(requested, serverChunks));
-		return compute(requested, serverChunks, server.getPlayerList().getSimulationDistance(),
-				duskAmount(level, HerobrineState.get(server).effects().duskFogLevel(), atmosphere.duskNightWeight), atmosphere.duskMinFogBlocks, reported,
-				close, EntityConfig.get());
-	}
-
-	/** How much of the dusk fog the client applies right now, 0 to 1 (none where time is fixed). */
-	static double duskAmount(ServerLevel level, float duskFogLevel, double nightWeight) {
-		if (duskFogLevel <= 0.0F || level.dimensionType().hasFixedTime()) {
-			return 0.0;
-		}
-		return duskFogLevel * Curves.duskWeight(level.getDefaultClockTime(), nightWeight);
-	}
-
-	/** The fog end the client sees by the server's estimate: the render-distance fog end, pulled in by the dusk fog. */
-	public static double visibleFogEnd(double renderLimit, double duskAmount, double duskMinFogBlocks) {
-		return Curves.fogEnd(renderLimit, duskMinFogBlocks, duskAmount);
-	}
-
-	/** Effective render distance in chunks: the client's (if known) capped by the server's, at least 2. */
-	static int chunks(int requestedChunks, int serverChunks) {
-		int chunks = requestedChunks > 0 ? Math.min(requestedChunks, serverChunks) : serverChunks;
-		return Math.max(chunks, 2);
-	}
-
-	static double renderLimit(int requestedChunks, int serverChunks) {
-		return chunks(requestedChunks, serverChunks) * 16.0;
+		FogLimits.Result fog = FogLimits.of(player);
+		int simulation = player.level().getServer().getPlayerList().getSimulationDistance();
+		return compute(fog, simulation, ReportedFog.fresh(player, fog.renderLimit()), close, EntityConfig.get());
 	}
 
 	/**
-	 * @param requestedChunks  the client's view distance (0 or less if unknown)
-	 * @param serverChunks     the server's view distance
+	 * @param fog              core's fog for the player (render limit and estimated fog end)
 	 * @param simulationChunks the server's simulation distance (0 or less to ignore)
-	 * @param duskAmount       dusk fog applied now, 0 to 1 ({@link #duskAmount})
-	 * @param duskMinFogBlocks fog end at full dusk fog (atmosphere's config)
 	 * @param reported         the client's fresh fog end report ({@link ReportedFog#fresh}), NaN to use the estimate
 	 * @param close            the close variant's band
 	 */
-	public static FogEdge compute(int requestedChunks, int serverChunks, int simulationChunks, double duskAmount, double duskMinFogBlocks,
-			double reported, boolean close, EntityConfig config) {
-		int chunks = chunks(requestedChunks, serverChunks);
-		double renderLimit = chunks * 16.0;
-		double estimate = visibleFogEnd(renderLimit, duskAmount, duskMinFogBlocks);
-		double limit = Double.isNaN(reported) ? estimate : reported;
+	public static FogEdge compute(FogLimits.Result fog, int simulationChunks, double reported, boolean close, EntityConfig config) {
+		double limit = Double.isNaN(reported) ? fog.fogEnd() : reported;
 		double[] band = band(limit, close, simulationChunks, config);
 		double margin = Math.max(0.0, config.edgeMarginBlocks);
 		boolean seeable = band[1] <= limit - margin + 1.0E-6;
-		return new FogEdge(chunks, renderLimit, estimate, reported, limit, band[0], band[1], seeable);
+		return new FogEdge(fog.chunks(), fog.renderLimit(), fog.fogEnd(), reported, limit, band[0], band[1], seeable);
 	}
 
 	/**
