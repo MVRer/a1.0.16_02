@@ -164,11 +164,6 @@ public final class DigTicker {
 		}
 	}
 
-	/** True if something solid is above the position (heightmap based, so it is right even before light updates). */
-	public static boolean covered(ServerLevel level, BlockPos pos) {
-		return pos.getY() < level.getHeight(Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, pos.getX(), pos.getZ()) - 1;
-	}
-
 	/** True if the position is in a cave: no sky light to speak of and well below the surface. */
 	public static boolean underground(ServerLevel level, BlockPos pos) {
 		return level.getBrightness(LightLayer.SKY, pos) <= 4 && pos.getY() < level.getHeight(Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, pos.getX(), pos.getZ()) - 4;
@@ -197,6 +192,9 @@ public final class DigTicker {
 
 	private void scanSaplings(ServerPlayer player, DigData data, DigConfig config) {
 		ServerLevel level = player.level();
+		if (!Tunnels.chunksLoaded(level, player.blockPosition(), config.saplingScanRadius)) {
+			return;
+		}
 		PosSet planted = data.planted(level.dimension());
 		boolean added = false;
 		for (BlockPos pos : Services.watch().placedNear(level, player.blockPosition(), config.saplingScanRadius, BlockTags.SAPLINGS)) {
@@ -260,10 +258,13 @@ public final class DigTicker {
 		long day = GameClock.day(server);
 		if (tunnel.visited && nearest >= config.growingLeaveDistance && day - tunnel.lastGrowDay >= config.growingMinDaysBetween) {
 			Pacing pacing = ModConfig.pacing();
+			boolean wasComplete = tunnel.complete;
 			if (tunnel.grow(player.level(), pacing.tunnelGrowthPerVisit, config.tunnelPlayerClearance, config, Services.traces(), day)) {
 				tunnel.visited = false;
+				data.changed();
+			} else if (tunnel.complete != wasComplete) {
+				data.setDirty(); // it ended without carving: nothing new to index
 			}
-			data.changed();
 		}
 	}
 
@@ -277,12 +278,11 @@ public final class DigTicker {
 			return;
 		}
 		ServerLevel level = player.level();
+		BlockPos base = DigCard.base(player).orElse(null);
 		if (now >= session.refresh) {
 			session.refresh = now + 200;
-			for (BlockPos torch : Services.watch().placedNear(level, player.blockPosition(), 64, Tunnels::isTorch)) {
-				if (covered(level, torch)) {
-					session.torches.add(torch.asLong());
-				}
+			for (BlockPos torch : TorchCards.caveTorches(level, player.blockPosition(), 64, base)) {
+				session.torches.add(torch.asLong());
 			}
 		}
 		if (now < session.next) {
@@ -296,7 +296,7 @@ public final class DigTicker {
 			if (!level.isLoaded(torch)) {
 				continue;
 			}
-			if (!Tunnels.isTorch(level.getBlockState(torch))) {
+			if (!TorchCards.caveTorch(level, torch, base)) {
 				gone.add(packed);
 			} else if (torch.distToCenterSqr(player.position()) >= (double) behind * behind) {
 				candidates.add(torch);

@@ -57,6 +57,15 @@ final class DigGround {
 		return ground;
 	}
 
+	/** Force-loads the ground's chunks (for tests that run over several ticks, so light and blocks settle). */
+	void keepLoaded(boolean loaded) {
+		for (int cx = origin.getX() >> 4; cx <= (origin.getX() + sizeX) >> 4; cx++) {
+			for (int cz = origin.getZ() >> 4; cz <= (origin.getZ() + sizeZ) >> 4; cz++) {
+				level.setChunkForced(cx, cz, loaded);
+			}
+		}
+	}
+
 	BlockPos at(int x, int y, int z) {
 		return origin.offset(x, y, z);
 	}

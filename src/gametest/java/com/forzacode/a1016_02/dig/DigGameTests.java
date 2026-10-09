@@ -119,9 +119,10 @@ public class DigGameTests extends TunnelGameTests {
 		helper.succeed();
 	}
 
-	@GameTest(maxTicks = 100)
+	@GameTest(maxTicks = 200)
 	public void torchesGoneFromACaveThePlayerLeft(GameTestHelper helper) {
 		DigGround g = DigGround.of(helper, 10, 24, 8, 96, Blocks.STONE);
+		g.keepLoaded(true);
 		// A natural cave the player explored and lit at the south end; the player is now at the north end.
 		g.hollow(8, 2, 70, 14, 4, 90);
 		DigData.get(g.level.getServer()).explored(g.level.dimension()).add(g.at(11, 2, 80), Integer.MAX_VALUE);
@@ -129,14 +130,27 @@ public class DigGameTests extends TunnelGameTests {
 		g.place(wallTorch, Blocks.WALL_TORCH.defaultBlockState().setValue(WallTorchBlock.FACING, Direction.EAST));
 		BlockPos floorTorch = g.at(11, 2, 82);
 		g.place(floorTorch, Blocks.TORCH.defaultBlockState());
+		// A torch on a block the player built (a house wall, not the cave) is never a cave torch.
+		BlockPos builtWall = g.at(13, 2, 86);
+		g.place(builtWall, Blocks.OAK_PLANKS.defaultBlockState());
+		BlockPos houseTorch = builtWall.above();
+		g.place(houseTorch, Blocks.TORCH.defaultBlockState());
 		g.stand(g.at(11, 8, 4));
-
-		int removed = TorchCards.removeFromLeftCave(g.level, g.mock, RandomSource.create(6L));
-		helper.assertTrue(removed == 2, "removed " + removed + " torches");
-		helper.assertTrue(g.level.getBlockState(wallTorch).isAir() && g.level.getBlockState(floorTorch).isAir(), "torches still there");
-		helper.assertTrue(g.level.getBlockState(wallTorch.west()).is(Blocks.STONE) && g.level.getBlockState(floorTorch.below()).is(Blocks.STONE),
-				"a support block went");
-		helper.succeed();
+		// Let the sky light settle in the new cave before looking.
+		helper.runAfterDelay(60, () -> {
+			helper.assertTrue(DigTicker.underground(g.level, floorTorch), "the cave is not dark yet");
+			helper.assertTrue(TorchCards.caveTorch(g.level, floorTorch, null), "a cave torch does not count");
+			helper.assertFalse(TorchCards.caveTorch(g.level, floorTorch, floorTorch.east(10)), "a torch within the base radius counts");
+			helper.assertFalse(TorchCards.caveTorch(g.level, houseTorch, null), "a torch on a built block counts");
+			int removed = TorchCards.removeFromLeftCave(g.level, g.mock, RandomSource.create(6L));
+			helper.assertTrue(removed == 2, "removed " + removed + " torches");
+			helper.assertTrue(g.level.getBlockState(wallTorch).isAir() && g.level.getBlockState(floorTorch).isAir(), "torches still there");
+			helper.assertTrue(g.level.getBlockState(wallTorch.west()).is(Blocks.STONE) && g.level.getBlockState(floorTorch.below()).is(Blocks.STONE),
+					"a support block went");
+			helper.assertTrue(g.level.getBlockState(houseTorch).is(Blocks.TORCH), "a torch on a built block went");
+			g.keepLoaded(false);
+			helper.succeed();
+		});
 	}
 
 	@GameTest

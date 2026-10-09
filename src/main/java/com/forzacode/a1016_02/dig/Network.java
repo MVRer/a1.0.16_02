@@ -72,6 +72,8 @@ public final class Network {
 	int stacksLedgered;
 	/** Not saved: founding is tried once per night. */
 	long foundTriedNight = Long.MIN_VALUE;
+	/** Not saved: when a far chunk was asked to load for the chest, the server tick of the next try. */
+	long chestRetryTick = Long.MAX_VALUE;
 
 	Network(ResourceKey<Level> dimension, BlockPos base) {
 		this.dimension = dimension;

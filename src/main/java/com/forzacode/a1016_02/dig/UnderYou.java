@@ -62,9 +62,8 @@ public final class UnderYou {
 		if (net.nights != before && !net.anchors.isEmpty()) {
 			NetworkGrower.refreshTargets(ctx);
 		}
-		if (net.budget > 0) {
-			growNow(ctx, data, STEPS_PER_CHECK, false);
-		}
+		// Also with no budget left: a chest may be waiting for its chunk to load.
+		growNow(ctx, data, STEPS_PER_CHECK, false);
 		if (changed) {
 			data.setDirty();
 		}
@@ -107,12 +106,16 @@ public final class UnderYou {
 		if (net.anchors.isEmpty()) {
 			net.foundTriedNight = ctx.night();
 		}
-		if (net.alcove != null && net.chest == null && (net.chestTriedNight != ctx.night() || force)) {
+		long now = ctx.level().getServer().getTickCount();
+		if (net.alcove != null && net.chest == null && (net.chestTriedNight != ctx.night() || force || now >= net.chestRetryTick)) {
 			net.chestTriedNight = ctx.night();
-			NetworkChest.tryFetch(ctx);
+			if (NetworkChest.tryFetch(ctx)) {
+				data.setDirty();
+			}
 		}
 		if (net.underBaseSite < 0 && !net.anchors.isEmpty() && net.nights >= ctx.config().networkChestAfterNights + 3) {
 			NetworkGrower.recordUnderBase(ctx, net.anchors.getFirst());
+			data.setDirty();
 		}
 		if (carved > 0) {
 			data.changed();

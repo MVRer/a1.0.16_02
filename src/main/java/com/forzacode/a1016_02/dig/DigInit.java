@@ -12,6 +12,7 @@ public final class DigInit {
 
 	public static void init() {
 		DigConfig.get();
+		NetworkChest.init();
 		Director.register(new TorchCards.TorchesGone());
 		Director.register(new TorchCards.TorchesBehindYou());
 		Director.register(new SoundCards.MiningThatMoves());

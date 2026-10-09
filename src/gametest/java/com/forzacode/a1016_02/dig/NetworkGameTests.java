@@ -18,6 +18,7 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.gametest.framework.GameTestHelper;
 import net.minecraft.util.RandomSource;
+import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.Container;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
@@ -61,6 +62,18 @@ public class NetworkGameTests {
 		return best;
 	}
 
+	/**
+	 * The player's digs or blocks a cell must keep its distance from: all of them, except, for the shaft, the bedroom
+	 * it stops under (digs at the bed's height and above; blocks from the floor under the bed up).
+	 */
+	static List<BlockPos> outsideBedroom(Network net, boolean shaft, List<BlockPos> spaces, boolean placed) {
+		if (!shaft || net.bedHead == null) {
+			return spaces;
+		}
+		int lowest = placed ? net.bedHead.getY() - 1 : net.bedHead.getY();
+		return spaces.stream().filter(pos -> pos.getY() < lowest).toList();
+	}
+
 	static List<BlockPos> cells(Network net, boolean shaft) {
 		List<BlockPos> cells = new ArrayList<>();
 		for (long packed : net.cells) {
@@ -80,11 +93,12 @@ public class NetworkGameTests {
 			BlockPos cell = BlockPos.of(packed);
 			helper.assertTrue(g.level.getBlockState(cell).isAir(), "network cell not carved at " + cell);
 			boolean shaft = net.isShaftCell(cell);
-			int digGap = minCheb(cell, g.dug);
-			// Corridors: digBelow solid blocks between them and any dig or build. The shaft: never into a player space.
-			helper.assertTrue(shaft ? digGap > 1 : digGap > digBelow, "cell " + cell + " is " + digGap + " from a player dig");
+			// digBelow solid blocks between every cell and any dig or build. Only the shaft's stop under the bed may
+			// come closer, and only to the bedroom: digs at the bed's height and above, and the floor under it.
+			int digGap = minCheb(cell, outsideBedroom(net, shaft, g.dug, false));
+			helper.assertTrue(digGap > digBelow, "cell " + cell + " is " + digGap + " from a player dig");
+			helper.assertTrue(minCheb(cell, outsideBedroom(net, shaft, g.placed, true)) > digBelow, "cell " + cell + " is too close to a player block");
 			if (!shaft) {
-				helper.assertTrue(minCheb(cell, g.placed) > digBelow, "cell " + cell + " is too close to a player block");
 				helper.assertFalse(explored.anyWithin(cell, config.networkExploredClearance), "cell " + cell + " is in an explored cave");
 			}
 			for (Direction dir : Direction.values()) {
@@ -180,8 +194,8 @@ public class NetworkGameTests {
 				BlockPos cell = BlockPos.of(packed);
 				// Cells carved after the player came closer still keep their distance from every dig.
 				if (!before.contains(packed)) {
-					int dist = minCheb(cell, g.dug);
-					helper.assertTrue(net.isShaftCell(cell) ? dist > 1 : dist > pacing.digBelow, "the network grew to " + dist + " from a dig at " + cell);
+					int dist = minCheb(cell, outsideBedroom(net, net.isShaftCell(cell), g.dug, false));
+					helper.assertTrue(dist > pacing.digBelow, "the network grew to " + dist + " from a dig at " + cell);
 				}
 			}
 			prevGap = gap;
@@ -215,11 +229,39 @@ public class NetworkGameTests {
 	}
 
 	@GameTest(maxTicks = 100)
+	public void shaftKeepsClearOfStairsBesideTheBed(GameTestHelper helper) {
+		// Stairs the player dug down right beside the bed: the shaft keeps digBelow from them and stops short.
+		DigConfig config = testConfig();
+		Pacing pacing = ModConfig.pacing();
+		DigGround g = DigGround.of(helper, 13, 48, 24, 48, Blocks.STONE);
+		BlockPos head = g.at(24, 24, 24);
+		BlockPos foot = g.at(23, 24, 24);
+		BlockState bed = Blocks.BED.white().defaultBlockState().setValue(BedBlock.FACING, Direction.EAST);
+		g.place(foot, bed.setValue(BedBlock.PART, BedPart.FOOT));
+		g.place(head, bed.setValue(BedBlock.PART, BedPart.HEAD));
+		for (int y = 23; y >= 18; y--) {
+			g.dig(g.at(27, y, 24));
+		}
+		PosSet explored = new PosSet();
+		Network net = new Network(g.level.dimension(), head);
+		NetworkGrower.refreshBed(g.level, net, head);
+		RandomSource random = RandomSource.create(77L);
+		for (long n = 0; n < 10; n++) {
+			night(g, net, explored, config, random, n);
+		}
+		helper.assertTrue(net.shaftFoot != null && !net.shaftDone, "the shaft " + (net.shaftDone ? "passed the stairs" : "never started"));
+		helper.assertTrue(net.shaftTop().orElseThrow().getY() < g.at(0, 18 - pacing.digBelow, 0).getY(), "the shaft came within "
+				+ pacing.digBelow + " of the stairs");
+		assertClear(g, net, explored, config);
+		helper.succeed();
+	}
+
+	@GameTest(maxTicks = 100)
 	public void networkKeepsAwayFromANewMineAtItsLevel(GameTestHelper helper) {
 		// After the network starts, the player digs a mine right at its level: it grows around it, never within digBelow.
 		DigConfig config = testConfig();
-		DigGround g = DigGround.of(helper, 1, 40, 24, 40, Blocks.STONE);
-		BlockPos base = g.at(20, 24, 20);
+		DigGround g = DigGround.of(helper, 1, 48, 24, 48, Blocks.STONE);
+		BlockPos base = g.at(24, 24, 24);
 		g.place(base, Blocks.CRAFTING_TABLE.defaultBlockState());
 		PosSet explored = new PosSet();
 		Network net = new Network(g.level.dimension(), base);
@@ -228,12 +270,12 @@ public class NetworkGameTests {
 		BlockPos[] bounds = net.bounds().orElseThrow();
 		BlockPos min = bounds[0].subtract(g.origin);
 		BlockPos max = bounds[1].subtract(g.origin);
-		int z = max.getZ() + 5 < 38 ? max.getZ() + 5 : min.getZ() - 5;
-		int x = max.getX() + 5 < 38 ? max.getX() + 5 : min.getX() - 5;
+		int z = max.getZ() + 5 < 46 ? max.getZ() + 5 : min.getZ() - 5;
+		int x = max.getX() + 5 < 46 ? max.getX() + 5 : min.getX() - 5;
 		int y = net.depth - g.origin.getY();
-		g.digBox(1, y, z, 38, y + 1, z);
+		g.digBox(1, y, z, 46, y + 1, z);
 		g.digBox(x, y, 1, x, y + 1, z - 1);
-		g.digBox(x, y, z + 1, x, y + 1, 38);
+		g.digBox(x, y, z + 1, x, y + 1, 46);
 		assertClear(g, net, explored, config);
 		for (long n = 1; n < 10; n++) {
 			helper.assertTrue(night(g, net, explored, config, random, n) > 0, "no growth on night " + n);
@@ -265,11 +307,33 @@ public class NetworkGameTests {
 		helper.succeed();
 	}
 
+	@GameTest(maxTicks = 200)
+	public void networkChestNeverLoadsAChunkInTheTick(GameTestHelper helper) {
+		DigConfig config = testConfig();
+		DigGround g = DigGround.of(helper, 14, 16, 10, 16, Blocks.STONE);
+		Network net = new Network(g.level.dimension(), g.at(8, 10, 8));
+		g.hollow(3, 3, 3, 4, 4, 4);
+		net.addAnchor(g.at(3, 3, 3), false);
+		net.alcove = g.at(3, 3, 3);
+		// A hut 700 blocks away in a chunk nobody has loaded.
+		BlockPos spot = g.at(8, 2, 8).east(700);
+		ChunkPos chunk = ChunkPos.containing(spot);
+		BlockPos far = new BlockPos(chunk.getMiddleBlockX(), spot.getY(), chunk.getMiddleBlockZ());
+		helper.assertTrue(g.level.getChunkSource().getChunkNow(chunk.x(), chunk.z()) == null, "the far chunk is already loaded");
+		Services.sites().record(SiteType.RUINED_HUT, g.level.dimension(), far, 4);
+
+		helper.assertFalse(NetworkChest.tryFetch(ctx(g, net, new PosSet(), config, RandomSource.create(1L), 0)), "a chest from an unloaded chunk");
+		helper.assertTrue(g.level.getChunkSource().getChunkNow(chunk.x(), chunk.z()) == null, "the far chunk was loaded in the same tick");
+		helper.assertTrue(net.chestRetryTick != Long.MAX_VALUE, "no later try planned");
+		helper.succeedWhen(() -> helper.assertTrue(g.level.getChunkSource().getChunkNow(chunk.x(), chunk.z()) != null, "the far chunk never loaded"));
+	}
+
 	@GameTest
 	public void underYouStackGoesToTheLedgerThenToTheNetworkChest(GameTestHelper helper) {
-		DigGround g = DigGround.of(helper, 3, 16, 6, 16, Blocks.STONE);
-		BlockPos base = g.at(8, 6, 8);
-		BlockPos chest = g.at(10, 6, 8);
+		// Big enough that every chunk within chestRadius of the base is loaded.
+		DigGround g = DigGround.of(helper, 3, 40, 6, 40, Blocks.STONE);
+		BlockPos base = g.at(20, 6, 20);
+		BlockPos chest = g.at(22, 6, 20);
 		g.place(chest, Blocks.CHEST.defaultBlockState());
 		Container container = (Container) g.level.getBlockEntity(chest);
 		container.setItem(0, new ItemStack(Items.COBBLESTONE, 16));

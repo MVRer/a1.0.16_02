@@ -141,6 +141,9 @@ public final class NetworkGrower {
 	public static void refreshTargets(Ctx ctx) {
 		Network net = ctx.net();
 		int radius = ctx.config().networkRadius;
+		if (!Tunnels.chunksLoaded(ctx.level(), net.base, radius)) {
+			return;
+		}
 		LongOpenHashSet grid = new LongOpenHashSet();
 		List<BlockPos> targets = new ArrayList<>();
 		for (BlockPos placed : Services.watch().placedNear(ctx.level(), net.base, radius, state -> !state.isAir())) {
@@ -165,6 +168,9 @@ public final class NetworkGrower {
 		ServerLevel level = ctx.level();
 		PlayerWatch watch = Services.watch();
 		int radius = ctx.config().networkRadius;
+		if (!Tunnels.chunksLoaded(level, net.base, radius)) {
+			return false;
+		}
 		int lowest = net.base.getY();
 		for (BlockPos dug : watch.dugNear(level, net.base, radius)) {
 			lowest = Math.min(lowest, dug.getY());
@@ -273,7 +279,7 @@ public final class NetworkGrower {
 			return Result.BLOCKED;
 		}
 		BlockPos next = top.above();
-		if (Tunnels.check(ctx.level(), next, net.cells, Tunnels.Rules.shaft()) != null) {
+		if (Tunnels.check(ctx.level(), next, net.cells, shaftRules(ctx)) != null) {
 			return Result.BLOCKED;
 		}
 		if (!Tunnels.carve(ctx.level(), ctx.traces(), List.of(next), net.cells, CAUSE)) {
@@ -285,6 +291,17 @@ public final class NetworkGrower {
 			finishShaft(ctx);
 		}
 		return Result.CARVED;
+	}
+
+	/**
+	 * The shaft keeps {@code digBelow} from every player dig and build like the corridors. Only the bedroom it stops
+	 * under is exempt: digs at the bed's height and above, and the blocks the player placed as the floor under it.
+	 */
+	static Tunnels.Rules shaftRules(Ctx ctx) {
+		int bedY = ctx.net().bedHead.getY();
+		PlayerWatch watch = Services.watch();
+		ServerLevel level = ctx.level();
+		return Tunnels.Rules.shaft(ctx.digBelow(), pos -> pos.getY() >= bedY || pos.getY() == bedY - 1 && !watch.wasDugByPlayer(level, pos));
 	}
 
 	private static void finishShaft(Ctx ctx) {

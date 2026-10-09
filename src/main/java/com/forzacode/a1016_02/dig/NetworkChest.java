@@ -11,7 +11,11 @@ import com.forzacode.a1016_02.core.SiteType;
 
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.GlobalPos;
+import net.minecraft.core.Registry;
+import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.server.level.ServerLevel;
+import net.minecraft.server.level.TicketType;
+import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.ChestBlock;
 import net.minecraft.world.level.block.entity.BlockEntity;
@@ -26,11 +30,25 @@ import org.jspecify.annotations.Nullable;
  * Brings a real chest into the network's dead end. He never makes blocks, so it is moved with
  * {@code TraceService.move} from far away: first a chest at an unclaimed ABANDONED_BUILD or RUINED_HUT site,
  * otherwise a single chest nobody placed (a structure chest) in a loaded chunk far from the player and the base.
+ * Nothing is loaded synchronously: a site chunk that is not loaded gets a short loading ticket (one chunk per try,
+ * loaded in the background) and a later try, a few seconds on, takes its chest.
  */
 public final class NetworkChest {
 	private static final int MAX_SITES_PER_TRY = 2;
+	/** Loads a far site chunk in the background for a minute; it does not tick or save. */
+	public static final TicketType TICKET = new TicketType(1200L, TicketType.FLAG_LOADING);
+	/** Ticks until the next try after asking for a chunk. */
+	static final int RETRY_TICKS = 100;
+
+	/** The chunks a try found, and whether it asked for one more to load. */
+	record Sources(List<BlockPos> chests, boolean requested) {
+	}
 
 	private NetworkChest() {
+	}
+
+	static void init() {
+		Registry.register(BuiltInRegistries.TICKET_TYPE, A1016_02.id("dig_chest"), TICKET);
 	}
 
 	/** Tries once to move a chest into the dead end. True if the network now has its chest. */
@@ -43,18 +61,21 @@ public final class NetworkChest {
 		if (net.alcove == null || !level.isLoaded(net.alcove) || !level.getBlockState(net.alcove).isAir()) {
 			return false;
 		}
-		for (BlockPos source : sources(ctx)) {
+		Sources sources = sources(ctx);
+		for (BlockPos source : sources.chests()) {
 			if (ctx.traces().move(level, source, net.alcove, NetworkGrower.CAUSE_CHEST)) {
 				net.chest = net.alcove;
+				net.chestRetryTick = Long.MAX_VALUE;
 				A1016_02.LOGGER.debug("[a1016] dig: moved the chest at {} into the network at {}", source, net.alcove);
 				return true;
 			}
 		}
+		net.chestRetryTick = sources.requested() ? level.getServer().getTickCount() + RETRY_TICKS : Long.MAX_VALUE;
 		return false;
 	}
 
-	/** Candidate chests, best first. */
-	static List<BlockPos> sources(NetworkGrower.Ctx ctx) {
+	/** Candidate chests in loaded chunks, best first; asks for at most one unloaded site chunk to load. */
+	static Sources sources(NetworkGrower.Ctx ctx) {
 		ServerLevel level = ctx.level();
 		Network net = ctx.net();
 		int minDist = ctx.config().chestSourceMinDistance;
@@ -64,6 +85,7 @@ public final class NetworkChest {
 		sites.addAll(Services.sites().findUnclaimed(SiteType.ABANDONED_BUILD, near, ctx.config().chestSourceSiteRadius));
 		sites.addAll(Services.sites().findUnclaimed(SiteType.RUINED_HUT, near, ctx.config().chestSourceSiteRadius));
 		int tried = 0;
+		boolean requested = false;
 		for (SiteRegistry.Site site : sites) {
 			if (tried >= MAX_SITES_PER_TRY) {
 				break;
@@ -75,8 +97,13 @@ public final class NetworkChest {
 			int r = Math.min(16, Math.max(4, site.size()));
 			for (int cx = (site.pos().getX() - r) >> 4; cx <= (site.pos().getX() + r) >> 4; cx++) {
 				for (int cz = (site.pos().getZ() - r) >> 4; cz <= (site.pos().getZ() + r) >> 4; cz++) {
-					// Loads the site's chunk if it is not loaded: it is far away and only read here.
-					collect(ctx, level.getChunk(cx, cz), site.pos(), r, minDist, found);
+					LevelChunk chunk = level.getChunkSource().getChunkNow(cx, cz);
+					if (chunk != null) {
+						collect(ctx, chunk, site.pos(), r, minDist, found);
+					} else if (!requested) {
+						level.getChunkSource().addTicketWithRadius(TICKET, new ChunkPos(cx, cz), 0);
+						requested = true;
+					}
 				}
 			}
 		}
@@ -96,7 +123,7 @@ public final class NetworkChest {
 				}
 			}
 		}
-		return found;
+		return new Sources(found, requested);
 	}
 
 	private static void collect(NetworkGrower.Ctx ctx, LevelChunk chunk, @Nullable BlockPos around, int radius, int minDist, List<BlockPos> found) {

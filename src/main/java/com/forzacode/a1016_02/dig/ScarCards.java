@@ -73,11 +73,14 @@ final class ScarCards {
 		if (tunnel.complete || !tunnel.dimension.equals(level.dimension()) || !(force || tunnel.visited)) {
 			return null;
 		}
+		boolean wasComplete = tunnel.complete;
 		boolean grown = tunnel.grow(level, growth, config.tunnelPlayerClearance, config, traces, day);
 		if (grown) {
 			tunnel.visited = false;
+			data.changed();
+		} else if (tunnel.complete != wasComplete) {
+			data.setDirty();
 		}
-		data.changed();
 		return grown ? tunnel : null;
 	}
 
@@ -176,7 +179,9 @@ final class ScarCards {
 				stripped++;
 			}
 		}
-		data.setDirty();
+		if (stripped > 0 || !dead.isEmpty()) {
+			data.setDirty();
+		}
 		return stripped;
 	}
 }

@@ -68,7 +68,7 @@ public final class CardTunnels {
 
 	/** A lone 2x2 tunnel through stone 20 to 40 blocks from {@code near}, below it, carved out of view. */
 	public static @Nullable Carved plain(ServerLevel level, BlockPos near, DigConfig config, int clearance, RandomSource random, TraceService traces) {
-		Tunnels.Rules rules = new Tunnels.Rules(clearance, 0, false, false, pos -> false, null);
+		Tunnels.Rules rules = new Tunnels.Rules(clearance, 0, false, false, pos -> false, null, pos -> false);
 		for (int tries = 0; tries < 48; tries++) {
 			double angle = random.nextDouble() * Math.PI * 2;
 			double r = 20 + random.nextDouble() * 20;
@@ -142,7 +142,7 @@ public final class CardTunnels {
 			int along = dir.getStepX() * floor.getX() + dir.getStepZ() * floor.getZ();
 			// The player's side of the wall plane is the space this card is allowed to open into.
 			Predicate<BlockPos> playerSide = pos -> dir.getStepX() * pos.getX() + dir.getStepZ() * pos.getZ() <= along;
-			Tunnels.Rules rules = new Tunnels.Rules(clearance, 0, true, false, playerSide, null);
+			Tunnels.Rules rules = new Tunnels.Rules(clearance, 0, true, false, playerSide, null, pos -> false);
 			int length = config.intoMineLengthMin + random.nextInt(Math.max(1, config.intoMineLengthMax - config.intoMineLengthMin + 1));
 			List<BlockPos> anchors = plan(level, anchor, dir, length, rules, config, random, false);
 			if (anchors.size() < Math.min(8, config.intoMineLengthMin)) {

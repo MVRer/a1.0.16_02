@@ -42,23 +42,32 @@ public final class Tunnels {
 	 * @param sealed            every neighbour of a new cell must be an opaque solid block (or the tunnel): it never
 	 *                          opens into a cave, a mine or a room
 	 * @param allowAir          new cells may already be natural air (crossing a cave)
-	 * @param ignored           player spaces this carve may ignore (the mine wall a card breaks through)
+	 * @param ignored           player spaces this carve may ignore and open into (the mine wall a card breaks through)
 	 * @param explored          the explored-cave index, or null
+	 * @param exempt            player digs and blocks the clearance ignores (it still never opens into them)
 	 */
-	public record Rules(int clearance, int exploredClearance, boolean sealed, boolean allowAir, Predicate<BlockPos> ignored, @Nullable PosSet explored) {
+	public record Rules(int clearance, int exploredClearance, boolean sealed, boolean allowAir, Predicate<BlockPos> ignored, @Nullable PosSet explored,
+			Predicate<BlockPos> exempt) {
 		/** "Under you" corridors: sealed, {@code digBelow} from every player dig and build, away from explored caves. */
 		public static Rules network(int digBelow, int exploredClearance, @Nullable PosSet explored) {
-			return new Rules(digBelow, exploredClearance, true, false, pos -> false, explored);
+			return new Rules(digBelow, exploredClearance, true, false, pos -> false, explored, pos -> false);
 		}
 
-		/** The shaft under the bed: sealed and never into a player space, but allowed up to one block below it. */
-		public static Rules shaft() {
-			return new Rules(0, 0, true, false, pos -> false, null);
+		/**
+		 * The shaft under the bed: sealed and {@code digBelow} from every player dig and build, except the bedroom it
+		 * stops under ({@code bedroom}), so its top can end one block below the bed.
+		 */
+		public static Rules shaft(int digBelow, Predicate<BlockPos> bedroom) {
+			return new Rules(digBelow, 0, true, false, pos -> false, null, bedroom);
 		}
 
 		/** Card tunnels: may cross natural caves, keep {@code clearance} from player spaces. */
 		public static Rules card(int clearance) {
-			return new Rules(clearance, 0, false, true, pos -> false, null);
+			return new Rules(clearance, 0, false, true, pos -> false, null, pos -> false);
+		}
+
+		boolean skips(BlockPos pos) {
+			return ignored.test(pos) || exempt.test(pos);
 		}
 	}
 
@@ -113,6 +122,21 @@ public final class Tunnels {
 	/** Torches the player might have placed (not redstone torches, which are circuitry). */
 	public static boolean isTorch(BlockState state) {
 		return state.getBlock() instanceof BaseTorchBlock && !(state.getBlock() instanceof RedstoneTorchBlock);
+	}
+
+	/**
+	 * True if every chunk within {@code radius} blocks (horizontally) of {@code center} is loaded. Check it before
+	 * {@code PlayerWatch.placedNear}, which reads block states and would otherwise load chunks synchronously.
+	 */
+	public static boolean chunksLoaded(ServerLevel level, BlockPos center, int radius) {
+		for (int cx = (center.getX() - radius) >> 4; cx <= (center.getX() + radius) >> 4; cx++) {
+			for (int cz = (center.getZ() - radius) >> 4; cz <= (center.getZ() + radius) >> 4; cz++) {
+				if (!level.getChunkSource().hasChunk(cx, cz)) {
+					return false;
+				}
+			}
+		}
+		return true;
 	}
 
 	/** Chebyshev (cube) distance. */
@@ -189,20 +213,16 @@ public final class Tunnels {
 		int r = rules.clearance();
 		if (r > 0) {
 			// placedNear reads block states: never let it load a chunk.
-			for (int cx = (anchor.getX() - r - 1) >> 4; cx <= (anchor.getX() + r + 2) >> 4; cx++) {
-				for (int cz = (anchor.getZ() - r - 1) >> 4; cz <= (anchor.getZ() + r + 2) >> 4; cz++) {
-					if (!level.getChunkSource().hasChunk(cx, cz)) {
-						return UNLOADED;
-					}
-				}
+			if (!chunksLoaded(level, anchor, r + 2)) {
+				return UNLOADED;
 			}
 			for (BlockPos dug : watch.dugNear(level, anchor, r + 1)) {
-				if (!rules.ignored().test(dug) && within(fresh, dug, r)) {
+				if (!rules.skips(dug) && within(fresh, dug, r)) {
 					return "near a player dig";
 				}
 			}
 			for (BlockPos placed : watch.placedNear(level, anchor, r + 1, state -> true)) {
-				if (!rules.ignored().test(placed) && within(fresh, placed, r)) {
+				if (!rules.skips(placed) && within(fresh, placed, r)) {
 					return "near a player block";
 				}
 			}

@@ -15,6 +15,10 @@ import com.forzacode.a1016_02.core.Tier;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.level.block.WallTorchBlock;
+import net.minecraft.world.level.block.state.BlockState;
+
+import org.jspecify.annotations.Nullable;
 
 /** "Torches gone" and "Torches behind you". */
 final class TorchCards {
@@ -43,6 +47,40 @@ final class TorchCards {
 	}
 
 	/**
+	 * A torch the player lit a cave with: underground (no sky access, well below the surface), hanging on or standing
+	 * on natural ground (not a wall or floor they built), and outside the base radius. Base lights never count.
+	 */
+	static boolean caveTorch(ServerLevel level, BlockPos pos, @Nullable BlockPos base) {
+		if (!level.isLoaded(pos)) {
+			return false;
+		}
+		BlockState state = level.getBlockState(pos);
+		if (!Tunnels.isTorch(state) || !DigTicker.underground(level, pos)) {
+			return false;
+		}
+		int home = DigConfig.get().homeRadius;
+		if (base != null && DigTicker.horizontalDistSqr(pos, base) <= (long) home * home) {
+			return false;
+		}
+		BlockPos support = state.getBlock() instanceof WallTorchBlock ? pos.relative(state.getValue(WallTorchBlock.FACING).getOpposite()) : pos.below();
+		return !Services.watch().wasPlacedByPlayer(level, support);
+	}
+
+	/** The player's cave torches within {@code radius} of {@code center} (none if those chunks are not loaded). */
+	static List<BlockPos> caveTorches(ServerLevel level, BlockPos center, int radius, @Nullable BlockPos base) {
+		List<BlockPos> torches = new ArrayList<>();
+		if (!Tunnels.chunksLoaded(level, center, radius)) {
+			return torches;
+		}
+		for (BlockPos torch : Services.watch().placedNear(level, center, radius, Tunnels::isTorch)) {
+			if (caveTorch(level, torch, base)) {
+				torches.add(torch);
+			}
+		}
+		return torches;
+	}
+
+	/**
 	 * Finds a cave the player explored and lit, at least {@link DigConfig#torchesGoneMinDistance} away, and removes up
 	 * to {@link DigConfig#torchesGoneMax} of their torches there, each out of view. Returns how many went.
 	 */
@@ -60,13 +98,10 @@ final class TorchCards {
 			}
 		});
 		NetworkGrower.shuffle(centers, random);
+		BlockPos base = DigCard.base(player).orElse(null);
 		for (BlockPos center : centers.subList(0, Math.min(48, centers.size()))) {
-			List<BlockPos> torches = new ArrayList<>();
-			for (BlockPos torch : Services.watch().placedNear(level, center, config.torchesGoneSearchRadius, Tunnels::isTorch)) {
-				if (DigTicker.covered(level, torch) && torch.distSqr(here) >= minSqr) {
-					torches.add(torch);
-				}
-			}
+			List<BlockPos> torches = new ArrayList<>(caveTorches(level, center, config.torchesGoneSearchRadius, base));
+			torches.removeIf(torch -> torch.distSqr(here) < minSqr);
 			if (torches.size() < 2) {
 				continue;
 			}
@@ -97,27 +132,17 @@ final class TorchCards {
 		@Override
 		public boolean contextFits(ServerPlayer player, ServerLevel world) {
 			return !DigTicker.INSTANCE.torchSessionActive() && DigTicker.underground(world, player.blockPosition())
-					&& caveTorches(world, player, 64).size() >= DigConfig.get().torchesBehindMinTorches;
+					&& caveTorches(world, player.blockPosition(), 64, base(player).orElse(null)).size() >= DigConfig.get().torchesBehindMinTorches;
 		}
 
 		@Override
 		public FireResult fire(FireContext ctx) {
-			List<BlockPos> torches = caveTorches(ctx.level(), ctx.player(), 96);
+			List<BlockPos> torches = caveTorches(ctx.level(), ctx.player().blockPosition(), 96, base(ctx.player()).orElse(null));
 			if (torches.size() < 2) {
 				return FireResult.NO_SPOT;
 			}
 			DigTicker.INSTANCE.startTorchSession(ctx.player(), torches);
 			return FireResult.FIRED;
-		}
-
-		private static List<BlockPos> caveTorches(ServerLevel level, ServerPlayer player, int radius) {
-			List<BlockPos> torches = new ArrayList<>();
-			for (BlockPos torch : Services.watch().placedNear(level, player.blockPosition(), radius, Tunnels::isTorch)) {
-				if (DigTicker.covered(level, torch)) {
-					torches.add(torch);
-				}
-			}
-			return torches;
 		}
 	}
 }
