@@ -135,18 +135,25 @@ public class EndingRuleTests {
 	@GameTest
 	public void directorFlagsAreSingleAndParseable(GameTestHelper helper) {
 		HerobrineState state = new HerobrineState();
-		DirectorFlags.silenceUntil(state, 12);
-		DirectorFlags.silenceUntil(state, 15);
+		DirectorHooks.silenceUntil(state, 12);
+		DirectorHooks.silenceUntil(state, 15);
 		helper.assertTrue(state.hasFlag("director:silence_until_day=15") && !state.hasFlag("director:silence_until_day=12"),
 				"silence flags: " + state.flags());
-		helper.assertTrue(DirectorFlags.silence(state).orElse(0L) == 15, "silence did not read back");
-		DirectorFlags.silenceForever(state);
-		helper.assertTrue(state.hasFlag("director:silence_until_day=-1"), "forever is not -1: " + state.flags());
-		DirectorFlags.pace(state, 1.6);
+		helper.assertTrue(DirectorHooks.silence(state).orElse(0L) == 15, "silence did not read back");
+		DirectorHooks.silenceForever(state);
+		helper.assertTrue(state.hasFlag("director:silence_forever") && state.flags().stream().noneMatch(f -> f.startsWith("director:silence_until")),
+				"forever is not director:silence_forever alone: " + state.flags());
+		helper.assertTrue(com.forzacode.a1016_02.director.DirectorFlags.parse(state.flags()).silenced(Long.MAX_VALUE - 1),
+				"the director does not read it as for good");
+		DirectorHooks.silenceUntil(state, 20);
+		helper.assertFalse(state.hasFlag("director:silence_forever"), "a silence until a day left forever behind");
+		helper.assertTrue(com.forzacode.a1016_02.director.DirectorFlags.parse(state.flags()).silenced(19)
+				&& !com.forzacode.a1016_02.director.DirectorFlags.parse(state.flags()).silenced(20), "the director reads the day wrong");
+		DirectorHooks.pace(state, 1.6);
 		helper.assertTrue(state.hasFlag("director:pace_multiplier=1.60"), "pace flag not in Locale.ROOT form: " + state.flags());
-		helper.assertTrue(Math.abs(DirectorFlags.pace(state).orElse(0.0) - 1.6) < 1.0E-9, "pace did not read back");
-		DirectorFlags.clearSilence(state);
-		DirectorFlags.clearPace(state);
+		helper.assertTrue(Math.abs(DirectorHooks.pace(state).orElse(0.0) - 1.6) < 1.0E-9, "pace did not read back");
+		DirectorHooks.clearSilence(state);
+		DirectorHooks.clearPace(state);
 		helper.assertTrue(state.flags().stream().noneMatch(f -> f.startsWith("director:")), "flags left behind: " + state.flags());
 		helper.succeed();
 	}

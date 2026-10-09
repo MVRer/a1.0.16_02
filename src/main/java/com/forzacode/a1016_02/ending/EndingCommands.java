@@ -65,8 +65,8 @@ final class EndingCommands {
 				path == EndingPath.NONE ? "" : String.format(Locale.ROOT, " (%.1f days in, %.1f in this beat; %s)", snap.ctx().daysSince(data.pathSince()),
 						snap.ctx().daysSince(data.beatSince()), data.reason()),
 				state.stage(), data.ended() ? ", the story has ended" : ""));
-		lines.add("  director flags: silence " + DirectorFlags.silence(state).map(d -> d == DirectorFlags.FOREVER ? "forever" : "until day " + d)
-				.orElse("off") + ", pace " + DirectorFlags.pace(state).map(x -> String.format(Locale.ROOT, "x%.2f", x)).orElse("x1")
+		lines.add("  director flags: silence " + DirectorHooks.silence(state).map(d -> d == DirectorHooks.FOREVER ? "forever" : "until day " + d)
+				.orElse("off") + ", pace " + DirectorHooks.pace(state).map(x -> String.format(Locale.ROOT, "x%.2f", x)).orElse("x1")
 				+ ", last sighting " + (state.hasFlag(EndingEngine.LAST_SIGHTING_FLAG) ? "allowed" : "off")
 				+ (state.hasFlag(EndingEngine.LAST_SIGHTING_SEEN_FLAG) ? " (seen)" : ""));
 		lines.add(String.format(Locale.ROOT, "  watch: Stop. %s, tellings %d (%d after Stop.), named %s, read %s, traces %s, fog stare %s, marked deaths %d",

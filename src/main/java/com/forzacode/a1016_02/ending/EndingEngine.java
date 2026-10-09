@@ -178,8 +178,8 @@ public final class EndingEngine {
 			// Stage 4 stays, so atmosphere will not set its fog again: put back Stage 4's dusk fog.
 			ports.setDuskFog(c.server(), ports.stageDuskFog(Stage.REMOVAL));
 		}
-		DirectorFlags.clearSilence(state);
-		DirectorFlags.clearPace(state);
+		DirectorHooks.clearSilence(state);
+		DirectorHooks.clearPace(state);
 	}
 
 	static void mirror(HerobrineState state, EndingPath path) {
@@ -230,9 +230,9 @@ public final class EndingEngine {
 		HerobrineState state = c.state();
 		data.setEnded(c.now());
 		state.setFlag(ENDED_FLAG, true);
-		DirectorFlags.clearPace(state);
+		DirectorHooks.clearPace(state);
 		if (c.cfg().silenceAfterEnd) {
-			DirectorFlags.silenceForever(state);
+			DirectorHooks.silenceForever(state);
 		}
 		releaseWaiters(c);
 		ports.disarmTraps();
@@ -266,7 +266,7 @@ public final class EndingEngine {
 		if (path == EndingPath.A && data.progress(EndingPath.A) == A.ACCIDENT.ordinal()) {
 			data.setDeath(pos, c.now());
 			setBeat(c, EndingPath.A, A.SIGN, "the ordinary accident");
-		} else if (path == EndingPath.B && data.progress(EndingPath.B) == B.FINAL.ordinal() && data.finalArmed()) {
+		} else if (path == EndingPath.B && data.progress(EndingPath.B) == B.FINAL.ordinal() && (data.finalArmed() || insideFinal(c, pos))) {
 			toRecord(c, "the final death, inside the copy");
 		}
 		if (fresh) {
@@ -287,7 +287,7 @@ public final class EndingEngine {
 		if (!namesHim || data.path() != EndingPath.C || data.ended()) {
 			return;
 		}
-		DirectorFlags.clearSilence(c.state());
+		DirectorHooks.clearSilence(c.state());
 		data.resetSilenceWork();
 		data.setPath(EndingPath.NONE, c.now(), "named him during C");
 		mirror(c.state(), EndingPath.NONE);
@@ -303,7 +303,7 @@ public final class EndingEngine {
 		ports.disarmTraps();
 		c.state().setFlag(LAST_SIGHTING_FLAG, true);
 		// The world goes quiet and vanilla again.
-		DirectorFlags.silenceForever(c.state());
+		DirectorHooks.silenceForever(c.state());
 	}
 
 	private void runA(Ctx c) {
@@ -356,14 +356,14 @@ public final class EndingEngine {
 		int max = Math.max(min, cfg.aSilenceMaxDays);
 		long until = c.today() + min + c.random().nextInt(max - min + 1);
 		c.data().setSilenceUntilDay(until);
-		DirectorFlags.silenceUntil(c.state(), until);
+		DirectorHooks.silenceUntil(c.state(), until);
 		setBeat(c, EndingPath.A, A.QUIET, why + "; quiet until day " + until);
 	}
 
 	void aQuiet(Ctx c) {
 		if (c.force() || c.today() >= c.data().silenceUntilDay()) {
 			// Only the one accident comes now.
-			DirectorFlags.silenceForever(c.state());
+			DirectorHooks.silenceForever(c.state());
 			setBeat(c, EndingPath.A, A.ACCIDENT, "the quiet is over");
 		}
 	}
@@ -415,7 +415,7 @@ public final class EndingEngine {
 	// --- Ending B: "Removed" ---
 
 	private void enterB(Ctx c) {
-		DirectorFlags.pace(c.state(), c.cfg().bPaceMultiplier);
+		DirectorHooks.pace(c.state(), c.cfg().bPaceMultiplier);
 		GlobalPos house = c.player() != null ? ports.watch().base(c.player()).orElse(null) : null;
 		c.data().setHouse(house != null ? house : c.data().home().orElse(null));
 	}
@@ -668,6 +668,14 @@ public final class EndingEngine {
 		});
 	}
 
+	/** Within {@code bFinalRadius} of the copy (or the house): any marked death there is the final one. */
+	private boolean insideFinal(Ctx c, GlobalPos pos) {
+		Optional<GlobalPos> target = finalTarget(c);
+		int r = c.cfg().bFinalRadius;
+		return target.isPresent() && target.get().dimension().equals(pos.dimension()) && horizontal(target.get().pos(), pos.pos()) <= r
+				&& Math.abs(target.get().pos().getY() - pos.pos().getY()) <= r;
+	}
+
 	/** The copy's middle if there is a copy, else the house. */
 	Optional<GlobalPos> finalTarget(Ctx c) {
 		if (ports.copyExists(c.server())) {
@@ -710,14 +718,14 @@ public final class EndingEngine {
 
 	private void enterC(Ctx c) {
 		ports.disarmTraps();
-		DirectorFlags.silenceForever(c.state());
+		DirectorHooks.silenceForever(c.state());
 		ports.setDuskFog(c.server(), 0.0F);
 	}
 
 	/** The world stays quiet: the silence and the clear dusk hold until he is named. */
 	private void runC(Ctx c) {
-		if (DirectorFlags.silence(c.state()).orElse(0L) != DirectorFlags.FOREVER) {
-			DirectorFlags.silenceForever(c.state());
+		if (DirectorHooks.silence(c.state()).orElse(0L) != DirectorHooks.FOREVER) {
+			DirectorHooks.silenceForever(c.state());
 		}
 		if (c.state().effects().duskFogLevel() > 0.0F) {
 			ports.setDuskFog(c.server(), 0.0F);

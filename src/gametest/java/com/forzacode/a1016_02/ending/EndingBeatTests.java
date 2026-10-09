@@ -43,7 +43,7 @@ public class EndingBeatTests extends EndingRuleTests {
 		helper.assertTrue(r.state.stage() == Stage.REMOVAL, "A did not enter Stage 4");
 		helper.assertTrue(r.state.hasFlag(EndingEngine.LAST_SIGHTING_FLAG), "ending:last_sighting not set");
 		helper.assertTrue(r.state.hasFlag("ending:path=A"), "the path is not mirrored");
-		helper.assertTrue(DirectorFlags.silence(r.state).orElse(0L) == DirectorFlags.FOREVER, "the world did not go quiet");
+		helper.assertTrue(DirectorHooks.silence(r.state).orElse(0L) == DirectorHooks.FOREVER, "the world did not go quiet");
 		helper.assertTrue(r.ports.disarms == 1, "an armed trap was left for the false peace");
 
 		r.tick();
@@ -57,7 +57,7 @@ public class EndingBeatTests extends EndingRuleTests {
 		helper.assertTrue(r.beat(A.class, EndingPath.A) == A.QUIET, "no quiet after he was seen");
 		long until = r.data.silenceUntilDay();
 		helper.assertTrue(until >= r.today() + 5 && until <= r.today() + 7, "the quiet is not 5 to 7 days: until " + until + " from " + r.today());
-		helper.assertTrue(DirectorFlags.silence(r.state).orElse(0L) == until, "director:silence_until_day is not the quiet's end");
+		helper.assertTrue(DirectorHooks.silence(r.state).orElse(0L) == until, "director:silence_until_day is not the quiet's end");
 
 		r.ports.armable.add("lava_floor");
 		r.days(4);
@@ -66,7 +66,7 @@ public class EndingBeatTests extends EndingRuleTests {
 		r.now = until * GameClock.TICKS_PER_DAY + 100;
 		r.tick();
 		helper.assertTrue(r.beat(A.class, EndingPath.A) == A.ACCIDENT, "the quiet did not end");
-		helper.assertTrue(DirectorFlags.silence(r.state).orElse(0L) == DirectorFlags.FOREVER, "other events came back for the accident");
+		helper.assertTrue(DirectorHooks.silence(r.state).orElse(0L) == DirectorHooks.FOREVER, "other events came back for the accident");
 		r.tick();
 		helper.assertTrue(r.ports.armed.equals(List.of("lava_floor")), "the lava floor was not armed: " + r.ports.armed);
 
@@ -122,7 +122,7 @@ public class EndingBeatTests extends EndingRuleTests {
 		r.tick();
 		helper.assertTrue(r.data.path() == EndingPath.B, "kept telling during A, still A");
 		helper.assertFalse(r.state.hasFlag(EndingEngine.LAST_SIGHTING_FLAG), "A's last sighting is still allowed on B");
-		helper.assertTrue(DirectorFlags.pace(r.state).isPresent() && DirectorFlags.silence(r.state).isEmpty(), "B's flags are wrong: " + r.state.flags());
+		helper.assertTrue(DirectorHooks.pace(r.state).isPresent() && DirectorHooks.silence(r.state).isEmpty(), "B's flags are wrong: " + r.state.flags());
 		helper.succeed();
 	}
 
@@ -174,9 +174,24 @@ public class EndingBeatTests extends EndingRuleTests {
 		r.ports.f20Ready = true;
 		r.tick();
 		helper.assertTrue(r.beat(B.class, EndingPath.B) == B.DONE && r.data.ended() && r.data.f20Placed(), "B did not end with F20 placed");
-		helper.assertTrue(DirectorFlags.pace(r.state).isEmpty() && DirectorFlags.silence(r.state).orElse(0L) == DirectorFlags.FOREVER,
+		helper.assertTrue(DirectorHooks.pace(r.state).isEmpty() && DirectorHooks.silence(r.state).orElse(0L) == DirectorHooks.FOREVER,
 				"the end left the pace on or the director awake: " + r.state.flags());
 		before.check(helper, r);
+		helper.succeed();
+	}
+
+	@GameTest
+	public void onlyADeathInsideTheCopyIsBsFinalOne(GameTestHelper helper) {
+		Run r = new Run(helper);
+		r.ports.copyExists = true;
+		r.ports.copySite = r.at(0, 150, 40);
+		r.commit(EndingPath.B);
+		r.data.setHouse(r.at(0, 150, 0));
+		r.data.setProgress(EndingPath.B, B.FINAL.ordinal(), r.now);
+		r.engine.onMarkedDeath(r.ctx(), r.at(0, 150, 100), 1, false);
+		helper.assertTrue(r.beat(B.class, EndingPath.B) == B.FINAL && r.ports.f10Finished == 0, "a death far from the copy was the final one");
+		r.engine.onMarkedDeath(r.ctx(), r.at(3, 151, 42), 2, false);
+		helper.assertTrue(r.beat(B.class, EndingPath.B) == B.RECORD && r.ports.f10Finished == 1, "a death inside the copy was not the final one");
 		helper.succeed();
 	}
 
@@ -210,7 +225,7 @@ public class EndingBeatTests extends EndingRuleTests {
 		r.data.addFragmentBurned();
 		r.commit(EndingPath.C);
 		helper.assertTrue(r.state.stage() == Stage.REMOVAL && r.state.hasFlag("ending:path=C"), "C did not enter Stage 4");
-		helper.assertTrue(DirectorFlags.silence(r.state).orElse(0L) == DirectorFlags.FOREVER, "director:silence_until_day=-1 not set");
+		helper.assertTrue(DirectorHooks.silence(r.state).orElse(0L) == DirectorHooks.FOREVER, "director:silence_until_day=-1 not set");
 		helper.assertTrue(r.ports.duskFog.equals(List.of(0.0F)), "the dusk fog did not go to 0: " + r.ports.duskFog);
 		helper.assertFalse(r.ports.trapArmed, "a trap stayed armed in the silence");
 		r.days(30);
@@ -223,7 +238,7 @@ public class EndingBeatTests extends EndingRuleTests {
 		r.data.recordTelling(r.now, true);
 		r.engine.onTelling(r.ctx(), true);
 		helper.assertTrue(r.data.path() == EndingPath.NONE, "naming him did not undo C");
-		helper.assertTrue(DirectorFlags.silence(r.state).isEmpty(), "the silence stayed after naming him");
+		helper.assertTrue(DirectorHooks.silence(r.state).isEmpty(), "the silence stayed after naming him");
 		helper.assertTrue(r.state.stage() == Stage.TELLING, "the stage did not go back to Telling");
 		helper.assertTrue(r.data.fragmentsBurned() == 0 && !r.state.hasFlag("ending:path=C"), "C's work was kept");
 		helper.succeed();
@@ -241,10 +256,10 @@ public class EndingBeatTests extends EndingRuleTests {
 			helper.assertTrue(r.data.path() == path, path + ": changed before the third death");
 			r.engine.onMarkedDeath(r.ctx(), r.at(1, 1, 1), 3, false);
 			helper.assertTrue(r.data.path() == EndingPath.B && r.data.reason().contains("third"), path + ": the third death did not commit B");
-			helper.assertTrue(r.state.stage() == Stage.REMOVAL && DirectorFlags.pace(r.state).isPresent(), path + ": B did not start");
+			helper.assertTrue(r.state.stage() == Stage.REMOVAL && DirectorHooks.pace(r.state).isPresent(), path + ": B did not start");
 			if (path == EndingPath.C) {
 				helper.assertTrue(r.ports.duskFog.getLast() == 0.7F, "C's clear dusk stayed on B");
-				helper.assertTrue(DirectorFlags.silence(r.state).isEmpty(), "C's silence stayed on B");
+				helper.assertTrue(DirectorHooks.silence(r.state).isEmpty(), "C's silence stayed on B");
 			}
 		}
 
@@ -275,7 +290,7 @@ public class EndingBeatTests extends EndingRuleTests {
 		Run none = new Run(helper);
 		none.engine.onMarkedDeath(none.ctx(), none.at(1, 1, 1), 1, true);
 		helper.assertTrue(none.data.ended() && none.state.hasFlag(EndingEngine.ENDED_FLAG), "a hardcore death did not end the story");
-		helper.assertTrue(DirectorFlags.silence(none.state).orElse(0L) == DirectorFlags.FOREVER, "the director kept going after the end");
+		helper.assertTrue(DirectorHooks.silence(none.state).orElse(0L) == DirectorHooks.FOREVER, "the director kept going after the end");
 		none.ports.armable.add("lava_floor");
 		none.state.setStopFired(true);
 		none.data.setStopSeenAt(none.now - 10 * GameClock.TICKS_PER_DAY);
@@ -299,7 +314,7 @@ public class EndingBeatTests extends EndingRuleTests {
 		helper.assertTrue(b.beat(B.class, EndingPath.B) == B.DONE && b.data.f20Placed(), "hardcore B did not place F20");
 		b.engine.onMarkedDeath(b.ctx(), b.at(2, 1, 2), 2, true);
 		helper.assertTrue(b.data.path() == EndingPath.B && b.ports.f10Finished == 1, "a death after the end changed something");
-		helper.assertTrue(DirectorFlags.pace(b.state).isEmpty() && b.state.stage() == Stage.REMOVAL, "the final state is not consistent");
+		helper.assertTrue(DirectorHooks.pace(b.state).isEmpty() && b.state.stage() == Stage.REMOVAL, "the final state is not consistent");
 		helper.succeed();
 	}
 
