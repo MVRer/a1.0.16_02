@@ -23,7 +23,7 @@ import net.minecraft.world.level.block.state.BlockState;
  */
 public final class PowderSnowTrap extends BaseTrap {
 	/** Path spots checked for nearby powder snow per scan (each check reads a box of blocks). */
-	private static final int MAX_SPOTS = 24;
+	private static final int MAX_SPOTS = 8;
 
 	public PowderSnowTrap() {
 		super("powder_snow", false, "froze", EnumSet.of(Habit.WATCHER), DamageTypes.FREEZE);
@@ -68,7 +68,7 @@ public final class PowderSnowTrap extends BaseTrap {
 	/** Natural powder snow tops (open above) near the path, nearest first, never right next to it. */
 	static List<BlockPos> sources(ServerLevel level, BlockPos path, int radius, TrapContext ctx) {
 		List<BlockPos> found = new ArrayList<>();
-		for (BlockPos pos : BlockPos.betweenClosed(path.offset(-radius, -4, -radius), path.offset(radius, 4, radius))) {
+		for (BlockPos pos : BlockPos.betweenClosed(path.offset(-radius, -3, -radius), path.offset(radius, 3, radius))) {
 			if (pos.distManhattan(path) <= 2 || !level.getBlockState(pos).is(Blocks.POWDER_SNOW) || !level.getBlockState(pos.above()).isAir()
 					|| ctx.placedByPlayer(pos)) {
 				continue;

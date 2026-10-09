@@ -339,6 +339,11 @@ public final class AccidentPlannerImpl implements AccidentPlanner {
 		refresh(subject, kind);
 	}
 
+	/** Stores a candidate count found elsewhere (the candidates command). */
+	public void remember(TrapKind kind, int count) {
+		cachedCandidates.put(kind.id(), count);
+	}
+
 	public int refresh(ServerPlayer subject, TrapKind kind) {
 		int count;
 		try {

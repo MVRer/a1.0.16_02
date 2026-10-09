@@ -102,7 +102,7 @@ final class AccidentCommands {
 		lines.add("[a1016] accident candidates near " + Candidate.at(player.blockPosition()) + ":");
 		for (TrapKind kind : only != null ? List.of(only) : Traps.ALL) {
 			List<Candidate> found = planner.candidates(player, kind);
-			planner.refresh(player, kind);
+			planner.remember(kind, kind.blocked() != null ? 0 : found.size());
 			String blocked = kind.blocked();
 			String head = "  " + kind.id() + (kind.live() ? " (live)" : "") + ": " + found.size() + (blocked != null ? " [" + blocked + "]" : "");
 			if (found.isEmpty()) {

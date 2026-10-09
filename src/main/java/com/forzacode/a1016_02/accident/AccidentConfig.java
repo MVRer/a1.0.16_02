@@ -64,7 +64,7 @@ public final class AccidentConfig {
 	/** The base keeps at least this many torches lit while the corner is dark. */
 	public int darkCornerKeepLit = 3;
 	public int noBedAwayBlocks = 48;
-	public int powderSourceRadius = 16;
+	public int powderSourceRadius = 12;
 	public int woolMinLine = 3;
 	public int sculkSearchRadius = 8;
 	public int mobSearchRadius = 64;
