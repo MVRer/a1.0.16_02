@@ -9,10 +9,10 @@ Status values: queued, running, review, fix, merged, blocked. Only the orchestra
 | P1-2 | The figure: model, white eyes, fog-edge spawn out of view, all sighting variants, stare then leave, despawn | entity | feat/entity-figure | v0.2-figure | review | Starts from the HimEntity prototype (D-001) |
 | P1-3 | Old scars (worldgen) and the live new-scar placer | world | feat/world-scars | v0.3-traces | running | Records sites in SiteRegistry for lore |
 | P1-4 | Live diggers and the "Under you" network | dig | feat/dig-diggers | v0.3-traces | running | Records TUNNEL_END and UNDER_BASE sites |
-| P1-5 | Dread layer: fog, silence, music off, sound director, mobs acting wrong (client and server) | atmosphere | feat/atmosphere-dread | v0.4-dread | running | Also builds the real MobTamper (D-017) |
+| P1-5 | Dread layer: fog, silence, music off, sound director, mobs acting wrong (client and server) | atmosphere | feat/atmosphere-dread | v0.4-dread | review | Also builds the real MobTamper (D-017) |
 | P1-6 | Fragments: all 30 as data, placement by stage and profile, sites | lore | feat/lore-fragments | v0.5-fragments | running | Contract gap to expect: a protected "untouched grove" so new scars avoid it |
 | P1-7 | Telling: sign and book watcher, blank signs, "Stop.", place not found, list updates, unbreakable F30 | lore | feat/lore-telling | v0.6-telling | queued, after P1-6 | |
-| P1-8 | Accidents: planner, every trap, death marker (uses atmosphere's MobTamper) | accident | feat/accident-traps | v0.7-accidents | queued, wave 2 | |
+| P1-8 | Accidents: planner, every trap, death marker (uses atmosphere's MobTamper) | accident | feat/accident-traps | v0.7-accidents | running | Gravel ceiling waits on a core opt-in. Rebases onto main once atmosphere's MobTamper lands |
 | P2-1 | Endings A, B, C, D (full D chain) | ending | feat/ending-endings | v0.8-endings | queued, phase 2 | |
 | P2-2 | Integration: wire all cards, close contract gaps, guardrail pass | (multi) | feat/integration-pass | v1.0 | queued, phase 2 | |
 | P2-3 | Playtest tooling: dev overlay and a 20 h scripted timewarp log | debug | feat/debug-playtest | v1.0 | queued, phase 2 | |
@@ -29,3 +29,12 @@ Status values: queued, running, review, fix, merged, blocked. Only the orchestra
 | v0.7-accidents | P1-8 merged | |
 | v0.8-endings | P2-1 merged | |
 | v1.0 | P2-2 and P2-3 merged, 20 h simulation passes | |
+
+## Core contract batch (after entity and atmosphere merge)
+- `Director.timewarp` returns summary lines; `/a1016 timewarp` prints them (director)
+- `GameClock.dayTicks` (director)
+- A shared fog-end helper in core, used by entity and atmosphere (entity)
+- Document the flags `ending:last_sighting` and `entity:last_sighting_seen` (entity)
+- `MobTamper`/`installMobTamper` Javadoc names atmosphere as the owner, and `MobTamper.isTampered(Mob)` (atmosphere)
+- A TraceService opt-in that lets a falling block drop, for the gravel ceiling (accident)
+- A protected "untouched grove" area that new scars avoid (lore, expected)
