@@ -49,8 +49,8 @@ import net.minecraft.world.level.block.entity.SignBlockEntity;
 public final class Telling {
 	/** Custom data key stamped into a book written about him, holding its id in {@link TellingData}. */
 	public static final String BOOK_MARKER = "a1016_02:telling";
-	/** The telling count mirrored into {@code HerobrineState} flags as {@code lore:telling_count=<n>}. */
-	public static final String COUNT_FLAG = "lore:telling_count";
+	/** The telling count's mirror flag in {@code HerobrineState}, {@code lore:telling_count=<n>} (kept for compatibility). */
+	public static final String COUNT_FLAG = HerobrineState.TELLING_COUNT_FLAG;
 	/** Set once a copy of the list (F06) burnt in lava or fire. */
 	public static final String LIST_BURNED_FLAG = "lore:list_burned";
 
@@ -256,11 +256,11 @@ public final class Telling {
 			TellingData data) {
 		MinecraftServer server = player.level().getServer();
 		// D-041: both count as telling; only naming him starts it (Stage 3, tellingStarted, the first telling).
-		int count = data.countTelling(seq, day, names);
+		int count = state.incrementTellingCount();
+		data.noteTelling(seq, day, names);
 		if (names) {
 			state.setTellingStarted(true);
 		}
-		mirrorCount(state, count);
 		if (names) {
 			Attention.trigger(server, AttentionTrigger.NAMED_HIM);
 		}
@@ -270,16 +270,6 @@ public final class Telling {
 		A1016_02.LOGGER.info("[a1016] lore: {} told ({}{}), count {}", player.getName().getString(), names ? "named him" : "",
 				near ? (names ? ", near his traces" : "near his traces") : "", count);
 		HerobrineEvents.TELLING.invoker().onTelling(player, text, pos.immutable(), names);
-	}
-
-	/** Keeps exactly one {@code lore:telling_count=<n>} flag in the shared state. */
-	static void mirrorCount(HerobrineState state, int count) {
-		for (String flag : List.copyOf(state.flags())) {
-			if (flag.startsWith(COUNT_FLAG + "=")) {
-				state.setFlag(flag, false);
-			}
-		}
-		state.setFlag(COUNT_FLAG + "=" + count, true);
 	}
 
 	/** The count read back from the shared state's flag (0 if none). */

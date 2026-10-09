@@ -104,9 +104,9 @@ public final class TellingData extends SavedData {
 		}
 	}
 
-	private record Counters(int count, long nextSeq, long firstTellingSeq, long firstTellingDay) {
+	/** The count itself lives in {@code HerobrineState.tellingCount()}; an old {@code count} key here is ignored. */
+	private record Counters(long nextSeq, long firstTellingSeq, long firstTellingDay) {
 		static final Codec<Counters> CODEC = RecordCodecBuilder.create(i -> i.group(
-				Codec.INT.optionalFieldOf("count", 0).forGetter(Counters::count),
 				Codec.LONG.optionalFieldOf("nextSeq", 0L).forGetter(Counters::nextSeq),
 				Codec.LONG.optionalFieldOf("firstTellingSeq", -1L).forGetter(Counters::firstTellingSeq),
 				Codec.LONG.optionalFieldOf("firstTellingDay", -1L).forGetter(Counters::firstTellingDay)
@@ -114,7 +114,7 @@ public final class TellingData extends SavedData {
 	}
 
 	public static final Codec<TellingData> CODEC = RecordCodecBuilder.create(i -> i.group(
-			Counters.CODEC.optionalFieldOf("counters", new Counters(0, 0, -1, -1)).forGetter(d -> new Counters(d.count, d.nextSeq, d.firstTellingSeq,
+			Counters.CODEC.optionalFieldOf("counters", new Counters(0, -1, -1)).forGetter(d -> new Counters(d.nextSeq, d.firstTellingSeq,
 					d.firstTellingDay)),
 			WrittenSign.CODEC.listOf().optionalFieldOf("signs", List.of()).forGetter(d -> d.signs),
 			WrittenBook.CODEC.listOf().optionalFieldOf("books", List.of()).forGetter(d -> d.books),
@@ -129,7 +129,6 @@ public final class TellingData extends SavedData {
 
 	public static final SavedDataType<TellingData> TYPE = new SavedDataType<>(A1016_02.id("lore_telling"), TellingData::new, CODEC, null);
 
-	private int count;
 	private long nextSeq;
 	private long firstTellingSeq = -1;
 	private long firstTellingDay = -1;
@@ -150,7 +149,6 @@ public final class TellingData extends SavedData {
 	private TellingData(Counters counters, List<WrittenSign> signs, List<WrittenBook> books, Optional<GlobalPos> stopCandidate,
 			Optional<GlobalPos> stopSign, List<String> visited, Optional<String> notFound, List<GlobalPos> pendingBlanks, Burned burned,
 			Optional<String> listCause) {
-		this.count = counters.count();
 		this.nextSeq = counters.nextSeq();
 		this.firstTellingSeq = counters.firstTellingSeq();
 		this.firstTellingDay = counters.firstTellingDay();
@@ -171,23 +169,16 @@ public final class TellingData extends SavedData {
 
 	// --- counting ---
 
-	/** How many times a player told about him (signs, books and chat that name him or were written near his traces). */
-	public int count() {
-		return count;
-	}
-
 	/**
-	 * Counts one telling. The first one that names him is remembered as the first telling (writing near his traces
-	 * counts, but does not start it, D-041). Returns the new count.
+	 * Notes one telling (the count itself is {@code HerobrineState.incrementTellingCount}). The first one that names
+	 * him is remembered as the first telling (writing near his traces counts, but does not start it, D-041).
 	 */
-	int countTelling(long seq, long day, boolean namesHim) {
-		count++;
+	void noteTelling(long seq, long day, boolean namesHim) {
 		if (namesHim && firstTellingSeq < 0) {
 			firstTellingSeq = seq;
 			firstTellingDay = day;
+			setDirty();
 		}
-		setDirty();
-		return count;
 	}
 
 	/** The next writing's place in order. */

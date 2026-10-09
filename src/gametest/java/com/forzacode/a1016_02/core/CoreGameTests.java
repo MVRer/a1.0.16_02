@@ -73,6 +73,8 @@ public class CoreGameTests extends TraceGameTests {
 		state.recordFirst(HerobrineState.FirstKind.CHEST, new PlacedBlock(GlobalPos.of(Level.OVERWORLD, new BlockPos(5, 5, 5)), Blocks.CHEST.defaultBlockState()));
 		state.setEffects(new HerobrineState.Effects(true, 0.4F));
 		state.setFlag("lore:f04_done", true);
+		state.incrementTellingCount();
+		state.incrementTellingCount();
 
 		CompoundTag encoded = (CompoundTag) HerobrineState.CODEC.encodeStart(ops, state).getOrThrow();
 		encoded.putString("stage", Stage.PROXIMITY.name());
@@ -90,6 +92,15 @@ public class CoreGameTests extends TraceGameTests {
 		helper.assertTrue(decoded.markedDeaths().equals(state.markedDeaths()), "marked deaths");
 		helper.assertTrue(decoded.firstBlocks().equals(state.firstBlocks()) && decoded.firstBlocks().craftingTable() == null, "first blocks");
 		helper.assertTrue(decoded.effects().equals(state.effects()) && decoded.hasFlag("lore:f04_done"), "effects/flags");
+		helper.assertTrue(decoded.tellingCount() == 2 && decoded.hasFlag(HerobrineState.TELLING_COUNT_FLAG + "=2")
+				&& !decoded.hasFlag(HerobrineState.TELLING_COUNT_FLAG + "=1"), "telling count " + decoded.tellingCount() + " " + decoded.flags());
+
+		// A world saved before tellingCount existed: the count comes from lore's flag, and counting goes on from it.
+		CompoundTag legacy = encoded.copy();
+		legacy.remove("tellingCount");
+		HerobrineState old = HerobrineState.CODEC.parse(ops, legacy).getOrThrow();
+		helper.assertTrue(old.tellingCount() == 2 && old.incrementTellingCount() == 3 && old.hasFlag(HerobrineState.TELLING_COUNT_FLAG + "=3")
+				&& old.flags().stream().filter(f -> f.startsWith(HerobrineState.TELLING_COUNT_FLAG)).count() == 1, "legacy telling count " + old.flags());
 		helper.succeed();
 	}
 

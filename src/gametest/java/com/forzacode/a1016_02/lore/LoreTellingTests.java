@@ -157,7 +157,8 @@ public class LoreTellingTests extends LorePlacementTests {
 		helper.assertTrue(state.tellingStarted(), "tellingStarted was not set");
 		helper.assertTrue(TellingData.get(server).sign(GlobalPos.of(helper.getLevel().dimension(), pos)).map(TellingData.WrittenSign::namesHim)
 				.orElse(false), "the sign about him is not remembered");
-		helper.assertTrue(Telling.countFromFlags(state) == TellingData.get(server).count() && LoreApi.tellingCount(server) > 0,
+		helper.assertTrue(Telling.countFromFlags(state) == state.tellingCount() && LoreApi.tellingCount(server) == state.tellingCount()
+				&& state.tellingCount() > 0,
 				"the telling count is not mirrored into the flags");
 		helper.succeed();
 	}
@@ -202,7 +203,8 @@ public class LoreTellingTests extends LorePlacementTests {
 		helper.assertFalse(Telling.writeBook(player, writable("a shopping list"), false, state, data, NO_TRACES).told(), "a plain book told");
 		helper.assertTrue(Telling.chat(player, "sorry h e r o b r i n e", state, data).told(), "naming him in chat did not tell");
 		helper.assertFalse(Telling.chat(player, "anyone online?", state, data).told(), "plain chat told");
-		helper.assertTrue(data.count() == 3 && state.tellingStarted(), "count " + data.count());
+		helper.assertTrue(state.tellingCount() == 3 && Telling.countFromFlags(state) == 3 && state.tellingStarted(), "count " + state.tellingCount()
+				+ ", flags " + state.flags());
 		helper.succeed();
 	}
 
@@ -227,7 +229,7 @@ public class LoreTellingTests extends LorePlacementTests {
 		Telling.Told byTunnel = sign(helper, new BlockPos(3, 1, 2), player, "meet at the hut", state, data, nearTunnel);
 		helper.assertTrue(byTunnel.told() && byTunnel.nearTraces() && !byTunnel.namesHim(), "a sign near his tunnel did not tell");
 		helper.assertTrue(TOLD.size() > before && TOLD.getLast().endsWith("|false"), "TELLING for the sign near traces should not name him");
-		helper.assertTrue(data.count() == 1, "count " + data.count());
+		helper.assertTrue(state.tellingCount() == 1, "count " + state.tellingCount());
 		helper.assertFalse(state.tellingStarted() || data.told(), "writing near his traces started the telling (only his name does, D-041)");
 		helper.assertTrue(data.stopCandidate().isEmpty(), "a sign that does not name him became the Stop. sign");
 

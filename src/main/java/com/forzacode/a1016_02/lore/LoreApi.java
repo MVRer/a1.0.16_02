@@ -34,10 +34,10 @@ public final class LoreApi {
 	/**
 	 * How many times the player told about him: signs and books that name him or were written within
 	 * {@code pacing.tellingRadius} of his traces, and chat that names him. "The more you tell, the faster things
-	 * go." Also mirrored in {@code HerobrineState} flags as {@code lore:telling_count=<n>}.
+	 * go." The count is {@code HerobrineState.tellingCount()}; also mirrored in its flags as {@code lore:telling_count=<n>}.
 	 */
 	public static int tellingCount(MinecraftServer server) {
-		return TellingData.get(server).count();
+		return HerobrineState.get(server).tellingCount();
 	}
 
 	/** Where the "Stop." sign (F03) stands, once it fired and while it still exists. */

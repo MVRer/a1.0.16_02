@@ -69,6 +69,20 @@ public final class HerobrineState extends SavedData {
 		).apply(i, Clock::new));
 	}
 
+	/**
+	 * The story facts, stored as top-level fields ({@code stopFired}, {@code listRead}, {@code tellingStarted},
+	 * {@code tellingCount}). A world saved before {@code tellingCount} existed reads it from lore's
+	 * {@link #TELLING_COUNT_FLAG} flag.
+	 */
+	record Story(boolean stopFired, boolean listRead, boolean tellingStarted, Optional<Integer> tellingCount) {
+		static final MapCodec<Story> MAP_CODEC = RecordCodecBuilder.mapCodec(i -> i.group(
+				Codec.BOOL.optionalFieldOf("stopFired", false).forGetter(Story::stopFired),
+				Codec.BOOL.optionalFieldOf("listRead", false).forGetter(Story::listRead),
+				Codec.BOOL.optionalFieldOf("tellingStarted", false).forGetter(Story::tellingStarted),
+				Codec.INT.optionalFieldOf("tellingCount").forGetter(Story::tellingCount)
+		).apply(i, Story::new));
+	}
+
 	/** The profile salt and the worldgen salt, stored as two top-level fields ({@code salt}, {@code worldgenSalt}). */
 	record Salts(long profile, Optional<Long> worldgen) {
 		static final MapCodec<Salts> MAP_CODEC = RecordCodecBuilder.mapCodec(i -> i.group(
@@ -85,9 +99,7 @@ public final class HerobrineState extends SavedData {
 			WorldProfile.CODEC.optionalFieldOf("profile").forGetter(s -> Optional.ofNullable(s.profile)),
 			Subject.CODEC.optionalFieldOf("subject").forGetter(s -> Optional.ofNullable(s.subject)),
 			Clock.CODEC.optionalFieldOf("clock", new Clock(0, 0)).forGetter(s -> new Clock(s.playTicks, s.warpDays)),
-			Codec.BOOL.optionalFieldOf("stopFired", false).forGetter(s -> s.stopFired),
-			Codec.BOOL.optionalFieldOf("listRead", false).forGetter(s -> s.listRead),
-			Codec.BOOL.optionalFieldOf("tellingStarted", false).forGetter(s -> s.tellingStarted),
+			Story.MAP_CODEC.forGetter(s -> new Story(s.stopFired, s.listRead, s.tellingStarted, Optional.of(s.tellingCount))),
 			CoreCodecs.setOf(Codec.STRING).optionalFieldOf("fragmentsRead", Set.of()).forGetter(s -> s.fragmentsRead),
 			Codec.unboundedMap(Codec.STRING, GlobalPos.CODEC).optionalFieldOf("fragmentsPlaced", Map.of()).forGetter(s -> s.fragmentsPlaced),
 			MarkedDeath.CODEC.listOf().optionalFieldOf("markedDeaths", List.of()).forGetter(s -> s.markedDeaths),
@@ -97,6 +109,11 @@ public final class HerobrineState extends SavedData {
 	).apply(i, HerobrineState::new));
 
 	public static final SavedDataType<HerobrineState> TYPE = new SavedDataType<>(A1016_02.id("state"), HerobrineState::new, CODEC, null);
+	/**
+	 * The telling count is mirrored in {@link #flags()} as {@code lore:telling_count=<n>} (D-039), kept in sync by
+	 * {@link #incrementTellingCount()} for readers of the flag.
+	 */
+	public static final String TELLING_COUNT_FLAG = "lore:telling_count";
 
 	private Stage stage = Stage.ALONE;
 	private double attention;
@@ -112,6 +129,7 @@ public final class HerobrineState extends SavedData {
 	private boolean stopFired;
 	private boolean listRead;
 	private boolean tellingStarted;
+	private int tellingCount;
 	private final Set<String> fragmentsRead = new TreeSet<>();
 	private final Map<String, GlobalPos> fragmentsPlaced = new HashMap<>();
 	private final List<MarkedDeath> markedDeaths = new ArrayList<>();
@@ -124,8 +142,7 @@ public final class HerobrineState extends SavedData {
 	}
 
 	private HerobrineState(Stage stage, double attention, double tension, Salts salts, Optional<WorldProfile> profile,
-			Optional<Subject> subject, Clock clock, boolean stopFired, boolean listRead, boolean tellingStarted,
-			Set<String> fragmentsRead, Map<String, GlobalPos> fragmentsPlaced, List<MarkedDeath> markedDeaths,
+			Optional<Subject> subject, Clock clock, Story story, Set<String> fragmentsRead, Map<String, GlobalPos> fragmentsPlaced, List<MarkedDeath> markedDeaths,
 			FirstBlocks firstBlocks, Effects effects, Set<String> flags) {
 		this.stage = stage;
 		this.attention = attention;
@@ -139,9 +156,10 @@ public final class HerobrineState extends SavedData {
 		this.subject = subject.orElse(null);
 		this.playTicks = clock.playTicks();
 		this.warpDays = clock.warpDays();
-		this.stopFired = stopFired;
-		this.listRead = listRead;
-		this.tellingStarted = tellingStarted;
+		this.stopFired = story.stopFired();
+		this.listRead = story.listRead();
+		this.tellingStarted = story.tellingStarted();
+		this.tellingCount = Math.max(0, story.tellingCount().orElseGet(() -> countFromFlag(flags)));
 		this.fragmentsRead.addAll(fragmentsRead);
 		this.fragmentsPlaced.putAll(fragmentsPlaced);
 		this.markedDeaths.addAll(markedDeaths);
@@ -307,6 +325,41 @@ public final class HerobrineState extends SavedData {
 	public void setTellingStarted(boolean value) {
 		tellingStarted = value;
 		setDirty();
+	}
+
+	/**
+	 * How many times a player told about him: signs and books that name him or were written near his traces, and
+	 * chat that names him (D-039). Lore counts; "the more you tell, the faster things go".
+	 */
+	public int tellingCount() {
+		return tellingCount;
+	}
+
+	/** Counts one telling and keeps the one {@link #TELLING_COUNT_FLAG} flag in sync. Returns the new count. */
+	public int incrementTellingCount() {
+		tellingCount++;
+		for (String flag : List.copyOf(flags)) {
+			if (flag.startsWith(TELLING_COUNT_FLAG + "=")) {
+				flags.remove(flag);
+			}
+		}
+		flags.add(TELLING_COUNT_FLAG + "=" + tellingCount);
+		setDirty();
+		return tellingCount;
+	}
+
+	/** The count in a {@link #TELLING_COUNT_FLAG} flag (worlds saved before the field), or 0. */
+	private static int countFromFlag(Set<String> flags) {
+		for (String flag : flags) {
+			if (flag.startsWith(TELLING_COUNT_FLAG + "=")) {
+				try {
+					return Integer.parseInt(flag.substring(TELLING_COUNT_FLAG.length() + 1));
+				} catch (NumberFormatException e) {
+					return 0;
+				}
+			}
+		}
+		return 0;
 	}
 
 	// --- fragments ---

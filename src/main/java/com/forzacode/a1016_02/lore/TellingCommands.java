@@ -47,7 +47,7 @@ final class TellingCommands {
 		MinecraftServer server = ctx.getSource().getServer();
 		HerobrineState state = HerobrineState.get(server);
 		TellingData data = TellingData.get(server);
-		say(ctx, String.format(Locale.ROOT, "[a1016] telling: count %d (flag %d), tellingStarted %s, stage %s, first telling %s", data.count(),
+		say(ctx, String.format(Locale.ROOT, "[a1016] telling: count %d (flag %d), tellingStarted %s, stage %s, first telling %s", state.tellingCount(),
 				Telling.countFromFlags(state), state.tellingStarted(), state.stage(), data.told() ? "day " + data.firstTellingDay() : "never"));
 		say(ctx, String.format(Locale.ROOT, "[a1016] stopFired %s | Stop. candidate %s | Stop. sign %s", state.stopFired(),
 				data.stopCandidate().map(TellingCommands::at).orElse("none"), data.stopSign().map(TellingCommands::at).orElse("none")));
@@ -68,7 +68,7 @@ final class TellingCommands {
 		say(ctx, String.format(Locale.ROOT, "[a1016] visited %s | not found %s | list burnt %d (pyramids owed %d, raised %d%s) | list cause %s | blanks waiting %d",
 				data.visited(), data.notFound().orElse("not yet"), burned.lists(), burned.owed(), burned.raised(),
 				burned.ocean().map(o -> ", ocean " + at(o)).orElse(""), LiveBooks.cause(server).orElse("none"), data.pendingBlanks().size()));
-		return data.count();
+		return state.tellingCount();
 	}
 
 	/**
@@ -87,7 +87,7 @@ final class TellingCommands {
 				pos.getY(), pos.getZ(), told.told() ? "TELLING fired" : told.recorded() ? "recorded for blank sign, not telling" : "nothing",
 				NameMatcher.namesHim(text), Telling.live(server).near(GlobalPos.of(player.level().dimension(), pos),
 						com.forzacode.a1016_02.core.ModConfig.pacing().tellingRadius),
-				data.count(), state.stage(), data.stopCandidate().map(c -> c.pos().equals(pos) ? "; it is the Stop. candidate" : "").orElse("")));
+				state.tellingCount(), state.stage(), data.stopCandidate().map(c -> c.pos().equals(pos) ? "; it is the Stop. candidate" : "").orElse("")));
 		return told.told() ? 1 : 0;
 	}
 
