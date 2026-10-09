@@ -113,8 +113,8 @@ final class PlaythroughLog {
 		for (Event e : result.events) {
 			if (e.kind() == Kind.QUIET) {
 				any = true;
-				lines.add(Fmt.f("  %s day %d: %d in-game days, until day %d (%s of play), %s; tension was %.1f", Fmt.hm(e.play(), h), e.day(),
-						(e.until() - e.dayTicks()) / DAY_TICKS, Math.floorDiv(e.until(), DAY_TICKS), Fmt.hm(e.until() - e.dayTicks(), h), e.stage(),
+				lines.add(Fmt.f("  %s day %d: %s, until day %d (%s of play), %s; tension was %.1f", Fmt.hm(e.play(), h), e.day(),
+						days((e.until() - e.dayTicks()) / DAY_TICKS), Math.floorDiv(e.until(), DAY_TICKS), Fmt.hm(e.until() - e.dayTicks(), h), e.stage(),
 						e.value()));
 			}
 		}
@@ -176,8 +176,12 @@ final class PlaythroughLog {
 			case GIVE_UP -> Fmt.lower(e.tier()) + " " + e.cardId() + " back into its deck: " + e.note();
 			case REFILL -> Fmt.lower(e.tier()) + " deck reshuffled";
 			case FIRE -> Fmt.f("%-9s %s%s  tension %.1f", Fmt.lower(e.tier()), e.cardId(), e.fake() ? " (fake)" : "", e.value());
-			case QUIET -> Fmt.f("%d in-game days, until day %d (tension was %.1f)", (e.until() - e.dayTicks()) / DAY_TICKS,
+			case QUIET -> Fmt.f("%s, until day %d (tension was %.1f)", days((e.until() - e.dayTicks()) / DAY_TICKS),
 					Math.floorDiv(e.until(), DAY_TICKS), e.value());
 		};
+	}
+
+	private static String days(long days) {
+		return days + (days == 1 ? " in-game day" : " in-game days");
 	}
 }
