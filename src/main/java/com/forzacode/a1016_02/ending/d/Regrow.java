@@ -203,6 +203,14 @@ public final class Regrow {
 		return batch.commit();
 	}
 
+	/**
+	 * The last minute's leaf wave (D-048): one crown back, all or nothing, in view on purpose through core's
+	 * {@code regrowVisibly} (only while {@code ending:last_minute} is set).
+	 */
+	public static boolean growVisibly(ServerLevel level, Crown crown, TraceService traces) {
+		return traces.regrowVisibly(level, crown.leaves(), CAUSE);
+	}
+
 	/** The bare groves the world recorded, nearest {@code near} first. */
 	static List<SiteRegistry.Site> groves(ServerLevel level, BlockPos near) {
 		List<SiteRegistry.Site> sites = new ArrayList<>();

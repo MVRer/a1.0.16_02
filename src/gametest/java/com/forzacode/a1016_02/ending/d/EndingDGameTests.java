@@ -280,14 +280,22 @@ public class EndingDGameTests extends EndingDDangerTests {
 		try {
 			LastMinute.start(server, data, true, player.blockPosition());
 			long now = server.getTickCount();
+			boolean flagWhileGiving = false;
+			boolean flagOtherwise = false;
 			for (int i = 0; i < 2000 && LastMinute.running() && LastMinute.phase() != LastMinute.Phase.CLIMB; i++) {
 				LastMinute.tick(server, data, cfg, player, now + i);
+				boolean giving = LastMinute.phase() == LastMinute.Phase.FOOTSTEPS;
+				flagWhileGiving |= giving && state.hasFlag(LastMinute.FLAG);
+				flagOtherwise |= !giving && state.hasFlag(LastMinute.FLAG);
 			}
 			helper.assertTrue(LastMinute.phase().ordinal() >= LastMinute.Phase.CLIMB.ordinal(), "the preview stopped at " + LastMinute.phase());
+			helper.assertTrue(flagWhileGiving && !flagOtherwise && !state.hasFlag(LastMinute.FLAG),
+					"ending:last_minute is not set exactly while the stair comes back (D-048)");
 			helper.assertFalse(state.hasFlag(EndingDInit.COMPLETE_FLAG) || state.hasFlag(EndingDInit.SILENCE_FOREVER_FLAG), "a preview completed the ending");
 			helper.assertTrue(data.step() == Step.MAP, "a preview moved the chain");
 		} finally {
 			LastMinute.reset();
+			state.setFlag(LastMinute.FLAG, false);
 			com.forzacode.a1016_02.core.ClientEffects.setDuskFog(server, effects.duskFogLevel());
 			com.forzacode.a1016_02.core.ClientEffects.setMusicOff(server, effects.musicOff());
 		}

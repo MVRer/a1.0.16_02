@@ -1,6 +1,7 @@
 package com.forzacode.a1016_02.core;
 
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 import net.fabricmc.fabric.api.gametest.v1.GameTest;
@@ -29,6 +30,7 @@ import net.minecraft.world.level.block.WallTorchBlock;
 import net.minecraft.world.level.block.entity.SignBlockEntity;
 import net.minecraft.world.level.block.entity.SignText;
 import net.minecraft.world.level.block.entity.SignTextSlot;
+import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.state.properties.SlabType;
 import net.minecraft.world.level.block.state.properties.SpeleothemThickness;
 import net.minecraft.world.phys.AABB;
@@ -291,6 +293,49 @@ public class TraceContractTests extends CoreContractTests {
 		helper.assertTrue(traces.remove(level, off, cause + "/again"), "second remove failed");
 		helper.assertTrue(traces.restoreBlock(level, entries(level, cause + "/again").getFirst(), off), "restoring in place failed");
 		helper.assertTrue(level.getBlockState(off).is(Blocks.WALL_TORCH) && entries(level, cause + "/again").isEmpty(), "in-place restore");
+		helper.succeed();
+	}
+
+	/** D-048: Ending D's last minute gives back in view, only while ending:last_minute is set, and never twice. */
+	@GameTest
+	public void restoreVisiblyGivesBackInViewOnlyInTheLastMinute(GameTestHelper helper) {
+		ServerLevel level = helper.getLevel();
+		HerobrineState state = HerobrineState.get(level.getServer());
+		String cause = "test:last_minute/" + helper.absolutePos(BlockPos.ZERO).toShortString();
+		floor(helper, Blocks.STONE);
+		helper.setBlock(3, 1, 3, Blocks.OAK_STAIRS);
+		BlockPos stair = helper.absolutePos(new BlockPos(3, 1, 3));
+		helper.assertTrue(Services.traces().remove(level, stair, cause), "remove failed");
+		TraceLedger.Entry removed = entries(level, cause).getFirst();
+		helper.assertTrue(Services.traces().move(level, helper.absolutePos(new BlockPos(1, 0, 1)), helper.absolutePos(new BlockPos(1, 1, 1)), cause + "/move"),
+				"move failed");
+		TraceLedger.Entry moved = entries(level, cause + "/move").getFirst();
+		// Someone stands right there, looking at it: every ordinary edit is refused.
+		TraceService watched = Services.traces().watchedBy(List.of(viewerAt(helper, new Vec3(3.5, 1.0, 1.5), 0.0F, 20.0F)));
+		BlockPos leafA = helper.absolutePos(new BlockPos(5, 3, 5));
+		BlockPos leafB = helper.absolutePos(new BlockPos(5, 3, 4));
+		Map<BlockPos, BlockState> crown = Map.of(leafA, Blocks.RED_POPLAR_LEAVES.defaultBlockState(), leafB, Blocks.ORANGE_POPLAR_LEAVES.defaultBlockState());
+		boolean had = state.hasFlag(TraceService.LAST_MINUTE_FLAG);
+		try {
+			state.setFlag(TraceService.LAST_MINUTE_FLAG, false);
+			helper.assertFalse(watched.restoreBlock(level, removed, stair), "restoreBlock gave back in view");
+			helper.assertFalse(watched.restoreVisibly(level, removed, "test:giving"), "restoreVisibly worked outside the last minute");
+			helper.assertFalse(watched.regrowVisibly(level, crown, "test:giving"), "regrowVisibly worked outside the last minute");
+
+			state.setFlag(TraceService.LAST_MINUTE_FLAG, true);
+			helper.assertFalse(watched.restoreVisibly(level, moved, "test:giving"), "restoreVisibly took a MOVE entry");
+			helper.assertTrue(watched.restoreVisibly(level, removed, "test:giving"), "the stair did not come back in view");
+			helper.assertTrue(level.getBlockState(stair).is(Blocks.OAK_STAIRS) && entries(level, cause).isEmpty(), "not back, or its entry is still open");
+			helper.assertFalse(watched.restoreVisibly(level, removed, "test:giving"), "the stair came back twice");
+			helper.assertFalse(watched.regrowVisibly(level, Map.of(leafA, Blocks.STONE.defaultBlockState()), "test:giving"), "grew stone back");
+			helper.assertTrue(watched.regrowVisibly(level, crown, "test:giving"), "the leaves did not come back in view");
+			helper.assertTrue(level.getBlockState(leafA).is(Blocks.RED_POPLAR_LEAVES) && level.getBlockState(leafB).is(Blocks.ORANGE_POPLAR_LEAVES),
+					"the leaves are not there");
+			helper.assertTrue(entries(level, "test:giving").isEmpty(), "giving back was ledgered");
+			helper.assertFalse(watched.regrowVisibly(level, crown, "test:giving"), "leaves grew into leaves");
+		} finally {
+			state.setFlag(TraceService.LAST_MINUTE_FLAG, had);
+		}
 		helper.succeed();
 	}
 

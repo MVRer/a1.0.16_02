@@ -14,6 +14,7 @@ import com.forzacode.a1016_02.core.Services;
 import com.forzacode.a1016_02.core.SiteRegistry;
 import com.forzacode.a1016_02.core.SoundCues;
 import com.forzacode.a1016_02.core.TraceLedger;
+import com.forzacode.a1016_02.core.TraceService;
 import com.forzacode.a1016_02.ending.DirectorHooks;
 import com.forzacode.a1016_02.ending.EndingApi;
 import com.forzacode.a1016_02.ending.EndingPath;
@@ -44,20 +45,30 @@ import org.jspecify.annotations.Nullable;
  * The last minute, a scripted sequence once the last plank is on his cross (DESIGN.md "The last minute"):
  * <ol>
  * <li>every ambient sound stops (the torches keep burning);</li>
- * <li>the missing stair blocks come back one at a time, climbing like footsteps (the exact ledgered blocks, through
- * {@code restoreBlock}; each one's step sound for the player);</li>
+ * <li>the missing stair blocks come back one at a time, climbing like footsteps, in view on purpose (D-048: the exact
+ * ledgered blocks, through core's {@code restoreVisibly} while {@link #FLAG} is set; each one's step sound for the
+ * player);</li>
  * <li>a torch they lost is back on the stairwell wall (a ledgered torch, through {@code restoreBlock});</li>
  * <li>they come out at dawn and the fog pulls back to full render distance (dusk fog 0, for good);</li>
  * <li>on the far shore, at the edge of render distance, he stands facing them, and once seen turns and walks into the
  * bare grove behind him ({@code FigureApi}, walking);</li>
- * <li>the leaves fill back in after him in one red and orange wave (his own taken leaves from the ledger, crowns on
- * the old bare trunks), each block out of view; where he stood, nothing;</li>
+ * <li>the leaves fill back in after him in one red and orange wave, in view on purpose (D-048: his own taken leaves
+ * from the ledger through {@code restoreVisibly}, crowns on the old bare trunks through {@code regrowVisibly}, both
+ * while {@link #FLAG} is set); where he stood, nothing;</li>
  * <li>music: back on, and one of the game's calm tracks starts.</li>
  * </ol>
  * Then the afterward. Server thread only; the phase is saved, the rest starts over after a restart.
  */
 public final class LastMinute {
 	public enum Phase { START, FOOTSTEPS, TORCH, CLIMB, FIGURE, LEAVES, MUSIC, DONE }
+
+	/**
+	 * Set only while the last minute gives things back in view on purpose (the footsteps and the leaf wave, D-048):
+	 * core's {@code restoreVisibly} and {@code regrowVisibly} work only then.
+	 */
+	public static final String FLAG = TraceService.LAST_MINUTE_FLAG;
+	/** The cause of what the last minute gives back (a neighbour that breaks is ledgered under it). */
+	public static final String CAUSE = "ending:d/last_minute";
 
 	/** One item of the leaf wave: a taken leaf, or a crown. */
 	private record WaveItem(BlockPos pos, TraceLedger.@Nullable Entry entry, Regrow.@Nullable Crown crown) {
@@ -107,6 +118,7 @@ public final class LastMinute {
 		phase = Phase.START;
 		clock = server.getTickCount();
 		phaseStart = clock;
+		syncFlag(server);
 	}
 
 	/** After a restart in the middle of it: carry on from the saved phase (the climb at the earliest). */
@@ -121,6 +133,19 @@ public final class LastMinute {
 		origin = data.stair().map(StairPlan::twin).orElse(null);
 		clock = server.getTickCount();
 		phaseStart = clock;
+		syncFlag(server);
+	}
+
+	/**
+	 * {@link #FLAG} is set exactly while the footsteps or the leaf wave run (and never left over from a stopped or
+	 * finished sequence). Called on every phase change, on resume and at server start.
+	 */
+	static void syncFlag(MinecraftServer server) {
+		boolean giving = running && (phase == Phase.FOOTSTEPS || phase == Phase.LEAVES);
+		HerobrineState state = HerobrineState.get(server);
+		if (state.hasFlag(FLAG) != giving) {
+			state.setFlag(FLAG, giving);
+		}
 	}
 
 	static void reset() {
@@ -143,6 +168,7 @@ public final class LastMinute {
 		phaseStart = clock;
 		tries = 0;
 		data.setLastMinutePhase(next.ordinal());
+		syncFlag(server);
 		A1016_02.LOGGER.info("[a1016] ending d: last minute, {}", next.name().toLowerCase(java.util.Locale.ROOT));
 	}
 
@@ -192,7 +218,8 @@ public final class LastMinute {
 					TraceLedger.Entry entry = footsteps.getFirst();
 					ServerLevel level = server.getLevel(entry.pos().dimension());
 					BlockState state = entry.state().orElseThrow();
-					boolean back = level != null && TraceLedger.get(server).entries().contains(entry) && Services.traces().restoreBlock(level, entry, entry.pos().pos());
+					// In view on purpose (D-048): the stair climbs back like footsteps while they watch.
+					boolean back = level != null && TraceLedger.get(server).entries().contains(entry) && Services.traces().restoreVisibly(level, entry, CAUSE);
 					if (back) {
 						footstep(player, entry.pos().pos(), state);
 					}
@@ -265,11 +292,11 @@ public final class LastMinute {
 					WaveItem item = wave.get(i);
 					budget--;
 					boolean done;
+					// In view on purpose (D-048): the leaves fill back in after him in one wave.
 					if (item.entry() != null) {
-						done = !TraceLedger.get(server).entries().contains(item.entry())
-								|| Services.traces().restoreBlock(level, item.entry(), item.entry().pos().pos());
+						done = !TraceLedger.get(server).entries().contains(item.entry()) || Services.traces().restoreVisibly(level, item.entry(), CAUSE);
 					} else {
-						done = Regrow.grow(level, item.crown(), Services.traces());
+						done = Regrow.growVisibly(level, item.crown(), Services.traces());
 					}
 					if (done) {
 						wave.remove(i);
@@ -290,8 +317,8 @@ public final class LastMinute {
 					ClientEffects.silence(player, 1, cfg.silenceFadeTicks);
 					CalmMusicPayload.send(player);
 				}
-				enter(server, data, Phase.DONE);
 				running = false;
+				enter(server, data, Phase.DONE);
 				if (!preview) {
 					data.setStep(Step.AFTERWARD);
 				}

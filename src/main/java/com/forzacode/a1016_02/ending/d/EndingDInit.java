@@ -43,6 +43,7 @@ public final class EndingDInit {
 		ServerLifecycleEvents.SERVER_STARTED.register(server -> {
 			Sting.refresh(server);
 			LastMinute.resume(server, EndingDState.get(server));
+			LastMinute.syncFlag(server); // never left over from a sequence that is not running
 		});
 		ServerLifecycleEvents.SERVER_STOPPED.register(server -> clear());
 		PlayerBlockBreakEvents.BEFORE.register((level, player, pos, state, blockEntity) -> {

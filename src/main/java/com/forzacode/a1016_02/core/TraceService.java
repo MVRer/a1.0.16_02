@@ -3,6 +3,7 @@ package com.forzacode.a1016_02.core;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.CopyOnWriteArrayList;
@@ -19,10 +20,12 @@ import net.minecraft.resources.ResourceKey;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.tags.BlockTags;
 import net.minecraft.util.Mth;
 import net.minecraft.world.Container;
 import net.minecraft.world.entity.DropChances;
 import net.minecraft.world.entity.EquipmentSlot;
+import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.Mob;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.ItemStack;
@@ -48,7 +51,9 @@ import org.jspecify.annotations.Nullable;
  * removed silently too and written to the ledger. Removals, moves, conversions, sign edits and stack changes go to
  * the {@link TraceLedger} so Ending D can undo them; {@link #leave} and {@link #leaveStack} place things "left by
  * others" and are never undone. The only changes allowed in view are {@link #figureDig} and {@link #figureFill}
- * (D-030), and the fall the game makes after {@link #removeLettingFall} (D-038). Server thread only.
+ * (D-030), the fall the game makes after {@link #removeLettingFall} (D-038), and Ending D's last minute giving things
+ * back ({@link #restoreVisibly}, {@link #regrowVisibly}, only while {@link #LAST_MINUTE_FLAG} is set, D-048).
+ * Server thread only.
  */
 public final class TraceService {
 	/**
@@ -76,6 +81,11 @@ public final class TraceService {
 	public static final int RESTORE_REACH = 2;
 	/** {@link #figureDig} and {@link #figureFill} work at most this many blocks (horizontally) from the dig's column. */
 	public static final int FIGURE_REACH = 3;
+	/**
+	 * The {@code HerobrineState} flag Ending D sets only while its last minute gives things back in view (D-048).
+	 * {@link #restoreVisibly} and {@link #regrowVisibly} refuse everything while it is not set.
+	 */
+	public static final String LAST_MINUTE_FLAG = "ending:last_minute";
 
 	/** Half the diagonal of a block: how far a block's corners reach from its center. */
 	private static final double BLOCK_RADIUS = 0.87;
@@ -465,6 +475,63 @@ public final class TraceService {
 	}
 
 	/**
+	 * D-048, Ending D's last minute only: puts a block he removed back at its own spot <em>in view, on purpose</em>
+	 * (the stair returning one block at a time like footsteps, the leaves filling back in one wave). Refused unless
+	 * {@link #LAST_MINUTE_FLAG} is set. Otherwise like {@link #restoreBlock} at the same spot: {@code entry} is an open
+	 * REMOVE entry of this level, the spot is replaceable (no block entity) and the block survives there; its block
+	 * entity data comes back too; vetoes apply; silent. The entry is closed, so it never comes back twice (the undo
+	 * finds nothing left). {@code cause} names the caller: a neighbour the block breaks is ledgered as
+	 * {@code <cause>/dependent}. The only difference is that the view is not checked: giving back is never taking.
+	 * Never into a cell where a player or a mob stands.
+	 */
+	public boolean restoreVisibly(ServerLevel level, TraceLedger.Entry entry, String cause) {
+		MinecraftServer server = level.getServer();
+		TraceLedger ledger = TraceLedger.get(server);
+		if (!HerobrineState.get(server).hasFlag(LAST_MINUTE_FLAG) || entry.kind() != TraceLedger.Kind.REMOVE || entry.state().isEmpty()
+				|| !entry.pos().dimension().equals(level.dimension()) || !ledger.entries().contains(entry)) {
+			return false;
+		}
+		BlockPos at = entry.pos().pos();
+		if (occupied(level, at)) {
+			return false;
+		}
+		TraceEdit edit = plan(level, cause, List.of(new TraceBatch.Restore(at, entry.state().get(), entry.blockEntity().map(CompoundTag::copy).orElse(null))), null);
+		if (edit == null) {
+			return false;
+		}
+		edit.apply();
+		ledger.remove(entry);
+		A1016_02.LOGGER.debug("[a1016] trace gave back {} at {} in view ({})", entry.state().get(), at, cause);
+		return true;
+	}
+
+	/**
+	 * D-048, Ending D's last minute only: leaves grow back on a bare tree <em>in view, on purpose</em> (old bare
+	 * groves were made bare at worldgen, so no ledger entry holds their leaves). Refused unless
+	 * {@link #LAST_MINUTE_FLAG} is set. Only leaves, only into air nobody stands in, all or nothing, vetoed, silent; like
+	 * {@link #leave} it is never ledgered (the world healing, not his edit). The view is not checked.
+	 */
+	public boolean regrowVisibly(ServerLevel level, Map<BlockPos, BlockState> leaves, String cause) {
+		if (leaves.isEmpty() || !HerobrineState.get(level.getServer()).hasFlag(LAST_MINUTE_FLAG)) {
+			return false;
+		}
+		List<TraceBatch.Op> ops = new ArrayList<>(leaves.size());
+		for (Map.Entry<BlockPos, BlockState> leaf : leaves.entrySet()) {
+			if (!leaf.getValue().is(BlockTags.LEAVES) || !level.getBlockState(leaf.getKey()).isAir() || occupied(level, leaf.getKey())) {
+				return false;
+			}
+			ops.add(new TraceBatch.Leave(leaf.getKey().immutable(), leaf.getValue(), null));
+		}
+		TraceEdit edit = plan(level, cause, ops, null);
+		if (edit == null) {
+			return false;
+		}
+		edit.apply();
+		A1016_02.LOGGER.debug("[a1016] trace grew {} leaves back in view ({})", leaves.size(), cause);
+		return true;
+	}
+
+	/**
 	 * Replaces a sign's text out of view. {@code null} or empty lists blank that side (the "blank sign" event); up to
 	 * 4 lines, the rest are blank; colour and glow stay. Silent, vetoed, and ledgered as BLOCK_ENTITY with the old
 	 * text so Ending D can put it back. False if there is no sign, more than 4 lines, or the sign is waxed and the
@@ -777,6 +844,11 @@ public final class TraceService {
 			}
 		}
 		return false;
+	}
+
+	/** True if a player or a living mob stands in this cell: an in-view give-back never puts a block into anyone. */
+	private static boolean occupied(ServerLevel level, BlockPos pos) {
+		return !level.getEntitiesOfClass(LivingEntity.class,new AABB(pos), e -> e.isAlive() && !e.isSpectator()).isEmpty();
 	}
 
 	private static int reach(BlockPos a, BlockPos b) {
