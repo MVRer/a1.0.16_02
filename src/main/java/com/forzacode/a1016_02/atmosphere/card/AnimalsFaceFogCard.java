@@ -1,6 +1,8 @@
 package com.forzacode.a1016_02.atmosphere.card;
 
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Set;
 import java.util.UUID;
@@ -64,18 +66,7 @@ public final class AnimalsFaceFogCard extends AtmosphereCard {
 			mobs().face(one, point, 60 + random.nextInt(60));
 			return FireResult.FIRED;
 		}
-		int maxTicks = AtmosphereConfig.ticks(cfg.animalsMaxSeconds);
-		for (Animal animal : animals) {
-			int delay = random.nextInt(Math.max(1, cfg.animalsStaggerTicks));
-			Tasks.later(delay, () -> {
-				if (animal.isAlive()) {
-					mobs().freeze(animal, maxTicks);
-					mobs().face(animal, point, maxTicks);
-					mobs().silence(animal, maxTicks);
-				}
-			});
-		}
-		Tasks.start(new Facing(player.getUUID(), level, point, horizontalDistance(player.position(), point), new ArrayList<>(animals), maxTicks, cfg));
+		Tasks.start(new Facing(player.getUUID(), level, point, horizontalDistance(player.position(), point), animals, random, cfg));
 		return FireResult.FIRED;
 	}
 
@@ -99,49 +90,76 @@ public final class AnimalsFaceFogCard extends AtmosphereCard {
 		return Math.sqrt(dx * dx + dz * dz);
 	}
 
-	/** Holds the animals until the player walks toward the point. */
+	/**
+	 * The whole effect, from the staggered start to the staggered release. Each animal starts turning on its own
+	 * tick; when the player walks toward the point (or time runs out, or they leave) the episode stops starting
+	 * animals and releases every one it started, so a late starter can never be left frozen.
+	 */
 	private static final class Facing implements Tasks.Episode {
+		private record Member(Animal animal, int startAge, int releaseOffset) {
+		}
+
 		private final UUID player;
 		private final ServerLevel level;
 		private final Vec3 point;
 		private final double startDistance;
-		private final List<Animal> animals;
+		private final List<Member> members = new ArrayList<>();
+		private final Set<Animal> started = Collections.newSetFromMap(new IdentityHashMap<>());
 		private final double releaseBlocks;
-		private final int stagger;
-		private int ticksLeft;
+		private final int maxTicks;
+		private final int holdTicks;
+		private int age;
+		private int endAge = -1;
 
-		Facing(UUID player, ServerLevel level, Vec3 point, double startDistance, List<Animal> animals, int maxTicks, AtmosphereConfig cfg) {
+		Facing(UUID player, ServerLevel level, Vec3 point, double startDistance, List<Animal> animals, RandomSource random, AtmosphereConfig cfg) {
 			this.player = player;
 			this.level = level;
 			this.point = point;
 			this.startDistance = startDistance;
-			this.animals = animals;
 			this.releaseBlocks = cfg.animalsReleaseBlocks;
-			this.stagger = Math.max(1, cfg.animalsStaggerTicks / 2);
-			this.ticksLeft = maxTicks + cfg.animalsStaggerTicks;
+			this.maxTicks = AtmosphereConfig.ticks(cfg.animalsMaxSeconds);
+			int stagger = Math.max(1, cfg.animalsStaggerTicks);
+			// Tamper deadlines outlast the episode: the episode is what ends the effect.
+			this.holdTicks = maxTicks + 2 * stagger + 20;
+			for (Animal animal : animals) {
+				members.add(new Member(animal, 1 + random.nextInt(stagger), random.nextInt(Math.max(1, stagger / 2))));
+			}
 		}
 
 		@Override
 		public boolean tick(MinecraftServer server) {
-			ServerPlayer subject = server.getPlayerList().getPlayer(player);
-			boolean walkedToward = subject != null && subject.level() == level
-					&& startDistance - horizontalDistance(subject.position(), point) >= releaseBlocks;
-			if (--ticksLeft <= 0 || subject == null || walkedToward) {
-				releaseAll(level.getRandom());
-				return false;
+			age++;
+			if (endAge < 0) {
+				ServerPlayer subject = server.getPlayerList().getPlayer(player);
+				boolean walkedToward = subject != null && subject.level() == level
+						&& startDistance - horizontalDistance(subject.position(), point) >= releaseBlocks;
+				if (age > maxTicks || subject == null || subject.level() != level || walkedToward) {
+					endAge = age;
+				} else {
+					for (Member member : members) {
+						Animal animal = member.animal();
+						if (member.startAge() == age && animal.isAlive() && mobs().freeze(animal, holdTicks)) {
+							mobs().face(animal, point, holdTicks);
+							mobs().silence(animal, holdTicks);
+							started.add(animal);
+						}
+					}
+					return true;
+				}
 			}
-			return true;
+			for (Member member : members) {
+				if (started.contains(member.animal()) && age - endAge >= member.releaseOffset()) {
+					mobs().release(member.animal());
+					started.remove(member.animal());
+				}
+			}
+			return !started.isEmpty();
 		}
 
 		@Override
 		public void stop(MinecraftServer server) {
-			animals.forEach(mobs()::release);
-		}
-
-		private void releaseAll(RandomSource random) {
-			for (Animal animal : animals) {
-				Tasks.later(random.nextInt(stagger), () -> mobs().release(animal));
-			}
+			started.forEach(mobs()::release);
+			started.clear();
 		}
 	}
 }
