@@ -2,6 +2,22 @@
 
 One entry per merge, newest first. Run the game from the main checkout (this folder, on `main`).
 
+## READY TO TRY: The director (decks, pacing, quiet, stages by time)  (merged feat/director-core, commit c41bff5)
+```
+Restart needed: full game restart (new Java code and a jukebox mixin)
+See it now:
+  1. Launch "Dev Client". /a1016 state now ends with live director lines.
+  2. /a1016 director            (deck, held card, next allowed times, quiet, pity, tension, stage timers)
+  3. /a1016 director sim 20 synthetic   (a 20 h dry run; the full log is in run/logs/a1016_director_sim.log)
+  4. /a1016 director timewarp 3, then /a1016 state   (3 in-game days pass as a dry run; watch the stage timers move)
+What to look for: the sim summary shows rare, uneven events, long quiet stretches, whole empty sessions, and stages
+  arriving inside their windows. In your world, the only card so far is debug_ping. After the 5-minute grace it may
+  fire once on its own ("[a1016] debug_ping fired"), which proves the live loop runs.
+Known rough edges: no real cards yet (they arrive with each workstream). Proximity runs at about 0.6 minors/h overall
+  (D-020); say if that feels too sparse once real events exist. /a1016 timewarp still prints no summary; use
+  /a1016 director timewarp.
+```
+
 ## READY TO TRY: Skeleton (mod loads, world state, debug commands)  (merged feat/core-scaffold, commit 408ef8e)
 ```
 Restart needed: full game restart (new Java code, mixins and a new run config)
