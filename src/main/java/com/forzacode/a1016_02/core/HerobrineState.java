@@ -13,6 +13,7 @@ import java.util.concurrent.ThreadLocalRandom;
 
 import com.forzacode.a1016_02.A1016_02;
 import com.mojang.serialization.Codec;
+import com.mojang.serialization.MapCodec;
 import com.mojang.serialization.codecs.RecordCodecBuilder;
 
 import net.minecraft.core.GlobalPos;
@@ -68,11 +69,19 @@ public final class HerobrineState extends SavedData {
 		).apply(i, Clock::new));
 	}
 
+	/** The profile salt and the worldgen salt, stored as two top-level fields ({@code salt}, {@code worldgenSalt}). */
+	record Salts(long profile, Optional<Long> worldgen) {
+		static final MapCodec<Salts> MAP_CODEC = RecordCodecBuilder.mapCodec(i -> i.group(
+				Codec.LONG.optionalFieldOf("salt", 0L).forGetter(Salts::profile),
+				Codec.LONG.optionalFieldOf("worldgenSalt").forGetter(Salts::worldgen)
+		).apply(i, Salts::new));
+	}
+
 	public static final Codec<HerobrineState> CODEC = RecordCodecBuilder.create(i -> i.group(
 			CoreCodecs.enumCodec(Stage.class).optionalFieldOf("stage", Stage.ALONE).forGetter(s -> s.stage),
 			Codec.DOUBLE.optionalFieldOf("attention", 0.0).forGetter(s -> s.attention),
 			Codec.DOUBLE.optionalFieldOf("tension", 0.0).forGetter(s -> s.tension),
-			Codec.LONG.optionalFieldOf("salt", 0L).forGetter(s -> s.salt),
+			Salts.MAP_CODEC.forGetter(s -> new Salts(s.salt, s.worldgenSaltSet ? Optional.of(s.worldgenSalt) : Optional.empty())),
 			WorldProfile.CODEC.optionalFieldOf("profile").forGetter(s -> Optional.ofNullable(s.profile)),
 			Subject.CODEC.optionalFieldOf("subject").forGetter(s -> Optional.ofNullable(s.subject)),
 			Clock.CODEC.optionalFieldOf("clock", new Clock(0, 0)).forGetter(s -> new Clock(s.playTicks, s.warpDays)),
@@ -93,6 +102,9 @@ public final class HerobrineState extends SavedData {
 	private double attention;
 	private double tension;
 	private long salt;
+	/** Fixed once set (volatile so worldgen threads that cached the state read it safely). */
+	private volatile long worldgenSalt;
+	private volatile boolean worldgenSaltSet;
 	private @Nullable WorldProfile profile;
 	private @Nullable Subject subject;
 	private long playTicks;
@@ -111,14 +123,18 @@ public final class HerobrineState extends SavedData {
 	public HerobrineState() {
 	}
 
-	private HerobrineState(Stage stage, double attention, double tension, long salt, Optional<WorldProfile> profile,
+	private HerobrineState(Stage stage, double attention, double tension, Salts salts, Optional<WorldProfile> profile,
 			Optional<Subject> subject, Clock clock, boolean stopFired, boolean listRead, boolean tellingStarted,
 			Set<String> fragmentsRead, Map<String, GlobalPos> fragmentsPlaced, List<MarkedDeath> markedDeaths,
 			FirstBlocks firstBlocks, Effects effects, Set<String> flags) {
 		this.stage = stage;
 		this.attention = attention;
 		this.tension = tension;
-		this.salt = salt;
+		this.salt = salts.profile();
+		salts.worldgen().ifPresent(value -> {
+			this.worldgenSalt = value;
+			this.worldgenSaltSet = true;
+		});
 		this.profile = profile.orElse(null);
 		this.subject = subject.orElse(null);
 		this.playTicks = clock.playTicks();
@@ -139,6 +155,9 @@ public final class HerobrineState extends SavedData {
 		HerobrineState state = server.getDataStorage().computeIfAbsent(TYPE);
 		if (state.profile == null) {
 			state.reroll(server.getWorldGenSettings().options().seed(), ThreadLocalRandom.current().nextLong());
+		}
+		if (!state.worldgenSaltSet) {
+			state.fixWorldgenSalt();
 		}
 		return state;
 	}
@@ -194,7 +213,36 @@ public final class HerobrineState extends SavedData {
 		return salt;
 	}
 
-	/** Makes a new salt and rolls a new profile (D-008, {@code /a1016 profile reroll}). */
+	/**
+	 * A salt for worldgen hashing, derived from the profile salt the first time the state is read and then fixed for
+	 * the life of the world: {@link #reroll} does not change it, so chunks generated before and after a reroll agree.
+	 * Hash it together with the seed (for example {@code mix(seed ^ worldgenSalt())}). Read it on the server thread
+	 * at server start and hand the value to worldgen threads.
+	 */
+	public long worldgenSalt() {
+		if (!worldgenSaltSet) {
+			fixWorldgenSalt();
+		}
+		return worldgenSalt;
+	}
+
+	/** Derives the worldgen salt from the profile salt (SplitMix64 finalizer, so it is not the profile salt itself). */
+	static long deriveWorldgenSalt(long profileSalt) {
+		long z = profileSalt + 0x9E3779B97F4A7C15L;
+		z = (z ^ (z >>> 30)) * 0xBF58476D1CE4E5B9L;
+		z = (z ^ (z >>> 27)) * 0x94D049BB133111EBL;
+		return z ^ (z >>> 31);
+	}
+
+	private synchronized void fixWorldgenSalt() {
+		if (!worldgenSaltSet) {
+			worldgenSalt = deriveWorldgenSalt(salt);
+			worldgenSaltSet = true;
+			setDirty();
+		}
+	}
+
+	/** Makes a new salt and rolls a new profile (D-008, {@code /a1016 profile reroll}). The worldgen salt stays. */
 	public void reroll(long seed, long newSalt) {
 		salt = newSalt;
 		profile = WorldProfile.roll(seed, newSalt);
