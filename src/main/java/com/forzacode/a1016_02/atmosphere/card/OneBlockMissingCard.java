@@ -50,6 +50,10 @@ public final class OneBlockMissingCard extends AtmosphereCard {
 		if (level == null) {
 			return FireResult.SKIPPED;
 		}
+		// Never load the base's chunks just to look: if they are not loaded, try again later.
+		if (!WorldScan.areaLoaded(level, base.get().pos(), cfg().houseRadius + 1)) {
+			return FireResult.NO_SPOT;
+		}
 		List<WorldScan.WallSpot> spots = WorldScan.houseWalls(level, base.get().pos(), cfg().houseRadius);
 		List<WorldScan.WallSpot> eye = new ArrayList<>(spots.stream().filter(WorldScan.WallSpot::eyeLevel).toList());
 		List<WorldScan.WallSpot> rest = new ArrayList<>(spots.stream().filter(s -> !s.eyeLevel()).toList());

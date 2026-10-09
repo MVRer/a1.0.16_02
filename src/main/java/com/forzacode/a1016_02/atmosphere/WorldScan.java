@@ -28,8 +28,9 @@ import net.minecraft.world.phys.Vec3;
 import org.jspecify.annotations.Nullable;
 
 /**
- * Spot finders for atmosphere's cards. They only read the world (and never load chunks); every change still goes
- * through {@code TraceService} or {@code MobTamper}, which do the view checks.
+ * Spot finders for atmosphere's cards. They only read the world and never load chunks: area scans return nothing
+ * unless every chunk they touch is already loaded ({@link #areaLoaded}). Every change still goes through
+ * {@code TraceService} or {@code MobTamper}, which do the view checks.
  */
 public final class WorldScan {
 	private WorldScan() {
@@ -47,6 +48,18 @@ public final class WorldScan {
 
 	public static boolean loaded(Level level, int x, int z) {
 		return level.hasChunk(x >> 4, z >> 4);
+	}
+
+	/** True if every chunk within {@code radius} blocks (horizontally) of {@code center} is loaded. */
+	public static boolean areaLoaded(Level level, BlockPos center, int radius) {
+		for (int cx = (center.getX() - radius) >> 4; cx <= (center.getX() + radius) >> 4; cx++) {
+			for (int cz = (center.getZ() - radius) >> 4; cz <= (center.getZ() + radius) >> 4; cz++) {
+				if (!level.hasChunk(cx, cz)) {
+					return false;
+				}
+			}
+		}
+		return true;
 	}
 
 	/** Nothing that blocks motion above this block (heightmap: updates at once, unlike sky light). */
@@ -140,10 +153,13 @@ public final class WorldScan {
 		return found;
 	}
 
-	/** Every removable wall block of a house the player built near {@code base}. */
+	/** Every removable wall block of a house the player built near {@code base}. Empty if the area is not loaded. */
 	public static List<WallSpot> houseWalls(ServerLevel level, BlockPos base, int radius) {
 		PlayerWatch watch = Services.watch();
 		List<WallSpot> spots = new ArrayList<>();
+		if (!areaLoaded(level, base, radius + 1)) {
+			return spots;
+		}
 		for (BlockPos pos : watch.placedNear(level, base, radius, BlockState::isSolidRender)) {
 			WallSpot spot = wallSpot(level, pos, watch);
 			if (spot != null) {
@@ -227,9 +243,12 @@ public final class WorldScan {
 		return new ArrayList<>(seen);
 	}
 
-	/** Sealed rooms of the player's house near {@code base} (distinct, at most {@code maxRooms}). */
+	/** Sealed rooms of the player's house near {@code base} (distinct, at most {@code maxRooms}). Empty if the area is not loaded. */
 	public static List<List<BlockPos>> sealedRoomsNear(ServerLevel level, BlockPos base, int radius, int maxCells, int maxRooms) {
 		List<List<BlockPos>> rooms = new ArrayList<>();
+		if (!areaLoaded(level, base, radius + 1)) {
+			return rooms;
+		}
 		Set<BlockPos> visited = new HashSet<>();
 		int starts = 0;
 		for (BlockPos placed : Services.watch().placedNear(level, base, radius, state -> true)) {
@@ -255,6 +274,9 @@ public final class WorldScan {
 
 	/** An indoor corner (two walls at a right angle) within {@code radius} of {@code center}, nearest first, away from {@code avoid}. */
 	public static @Nullable BlockPos corner(Level level, BlockPos center, int radius, Vec3 avoid) {
+		if (!areaLoaded(level, center, radius + 1)) {
+			return null;
+		}
 		BlockPos best = null;
 		double bestDist = Double.MAX_VALUE;
 		for (BlockPos pos : BlockPos.betweenClosed(center.offset(-radius, -2, -radius), center.offset(radius, 2, radius))) {
@@ -280,6 +302,9 @@ public final class WorldScan {
 
 	/** The nearest indoor spot next to a window (glass or pane at head height) within {@code radius}, skipping {@code used}. */
 	public static @Nullable WindowSpot windowSpot(Level level, BlockPos near, int radius, Set<BlockPos> used) {
+		if (!areaLoaded(level, near, radius + 1)) {
+			return null;
+		}
 		WindowSpot best = null;
 		double bestDist = Double.MAX_VALUE;
 		for (BlockPos pos : BlockPos.betweenClosed(near.offset(-radius, -3, -radius), near.offset(radius, 3, radius))) {

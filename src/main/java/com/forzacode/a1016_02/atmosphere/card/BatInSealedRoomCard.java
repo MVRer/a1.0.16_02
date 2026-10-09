@@ -52,6 +52,10 @@ public final class BatInSealedRoomCard extends AtmosphereCard {
 			return FireResult.SKIPPED;
 		}
 		AtmosphereConfig cfg = cfg();
+		// Never load the base's chunks just to look: if they are not loaded, try again later.
+		if (!WorldScan.areaLoaded(level, base.get().pos(), cfg.roomSearchRadius + 1)) {
+			return FireResult.NO_SPOT;
+		}
 		List<Bat> bats = bats(level, player).stream()
 				.filter(bat -> Services.traces().isOutOfView(level, bat.getBoundingBox()))
 				.sorted(Comparator.comparingDouble(bat -> bat.distanceToSqr(player)))

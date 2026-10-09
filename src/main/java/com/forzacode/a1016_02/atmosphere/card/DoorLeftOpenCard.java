@@ -7,6 +7,7 @@ import java.util.Set;
 
 import com.forzacode.a1016_02.atmosphere.AtmosphereConfig;
 import com.forzacode.a1016_02.atmosphere.Gates;
+import com.forzacode.a1016_02.atmosphere.WorldScan;
 import com.forzacode.a1016_02.core.CardTag;
 import com.forzacode.a1016_02.core.FireContext;
 import com.forzacode.a1016_02.core.FireResult;
@@ -54,6 +55,10 @@ public final class DoorLeftOpenCard extends AtmosphereCard {
 		if (level == null) {
 			return FireResult.SKIPPED;
 		}
+		// Never load the base's chunks just to look: if they are not loaded, try again later.
+		if (!WorldScan.areaLoaded(level, base.get().pos(), cfg().doorSearchRadius + 1)) {
+			return FireResult.NO_SPOT;
+		}
 		List<BlockPos> doors = new ArrayList<>(closedPlacedDoors(level, base.get().pos(), cfg().doorSearchRadius));
 		if (doors.isEmpty()) {
 			return FireResult.NO_SPOT;
@@ -76,9 +81,12 @@ public final class DoorLeftOpenCard extends AtmosphereCard {
 		return FireResult.NO_SPOT;
 	}
 
-	/** Lower halves of hand-opened doors a player placed near {@code center} that are closed now. */
+	/** Lower halves of hand-opened doors a player placed near {@code center} that are closed now. Empty if the area is not loaded. */
 	public static List<BlockPos> closedPlacedDoors(ServerLevel level, BlockPos center, int radius) {
 		List<BlockPos> doors = new ArrayList<>();
+		if (!WorldScan.areaLoaded(level, center, radius + 1)) {
+			return doors;
+		}
 		for (BlockPos pos : Services.watch().placedNear(level, center, radius, DoorLeftOpenCard::isClosedLowerDoor)) {
 			BlockState upper = level.getBlockState(pos.above());
 			if (upper.getBlock() == level.getBlockState(pos).getBlock() && upper.getValue(DoorBlock.HALF) == DoubleBlockHalf.UPPER) {
