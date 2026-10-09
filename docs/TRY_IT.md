@@ -2,6 +2,25 @@
 
 One entry per merge, newest first. Run the game from the main checkout (this folder, on `main`).
 
+## READY TO TRY: Ending D, "No longer with us" (the true ending)  (merged feat/ending-d, commit df57a98)
+```
+Restart needed: full game restart (Java code, worldgen mixins)
+See it now (USE A THROWAWAY WORLD: the afterward undoes removals and new chunks stop having caves, for good):
+  1. /a1016 ending d status   (the current step and what's still missing)
+  2. Walk the chain or jump it: /a1016 ending d step <1-7>. The map "where he didnt" (F28) leads to the untouched
+     grove; F30 "i did, but" is on the oldest poplar; take your first block back out of the cairn (F13); dig through
+     the seed pyramid's floor (F07) down the team's stair; place exactly six torches; under F30's twin write
+     "he is no longer with us"; build his cross on your first block, topped with planks from the grove.
+  3. /a1016 ending d lastminute   plays the last minute where you stand: silence, the stair returning block by block,
+     a lost torch back on the wall, dawn with the fog gone, him on the far shore walking into the grove, the leaves
+     coming back, then music.
+  4. Afterward: /a1016 ending d undo status. Your house's blocks come back, the copy falls apart, the network under
+     your base fills in. The crosses and the dead stay.
+What to look for: nothing in it is kind to him. It's a burial, not forgiveness.
+Known rough edges: the stair's return and the leaf wave currently happen only out of view (D-048 makes them
+  visible: final integration). If Ending B had started finishing the house copy, it keeps going after D (fix next).
+```
+
 ## READY TO TRY: Endings A, B and C  (merged feat/ending-abc, commit 34b526a)
 ```
 Restart needed: full game restart (Java code and mixins)
