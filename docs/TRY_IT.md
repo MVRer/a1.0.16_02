@@ -2,6 +2,23 @@
 
 One entry per merge, newest first. Run the game from the main checkout (this folder, on `main`).
 
+## READY TO TRY: Fragments (all 30, placed by stage)  (merged feat/lore-fragments, commit 3ea390a)
+```
+Restart needed: full game restart (new Java code and mixins). Later fragment text edits only need /reload.
+See it now:
+  1. Launch "Dev Client". /a1016 lore list shows every fragment: rolled or not, placed (where), read.
+  2. /a1016 stage 1, then /a1016 lore place F01 (it builds or fills the site out of view and prints coordinates;
+     /tp there and open the chest).
+  3. /a1016 lore give F06   (the list, with your name already written in at the end). Open it, then /a1016 state.
+  4. More: /a1016 lore place F07 (the seed sign in the largest ocean pyramid's core), /a1016 lore place F14
+     (10 blocks under world spawn), /a1016 lore place F15 (the sealed test room), /a1016 lore read F23 then
+     /a1016 lore place F28 (the map in an Abandoned Camp).
+What to look for: lowercase 2010 forum voice, word for word from the design. Each one is ambiguous alone.
+  Books have no author. The F30 signs can't be broken (try a pickaxe, TNT or a piston).
+Known rough edges: telling (Stop., blank signs, place not found, the list gaining causes) is next (v0.6).
+  Fragment builds were tested in a flat test world, so check how they sit in real terrain.
+```
+
 ## READY TO TRY: The dread layer (fog, silence, music off, sounds, mobs acting wrong)  (merged feat/atmosphere-dread, commit 2dd4fb8)
 ```
 Restart needed: full game restart (client mixins for fog, music and compass)

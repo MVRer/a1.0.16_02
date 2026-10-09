@@ -7,13 +7,13 @@ Status values: queued, running, review, fix, merged, blocked. Only the orchestra
 | P0-1 | Scaffold: template, packages, core contracts, config, debug commands, game tests, dev world | core | feat/core-scaffold | v0.1-skeleton | merged | 2 review rounds (TraceService silence and view check). TraceService refuses edits that leave a falling block unsupported. P1-8 needs an opt-in for the gravel ceiling |
 | P1-1 | Director: decks, gates, tension, forced quiet, pity, fakes, pacing limits, stages by time, timewarp sim | director | feat/director-core | (all) | merged | Follow-ups for P2-2: signature cards need a stage minimum; deck reshuffles early when the rest are gated; quiet check only after a director fire; no live-wiring test. Contract asks: `Director.timewarp` returns summary lines, `GameClock.dayTicks` |
 | P1-2 | The figure: model, white eyes, fog-edge spawn out of view, all sighting variants, stare then leave, despawn | entity | feat/entity-figure | v0.2-figure | merged | 3 review rounds. Rule: never despawn while in view. Contract asks: shared fog-end helper, document ending:last_sighting | Starts from the HimEntity prototype (D-001) |
-| P1-2b | Eye style toggle (flat / bright / glow), switchable live | entity | feat/entity-eyes | v0.5 | running | Default BRIGHT plus eye fog resistance (D-023). Also sighting visibility and approach tuning (D-029) |
-| P1-2c | "Goes under" exit: he digs down, covers himself, gone (D-030) | entity | feat/entity-goes-under | v0.5 | queued | Needs P1-9 (figureDig/figureFill) and P1-2b merged first |
+| P1-2b | Eye style toggle (flat / bright / glow), switchable live | entity | feat/entity-eyes | v0.6 | running | Default BRIGHT plus eye fog resistance (D-023). Also sighting visibility and approach tuning (D-029) |
+| P1-2c | "Goes under" exit: he digs down, covers himself, gone (D-030) | entity | feat/entity-goes-under | v0.6 | queued | Needs P1-9 (figureDig/figureFill) and P1-2b merged first |
 | P1-3 | Old scars (worldgen) and the live new-scar placer | world | feat/world-scars | v0.3-traces | merged | 2 review rounds. Later task: signatures (still burning, house elsewhere, cross row). Follow-ups: dead mountain silence and no animals (atmosphere), new pyramid when the list goes into lava (lore-telling) |
 | P1-4 | Live diggers and the "Under you" network | dig | feat/dig-diggers | v0.3-traces | merged | 2 review rounds plus a flaky-test fix. Contract asks: restoreStack, SiteRegistry.update | Records TUNNEL_END and UNDER_BASE sites |
 | P1-5 | Dread layer: fog, silence, music off, sound director, mobs acting wrong (client and server) | atmosphere | feat/atmosphere-dread | v0.4-dread | merged | Real MobTamper is on main. Follow-up: dead mountain silence and no animals | Also builds the real MobTamper (D-017) |
-| P1-6 | Fragments: all 30 as data, placement by stage and profile, sites | lore | feat/lore-fragments | v0.5-fragments | re-review | Text verified word for word on all 30. Fixing: idempotent place, chunk loads, F19 vs F07, unbreakable F30 | Contract gap to expect: a protected "untouched grove" so new scars avoid it |
-| P1-7 | Telling: sign and book watcher, blank signs, "Stop.", place not found, list updates (F30 unbreakable moved to P1-6) | lore | feat/lore-telling | v0.6-telling | queued, after P1-6 | |
+| P1-6 | Fragments: all 30 as data, placement by stage and profile, sites | lore | feat/lore-fragments | v0.5-fragments | merged | Text verified word for word on all 30. Fixing: idempotent place, chunk loads, F19 vs F07, unbreakable F30 | Contract gap to expect: a protected "untouched grove" so new scars avoid it |
+| P1-7 | Telling: sign and book watcher, blank signs, "Stop.", place not found, list updates (F30 unbreakable moved to P1-6) | lore | feat/lore-telling | v0.6-telling | running | Rebases on P1-9 for editSign, veto hook and ProtectedAreas |
 | P1-8 | Accidents: planner, every trap, death marker (uses atmosphere's MobTamper) | accident | feat/accident-traps | v0.7-accidents | fix | Fixing false-positive kills (dark corner, house fire, no bed), unloaded window, debug mark preview, torch undo | Gravel ceiling and dripstone are written, but spring only after P1-9 lands `removeLettingFall`. Debug `mark` counts toward Ending B |
 | P1-3b | World signatures: still burning, your house elsewhere, row of crosses with a fresh one | world | feat/world-signatures | v0.8 | queued | Follows D-004 and D-005 |
 | P1-9 | Core contract batch (see list below) plus D-022 fog defaults | core (narrow edits in director, atmosphere, world) | feat/core-contracts | (all) | running | Added: figureDig/figureFill (D-030), restoreBlock (accident), veto hook (lore F30, replaces the lore mixin into TraceEdit) |
@@ -28,7 +28,7 @@ Status values: queued, running, review, fix, merged, blocked. Only the orchestra
 | v0.2-figure | P1-2 merged | tagged (pacing check: director's 20 h fixed-seed game tests green) |
 | v0.3-traces | P1-3 and P1-4 merged | tagged (pacing check: director 20 h game tests green) |
 | v0.4-dread | P1-5 merged | tagged (pacing check: director 20 h game tests green) |
-| v0.5-fragments | P1-6 merged | |
+| v0.5-fragments | P1-6 merged | tagged (pacing check: director 20 h game tests green) |
 | v0.6-telling | P1-7 merged | |
 | v0.7-accidents | P1-8 merged | |
 | v0.8-endings | P2-1 merged | |
