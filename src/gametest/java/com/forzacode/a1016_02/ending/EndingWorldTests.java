@@ -10,6 +10,7 @@ import com.forzacode.a1016_02.core.CardRegistry;
 import com.forzacode.a1016_02.core.EventCard;
 import com.forzacode.a1016_02.core.FireContext;
 import com.forzacode.a1016_02.core.FireResult;
+import com.forzacode.a1016_02.core.GameClock;
 import com.forzacode.a1016_02.core.HerobrineState;
 import com.forzacode.a1016_02.core.Services;
 import com.forzacode.a1016_02.core.Stage;
@@ -215,31 +216,45 @@ public class EndingWorldTests extends EndingBeatTests {
 		helper.succeed();
 	}
 
+	/** The entity's stare-down (FigureApi.STARED) is staring into the fog for Ending C; only the subject's counts. */
 	@GameTest
-	public void theCrossIsFoundInTheLedger(GameTestHelper helper) {
-		List<TraceLedger.Entry> entries = new ArrayList<>();
-		entries.add(move("dig:tunnel", new BlockPos(0, 0, 0), new BlockPos(1, 0, 0)));
-		for (int y = 1; y <= 4; y++) {
-			entries.add(move(CrossFinder.CAUSE, new BlockPos(7, -y, 7), new BlockPos(5, y, 5)));
-		}
-		entries.add(move(CrossFinder.CAUSE, new BlockPos(8, -1, 8), new BlockPos(4, 3, 5)));
-		entries.add(move(CrossFinder.CAUSE, new BlockPos(8, -2, 8), new BlockPos(6, 3, 5)));
-		entries.add(new TraceLedger.Entry(TraceLedger.Kind.REMOVE, CrossFinder.CAUSE + "/dependent", 3, GlobalPos.of(Level.OVERWORLD,
-				new BlockPos(7, 0, 7)), Optional.empty(), Optional.of(Blocks.SHORT_GRASS.defaultBlockState()), Optional.empty(), Optional.empty(), -1,
-				-1));
-		entries.add(move("lore:his/F03", new BlockPos(30, 1, 30), new BlockPos(31, 1, 30)));
-		Optional<GlobalPos> cross = CrossFinder.find(entries, GlobalPos.of(Level.OVERWORLD, new BlockPos(5, 1, 7)), CrossFinder.SEARCH_RADIUS);
-		helper.assertTrue(cross.map(GlobalPos::pos).equals(Optional.of(new BlockPos(5, 1, 5))), "the post's bottom was not found: " + cross);
-		helper.assertTrue(CrossFinder.find(entries, GlobalPos.of(Level.OVERWORLD, new BlockPos(60, 1, 60)), CrossFinder.SEARCH_RADIUS).isEmpty(),
-				"a cross was found far from the death");
-		helper.assertTrue(CrossFinder.find(entries, GlobalPos.of(Level.NETHER, new BlockPos(5, 1, 7)), CrossFinder.SEARCH_RADIUS).isEmpty(),
-				"a cross was found in another dimension");
+	public void staringHimDownIsStaringIntoTheFog(GameTestHelper helper) {
+		Run r = new Run(helper);
+		helper.assertFalse(EndingWatch.onStared(r.player, r.data, r.now, p -> false), "another player's stare counted");
+		helper.assertTrue(r.data.lastFogStareAt() == EndingState.NEVER, "another player's stare was recorded");
+		helper.assertTrue(EndingWatch.onStared(r.player, r.data, r.now, p -> p == r.player) && r.data.lastFogStareAt() == r.now,
+				"the subject's stare did not count");
+		EndingFacts f = EndingTestSupport.facts(Stage.TELLING, true, r.now + GameClock.TICKS_PER_DAY, 5 * GameClock.TICKS_PER_DAY,
+				5 * GameClock.TICKS_PER_DAY, 5 * GameClock.TICKS_PER_DAY, EndingState.NEVER, -1, r.data.lastFogStareAt(), 6, 0, 20, 0, 2, 0, false, 40, 8, 32);
+		helper.assertTrue(EndingRules.cWhy(f, r.cfg).map(why -> why.contains("fog")).orElse(false), "C did not wait out the stare: " + EndingRules.cWhy(f, r.cfg));
 		helper.succeed();
 	}
 
-	private static TraceLedger.Entry move(String cause, BlockPos from, BlockPos to) {
-		return new TraceLedger.Entry(TraceLedger.Kind.MOVE, cause, 3, GlobalPos.of(Level.OVERWORLD, from), Optional.of(to),
-				Optional.of(Blocks.DIRT.defaultBlockState()), Optional.empty(), Optional.empty(), -1, -1);
+	/** Ending A's sign finds the cross through accident's DeathMarker.lastCrossPos, only for that death. */
+	@GameTest
+	public void theCrossComesFromTheDeathMarker(GameTestHelper helper) {
+		MinecraftServer server = helper.getLevel().getServer();
+		GlobalPos base = GlobalPos.of(Level.OVERWORLD, new BlockPos(5, 1, 5));
+		helper.assertTrue(LivePorts.crossFor(Optional.of(base), GlobalPos.of(Level.OVERWORLD, new BlockPos(5, 1, 7))).equals(Optional.of(base)),
+				"the cross of this death was not found");
+		helper.assertTrue(LivePorts.crossFor(Optional.of(base), GlobalPos.of(Level.OVERWORLD, new BlockPos(60, 1, 60))).isEmpty(),
+				"a cross was found far from the death");
+		helper.assertTrue(LivePorts.crossFor(Optional.of(base), GlobalPos.of(Level.NETHER, new BlockPos(5, 1, 7))).isEmpty(),
+				"a cross was found in another dimension");
+		helper.assertTrue(LivePorts.crossFor(Optional.empty(), base).isEmpty(), "a cross was found where none stands");
+		// Live: the real port reads the real death marker.
+		com.forzacode.a1016_02.accident.AccidentData accident = com.forzacode.a1016_02.accident.AccidentData.get(server);
+		Optional<GlobalPos> old = accident.lastCross();
+		GlobalPos here = GlobalPos.of(helper.getLevel().dimension(), helper.absolutePos(new BlockPos(1, 1, 1)));
+		try {
+			accident.setLastCross(here);
+			helper.assertTrue(Services.deaths().lastCrossPos(server).equals(Optional.of(here)), "DeathMarker.lastCrossPos does not give the newest cross");
+			helper.assertTrue(EndingPorts.LIVE.findCross(server, GlobalPos.of(here.dimension(), here.pos().offset(2, 0, 3))).equals(Optional.of(here)),
+					"the live port did not use the death marker");
+		} finally {
+			accident.setLastCross(old.orElse(null));
+		}
+		helper.succeed();
 	}
 
 	@GameTest

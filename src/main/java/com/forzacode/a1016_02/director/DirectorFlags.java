@@ -9,7 +9,8 @@ import com.forzacode.a1016_02.A1016_02;
 import com.forzacode.a1016_02.core.Pacing;
 
 /**
- * The two {@code HerobrineState} flags other workstreams (the endings) use to steer the director. The director reads
+ * The two {@code HerobrineState} flags other workstreams (the endings) use to steer the director, plus one the
+ * director writes for them ({@link #OBEYED_AFTER_STOP}). The director reads
  * them on every decision tick, through {@link DirectorImpl#rules}.
  * <ul>
  * <li>{@code director:silence_until_day=<n>}: while the in-game day ({@code GameClock.day}) is below {@code n}, no
@@ -30,6 +31,11 @@ public final class DirectorFlags {
 	public static final String SILENCE_UNTIL_DAY = "director:silence_until_day=";
 	public static final String SILENCE_FOREVER = "director:silence_forever";
 	public static final String PACE_MULTIPLIER = "director:pace_multiplier=";
+	/**
+	 * Written by the director, read by the endings: set when OBEYED_AFTER_STOP fires ({@code pacing.obeyDays} in-game
+	 * days with no telling after "Stop."), cleared by the next telling (the wait starts over) or if "Stop." is gone.
+	 */
+	public static final String OBEYED_AFTER_STOP = "director:obeyed_after_stop";
 	public static final double PACE_MIN = 0.25;
 	public static final double PACE_MAX = 4;
 	/** {@link #silenceUntilDay} when no silence flag is set. */

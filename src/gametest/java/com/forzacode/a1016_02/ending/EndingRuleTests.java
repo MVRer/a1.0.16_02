@@ -56,7 +56,12 @@ public class EndingRuleTests extends EndingDGameTests {
 		// A telling without his name after "Stop." starts the obeying clock again.
 		EndingFacts told = facts(Stage.TELLING, true, 24 * DAY, 20 * DAY, 22 * DAY, 19 * DAY, NEVER, -1, NEVER, 5, 1, 0, 0, 0, 0, false, 0, 0, 0);
 		expectWhy(helper, EndingRules.aWhy(told, cfg, OBEY_DAYS), "obeying", "told at day 22");
-		helper.assertTrue(EndingRules.aWhy(told.at(25 * DAY), cfg, OBEY_DAYS).isEmpty(), "three days after the last telling did not commit A");
+		// Three days after the last telling the director's OBEYED_AFTER_STOP fires again (director:obeyed_after_stop).
+		helper.assertTrue(EndingRules.aWhy(told.at(25 * DAY).withObeyedAfterStop(true), cfg, OBEY_DAYS).isEmpty(),
+				"three days after the last telling did not commit A");
+		// The obeying rule is the director's: without its flag, no A, however long ago "Stop." was.
+		expectWhy(helper, EndingRules.aWhy(obeying(40 * DAY).withObeyedAfterStop(false), cfg, OBEY_DAYS), "obeyed_after_stop",
+				"without the director's flag");
 
 		// Reading a fragment or going near his traces in the last aQuietDays holds A back.
 		EndingFacts read = facts(Stage.TELLING, true, 30 * DAY, 20 * DAY, 19 * DAY, 19 * DAY, 29 * DAY, -1, NEVER, 4, 0, 0, 0, 0, 0, false, 0, 0, 0);

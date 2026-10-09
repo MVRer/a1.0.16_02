@@ -17,6 +17,7 @@ import com.forzacode.a1016_02.core.Services;
 import com.forzacode.a1016_02.core.SiteRegistry;
 import com.forzacode.a1016_02.core.TrapType;
 
+import net.minecraft.core.BlockPos;
 import net.minecraft.core.GlobalPos;
 import net.minecraft.resources.ResourceKey;
 import net.minecraft.server.MinecraftServer;
@@ -95,6 +96,11 @@ public final class AccidentPlannerImpl implements AccidentPlanner {
 	}
 
 	@Override
+	public boolean arm(ServerPlayer player, TrapType type, BlockPos center) {
+		return Traps.byId(type.id()).map(kind -> arm(player, kind, false, center).armed()).orElse(false);
+	}
+
+	@Override
 	public void disarm() {
 		if (server != null) {
 			disarm(server, "disarmed");
@@ -151,9 +157,14 @@ public final class AccidentPlannerImpl implements AccidentPlanner {
 
 	/** A context centred on the player. */
 	public TrapContext context(ServerPlayer player) {
+		return context(player, player.blockPosition());
+	}
+
+	/** A context for this player, looking for spots around {@code center} (in the player's level). */
+	public TrapContext context(ServerPlayer player, BlockPos center) {
 		ServerLevel level = player.level();
 		MinecraftServer forServer = level.getServer();
-		return new TrapContext(level, player, player.blockPosition(), data(forServer), view, AccidentConfig.get(), GameClock.playTicks(forServer),
+		return new TrapContext(level, player, center.immutable(), data(forServer), view, AccidentConfig.get(), GameClock.playTicks(forServer),
 				GameClock.day(forServer));
 	}
 
@@ -161,11 +172,21 @@ public final class AccidentPlannerImpl implements AccidentPlanner {
 		return kind.candidates(context(player));
 	}
 
+	/** The spots the planner would try around {@code center}, nearest first. */
+	public List<Candidate> candidates(ServerPlayer player, TrapKind kind, BlockPos center) {
+		return kind.candidates(context(player, center));
+	}
+
 	/**
 	 * Arms a trap at the nearest spot that can be set now. {@code debug} skips the session cap and lets a live trap
 	 * that cannot spring yet (a missing core opt-in) be armed as a watch; one-at-a-time and out-of-view always hold.
 	 */
 	public ArmResult arm(ServerPlayer player, TrapKind kind, boolean debug) {
+		return arm(player, kind, debug, player.blockPosition());
+	}
+
+	/** {@link #arm(ServerPlayer, TrapKind, boolean)} with the spots looked for around {@code center}. */
+	public ArmResult arm(ServerPlayer player, TrapKind kind, boolean debug, BlockPos center) {
 		MinecraftServer forServer = player.level().getServer();
 		AccidentData d = data(forServer);
 		AccidentConfig cfg = AccidentConfig.get();
@@ -179,7 +200,7 @@ public final class AccidentPlannerImpl implements AccidentPlanner {
 		if (blocked != null && !(debug && kind.live())) {
 			return new ArmResult(Status.BLOCKED, null, null, blocked);
 		}
-		TrapContext ctx = context(player);
+		TrapContext ctx = context(player, center);
 		List<Candidate> candidates = kind.candidates(ctx);
 		if (candidates.isEmpty()) {
 			return new ArmResult(Status.NO_SPOT, null, null, "no spot for " + kind.id() + " near you");

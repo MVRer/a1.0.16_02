@@ -142,6 +142,9 @@ public final class DirectorImpl implements Director {
 		DirectorData data = DirectorData.get(server);
 		brain(server, rules(server)).onTelling(data.memory(), clock(server), new WorldEnv(server, null), namesHim, DirectorLog.INSTANCE);
 		HerobrineState state = HerobrineState.get(server);
+		if (state.hasFlag(DirectorFlags.OBEYED_AFTER_STOP)) {
+			state.setFlag(DirectorFlags.OBEYED_AFTER_STOP, false); // the obeying starts over
+		}
 		if (namesHim && !state.tellingStarted()) {
 			state.setTellingStarted(true);
 		}

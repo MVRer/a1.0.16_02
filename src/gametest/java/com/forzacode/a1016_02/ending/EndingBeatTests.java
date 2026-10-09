@@ -453,6 +453,12 @@ public class EndingBeatTests extends EndingRuleTests {
 		r.days(2);
 		r.engine.tick(r.ctx(), new EndingFacts(Stage.TELLING, true, true, r.now, stop, stop - 1000, stop - 1000, EndingState.NEVER, -1,
 				EndingState.NEVER, 4, 0, 10, 0, 0, 0, false, 0, 0, 0));
+		helper.assertTrue(r.data.path() == EndingPath.NONE, "A committed before the director's OBEYED_AFTER_STOP fired");
+		// Three days on, the director's rule has fired: director:obeyed_after_stop is set, and the live facts read it.
+		r.state.setFlag(DirectorHooks.OBEYED_AFTER_STOP, true);
+		helper.assertTrue(r.quiet().obeyedAfterStop(), "the facts do not read director:obeyed_after_stop");
+		r.engine.tick(r.ctx(), new EndingFacts(Stage.TELLING, true, true, r.now, stop, stop - 1000, stop - 1000, EndingState.NEVER, -1,
+				EndingState.NEVER, 4, 0, 10, 0, 0, 0, false, 0, 0, 0).withObeyedAfterStop(true));
 		helper.assertTrue(r.data.path() == EndingPath.A && r.state.stage() == Stage.REMOVAL, "the tick did not commit A: " + r.data.path());
 		helper.succeed();
 	}

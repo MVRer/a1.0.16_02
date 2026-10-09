@@ -92,6 +92,21 @@ public class AccidentGameTests extends TrapGameTests {
 		y.succeedWithoutDrops();
 	}
 
+	/** AccidentPlanner.arm(player, type, center): the spots are looked for around the center, not the player. */
+	@GameTest(structure = Yard.STRUCTURE, maxTicks = 40)
+	public void plannerArmsAroundACenter(GameTestHelper helper) {
+		Yard y = lavaTunnel(helper);
+		AccidentPlannerImpl planner = new AccidentPlannerImpl(server -> y.data, Yard.NOBODY);
+		BlockPos tunnel = y.abs(3, 5, 8);
+		y.player.snapTo(y.absVec(3.5, 5, 8.5).add(200, 0, 0), 90, 0);
+		helper.assertTrue(planner.candidates(y.player, Traps.LAVA_FLOOR).isEmpty(), "a spot was found around a player far from the tunnel");
+		helper.assertFalse(planner.candidates(y.player, Traps.LAVA_FLOOR, tunnel).isEmpty(), "no spot around the center");
+		helper.assertTrue(planner.arm(y.player, new TrapType("lava_floor"), tunnel), "the trap was not armed around the center");
+		helper.assertTrue(y.data.armed().map(t -> t.pos().closerThan(tunnel, 16)).orElse(false), "the trap is not near the center");
+		helper.assertBlockNotPresent(Blocks.STONE, new BlockPos(10, 4, 8));
+		y.succeedWithoutDrops();
+	}
+
 	@GameTest(structure = Yard.STRUCTURE, maxTicks = 40)
 	public void plannerNeverArmsInView(GameTestHelper helper) {
 		Yard y = lavaTunnel(helper);
@@ -158,6 +173,10 @@ public class AccidentGameTests extends TrapGameTests {
 				+ " column " + List.of(level.getBlockState(death), level.getBlockState(death.above()), level.getBlockState(death.below())));
 		helper.assertTrue(holes(y) == raised, "the cross is not made of blocks taken from the ground: " + holes(y) + " holes, " + raised + " blocks");
 		helper.assertTrue(isCross(y, height), "the blocks do not stand as a cross");
+		// DeathMarker.lastCrossPos: the post's bottom, for the ending's sign.
+		java.util.Optional<net.minecraft.core.GlobalPos> base = unseen.lastCrossPos(level.getServer());
+		helper.assertTrue(base.isPresent() && base.get().dimension().equals(level.dimension()) && base.get().pos().closerThan(death, 10)
+				&& level.getBlockState(base.get().pos()).is(Blocks.DIRT) && base.get().pos().getY() == y.abs(0, 2, 0).getY(), "lastCrossPos: " + base);
 		y.succeedWithoutDrops();
 	}
 

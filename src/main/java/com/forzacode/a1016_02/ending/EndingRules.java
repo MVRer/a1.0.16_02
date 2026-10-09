@@ -36,9 +36,10 @@ public final class EndingRules {
 	}
 
 	/**
-	 * Ending A: after "Stop.", the player obeys. OBEYED_AFTER_STOP's rule (no telling for {@code pacing.obeyDays}
-	 * since "Stop." or the last telling), never his name since "Stop.", and no fragment read and no trace visited for
-	 * {@code aQuietDays}.
+	 * Ending A: after "Stop.", the player obeys. OBEYED_AFTER_STOP's rule is the director's (its flag
+	 * {@code director:obeyed_after_stop}: no telling for {@code pacing.obeyDays} since "Stop." or the last telling;
+	 * {@code obeyDays} here only words the status), never his name since "Stop.", and no fragment read and no trace
+	 * visited for {@code aQuietDays}.
 	 */
 	public static Optional<String> aWhy(EndingFacts f, EndingConfig cfg, int obeyDays) {
 		if (!f.stage().atLeast(cfg.minStage())) {
@@ -50,9 +51,8 @@ public final class EndingRules {
 		if (f.lastNamedAt() != EndingState.NEVER && f.lastNamedAt() >= f.stopSeenAt()) {
 			return Optional.of("named him after \"Stop.\"");
 		}
-		double obeying = f.daysSince(Math.max(f.stopSeenAt(), f.lastTellingAt()));
-		if (obeying < obeyDays) {
-			return Optional.of(days("obeying", obeying, obeyDays));
+		if (!f.obeyedAfterStop()) {
+			return Optional.of(days("obeying", f.daysSince(Math.max(f.stopSeenAt(), f.lastTellingAt())), obeyDays) + " (the director's obeyed_after_stop)");
 		}
 		double read = f.daysSince(f.lastReadAt());
 		if (read < cfg.aQuietDays) {

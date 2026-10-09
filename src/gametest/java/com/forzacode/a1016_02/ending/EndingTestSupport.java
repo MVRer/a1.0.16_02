@@ -274,7 +274,7 @@ final class EndingTestSupport {
 			return new EndingFacts(state.stage(), state.stopFired(), state.tellingStarted(), now, data.stopSeenAt(), data.lastTellingAt(),
 					data.lastNamedAt(), data.lastReadAt(), -1, data.lastFogStareAt(), state.tellingCount(), data.tellingsSinceStop(), state.attention(),
 					state.markedDeaths().size(), data.fragmentsBurned(), data.unburned().size(), false, data.housePeak(), data.housePeak(),
-					data.ownBroken());
+					data.ownBroken(), state.hasFlag(DirectorHooks.OBEYED_AFTER_STOP));
 		}
 
 		void tick() {
@@ -300,6 +300,14 @@ final class EndingTestSupport {
 			int unburned, boolean holds, int peak, int left, int broken) {
 		return new EndingFacts(stage, stopFired, stage.atLeast(Stage.TELLING), now, stopSeenAt, lastTellingAt, lastNamedAt, lastReadAt,
 				lastTraceVisitDay, lastFogStareAt, tellingCount, tellingsSinceStop, attention, markedDeaths, burned, unburned, holds, peak, left,
-				broken);
+				broken, directorObeyed(stopFired, now, stopSeenAt, lastTellingAt));
+	}
+
+	/**
+	 * The director's {@code director:obeyed_after_stop} as it would stand at {@code now}: "Stop." came and
+	 * {@code EndingRuleTests.OBEY_DAYS} days passed with no telling (the director's own rule is tested in director).
+	 */
+	static boolean directorObeyed(boolean stopFired, long now, long stopSeenAt, long lastTellingAt) {
+		return stopFired && stopSeenAt != EndingState.NEVER && now - Math.max(stopSeenAt, lastTellingAt) >= EndingRuleTests.OBEY_DAYS * GameClock.TICKS_PER_DAY;
 	}
 }

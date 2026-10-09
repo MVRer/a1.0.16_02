@@ -17,6 +17,8 @@ import com.forzacode.a1016_02.director.DirectorFlags;
 public final class DirectorHooks {
 	/** {@link #silence} for a silence for good. */
 	public static final long FOREVER = -1L;
+	/** Read only: the director sets it while OBEYED_AFTER_STOP has fired and no telling came since (Ending A's rule). */
+	public static final String OBEYED_AFTER_STOP = DirectorFlags.OBEYED_AFTER_STOP;
 
 	private DirectorHooks() {
 	}

@@ -6,6 +6,7 @@ import java.util.Optional;
 import com.forzacode.a1016_02.accident.AccidentConfig;
 import com.forzacode.a1016_02.accident.AccidentInit;
 import com.forzacode.a1016_02.accident.AccidentPlannerImpl;
+import com.forzacode.a1016_02.accident.ArmedTrap;
 import com.forzacode.a1016_02.accident.Candidate;
 import com.forzacode.a1016_02.accident.TrapKind;
 import com.forzacode.a1016_02.accident.Traps;
@@ -27,6 +28,7 @@ import com.forzacode.a1016_02.lore.LoreApi;
 import com.forzacode.a1016_02.world.HouseCopyApi;
 import com.forzacode.a1016_02.world.sig.HouseCopyState;
 
+import net.minecraft.core.BlockPos;
 import net.minecraft.core.GlobalPos;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerPlayer;
@@ -36,6 +38,8 @@ import net.minecraft.util.RandomSource;
 final class LivePorts implements EndingPorts {
 	/** The figure's Ending A card ({@code entity.Variant.LAST_ONE}). */
 	static final String LAST_SIGHTING_CARD = "sighting_last_one";
+	/** Accident builds a death's cross at most this far from the death (it looks this far for a base). */
+	static final int CROSS_RADIUS = 10;
 
 	@Override
 	public FireResult lastSighting(ServerPlayer player) {
@@ -61,11 +65,13 @@ final class LivePorts implements EndingPorts {
 		MinecraftServer server = player.level().getServer();
 		AccidentPlannerImpl planner = AccidentInit.planner();
 		Optional<TrapKind> kind = Traps.byId(trapId);
-		if (kind.isEmpty() || kind.get().blocked() != null || !planner.canArm(server)) {
+		if (!player.level().dimension().equals(bounds.dimension()) || kind.isEmpty() || kind.get().blocked() != null || !planner.canArm(server)) {
 			return false;
 		}
-		// The planner sets the first of its nearest spots that works: every one it may try must be inside.
-		List<Candidate> candidates = planner.candidates(player, kind.get());
+		// The planner looks around the middle of the copy and sets the first of its nearest spots that works: every
+		// one it may try must be inside.
+		BlockPos center = bounds.box().getCenter();
+		List<Candidate> candidates = planner.candidates(player, kind.get(), center);
 		int tries = Math.min(candidates.size(), AccidentConfig.get().maxSetupTries);
 		if (tries == 0) {
 			return false;
@@ -75,11 +81,11 @@ final class LivePorts implements EndingPorts {
 				return false;
 			}
 		}
-		AccidentPlannerImpl.ArmResult result = planner.arm(player, kind.get(), false);
-		if (!result.armed() || result.trap() == null) {
+		if (!Services.accidents().arm(player, new TrapType(trapId), center)) {
 			return false;
 		}
-		if (!bounds.contains(result.trap().dimension(), result.trap().pos())) {
+		Optional<ArmedTrap> armed = planner.armedTrap(server);
+		if (armed.isEmpty() || !bounds.contains(armed.get().dimension(), armed.get().pos())) {
 			planner.disarm(server, "not inside the copy");
 			return false;
 		}
@@ -162,7 +168,13 @@ final class LivePorts implements EndingPorts {
 
 	@Override
 	public Optional<GlobalPos> findCross(MinecraftServer server, GlobalPos death) {
-		return CrossFinder.find(TraceService.ledger(server).entries(), death, CrossFinder.SEARCH_RADIUS);
+		return crossFor(Services.deaths().lastCrossPos(server), death);
+	}
+
+	/** The newest cross, if it stands for this death: in its level, within {@link #CROSS_RADIUS} of the spot. */
+	static Optional<GlobalPos> crossFor(Optional<GlobalPos> lastCross, GlobalPos death) {
+		return lastCross.filter(base -> base.dimension().equals(death.dimension()) && Math.abs(base.pos().getX() - death.pos().getX()) <= CROSS_RADIUS
+				&& Math.abs(base.pos().getY() - death.pos().getY()) <= CROSS_RADIUS && Math.abs(base.pos().getZ() - death.pos().getZ()) <= CROSS_RADIUS);
 	}
 
 	@Override

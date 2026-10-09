@@ -1,6 +1,7 @@
 package com.forzacode.a1016_02.accident;
 
 import java.util.List;
+import java.util.Optional;
 import java.util.function.Function;
 
 import com.forzacode.a1016_02.A1016_02;
@@ -74,6 +75,11 @@ public final class DeathMarkerImpl implements DeathMarker {
 		return HerobrineState.get(server).markedDeaths().size();
 	}
 
+	@Override
+	public Optional<GlobalPos> lastCrossPos(MinecraftServer server) {
+		return data.apply(server).lastCross();
+	}
+
 	/** Tries every waiting cross. */
 	public void tick(MinecraftServer server) {
 		for (AccidentData.PendingCross cross : List.copyOf(data.apply(server).crosses())) {
@@ -113,6 +119,9 @@ public final class DeathMarkerImpl implements DeathMarker {
 			return false;
 		}
 		d.replaceCross(cross, null);
+		if (HerobrineState.get(server).markedDeaths().stream().anyMatch(m -> m.pos().equals(cross.pos()))) {
+			d.setLastCross(GlobalPos.of(level.dimension(), plan.base().immutable())); // a debug preview is not a marked death
+		}
 		d.log("cross (" + cross.cause() + ") stands at " + Candidate.at(plan.base()));
 		A1016_02.LOGGER.info("[a1016] cross for '{}' built at {}", cross.cause(), plan.base());
 		return true;

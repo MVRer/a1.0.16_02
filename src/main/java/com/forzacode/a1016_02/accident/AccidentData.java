@@ -43,7 +43,8 @@ public final class AccidentData extends SavedData {
 			Codec.INT.optionalFieldOf("cairnVisits", 0).forGetter(d -> d.cairnVisits),
 			GlobalPos.CODEC.optionalFieldOf("cairn").forGetter(d -> Optional.ofNullable(d.cairn)),
 			Codec.STRING.listOf().optionalFieldOf("history", List.of()).forGetter(d -> d.history),
-			RouteBook.CODEC.optionalFieldOf("routes").forGetter(d -> Optional.of(d.routes))
+			RouteBook.CODEC.optionalFieldOf("routes").forGetter(d -> Optional.of(d.routes)),
+			GlobalPos.CODEC.optionalFieldOf("lastCross").forGetter(d -> Optional.ofNullable(d.lastCross))
 	).apply(i, AccidentData::new));
 
 	public static final SavedDataType<AccidentData> TYPE = new SavedDataType<>(A1016_02.id("accident"), AccidentData::new, CODEC, null);
@@ -55,6 +56,8 @@ public final class AccidentData extends SavedData {
 	private @Nullable GlobalPos cairn;
 	private final List<String> history = new ArrayList<>();
 	private final RouteBook routes;
+	/** The bottom of the post of the newest cross built for a marked death. */
+	private @Nullable GlobalPos lastCross;
 	/** Not saved: true while the subject is at the cairn. */
 	public boolean atCairn;
 	/** Not saved: lure tracking for this session. */
@@ -83,7 +86,8 @@ public final class AccidentData extends SavedData {
 	}
 
 	private AccidentData(Optional<ArmedTrap> armed, Optional<ArmedTrap> restoring, List<PendingCross> crosses, int cairnVisits,
-			Optional<GlobalPos> cairn, List<String> history, Optional<RouteBook> routes) {
+			Optional<GlobalPos> cairn, List<String> history, Optional<RouteBook> routes, Optional<GlobalPos> lastCross) {
+		this.lastCross = lastCross.orElse(null);
 		this.armed = armed.orElse(null);
 		this.restoring = restoring.orElse(null);
 		this.crosses.addAll(crosses);
@@ -113,6 +117,16 @@ public final class AccidentData extends SavedData {
 
 	public void setRestoring(@Nullable ArmedTrap trap) {
 		restoring = trap;
+		setDirty();
+	}
+
+	/** The bottom of the post of the newest cross built for a marked death, if any stands. */
+	public Optional<GlobalPos> lastCross() {
+		return Optional.ofNullable(lastCross);
+	}
+
+	public void setLastCross(@Nullable GlobalPos base) {
+		lastCross = base;
 		setDirty();
 	}
 

@@ -5,6 +5,7 @@ import com.forzacode.a1016_02.core.GameClock;
 import com.forzacode.a1016_02.core.HerobrineEvents;
 import com.forzacode.a1016_02.core.HerobrineState;
 import com.forzacode.a1016_02.core.Services;
+import com.forzacode.a1016_02.entity.FigureApi;
 
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
@@ -58,6 +59,10 @@ public final class EndingAbcInit {
 			MinecraftServer server = player.level().getServer();
 			EndingWatch.onTelling(player, namesHim, EndingState.get(server), now(server));
 			ENGINE.onTelling(ctx(server, false), namesHim);
+		});
+		FigureApi.STARED.register((player, him) -> {
+			MinecraftServer server = player.level().getServer();
+			EndingWatch.onStared(player, EndingState.get(server), now(server), Services.watch()::isSubject);
 		});
 		HerobrineEvents.FRAGMENT_READ.register((player, id) -> EndingWatch.onFragmentRead(player, EndingState.get(player.level().getServer()),
 				now(player.level().getServer())));

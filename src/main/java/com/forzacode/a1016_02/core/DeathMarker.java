@@ -1,6 +1,9 @@
 package com.forzacode.a1016_02.core;
 
+import java.util.Optional;
+
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.GlobalPos;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerPlayer;
 
@@ -14,6 +17,14 @@ public interface DeathMarker {
 
 	/** How many deaths are marked in this world. */
 	int count(MinecraftServer server);
+
+	/**
+	 * The bottom of the post of the newest cross that stands for a marked death (the cross is built once the spot is
+	 * out of view, so it can come a while after the death), or empty if none stands yet. Default: none.
+	 */
+	default Optional<GlobalPos> lastCrossPos(MinecraftServer server) {
+		return Optional.empty();
+	}
 
 	/** Default: marks nothing, counts what the state holds. */
 	final class Stub implements DeathMarker {

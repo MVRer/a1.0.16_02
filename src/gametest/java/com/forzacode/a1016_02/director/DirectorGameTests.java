@@ -152,6 +152,30 @@ public class DirectorGameTests {
 		helper.succeed();
 	}
 
+	/** OBEYED_AFTER_STOP fires after obeyDays quiet days and the flag director:obeyed_after_stop follows it. */
+	@GameTest
+	public void obeyedAfterStopSetsItsFlagUntilTheNextTelling(GameTestHelper helper) {
+		HerobrineState state = new HerobrineState();
+		DirectorMemory memory = new DirectorMemory();
+		helper.assertFalse(DirectorTriggers.obeyRule(state, memory, 10, 3) || state.hasFlag(DirectorFlags.OBEYED_AFTER_STOP), "fired without Stop.");
+		state.setStopFired(true);
+		helper.assertFalse(DirectorTriggers.obeyRule(state, memory, 10, 3) || DirectorTriggers.obeyRule(state, memory, 12, 3), "fired too early");
+		helper.assertFalse(state.hasFlag(DirectorFlags.OBEYED_AFTER_STOP), "the flag came before the rule fired");
+		helper.assertTrue(DirectorTriggers.obeyRule(state, memory, 13, 3) && state.hasFlag(DirectorFlags.OBEYED_AFTER_STOP), "three quiet days did not fire");
+		helper.assertFalse(DirectorTriggers.obeyRule(state, memory, 14, 3), "fired twice");
+		helper.assertTrue(state.hasFlag(DirectorFlags.OBEYED_AFTER_STOP), "the flag went while they kept obeying");
+		// A telling: the wait starts over, and the flag goes.
+		DirectorRules rules = rules(Tempo.SLOW_BURN, Signature.CROSS_ROW);
+		new DirectorBrain(rules, SyntheticDeck.cards(), 100).onTelling(memory, new DirectorBrain.Clock(0, 15 * DirectorBrain.DAY_TICKS), new ScriptEnv(Stage.TELLING,
+				0, rules.attentionNeutral), false, DirectorBrain.Recorder.NONE);
+		helper.assertFalse(DirectorTriggers.obeyRule(state, memory, 15, 3) || state.hasFlag(DirectorFlags.OBEYED_AFTER_STOP), "the flag stayed after a telling");
+		helper.assertTrue(DirectorTriggers.obeyRule(state, memory, 18, 3) && state.hasFlag(DirectorFlags.OBEYED_AFTER_STOP), "it did not fire again");
+		state.setStopFired(false);
+		DirectorTriggers.obeyRule(state, memory, 19, 3);
+		helper.assertFalse(state.hasFlag(DirectorFlags.OBEYED_AFTER_STOP), "the flag stayed without Stop.");
+		helper.succeed();
+	}
+
 	@GameTest
 	public void signaturesWaitForTheirStage(GameTestHelper helper) {
 		CardInfo early = card("sig_from_alone", Tier.SIGNATURE, Stage.ALONE, false);

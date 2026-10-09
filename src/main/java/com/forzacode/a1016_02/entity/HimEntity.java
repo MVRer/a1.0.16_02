@@ -733,6 +733,11 @@ public class HimEntity extends PathfinderMob {
 				stared = true;
 				Attention.trigger(level.getServer(), AttentionTrigger.STARED_AT_HIM);
 				EntityData.get(level.getServer()).recordStared();
+				HerobrineState shared = HerobrineState.get(level.getServer());
+				if (!shared.hasFlag(FigureApi.STARED_FLAG)) {
+					shared.setFlag(FigureApi.STARED_FLAG, true);
+				}
+				FigureApi.STARED.invoker().onStared(looker, this);
 				trigger(looker);
 			}
 			case APPROACH -> trigger(approacher);

@@ -120,20 +120,36 @@ public final class DirectorTriggers {
 	// --- OBEYED_AFTER_STOP: writing nothing for obeyDays in-game days after "Stop." ---
 
 	private static void obeyedAfterStop(MinecraftServer server, DirectorMemory m, DirectorBrain.Clock clock, Pacing pacing) {
-		if (!HerobrineState.get(server).stopFired()) {
-			m.stopSeenDay = -1;
-			m.obeyCounted = false;
-			return;
-		}
-		long day = clock.day();
-		if (m.stopSeenDay < 0) {
-			m.stopSeenDay = day;
-		}
-		long since = day - Math.max(m.stopSeenDay, m.lastTellingDay);
-		if (!m.obeyCounted && since >= pacing.obeyDays) {
-			m.obeyCounted = true;
+		if (obeyRule(HerobrineState.get(server), m, clock.day(), pacing.obeyDays)) {
 			Attention.trigger(server, AttentionTrigger.OBEYED_AFTER_STOP);
 		}
+	}
+
+	/**
+	 * OBEYED_AFTER_STOP's rule: after "Stop.", {@code obeyDays} in-game days with no telling (since "Stop." was seen or
+	 * the last telling). True the moment it fires (once until the next telling). Keeps
+	 * {@link DirectorFlags#OBEYED_AFTER_STOP} set exactly while it has fired and no telling came since, so the endings
+	 * read the same rule.
+	 */
+	static boolean obeyRule(HerobrineState state, DirectorMemory m, long day, int obeyDays) {
+		boolean fires = false;
+		if (!state.stopFired()) {
+			m.stopSeenDay = -1;
+			m.obeyCounted = false;
+		} else {
+			if (m.stopSeenDay < 0) {
+				m.stopSeenDay = day;
+			}
+			long since = day - Math.max(m.stopSeenDay, m.lastTellingDay);
+			if (!m.obeyCounted && since >= obeyDays) {
+				m.obeyCounted = true;
+				fires = true;
+			}
+		}
+		if (state.hasFlag(DirectorFlags.OBEYED_AFTER_STOP) != m.obeyCounted) {
+			state.setFlag(DirectorFlags.OBEYED_AFTER_STOP, m.obeyCounted);
+		}
+		return fires;
 	}
 
 	// --- AVOIDED_TRACES: no visit near his tunnels and pyramids for several days ---

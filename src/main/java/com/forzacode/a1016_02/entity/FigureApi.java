@@ -17,6 +17,9 @@ import com.forzacode.a1016_02.core.PlayerWatch;
 import com.forzacode.a1016_02.core.Services;
 import com.forzacode.a1016_02.core.SiteType;
 
+import net.fabricmc.fabric.api.event.Event;
+import net.fabricmc.fabric.api.event.EventFactory;
+
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.GlobalPos;
 import net.minecraft.server.MinecraftServer;
@@ -61,6 +64,24 @@ public final class FigureApi {
 	 */
 	public record LastSpawn(Variant variant, double distance, FogEdge edge) {
 	}
+
+	/** Someone stared him down (STARED_AT_HIM): they looked straight at him for {@code stareSeconds}. */
+	@FunctionalInterface
+	public interface Stared {
+		void onStared(ServerPlayer player, HimEntity him);
+	}
+
+	/**
+	 * Fired on the server thread when STARED_AT_HIM fires, right after its attention. The endings read it as "staring
+	 * into the fog". Also sets the flag {@link #STARED_FLAG}.
+	 */
+	public static final Event<Stared> STARED = EventFactory.createArrayBacked(Stared.class, listeners -> (player, him) -> {
+		for (Stared listener : listeners) {
+			listener.onStared(player, him);
+		}
+	});
+	/** {@code HerobrineState} flag: set the first time anyone stared him down in this world (never cleared). */
+	public static final String STARED_FLAG = "entity:stared";
 
 	private static volatile @Nullable LastSpawn lastSpawn;
 

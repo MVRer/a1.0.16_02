@@ -241,7 +241,20 @@ public final class EndingWatch {
 		return new EndingFacts(state.stage(), state.stopFired(), state.tellingStarted(), now, data.stopSeenAt(), data.lastTellingAt(),
 				data.lastNamedAt(), data.lastReadAt(), lastTraceVisit(server, cfg, ports.watch()), data.lastFogStareAt(), state.tellingCount(),
 				data.tellingsSinceStop(), state.attention(), state.markedDeaths().size(), data.fragmentsBurned(), data.unburned().size(), holds,
-				data.housePeak(), left, data.ownBroken());
+				data.housePeak(), left, data.ownBroken(), state.hasFlag(DirectorHooks.OBEYED_AFTER_STOP));
+	}
+
+	/**
+	 * The entity's STARED_AT_HIM ({@code FigureApi.STARED}): the subject stared him down at the fog edge, which is
+	 * staring into the fog for Ending C, whatever the guess in {@link #staringIntoFog} saw. True if it counted.
+	 */
+	static boolean onStared(ServerPlayer player, EndingState data, long now, Predicate<ServerPlayer> subject) {
+		if (!subject.test(player)) {
+			return false;
+		}
+		data.setLastFogStareAt(now);
+		data.log("C: stared at him in the fog");
+		return true;
 	}
 
 	/** The last in-game day a player was near one of his traces (the configured site types), or -1. */

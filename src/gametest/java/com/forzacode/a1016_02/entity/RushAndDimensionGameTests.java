@@ -276,6 +276,37 @@ public class RushAndDimensionGameTests extends SightingRuleGameTests {
 		});
 	}
 
+	/** Who stared him down, as FigureApi.STARED reported it (registered once). */
+	private static final List<ServerPlayer> STARED_BY = new java.util.concurrent.CopyOnWriteArrayList<>();
+	private static boolean staredRegistered;
+
+	/** STARED_AT_HIM: staring at him for stareSeconds sets entity:stared and fires FigureApi.STARED with the player. */
+	@GameTest(structure = "a1016_02:accident/yard", maxTicks = 200)
+	public void staringHimDownFiresStaredAndSetsTheFlag(GameTestHelper helper) {
+		if (!staredRegistered) {
+			staredRegistered = true;
+			FigureApi.STARED.register((player, him) -> STARED_BY.add(player));
+		}
+		for (int x = 0; x < 24; x++) {
+			for (int z = 8; z < 13; z++) {
+				helper.setBlock(x, 0, z, Blocks.STONE);
+			}
+		}
+		// 14 blocks apart along x (his flee distance scales down to 0.6 of that), well inside the test server's view
+		// distance, the player looking straight at him and never moving.
+		ServerPlayer looker = mockPlayer(helper, helper.absoluteVec(new Vec3(4.5, 1.0, 10.5)), -90.0F, 0.0F);
+		HimEntity him = watchedFigure(helper, Variant.RIDGE, new Vec3(18.5, 1.0, 10.5), 90.0F, List.of(looker));
+		helper.succeedWhen(() -> {
+			helper.assertTrue(him.stared(), "not stared down yet: stare " + him.stareTicks() + ", seen " + him.seenTicks());
+			helper.assertTrue(STARED_BY.contains(looker), "FigureApi.STARED did not fire for the player");
+			helper.assertTrue(com.forzacode.a1016_02.core.HerobrineState.get(helper.getLevel().getServer()).hasFlag(FigureApi.STARED_FLAG),
+					"entity:stared is not set");
+			if (!him.isRemoved()) {
+				him.discard();
+			}
+		});
+	}
+
 	/** Ending D's last minute (FigureApi "no run"): the same elytra chase, and he never runs, rushes or goes under. */
 	@GameTest(maxTicks = 60, padding = 16)
 	public void withNoRunHeNeverRunsFromTheChaser(GameTestHelper helper) {
