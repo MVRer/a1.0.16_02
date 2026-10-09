@@ -2,6 +2,20 @@
 
 One entry per merge, newest first. Run the game from the main checkout (this folder, on `main`).
 
+## READY TO TRY: Latin crosses everywhere, and glass memorials  (merged feat/world-crosses, commit bc6e01c)
+```
+Restart needed: full game restart (worldgen and Java code). Old crosses in already-generated chunks keep their
+  old shape; new chunks get the new one.
+See it now:
+  1. Launch "Dev Client". /a1016 world place cross   (a stone or wood Latin cross, out of view; prints where)
+  2. /a1016 world place glass_cross   (a glass memorial: left by people on the list, not by him)
+  3. /a1016 world locate glass_cross   (the nearest generated one, if this world has any)
+  4. /a1016 world signature cross_row now   (the row: one per "gone" name plus a fresh one, all Latin, never glass)
+What to look for: his crosses are built from whatever was right there. The glass ones are someone's deliberate
+  memorial, nearly invisible in fog at dusk, catching light at night.
+Known rough edges: lore and accident still treat glass memorials as his places (one-line fix next).
+```
+
 ## READY TO TRY: Death-marker crosses are proper Latin crosses  (merged feat/accident-cross-shape, commit 7909b67)
 ```
 Restart needed: full game restart (Java code)
