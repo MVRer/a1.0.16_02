@@ -122,7 +122,7 @@ final class TellingCommands {
 	/** {@code /a1016 lore ending placef20}: F20 under F10 (forced: no view check). */
 	static int placeF20(CommandContext<CommandSourceStack> ctx) {
 		MinecraftServer server = ctx.getSource().getServer();
-		boolean placed = LoreApi.placeF20(server, com.forzacode.a1016_02.core.Services.traces().forced());
+		boolean placed = LoreApi.placeF20(server, HerobrineState.get(server), com.forzacode.a1016_02.core.Services.traces().forced());
 		GlobalPos at = HerobrineState.get(server).fragmentsPlaced().get("F20");
 		say(ctx, placed && at != null ? "[a1016] F20 is under F10 at " + at(at) : "[a1016] could not place F20 (is F10 placed? its chunk loading?)");
 		return placed ? 1 : 0;
@@ -137,7 +137,8 @@ final class TellingCommands {
 			return 0;
 		}
 		MinecraftServer server = ctx.getSource().getServer();
-		boolean moved = LoreApi.moveStopSignToCross(server, GlobalPos.of(player.level().dimension(), cross.get()),
+		boolean moved = LoreApi.moveStopSignToCross(server, HerobrineState.get(server), TellingData.get(server),
+				GlobalPos.of(player.level().dimension(), cross.get()),
 				com.forzacode.a1016_02.core.Services.traces().forced(), SignEdits.editor(com.forzacode.a1016_02.core.Services.traces().forced()));
 		say(ctx, moved ? "[a1016] the Stop. sign now stands at " + LoreApi.stopSign(server).map(TellingCommands::at).orElse("?")
 				: "[a1016] could not move the Stop. sign (none yet? no free side? other dimension?)");

@@ -120,7 +120,7 @@ public final class Telling {
 				continue;
 			}
 			if (!(level.getBlockEntity(at.pos()) instanceof SignBlockEntity sign) || SignEdits.isBlank(sign)
-					|| editor.edit(level, at.pos(), SignEdits.blank(), SignEdits.blank(), "lore:his/" + PlaceNotFound.CAUSE)) {
+					|| editor.edit(level, at.pos(), List.of(), List.of(), "lore:his/" + PlaceNotFound.CAUSE)) {
 				data.removePendingBlank(at);
 			}
 		}

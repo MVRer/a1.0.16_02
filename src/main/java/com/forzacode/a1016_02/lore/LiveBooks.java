@@ -131,9 +131,12 @@ public final class LiveBooks {
 	 * was placed, dropped items and item frames in loaded areas) are updated at once. Returns how many were.
 	 */
 	public static int finishF10(MinecraftServer server) {
-		HerobrineState state = HerobrineState.get(server);
+		return finishF10(server, HerobrineState.get(server));
+	}
+
+	static int finishF10(MinecraftServer server, HerobrineState state) {
 		state.setFlag(F10_FINISHED, true);
-		String name = HerobrineState.get(server).subject().map(HerobrineState.Subject::name).orElse("Steve");
+		String name = state.subject().map(HerobrineState.Subject::name).orElse("Steve");
 		Optional<String> cause = cause(server);
 		int updated = 0;
 		for (ServerPlayer player : server.getPlayerList().getPlayers()) {

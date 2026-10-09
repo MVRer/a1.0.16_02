@@ -55,6 +55,8 @@ final class PlaceNotFound {
 	static final String CAUSE = "F04";
 	/** How high above the floor a structure is followed. */
 	private static final int MAX_HEIGHT = 16;
+	/** How far sideways beyond the seed area a structure is followed. */
+	static final int REACH = 8;
 
 	/**
 	 * What will go.
@@ -85,11 +87,10 @@ final class PlaceNotFound {
 	 * visited site has a structure; {@code NO_SPOT} while one is in view or its chunks load.
 	 */
 	static FireResult fire(MinecraftServer server, HerobrineState state, TellingData data, TraceService traces, SignEdits.Editor editor,
-			boolean canBlank, Optional<BlockPos> base, RandomSource random) {
+			boolean canBlank, Optional<BlockPos> base, RandomSource random, LoreConfig config) {
 		if (!state.stopFired() || state.hasFlag(DONE_FLAG) || data.notFound().isPresent()) {
 			return FireResult.SKIPPED;
 		}
-		LoreConfig config = LoreConfig.get();
 		boolean waiting = false;
 		for (String id : data.visited()) {
 			GlobalPos placed = state.fragmentsPlaced().get(id);
@@ -106,13 +107,13 @@ final class PlaceNotFound {
 					|| UntouchedGrove.contains(server, GlobalPos.of(placed.dimension(), center))) {
 				continue;
 			}
-			int reach = config.notFoundSeedRadius + MAX_HEIGHT;
-			if (!ChunkGate.request(level, center, reach)) {
+			if (!ChunkGate.request(level, center, config.notFoundSeedRadius + REACH + 1)) {
 				waiting = true;
 				continue;
 			}
 			Optional<Plan> plan = plan(level, placed.pos(), center, config, pos -> Services.watch().wasPlacedByPlayer(level, pos), random);
 			if (plan.isEmpty() || plan.get().needsBlank() && !canBlank) {
+				// No structure here; or its sign could not be blanked yet (core's editSign): never leave a sign with text.
 				continue;
 			}
 			if (!commit(level, plan.get(), traces)) {
@@ -139,7 +140,7 @@ final class PlaceNotFound {
 			RandomSource random) {
 		int floorY = anchor.getY() - 1;
 		int seed = config.notFoundSeedRadius;
-		int bound = seed + MAX_HEIGHT;
+		int bound = seed + REACH;
 		Set<BlockPos> built = new LinkedHashSet<>();
 		Deque<BlockPos> queue = new ArrayDeque<>();
 		for (BlockPos pos : BlockPos.betweenClosed(center.getX() - seed, floorY, center.getZ() - seed, center.getX() + seed, floorY + 10,
@@ -263,7 +264,7 @@ final class PlaceNotFound {
 	static void finish(ServerLevel level, String id, Plan plan, HerobrineState state, TellingData data, SignEdits.Editor editor) {
 		GlobalPos at = GlobalPos.of(level.dimension(), plan.sign().isPresent() ? plan.signTo() : plan.floorCenter());
 		if (plan.sign().isPresent() && plan.needsBlank()
-				&& !editor.edit(level, plan.signTo(), SignEdits.blank(), SignEdits.blank(), "lore:his/" + CAUSE)) {
+				&& !editor.edit(level, plan.signTo(), List.of(), List.of(), "lore:his/" + CAUSE)) {
 			data.addPendingBlank(at);
 		}
 		data.setNotFound(id);
@@ -278,10 +279,12 @@ final class PlaceNotFound {
 
 	/** The sign the site keeps: the fragment's own if it is a sign, else the first one in the structure. */
 	private static Optional<BlockPos> chooseSign(ServerLevel level, BlockPos anchor, Set<BlockPos> built) {
-		if (built.contains(anchor) && isMovableSign(level.getBlockState(anchor))) {
+		Predicate<BlockPos> usable = pos -> isMovableSign(level.getBlockState(pos))
+				&& !(level.getBlockEntity(pos) instanceof SignBlockEntity sign && sign.isWaxed());
+		if (built.contains(anchor) && usable.test(anchor)) {
 			return Optional.of(anchor);
 		}
-		return built.stream().filter(pos -> isMovableSign(level.getBlockState(pos))).findFirst();
+		return built.stream().filter(usable).findFirst();
 	}
 
 	/** Standing and wall signs (not hanging ones). */

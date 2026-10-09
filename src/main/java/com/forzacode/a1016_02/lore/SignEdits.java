@@ -8,24 +8,22 @@ import com.forzacode.a1016_02.core.TraceService;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerLevel;
-import net.minecraft.world.item.DyeColor;
 import net.minecraft.world.level.block.entity.SignBlockEntity;
-import net.minecraft.world.level.block.entity.SignText;
 import net.minecraft.world.level.block.entity.SignTextSlot;
 
 /**
- * Sign text changes "he" makes: blanking a sign, or showing a fragment's lines on it ("Stop."). They only ever go
- * through {@code TraceService.editSign} (out of view, ledgered). Until core's contract batch (P1-9) lands,
- * {@link #CORE_EDIT_SIGN} is false and nothing is edited: the cards that need it return {@code SKIPPED}.
+ * Sign text changes "he" makes: blanking a sign, or showing a fragment's own lines on it ("Stop."). They only ever
+ * go through {@code TraceService.editSign} (out of view, vetoed, ledgered with the old text). Until core's contract
+ * batch (P1-9) lands, {@link #CORE_EDIT_SIGN} is false and nothing is edited: the cards that need it skip.
  */
 final class SignEdits {
 	/** Flip to true once {@code TraceService.editSign} is on main (and wire {@link #edit} to it). */
 	static final boolean CORE_EDIT_SIGN = false;
 
-	/** One sign text change: both sides at once, out of view, ledgered. */
+	/** One sign text change, both sides at once: an empty list blanks that side; at most 4 lines. */
 	@FunctionalInterface
 	interface Editor {
-		boolean edit(ServerLevel level, BlockPos pos, SignText front, SignText back, String cause);
+		boolean edit(ServerLevel level, BlockPos pos, List<String> front, List<String> back, String cause);
 	}
 
 	private SignEdits() {
@@ -41,7 +39,7 @@ final class SignEdits {
 		return (level, pos, front, back, cause) -> edit(traces, level, pos, front, back, cause);
 	}
 
-	private static boolean edit(TraceService traces, ServerLevel level, BlockPos pos, SignText front, SignText back, String cause) {
+	private static boolean edit(TraceService traces, ServerLevel level, BlockPos pos, List<String> front, List<String> back, String cause) {
 		if (!CORE_EDIT_SIGN || !(level.getBlockEntity(pos) instanceof SignBlockEntity)) {
 			return false;
 		}
@@ -49,21 +47,11 @@ final class SignEdits {
 		return false;
 	}
 
-	/** An empty side, black, not glowing. */
-	static SignText blank() {
-		return lines(List.of());
-	}
-
-	/** A side with these lines (padded to 4), black, not glowing. */
-	static SignText lines(List<String> lines) {
-		List<Component> messages = new ArrayList<>(4);
-		for (String line : lines) {
-			messages.add(Component.literal(line));
-		}
-		while (messages.size() < 4) {
-			messages.add(Component.empty());
-		}
-		return new SignText(messages.subList(0, 4), messages.subList(0, 4), DyeColor.BLACK, false);
+	/** Plain lines as sign components. */
+	static List<Component> components(List<String> lines) {
+		List<Component> out = new ArrayList<>(lines.size());
+		lines.forEach(line -> out.add(Component.literal(line)));
+		return out;
 	}
 
 	/** Both sides of a sign as one text: the non-empty lines, front first, joined with " / ". */
@@ -88,5 +76,10 @@ final class SignEdits {
 	/** The front's four lines as plain strings. */
 	static List<String> front(SignBlockEntity sign) {
 		return sign.getText(SignTextSlot.FRONT).getMessages(false).stream().map(Component::getString).toList();
+	}
+
+	/** The back's four lines as plain strings. */
+	static List<String> back(SignBlockEntity sign) {
+		return sign.getText(SignTextSlot.BACK).getMessages(false).stream().map(Component::getString).toList();
 	}
 }

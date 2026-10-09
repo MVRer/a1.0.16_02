@@ -120,11 +120,12 @@ final class TellingCards {
 		if (!ChunkGate.request(level, at.pos(), 0)) {
 			return FireResult.NO_SPOT;
 		}
-		if (!(level.getBlockEntity(at.pos()) instanceof SignBlockEntity)) {
+		if (!(level.getBlockEntity(at.pos()) instanceof SignBlockEntity sign) || sign.isWaxed()) {
+			// Gone, or waxed by the player (he cannot change a waxed sign): the next sign about him will be the one.
 			data.setStopCandidate(null);
 			return FireResult.SKIPPED;
 		}
-		if (!editor.edit(level, at.pos(), SignEdits.lines(f03.get().linesFor(playerName)), SignEdits.blank(), "lore:his/F03")) {
+		if (!editor.edit(level, at.pos(), f03.get().linesFor(playerName), List.of(), "lore:his/F03")) {
 			return FireResult.NO_SPOT;
 		}
 		state.setStopFired(true);
@@ -221,8 +222,11 @@ final class TellingCards {
 				data.putSign(sign.withBlanked(true));
 				continue;
 			}
+			if (be.isWaxed()) {
+				continue;
+			}
 			waiting = true;
-			if (editor.edit(level, sign.pos().pos(), SignEdits.blank(), SignEdits.blank(), "lore:his/" + BLANK)) {
+			if (editor.edit(level, sign.pos().pos(), List.of(), List.of(), "lore:his/" + BLANK)) {
 				data.putSign(sign.withBlanked(true));
 				A1016_02.LOGGER.info("[a1016] lore: the sign at {} came back blank", sign.pos().pos().toShortString());
 				return FireResult.FIRED;
@@ -264,7 +268,7 @@ final class TellingCards {
 			MinecraftServer server = ctx.level().getServer();
 			return PlaceNotFound.fire(server, HerobrineState.get(server), TellingData.get(server), Services.traces(),
 					SignEdits.editor(Services.traces()), SignEdits.available(), Services.watch().base(ctx.player()).map(GlobalPos::pos),
-					ctx.random());
+					ctx.random(), LoreConfig.get());
 		}
 	}
 }

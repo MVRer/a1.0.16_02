@@ -57,11 +57,10 @@ public final class LoreApi {
 	 * is still loading.
 	 */
 	public static boolean placeF20(MinecraftServer server) {
-		return placeF20(server, Services.traces());
+		return placeF20(server, HerobrineState.get(server), Services.traces());
 	}
 
-	static boolean placeF20(MinecraftServer server, TraceService traces) {
-		HerobrineState state = HerobrineState.get(server);
+	static boolean placeF20(MinecraftServer server, HerobrineState state, TraceService traces) {
 		if (state.fragmentsPlaced().containsKey("F20")) {
 			return true;
 		}
@@ -103,7 +102,8 @@ public final class LoreApi {
 	 * "Stop." sign, it is in another dimension, no side is free, or the move would be seen.
 	 */
 	public static boolean moveStopSignToCross(MinecraftServer server, GlobalPos crossPos) {
-		return moveStopSignToCross(server, crossPos, Services.traces(), SignEdits.editor(Services.traces()));
+		return moveStopSignToCross(server, HerobrineState.get(server), TellingData.get(server), crossPos, Services.traces(),
+				SignEdits.editor(Services.traces()));
 	}
 
 	/** {@link #moveStopSignToCross(MinecraftServer, GlobalPos)} for a cross in the overworld. */
@@ -111,8 +111,8 @@ public final class LoreApi {
 		return moveStopSignToCross(server, GlobalPos.of(Level.OVERWORLD, crossPos));
 	}
 
-	static boolean moveStopSignToCross(MinecraftServer server, GlobalPos crossPos, TraceService traces, SignEdits.Editor editor) {
-		TellingData data = TellingData.get(server);
+	static boolean moveStopSignToCross(MinecraftServer server, HerobrineState state, TellingData data, GlobalPos crossPos, TraceService traces,
+			SignEdits.Editor editor) {
 		Optional<GlobalPos> stop = data.stopSign();
 		if (stop.isEmpty() || !stop.get().dimension().equals(crossPos.dimension())) {
 			return false;
@@ -181,15 +181,15 @@ public final class LoreApi {
 			data.putSign(record.movedTo(at));
 		});
 		data.setStopSign(at);
-		HerobrineState.get(server).setFragmentPlaced("F03", at);
+		state.setFragmentPlaced("F03", at);
 		LoreData lore = LoreData.get(server);
 		lore.clearReadTargets("F03");
 		lore.addReadTarget("F03", at);
 		// If the player rewrote it, it says "Stop." again: F03's own words, never his.
 		Optional<Fragment> f03 = FragmentData.get("F03");
-		String name = HerobrineState.get(server).subject().map(HerobrineState.Subject::name).orElse("Steve");
+		String name = state.subject().map(HerobrineState.Subject::name).orElse("Steve");
 		if (f03.isPresent() && level.getBlockEntity(to) instanceof SignBlockEntity be && !SignEdits.front(be).equals(f03.get().linesFor(name))) {
-			editor.edit(level, to, SignEdits.lines(f03.get().linesFor(name)), SignEdits.blank(), "lore:his/F03");
+			editor.edit(level, to, f03.get().linesFor(name), List.of(), "lore:his/F03");
 		}
 		A1016_02.LOGGER.info("[a1016] lore: the \"Stop.\" sign stands in front of the cross at {}", cross.toShortString());
 		return true;
