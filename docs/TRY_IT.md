@@ -2,6 +2,23 @@
 
 One entry per merge, newest first. Run the game from the main checkout (this folder, on `main`).
 
+## READY TO TRY: He goes under, follows you to the Nether and End, and rushes past when chased  (merged feat/entity-goes-under, main fe17516)
+```
+Restart needed: full game restart (Java code)
+See it now:
+  1. Launch "Dev Client". Render Distance 6. /a1016 stage 2, /time set 13000, /a1016 atmosphere fog dusk 0.45
+  2. Goes under: /a1016 fire sighting_walks_away, find him, then /a1016 entity goesunder. He digs straight down,
+     sinks, and the hole closes over him. Walk over: a too-clean patch of bare dirt where there was grass.
+     (It also happens on its own in about 1 in 4 sightings, on natural ground with dirt below.)
+  3. Nether: /a1016 fire sighting_among_piglins (stand near zombified piglins, Nether fog). End: /a1016 fire
+     sighting_among_endermen (white eyes among the purple ones).
+  4. Rush: /a1016 fire sighting_walks_away, then fly or ride at him fast. Within about 10 blocks he turns, runs past
+     you about 2 blocks to the side, and is gone the moment he's behind you.
+  5. Tune: /a1016 entity tune  (goUnderChance, rushTriggerDistance, pass offset, dig speed, depths)
+What to look for: the hole never closes while you're looking at it; it waits until you look away.
+Known rough edges: the dig-down only happens where there's dirt in the shaft (that's the clue).
+```
+
 ## READY TO TRY: Playtest tooling (dev overlay and the 20 h playthrough)  (merged feat/debug-playtest, commit 5dc34df)
 ```
 Restart needed: full game restart (new HUD and Java code)
