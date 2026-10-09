@@ -396,15 +396,47 @@ public class LorePlacementTests extends LoreTextTests {
 	 * D-004: F21 only ever goes beside world's still-burning furnace. Two ordinary emptied houses (one bare, one with
 	 * a lit furnace) sit in F21's band; the camp (its build claimed by world, its house beside a lit furnace) is
 	 * recorded last. Every attempt in one test, in order, because the camp is looked up at any distance.
+	 * <p>
+	 * The site registry is saved with the game test world and kept from run to run, and it has no removal. So the test
+	 * starts with no camp anyone could still use (a run that failed half way, or one from before this cleanup, leaves
+	 * one) and ends with its own camp used up: none of its emptied houses left free beside the claimed build.
 	 */
 	@GameTest
 	public void theDiaryWaitsForStillBurning(GameTestHelper helper) {
+		useUpLeftoverCamps(helper);
+		List<Site> mine = new ArrayList<>();
+		try {
+			diaryWaitsForStillBurning(helper, mine);
+		} finally {
+			for (Site site : mine) {
+				Services.sites().claim(site, USED_UP); // false for the one F21 took
+			}
+		}
+	}
+
+	/** The claim on an emptied house a test is done with, so it no longer counts as a camp's free house. */
+	static final String USED_UP = "test:used_up";
+
+	/** Uses up every emptied house still free beside a camp's build: until this test records its own, there is no camp. */
+	private static void useUpLeftoverCamps(GameTestHelper helper) {
+		Optional<Site> free;
+		while ((free = Placers.stillBurningHouse(Services.sites().all(), helper.getLevel().dimension(), BlockPos.ZERO)).isPresent()) {
+			if (!Services.sites().claim(free.get(), USED_UP)) {
+				throw helper.assertionException(Component.literal("could not use up a left-over camp's house: site #" + free.get().id()));
+			}
+		}
+	}
+
+	/** Every emptied house it records goes into {@code mine}, to be used up when the test ends, passed or not. */
+	private static void diaryWaitsForStillBurning(GameTestHelper helper, List<Site> mine) {
 		floor(helper);
 		ServerLevel level = helper.getLevel();
 		BlockState lit = Blocks.FURNACE.defaultBlockState().setValue(AbstractFurnaceBlock.LIT, true);
 		Site bare = seed(helper, SiteType.EMPTIED_HOUSE, new BlockPos(1, 1, 1), 1);
+		mine.add(bare);
 		helper.setBlock(new BlockPos(1, 1, 6), lit);
 		Site litHouse = seed(helper, SiteType.EMPTIED_HOUSE, new BlockPos(1, 1, 5), 1);
+		mine.add(litHouse);
 		helper.setBlock(new BlockPos(6, 1, 6), lit);
 		TestFacts facts = new TestFacts(helper);
 		BlockPos near = abs(helper, 3, 1, 3);
@@ -422,6 +454,7 @@ public class LorePlacementTests extends LoreTextTests {
 		Site build = seed(helper, SiteType.ABANDONED_BUILD, new BlockPos(7, 1, 7), 2);
 		Services.sites().claim(build, Placers.CAMP_CLAIM);
 		Site camp = seed(helper, SiteType.EMPTIED_HOUSE, new BlockPos(6, 1, 4), 3);
+		mine.add(camp);
 		helper.assertFalse(Placers.waitsForStillBurning(true, Services.sites().all(), level.dimension()), "the list would still say F21 waits");
 		BlockPos far = near.offset(3000, 0, 0);
 		Placing.Result result = Placers.place(request(helper, "F21", far, 150, 1500, facts))
