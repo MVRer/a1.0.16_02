@@ -155,6 +155,30 @@ public final class SiteRegistry {
 		}
 	}
 
+	/**
+	 * Moves or resizes a recorded site (a growing tunnel's end, for example), keeping its id, type, dimension and
+	 * claim. Safe from any thread.
+	 *
+	 * @return the updated site, or empty if no site has that id
+	 */
+	public Optional<Site> update(Site site, BlockPos pos, int size) {
+		synchronized (LOCK) {
+			List<Site> list = data != null ? data.sites : pending;
+			for (int n = 0; n < list.size(); n++) {
+				Site current = list.get(n);
+				if (current.id() == site.id()) {
+					Site updated = new Site(current.id(), current.type(), current.dimension(), pos.immutable(), size, current.claimedBy());
+					list.set(n, updated);
+					if (data != null) {
+						data.setDirty();
+					}
+					return Optional.of(updated);
+				}
+			}
+			return Optional.empty();
+		}
+	}
+
 	/** A snapshot of every site. */
 	public List<Site> all() {
 		synchronized (LOCK) {

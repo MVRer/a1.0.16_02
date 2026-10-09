@@ -19,10 +19,14 @@ public final class CoreInit {
 		ClientEffects.registerPayloads();
 		CommandHooks.install();
 
-		ServerLifecycleEvents.SERVER_STARTING.register(server -> Services.sites().attach(server));
+		ServerLifecycleEvents.SERVER_STARTING.register(server -> {
+			Services.sites().attach(server);
+			Services.protectedAreas().attach(server);
+		});
 		ServerLifecycleEvents.SERVER_STARTED.register(HerobrineState::get);
 		ServerLifecycleEvents.SERVER_STOPPED.register(server -> {
 			Services.sites().detach();
+			Services.protectedAreas().detach();
 			Services.watch().clear();
 		});
 

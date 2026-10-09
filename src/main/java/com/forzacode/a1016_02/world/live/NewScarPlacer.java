@@ -40,6 +40,7 @@ import net.minecraft.world.level.biome.Biome;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.levelgen.Heightmap;
+import net.minecraft.world.level.levelgen.structure.BoundingBox;
 
 import org.jspecify.annotations.Nullable;
 
@@ -47,7 +48,8 @@ import org.jspecify.annotations.Nullable;
  * New scars (DESIGN.md "New scar out of view"): a hill the player crossed days ago goes dead, or a grove goes
  * bare. Only in chunks the player visited and then left for {@code Pacing.newScarAwayDays} in-game days, and only
  * out of view (one {@link TraceBatch}: all of it or nothing). Edges stop on chunk lines where the player was more
- * recently, so they end on a sharp line. Server thread only.
+ * recently, so they end on a sharp line. Protected areas ({@code Services.protectedAreas()}, the untouched grove)
+ * are skipped: no candidate centered in one, and no column inside one is changed. Server thread only.
  */
 public final class NewScarPlacer {
 	public static final String CAUSE = "world:new_scar";
@@ -343,6 +345,9 @@ public final class NewScarPlacer {
 
 	/** Applies one candidate on loaded chunks (columns in unloaded chunks are skipped, never loaded). */
 	private static Outcome apply(ServerLevel level, Candidate candidate, Predicate<ChunkPos> allowed, WorldConfig config) {
+		if (protectedColumn(level, candidate.center().getX(), candidate.center().getZ())) {
+			return Outcome.failed("in a protected area");
+		}
 		if (candidate.tree()) {
 			ChunkPos chunk = ChunkPos.containing(candidate.center());
 			BlockPos trunk = level.getChunkSource().getChunkNow(chunk.x(), chunk.z()) == null ? null : findTree(level, chunk);
@@ -494,11 +499,19 @@ public final class NewScarPlacer {
 				if (!allowed.test(chunk) || level.getChunkSource().getChunkNow(chunk.x(), chunk.z()) == null) {
 					continue; // never load a chunk here: a waiting new scar loads its chunks through tickets first
 				}
+				if (protectedColumn(level, x, z)) {
+					continue;
+				}
 				int top = level.getHeight(Heightmap.Types.WORLD_SURFACE, x, z) - 1;
 				int ground = Vegetation.groundY(level, x, z, top, level.getMinY());
 				visitor.visit(x, z, top, ground);
 			}
 		}
+	}
+
+	/** True if any block of this column lies in a protected area (the untouched grove). */
+	private static boolean protectedColumn(ServerLevel level, int x, int z) {
+		return Services.protectedAreas().intersects(level.dimension(), new BoundingBox(x, level.getMinY(), z, x, level.getMaxY(), z));
 	}
 
 	private static BlockPos siteOnGround(ServerLevel level, BlockPos center) {
