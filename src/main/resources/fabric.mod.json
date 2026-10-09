@@ -5,7 +5,7 @@
 	"name": "a1.0.16_02",
 	"description": "Something else is in your world. It does not want to be found.",
 	"authors": [],
-	"license": "CC0-1.0",
+	"license": "MIT",
 	"icon": "assets/a1016_02/icon.png",
 	"environment": "*",
 	"entrypoints": {
