@@ -23,6 +23,8 @@ import net.minecraft.world.Container;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.block.ChestBlock;
 
+import org.jspecify.annotations.Nullable;
+
 /**
  * "Under you" home cue: a chest in the base is one stack short. The stack is moved into the chest in the network
  * ({@code TraceService.moveStack}); while the network has no chest yet, it is taken out and kept in the ledger.
@@ -48,17 +50,23 @@ final class UnderYouStackCard extends DigCard {
 		if (base.isEmpty()) {
 			return FireResult.NO_SPOT;
 		}
-		return takeStack(ctx.level(), base.get(), ctx.random(), Services.traces()) ? FireResult.FIRED : FireResult.NO_SPOT;
+		Network net = data(ctx.level()).network().filter(n -> n.dimension.equals(ctx.level().dimension())).orElse(null);
+		boolean taken = takeStack(ctx.level(), base.get(), net, ctx.random(), Services.traces());
+		if (taken) {
+			data(ctx.level()).setDirty();
+		}
+		return taken ? FireResult.FIRED : FireResult.NO_SPOT;
 	}
 
 	static List<BlockPos> playerChests(ServerLevel level, BlockPos base) {
 		return Services.watch().placedNear(level, base, ModConfig.pacing().chestRadius, state -> state.getBlock() instanceof ChestBlock);
 	}
 
-	/** Takes one stack from one of the player's chests near {@code base}. True if a stack went. */
-	static boolean takeStack(ServerLevel level, BlockPos base, RandomSource random, TraceService traces) {
-		DigData data = data(level);
-		Network net = data.network().filter(n -> n.dimension.equals(level.dimension())).orElse(null);
+	/**
+	 * Takes one stack from one of the player's chests near {@code base}: into the network's chest if it has one,
+	 * otherwise into the ledger. True if a stack went.
+	 */
+	static boolean takeStack(ServerLevel level, BlockPos base, @Nullable Network net, RandomSource random, TraceService traces) {
 		BlockPos into = net != null && net.chest != null && level.isLoaded(net.chest) && level.getBlockEntity(net.chest) instanceof Container ? net.chest
 				: null;
 		List<BlockPos> chests = new ArrayList<>(playerChests(level, base));
@@ -87,7 +95,6 @@ final class UnderYouStackCard extends DigCard {
 					} else {
 						net.stacksLedgered++;
 					}
-					data.setDirty();
 				}
 				return true;
 			}

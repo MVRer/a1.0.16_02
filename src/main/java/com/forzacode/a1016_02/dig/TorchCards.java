@@ -49,7 +49,8 @@ final class TorchCards {
 	static int removeFromLeftCave(ServerLevel level, ServerPlayer player, net.minecraft.util.RandomSource random) {
 		DigConfig config = DigConfig.get();
 		BlockPos here = player.blockPosition();
-		int maxReach = (level.getServer().getPlayerList().getViewDistance() + 1) * 16;
+		// Only loaded places can change; the view distance bounds them (at least twice the minimum distance).
+		int maxReach = Math.max(config.torchesGoneMinDistance * 2, (level.getServer().getPlayerList().getViewDistance() + 1) * 16);
 		long minSqr = (long) config.torchesGoneMinDistance * config.torchesGoneMinDistance;
 		List<BlockPos> centers = new ArrayList<>();
 		DigData.get(level.getServer()).explored(level.dimension()).forEachNear(here, maxReach, packed -> {
@@ -62,7 +63,7 @@ final class TorchCards {
 		for (BlockPos center : centers.subList(0, Math.min(48, centers.size()))) {
 			List<BlockPos> torches = new ArrayList<>();
 			for (BlockPos torch : Services.watch().placedNear(level, center, config.torchesGoneSearchRadius, Tunnels::isTorch)) {
-				if (!level.canSeeSky(torch) && torch.distSqr(here) >= minSqr) {
+				if (DigTicker.covered(level, torch) && torch.distSqr(here) >= minSqr) {
 					torches.add(torch);
 				}
 			}
@@ -112,7 +113,7 @@ final class TorchCards {
 		private static List<BlockPos> caveTorches(ServerLevel level, ServerPlayer player, int radius) {
 			List<BlockPos> torches = new ArrayList<>();
 			for (BlockPos torch : Services.watch().placedNear(level, player.blockPosition(), radius, Tunnels::isTorch)) {
-				if (!level.canSeeSky(torch)) {
+				if (DigTicker.covered(level, torch)) {
 					torches.add(torch);
 				}
 			}

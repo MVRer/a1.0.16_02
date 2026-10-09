@@ -101,6 +101,11 @@ public final class DigTicker {
 		return cues.size();
 	}
 
+	/** Where this player's waiting cues will sound, in the order they were queued (for tests and debug). */
+	public List<Vec3> pendingCuePositions(UUID player) {
+		return cues.stream().filter(cue -> cue.player().equals(player)).map(Cue::pos).toList();
+	}
+
 	public boolean torchSessionActive() {
 		return torchSession != null;
 	}
@@ -157,6 +162,11 @@ public final class DigTicker {
 				SoundCues.playTo(player, cue.sound(), cue.source(), cue.pos(), cue.volume(), cue.pitch());
 			}
 		}
+	}
+
+	/** True if something solid is above the position (heightmap based, so it is right even before light updates). */
+	public static boolean covered(ServerLevel level, BlockPos pos) {
+		return pos.getY() < level.getHeight(Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, pos.getX(), pos.getZ()) - 1;
 	}
 
 	/** True if the position is in a cave: no sky light to speak of and well below the surface. */
@@ -270,7 +280,7 @@ public final class DigTicker {
 		if (now >= session.refresh) {
 			session.refresh = now + 200;
 			for (BlockPos torch : Services.watch().placedNear(level, player.blockPosition(), 64, Tunnels::isTorch)) {
-				if (!level.canSeeSky(torch)) {
+				if (covered(level, torch)) {
 					session.torches.add(torch.asLong());
 				}
 			}
