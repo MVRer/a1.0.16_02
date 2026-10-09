@@ -124,9 +124,54 @@ public class DirectorGameTests {
 			brain.step(memory, clock, env, random, DirectorBrain.Recorder.NONE);
 		}
 		helper.assertTrue(env.stage == Stage.PROXIMITY, "no timed fallback into Telling (D-006), got " + env.stage);
-		helper.assertTrue(brain.enterTelling(clock, env, DirectorBrain.Recorder.NONE) && env.stage == Stage.TELLING, "TELLING did not start Telling");
+
+		// D-041: writing near his traces counts as telling but never moves the stage, in any stage before Telling.
+		DirectorBrain.Clock day5 = new DirectorBrain.Clock(clock.playTicks(), 5 * DirectorBrain.DAY_TICKS + 100);
+		for (Stage before : List.of(Stage.ALONE, Stage.TRACES, Stage.PROXIMITY)) {
+			env.stage = before;
+			memory.lastTellingDay = -1;
+			memory.obeyCounted = true;
+			helper.assertFalse(brain.onTelling(memory, day5, env, false, DirectorBrain.Recorder.NONE), "writing near his traces started Telling in " + before);
+			helper.assertTrue(env.stage == before, "writing near his traces moved " + before + " to " + env.stage);
+			helper.assertTrue(memory.lastTellingDay == 5 && !memory.obeyCounted, "writing near his traces did not count as telling");
+		}
+		// Only naming him starts Stage 3.
+		memory.lastTellingDay = -1;
+		helper.assertTrue(brain.onTelling(memory, day5, env, true, DirectorBrain.Recorder.NONE) && env.stage == Stage.TELLING,
+				"naming him did not start Telling, got " + env.stage);
+		helper.assertTrue(memory.lastTellingDay == 5, "naming him did not count as telling");
+		helper.assertFalse(brain.onTelling(memory, day5, env, true, DirectorBrain.Recorder.NONE), "Telling started twice");
 		env.stage = Stage.REMOVAL;
-		helper.assertFalse(brain.enterTelling(clock, env, DirectorBrain.Recorder.NONE), "Telling replaced Removal");
+		helper.assertFalse(brain.onTelling(memory, day5, env, true, DirectorBrain.Recorder.NONE) || env.stage != Stage.REMOVAL, "Telling replaced Removal");
+		helper.succeed();
+	}
+
+	@GameTest
+	public void signaturesWaitForTheirStage(GameTestHelper helper) {
+		CardInfo early = card("sig_from_alone", Tier.SIGNATURE, Stage.ALONE, false);
+		CardInfo traces = card("sig_from_traces", Tier.SIGNATURE, Stage.TRACES, false);
+		CardInfo late = card("sig_from_proximity", Tier.SIGNATURE, Stage.PROXIMITY, false);
+		List<CardInfo> deck = List.of(early, traces, late);
+		DirectorRules rules = rules(Tempo.SLOW_BURN, Signature.CROSS_ROW);
+		rules.minAnyGap = 0;
+		helper.assertTrue(rules.signatureMinStage == Stage.TRACES, "signatures start in " + rules.signatureMinStage + ", expected Traces by default");
+		DirectorBrain brain = new DirectorBrain(rules, deck, 10);
+		helper.assertTrue(brain.minStage(early) == Stage.TRACES && brain.minStage(late) == Stage.PROXIMITY, "minimum stages");
+		int ticks = (int) (4 * rules.hourTicks / rules.tickInterval);
+
+		ScriptEnv alone = DirectorTestSupport.drive(brain, DirectorTestSupport.pinned(rules), Stage.ALONE, ticks, 3, DirectorBrain.Recorder.NONE);
+		helper.assertTrue(alone.fired.isEmpty(), "a signature fired in Alone: " + alone.fired);
+		ScriptEnv inTraces = DirectorTestSupport.drive(brain, DirectorTestSupport.pinned(rules), Stage.TRACES, ticks, 3, DirectorBrain.Recorder.NONE);
+		helper.assertTrue(new HashSet<>(inTraces.fired).equals(Set.of(early.id(), traces.id())) && inTraces.fired.size() == 2,
+				"Traces should fire the two Traces-ready signatures once each: " + inTraces.fired);
+		ScriptEnv inProximity = DirectorTestSupport.drive(brain, DirectorTestSupport.pinned(rules), Stage.PROXIMITY, ticks, 3, DirectorBrain.Recorder.NONE);
+		helper.assertTrue(inProximity.fired.size() == 3 && new HashSet<>(inProximity.fired).size() == 3, "Proximity should fire all three once: " + inProximity.fired);
+
+		// The config minimum applies on top of each card's own stage.
+		rules.signatureMinStage = Stage.PROXIMITY;
+		DirectorBrain strict = new DirectorBrain(rules, deck, 10);
+		ScriptEnv strictTraces = DirectorTestSupport.drive(strict, DirectorTestSupport.pinned(rules), Stage.TRACES, ticks, 3, DirectorBrain.Recorder.NONE);
+		helper.assertTrue(strictTraces.fired.isEmpty(), "signatures fired in Traces with a Proximity minimum: " + strictTraces.fired);
 		helper.succeed();
 	}
 
@@ -134,17 +179,29 @@ public class DirectorGameTests {
 	public void decksNeverRepeatUntilExhausted(GameTestHelper helper) {
 		int repeats = 0;
 		int refills = 0;
+		List<CardInfo> synthetic = SyntheticDeck.cards();
 		for (Playthrough p : playthroughs()) {
 			Map<Tier, Set<String>> cycle = new EnumMap<>(Tier.class);
 			Map<Tier, String> last = new EnumMap<>(Tier.class);
+			Map<Tier, Long> lastProgress = new EnumMap<>(Tier.class);
 			Set<String> everFired = new HashSet<>();
 			String previous = null;
 			for (Tier tier : Tier.values()) {
 				cycle.put(tier, new HashSet<>());
 			}
 			for (Event e : p.result().events) {
-				if (e.kind() == Kind.REFILL) {
+				if (e.kind() == Kind.DRAW) {
+					lastProgress.put(e.tier(), e.dayTicks());
+				} else if (e.kind() == Kind.REFILL) {
 					helper.assertFalse(cycle.get(e.tier()).isEmpty(), where(p) + "refilled a deck with nothing fired");
+					// No card comes back while one it has not fired could still be drawn in this stage and profile,
+					// unless the deck drew nothing for the whole stall.
+					List<String> waiting = synthetic.stream().filter(card -> card.tier() == e.tier() && !cycle.get(e.tier()).contains(card.id())
+							&& !DirectorTestSupport.outOfStageOrProfile(p.rules(), card, e.stage(), everFired)).map(CardInfo::id).toList();
+					long stuck = e.dayTicks() - lastProgress.getOrDefault(e.tier(), p.result().startDayTicks);
+					helper.assertTrue(waiting.isEmpty() || stuck >= p.rules().deckStall,
+							where(p) + e.tier() + " deck reshuffled after " + stuck + " day ticks while " + waiting + " could still be drawn");
+					lastProgress.put(e.tier(), e.dayTicks());
 					cycle.get(e.tier()).clear();
 					refills++;
 				} else if (e.kind() == Kind.FIRE) {
@@ -181,6 +238,141 @@ public class DirectorGameTests {
 		for (int i = 0; i + 4 <= env.fired.size(); i += 4) {
 			helper.assertTrue(new HashSet<>(env.fired.subList(i, i + 4)).size() == 4, "cycle " + env.fired.subList(i, i + 4) + " is not a full deck");
 		}
+		helper.succeed();
+	}
+
+	/** Watches one deck: a repeat inside a cycle, or a reshuffle before every drawable card fired, is a violation. */
+	private static final class DeckWatch implements DirectorBrain.Recorder {
+		final Set<String> drawable;
+		final Set<String> cycle = new HashSet<>();
+		final List<String> violations = new ArrayList<>();
+		final List<Long> refills = new ArrayList<>();
+		final List<Long> fireDays = new ArrayList<>();
+
+		DeckWatch(String... drawable) {
+			this.drawable = Set.of(drawable);
+		}
+
+		@Override
+		public void fired(DirectorBrain.Clock clock, CardInfo card, boolean fake, boolean forced, Stage stage, double tensionAfter) {
+			if (!cycle.add(card.id())) {
+				violations.add(card.id() + " repeated while " + missing() + " had not fired");
+			}
+			fireDays.add(clock.dayTicks());
+		}
+
+		@Override
+		public void refilled(DirectorBrain.Clock clock, Tier tier) {
+			if (!cycle.containsAll(drawable)) {
+				violations.add("reshuffled at " + clock.dayTicks() + " while " + missing() + " had not fired");
+			}
+			refills.add(clock.dayTicks());
+			cycle.clear();
+		}
+
+		Set<String> missing() {
+			Set<String> out = new HashSet<>(drawable);
+			out.removeAll(cycle);
+			return out;
+		}
+	}
+
+	@GameTest
+	public void decksWaitForGatedCards(GameTestHelper helper) {
+		CardInfo sighting = card("s", Tier.AMBIENT, Stage.ALONE, false, CardTag.SIGHTING);
+		CardInfo accident = card("x", Tier.AMBIENT, Stage.ALONE, false, CardTag.ACCIDENT);
+		CardInfo telling = card("t", Tier.AMBIENT, Stage.TELLING, false);
+		CardInfo text = card("w", Tier.AMBIENT, Stage.ALONE, false, CardTag.TEXT);
+		CardInfo a = card("a", Tier.AMBIENT, Stage.ALONE, false);
+		CardInfo b = card("b", Tier.AMBIENT, Stage.ALONE, false);
+		CardInfo c = card("c", Tier.AMBIENT, Stage.ALONE, false);
+		List<CardInfo> deck = List.of(a, b, c, sighting, accident, telling, text);
+		DirectorRules rules = deckRules();
+		int ticksPerHour = (int) (rules.hourTicks / rules.tickInterval);
+
+		// 1. The accident card waits for its gate and the sighting is mostly skipped by its weight: nothing comes back
+		// until both have fired. Telling-only and zero-weight cards never hold the deck.
+		rules.firstAccident = 3 * rules.hourTicks; // two hours into the run
+		rules.deckStall = Long.MAX_VALUE / 4;
+		DeckWatch watch = new DeckWatch("a", "b", "c", "s", "x");
+		DirectorMemory memory = DirectorTestSupport.pinned(rules);
+		ScriptEnv env = DirectorTestSupport.drive(new DirectorBrain(rules, deck, 100), memory, Stage.PROXIMITY, 6 * ticksPerHour, 21, watch);
+		helper.assertTrue(watch.violations.isEmpty(), "gated: " + watch.violations);
+		int xAt = env.fired.indexOf("x");
+		helper.assertTrue(xAt == 4 && new HashSet<>(env.fired.subList(0, 4)).equals(Set.of("a", "b", "c", "s")),
+				"before the accident gate opened: " + env.fired);
+		helper.assertTrue(watch.refills.size() >= 1 && env.fired.size() > 6, "the deck never came back after the gated card fired: " + env.fired);
+		helper.assertFalse(env.fired.contains("t") || env.fired.contains("w"), "a card outside its stage fired: " + env.fired);
+
+		// 2. A card that never gets past its gate holds the deck back only for the stall (default 3 in-game days).
+		DirectorRules stall = deckRules();
+		stall.firstAccident = Long.MAX_VALUE / 4;
+		helper.assertTrue(stall.deckStall == 3 * DirectorBrain.DAY_TICKS, "default stall " + stall.deckStall + " day ticks");
+		DeckWatch stallWatch = new DeckWatch("a", "b", "c");
+		ScriptEnv stallEnv = DirectorTestSupport.drive(new DirectorBrain(stall, List.of(a, b, c, accident, telling, text), 100),
+				DirectorTestSupport.pinned(stall), Stage.PROXIMITY, 4 * ticksPerHour, 21, stallWatch);
+		helper.assertTrue(stallWatch.violations.isEmpty(), "stall: " + stallWatch.violations);
+		helper.assertFalse(stallEnv.fired.contains("x"), "the gated card fired");
+		helper.assertTrue(!stallWatch.refills.isEmpty() && stallEnv.fired.size() > 3, "the stalled deck never reshuffled: " + stallEnv.fired);
+		long lastNew = stallWatch.fireDays.get(2);
+		helper.assertTrue(stallWatch.refills.getFirst() - lastNew >= stall.deckStall,
+				"reshuffled " + (stallWatch.refills.getFirst() - lastNew) + " day ticks after the last new card, before the stall");
+
+		// 3. When only the stage rules the rest out, the deck comes back at once (never the last card first).
+		DirectorRules open = deckRules();
+		open.deckStall = Long.MAX_VALUE / 4;
+		DeckWatch openWatch = new DeckWatch("a", "b");
+		ScriptEnv openEnv = DirectorTestSupport.drive(new DirectorBrain(open, List.of(a, b, telling, text), 100),
+				DirectorTestSupport.pinned(open), Stage.PROXIMITY, 20, 21, openWatch);
+		helper.assertTrue(openWatch.violations.isEmpty() && openEnv.fired.size() >= 15 && openWatch.refills.size() >= 6,
+				"stage-only run out: fired " + openEnv.fired + ", refills " + openWatch.refills.size() + ", " + openWatch.violations);
+		for (int i = 1; i < openEnv.fired.size(); i++) {
+			helper.assertFalse(openEnv.fired.get(i).equals(openEnv.fired.get(i - 1)), "the same card twice in a row: " + openEnv.fired);
+		}
+		helper.succeed();
+	}
+
+	/** Ambient fires as often as the gates allow; sightings are rarely kept and TEXT is out of Proximity. */
+	private static DirectorRules deckRules() {
+		DirectorRules rules = rules(Tempo.SLOW_BURN, Signature.CROSS_ROW);
+		rules.proximityAmbientPerHour = 1000;
+		rules.minAnyGap = 0;
+		rules.sightingsPerDayMax = 100;
+		Map<CardTag, Double> weights = new EnumMap<>(CardTag.class);
+		weights.put(CardTag.SIGHTING, 0.05);
+		weights.put(CardTag.TEXT, 0.0);
+		rules.stageTagWeights.put(Stage.PROXIMITY, weights);
+		return rules;
+	}
+
+	@GameTest
+	public void quietFromTensionRaisedElsewhere(GameTestHelper helper) {
+		DirectorRules rules = rules(Tempo.SLOW_BURN, Signature.CROSS_ROW);
+		DirectorBrain brain = new DirectorBrain(rules, List.of(), 10); // nothing can fire: only outside tension counts
+		DirectorMemory memory = DirectorTestSupport.pinned(rules);
+		ScriptEnv env = new ScriptEnv(Stage.PROXIMITY, rules.tensionThreshold - 10, rules.attentionNeutral);
+		RandomSource random = RandomSource.create(8);
+		DirectorBrain.Clock clock = new DirectorBrain.Clock(rules.hourTicks, 2 * DirectorBrain.DAY_TICKS);
+		memory.lastStepPlay = clock.playTicks();
+		clock = clock.plus(rules.tickInterval);
+		brain.step(memory, clock, env, random, DirectorBrain.Recorder.NONE);
+		helper.assertFalse(brain.inQuiet(memory, clock), "a quiet started below the threshold");
+
+		// Another system raises tension between two director ticks (Attention.raiseTension).
+		env.addTension(20, "elsewhere");
+		clock = clock.plus(rules.tickInterval);
+		brain.step(memory, clock, env, random, DirectorBrain.Recorder.NONE);
+		helper.assertTrue(brain.inQuiet(memory, clock) && memory.quietCount == 1, "tension raised elsewhere did not start a quiet");
+		helper.assertTrue(env.fireCalls == 0 && env.tension <= rules.tensionAfterQuiet + 1e-9, "fires " + env.fireCalls + ", tension " + env.tension);
+		long days = (memory.quietUntilDayTicks - clock.dayTicks()) / DirectorBrain.DAY_TICKS;
+		helper.assertTrue(days >= rules.quietMinDays && days <= rules.quietMaxDays, "quiet of " + days + " days");
+
+		// A running quiet is never restarted or stretched.
+		long until = memory.quietUntilDayTicks;
+		env.addTension(100, "elsewhere");
+		clock = clock.plus(rules.tickInterval);
+		brain.step(memory, clock, env, random, DirectorBrain.Recorder.NONE);
+		helper.assertTrue(memory.quietUntilDayTicks == until && memory.quietCount == 1, "the quiet restarted while running");
 		helper.succeed();
 	}
 
@@ -443,20 +635,22 @@ public class DirectorGameTests {
 	public void sightingsDropOffInTelling(GameTestHelper helper) {
 		int telling = 0;
 		int proximity = 0;
+		Map<Tier, Integer> tellingByTier = new EnumMap<>(Tier.class);
 		for (long seed : SEEDS) {
 			DirectorRules rules = rules(Tempo.SLOW_BURN, Signature.CROSS_ROW);
 			for (Stage stage : List.of(Stage.TELLING, Stage.PROXIMITY)) {
 				DirectorSim.Result result = DirectorSim.run(rules, SyntheticDeck.cards(), 100, new DirectorMemory(), stage, 0,
 						new DirectorBrain.Clock(0, 0), DirectorTestSupport.params(rules, seed, rules.attentionNeutral, HOURS));
-				int sightings = fires(result, e -> SyntheticDeck.cards().stream().anyMatch(c -> c.id().equals(e.cardId()) && c.has(CardTag.SIGHTING))).size();
+				List<Event> sightings = fires(result, e -> SyntheticDeck.cards().stream().anyMatch(c -> c.id().equals(e.cardId()) && c.has(CardTag.SIGHTING)));
 				if (stage == Stage.TELLING) {
-					telling += sightings;
+					telling += sightings.size();
+					sightings.forEach(e -> tellingByTier.merge(e.tier(), 1, Integer::sum));
 				} else {
-					proximity += sightings;
+					proximity += sightings.size();
 				}
 			}
 		}
-		helper.assertTrue(proximity >= 8 && telling * 5 <= proximity, "sightings: Telling " + telling + ", Proximity " + proximity);
+		helper.assertTrue(proximity >= 8 && telling * 5 <= proximity, "sightings: Telling " + telling + " " + tellingByTier + ", Proximity " + proximity);
 		helper.succeed();
 	}
 

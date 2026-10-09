@@ -18,6 +18,8 @@ import com.forzacode.a1016_02.core.Tempo;
 import com.forzacode.a1016_02.core.Tier;
 import com.forzacode.a1016_02.core.WorldProfile;
 
+import net.minecraft.util.RandomSource;
+
 /** Fixtures for {@link DirectorGameTests}: fixed-seed 20 h playthroughs over the synthetic deck, and a scripted env. */
 class DirectorTestSupport {
 	static final long[] SEEDS = {1L, 7L, 42L, 1016L, 0xA1016L, 99_991L};
@@ -77,6 +79,59 @@ class DirectorTestSupport {
 
 	static CardInfo card(String id, Tier tier, Stage stage, boolean fake, CardTag... tags) {
 		return new CardInfo(id, tier, stage, Set.of(), tags.length == 0 ? Set.of() : EnumSet.copyOf(List.of(tags)), fake);
+	}
+
+	/** Memory for scripted runs: a session already past its join grace and stage points that never come. */
+	static DirectorMemory pinned(DirectorRules rules) {
+		DirectorMemory memory = new DirectorMemory();
+		memory.sessionStart = 0;
+		memory.tracesAt = Long.MAX_VALUE / 4;
+		memory.proximityAt = Long.MAX_VALUE / 4;
+		memory.rolledTempo = rules.profile.tempo().name();
+		return memory;
+	}
+
+	/** Steps the brain {@code ticks} times from hour 1, day 2, in a fixed stage, with tension held at 0 (no quiet). */
+	static ScriptEnv drive(DirectorBrain brain, DirectorMemory memory, Stage stage, int ticks, long seed, DirectorBrain.Recorder rec) {
+		DirectorRules rules = brain.rules();
+		ScriptEnv env = new ScriptEnv(stage, 0, rules.attentionNeutral);
+		RandomSource random = RandomSource.create(seed);
+		DirectorBrain.Clock clock = new DirectorBrain.Clock(rules.hourTicks, 2 * DirectorBrain.DAY_TICKS);
+		memory.lastStepPlay = clock.playTicks();
+		for (int i = 0; i < ticks; i++) {
+			clock = clock.plus(rules.tickInterval);
+			env.tension = 0;
+			brain.step(memory, clock, env, random, rec);
+		}
+		return env;
+	}
+
+	/**
+	 * Independent of the brain: true if this card cannot be drawn in this stage whatever the moment, because of the
+	 * stage (its own, its tier's, a zero tag weight) or the profile (habits, the world's signature, once per world).
+	 */
+	static boolean outOfStageOrProfile(DirectorRules rules, CardInfo card, Stage stage, Set<String> oncePerWorldFired) {
+		Stage tierMin = switch (card.tier()) {
+			case AMBIENT -> Stage.ALONE;
+			case MINOR -> rules.minorMinStage;
+			case MAJOR -> rules.majorMinStage;
+			case SIGNATURE -> rules.signatureMinStage;
+		};
+		if (!stage.atLeast(card.earliestStage()) || !stage.atLeast(tierMin)) {
+			return true;
+		}
+		if (rules.tagWeight(stage, card) <= 0 || rules.habitWeight(card) <= 0) {
+			return true;
+		}
+		if (DirectorBrain.oncePerWorld(card) && oncePerWorldFired.contains(card.id())) {
+			return true;
+		}
+		return switch (card.id()) {
+			case CardInfo.SIGNATURE_STILL_BURNING -> !rules.profile.hasStillBurning();
+			case CardInfo.SIGNATURE_HOUSE_ELSEWHERE -> !rules.profile.hasHouseCopy();
+			case CardInfo.SIGNATURE_CROSS_ROW -> rules.profile.signature() != Signature.CROSS_ROW;
+			default -> false;
+		};
 	}
 
 	/** A hand-driven env: stage, tension and attention fields, scripted context and fire results. */

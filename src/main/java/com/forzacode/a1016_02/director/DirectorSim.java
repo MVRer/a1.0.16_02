@@ -350,6 +350,9 @@ public final class DirectorSim {
 						if (tier == Tier.MAJOR && !e.stage().atLeast(rules.majorMinStage)) {
 							broken.add(at + "major in " + e.stage());
 						}
+						if (tier == Tier.SIGNATURE && !e.stage().atLeast(rules.signatureMinStage)) {
+							broken.add(at + "signature in " + e.stage());
+						}
 						lastMajor = now;
 					}
 					if (tier == Tier.AMBIENT && e.stage() == Stage.ALONE && ++aloneAmbients > rules.aloneMaxAmbient) {

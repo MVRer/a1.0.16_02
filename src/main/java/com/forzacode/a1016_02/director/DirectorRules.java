@@ -34,6 +34,7 @@ public final class DirectorRules {
 	public int houseCopyMinDay;
 	public Stage minorMinStage;
 	public Stage majorMinStage;
+	public Stage signatureMinStage;
 
 	// stages
 	public Pacing.TickRange tracesStart;
@@ -76,6 +77,8 @@ public final class DirectorRules {
 	public double habitMatchWeight;
 	public double habitMissWeight;
 	public final Map<Stage, Map<CardTag, Double>> stageTagWeights = new EnumMap<>(Stage.class);
+	/** In-game day ticks a deck may stay stuck on gated cards before it reshuffles anyway. */
+	public long deckStall;
 
 	private DirectorRules() {
 	}
@@ -102,6 +105,7 @@ public final class DirectorRules {
 		rules.houseCopyMinDay = pacing.houseCopyMinDay;
 		rules.minorMinStage = stage(config.minorMinStage, Stage.TRACES);
 		rules.majorMinStage = stage(config.majorMinStage, Stage.PROXIMITY);
+		rules.signatureMinStage = stage(config.signatureMinStage, Stage.TRACES);
 
 		rules.tracesStart = pacing.tracesStart(profile.tempo());
 		rules.proximityStart = pacing.proximityStart(profile.tempo());
@@ -141,6 +145,7 @@ public final class DirectorRules {
 
 		rules.habitMatchWeight = config.habitMatchWeight;
 		rules.habitMissWeight = config.habitMissWeight;
+		rules.deckStall = Math.max(1, Math.round(Math.max(0, config.deckStallDays) * DirectorBrain.DAY_TICKS));
 		if (config.stageTagWeights != null) {
 			config.stageTagWeights.forEach((stageName, tags) -> {
 				Stage stage = stage(stageName, null);

@@ -30,6 +30,8 @@ public final class DirectorConfig {
 	/** First stage that draws minor and major cards. */
 	public String minorMinStage = "TRACES";
 	public String majorMinStage = "PROXIMITY";
+	/** First stage that draws signature cards; each card's own earliest stage still applies on top. */
+	public String signatureMinStage = "TRACES";
 
 	// --- gates ---
 	/** No two fires of any tier closer than this (real minutes). */
@@ -63,6 +65,12 @@ public final class DirectorConfig {
 	 * kept at all, so 0.03 is "almost never". Missing entries are 1. Cards with several tags multiply.
 	 */
 	public Map<String, Map<String, Double>> stageTagWeights = defaultStageTagWeights();
+	/**
+	 * A deck reshuffles only when every card it has not fired this cycle is ruled out by the stage or the profile.
+	 * Cards that only wait on a passing gate (no accident yet, a sighting today, a tag weight's skip) hold the
+	 * reshuffle back, unless the deck has drawn nothing for this many in-game days.
+	 */
+	public double deckStallDays = 3;
 
 	// --- attention triggers the director owns (D-017) ---
 	/** LOW_RENDER_DISTANCE fires once per this much play at a low view distance (real minutes). */

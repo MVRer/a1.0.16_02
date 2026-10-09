@@ -31,7 +31,7 @@ public final class DirectorInit {
 				DIRECTOR.onLeave(server);
 			}
 		});
-		HerobrineEvents.TELLING.register((player, text, pos, namesHim) -> DIRECTOR.onTelling(player.level().getServer()));
+		HerobrineEvents.TELLING.register((player, text, pos, namesHim) -> DIRECTOR.onTelling(player.level().getServer(), namesHim));
 		EntitySleepEvents.START_SLEEPING.register((entity, pos) -> {
 			if (entity instanceof ServerPlayer player) {
 				DirectorTriggers.onStartSleeping(player);

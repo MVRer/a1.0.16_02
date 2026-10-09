@@ -26,21 +26,27 @@ import net.minecraft.util.RandomSource;
  * <ul>
  * <li>Stages move by real play time: ALONE to TRACES at a point rolled inside {@code Pacing.tracesStart(tempo)},
  * TRACES to PROXIMITY inside {@code proximityStart(tempo)}. The stage clock runs faster or slower with attention,
- * within the configured band. TELLING comes only from {@code HerobrineEvents.TELLING}; REMOVAL never from here.</li>
+ * within the configured band. TELLING comes only from a {@code HerobrineEvents.TELLING} that names him (D-041);
+ * other telling (writing near his traces) never moves the stage. REMOVAL never from here.</li>
  * <li>One deck per tier, drawn without replacement and weighted by the profile habits and per-stage tag weights
- * (a weight below 1 also skips the card for that draw with chance 1 - weight). A deck runs out when no undrawn card
- * can be drawn now; only then do its fired cards come back, and the last one fired is never drawn next. Signature
- * cards never come back.</li>
+ * (a weight below 1 also skips the card for that draw with chance 1 - weight). A deck runs out when every card it
+ * has not fired this cycle is ruled out by the stage or the profile; only then do its fired cards come back, and
+ * the last one fired is never drawn next. Cards that only wait on a passing gate (no accident yet, a sighting
+ * today, a skip roll) hold the reshuffle back, up to {@code deckStall} of in-game time. Signature cards never come
+ * back.</li>
  * <li>A drawn card is held until its context fits; {@code NO_SPOT} and {@code SKIPPED} keep it held. A card held
  * too long goes back into its deck.</li>
  * <li>Gates: join grace, forced quiet, empty sessions, a small gap between any two fires, the minor and major gaps,
  * no major (or signature) before {@code noMajorBeforeDay}, no ACCIDENT card before {@code firstAccident}, at most
- * {@code aloneMaxAmbient} ambients in Alone, sightings per day.</li>
+ * {@code aloneMaxAmbient} ambients in Alone, sightings per day. Every card waits for its own earliest stage and its
+ * tier's first stage ({@code minorMinStage}, {@code majorMinStage}, {@code signatureMinStage}).</li>
  * <li>Rates: ambient and minor tiers roll per director tick at their per-hour rate, raised by the pity bonus and
  * spread out by a refractory gap that keeps the mean;
- * majors are scheduled every {@code proximityMajorGap(tempo)}; signatures are due as soon as one is eligible.</li>
- * <li>Every fire adds tension by tier (fakes scaled); at the threshold a quiet of 1 to 4 in-game days starts and
- * tension drops. Tension decays outside quiet.</li>
+ * majors are scheduled every {@code proximityMajorGap(tempo)} (a slot whose card a stage weight passes over is
+ * spent); signatures are due as soon as one is eligible.</li>
+ * <li>Every fire adds tension by tier (fakes scaled). At the threshold a quiet of 1 to 4 in-game days starts and
+ * tension drops; the threshold is checked after every fire and on every decision tick, so tension other systems
+ * raise ({@code Attention.raiseTension}) starts a quiet too. Tension decays outside quiet.</li>
  * </ul>
  */
 public final class DirectorBrain {
@@ -200,7 +206,19 @@ public final class DirectorBrain {
 		}
 	}
 
-	/** Telling begins (lore fired {@code HerobrineEvents.TELLING}). Never moves out of Telling or Removal. */
+	/**
+	 * Lore fired {@code HerobrineEvents.TELLING}. Every telling counts as telling (the "obeyed after Stop." wait
+	 * starts over), but only one that names him starts Telling (D-041): writing near his traces never moves the stage.
+	 *
+	 * @return true if the stage moved to Telling
+	 */
+	public boolean onTelling(DirectorMemory m, Clock c, Env env, boolean namesHim, Recorder rec) {
+		m.lastTellingDay = c.day();
+		m.obeyCounted = false;
+		return namesHim && enterTelling(c, env, rec);
+	}
+
+	/** Telling begins (his name was written). Never moves out of Telling or Removal. */
 	public boolean enterTelling(Clock c, Env env, Recorder rec) {
 		Stage stage = env.stage();
 		if (stage.atLeast(Stage.TELLING)) {
@@ -228,6 +246,8 @@ public final class DirectorBrain {
 		if (m.sessionStart < 0 || m.sessionStart > c.playTicks()) {
 			onJoin(m, c, env, random, rec);
 		}
+		// Other systems may have raised tension since the last tick, not only our own fires.
+		checkQuiet(m, c, env, random, rec);
 		Stage stage = env.stage();
 		releaseStaleHolds(m, c, stage, rec);
 		String blocked = globalBlock(m, c);
@@ -241,8 +261,14 @@ public final class DirectorBrain {
 				if (tierBlock(tier, m, c, stage) != null || !due(tier, m, c, stage, random)) {
 					continue;
 				}
-				card = draw(tier, m, c, stage, random, rec);
+				Set<String> passedOver = new HashSet<>();
+				card = draw(tier, m, c, stage, random, rec, passedOver);
 				if (card == null) {
+					if (tier == Tier.MAJOR && !passedOver.isEmpty()) {
+						// A stage weight passed the slot's card over: the slot is spent, as a probabilistic tier's
+						// tick is. Retrying every tick would re-roll an "almost never" card until it fires.
+						m.nextMajorDue = c.playTicks() + rules.majorEvery.pick(random);
+					}
 					continue;
 				}
 				m.held.put(tier, card.id());
@@ -308,9 +334,26 @@ public final class DirectorBrain {
 			case MAJOR -> !stage.atLeast(rules.majorMinStage) ? "stage"
 					: c.day() < rules.noMajorBeforeDay ? "first day"
 					: now - m.lastMajorOrSignature < rules.majorGap ? "major gap" : null;
-			case SIGNATURE -> c.day() < rules.noMajorBeforeDay ? "first day"
+			case SIGNATURE -> !stage.atLeast(rules.signatureMinStage) ? "stage"
+					: c.day() < rules.noMajorBeforeDay ? "first day"
 					: now - m.lastMajorOrSignature < rules.majorGap ? "major gap" : null;
 		};
+	}
+
+	/** First stage a tier draws in. */
+	public Stage tierMinStage(Tier tier) {
+		return switch (tier) {
+			case AMBIENT -> Stage.ALONE;
+			case MINOR -> rules.minorMinStage;
+			case MAJOR -> rules.majorMinStage;
+			case SIGNATURE -> rules.signatureMinStage;
+		};
+	}
+
+	/** First stage this card may fire in: its own earliest stage, never before its tier's. */
+	public Stage minStage(CardInfo card) {
+		Stage tier = tierMinStage(card.tier());
+		return tier.atLeast(card.earliestStage()) ? tier : card.earliestStage();
 	}
 
 	/** Reason this card may not fire now (tier and card gates), or null. */
@@ -336,13 +379,16 @@ public final class DirectorBrain {
 		return null;
 	}
 
-	/** Blocks that only change with the stage or a once-per-world fire. */
+	/** Blocks that only change with the stage, the profile or a once-per-world fire (never with the moment). */
 	private String staticBlock(CardInfo card, DirectorMemory m, Stage stage) {
-		if (!stage.atLeast(card.earliestStage())) {
+		if (!stage.atLeast(minStage(card))) {
 			return "stage";
 		}
 		if (rules.tagWeight(stage, card) <= 0) {
 			return "not in " + stage;
+		}
+		if (rules.habitWeight(card) <= 0) {
+			return "not this world's habits";
 		}
 		if (oncePerWorld(card) && m.signaturesFired.contains(card.id())) {
 			return "once per world";
@@ -422,11 +468,13 @@ public final class DirectorBrain {
 
 	/**
 	 * Draws one card. A card whose stage weight is below 1 is skipped for this draw with chance 1 - weight
-	 * ("almost zero" means almost never). When nothing undrawn is left to draw (all fired, gated or skipped), the
-	 * deck has run out: its fired cards come back, except the last one fired.
+	 * ("almost zero" means almost never). When nothing undrawn can be drawn now, the fired cards come back (except
+	 * the last one fired) only if the deck has {@link #runOut run out}, or if it has drawn nothing for
+	 * {@code deckStall} of in-game time since it got stuck. Otherwise it waits for its gated cards.
+	 *
+	 * @param skipped filled with the cards a stage weight passed over in this draw
 	 */
-	private CardInfo draw(Tier tier, DirectorMemory m, Clock c, Stage stage, RandomSource random, Recorder rec) {
-		Set<String> skipped = new HashSet<>();
+	private CardInfo draw(Tier tier, DirectorMemory m, Clock c, Stage stage, RandomSource random, Recorder rec, Set<String> skipped) {
 		boolean refilled = false;
 		String givenUp = m.lastGivenUp.get(tier);
 		while (true) {
@@ -436,7 +484,18 @@ public final class DirectorBrain {
 				if (refilled || tier == Tier.SIGNATURE || m.cycleFired.get(tier).isEmpty()) {
 					return null;
 				}
+				if (!runOut(tier, m, stage)) {
+					Long stuckSince = m.deckStuckSince.get(tier);
+					if (stuckSince == null || stuckSince > c.dayTicks()) {
+						stuckSince = c.dayTicks();
+						m.deckStuckSince.put(tier, stuckSince);
+					}
+					if (c.dayTicks() - stuckSince < rules.deckStall) {
+						return null;
+					}
+				}
 				m.cycleFired.get(tier).clear();
+				m.deckStuckSince.remove(tier);
 				rec.refilled(c, tier);
 				refilled = true;
 				continue;
@@ -453,8 +512,23 @@ public final class DirectorBrain {
 				skipped.add(picked.id());
 				continue;
 			}
+			m.deckStuckSince.remove(tier);
 			return picked;
 		}
+	}
+
+	/**
+	 * A deck has run out when every card it has not fired this cycle is ruled out by the stage or the profile (or
+	 * already fired once per world). A card that only waits on the moment (a gate, a skip roll) keeps it going.
+	 */
+	public boolean runOut(Tier tier, DirectorMemory m, Stage stage) {
+		Set<String> cycle = m.cycleFired.get(tier);
+		for (CardInfo card : byTier.get(tier)) {
+			if (!cycle.contains(card.id()) && staticBlock(card, m, stage) == null) {
+				return false;
+			}
+		}
+		return true;
 	}
 
 	private CardInfo weightedPick(List<CardInfo> eligible, Stage stage, RandomSource random) {
@@ -517,6 +591,7 @@ public final class DirectorBrain {
 		m.cycleFired.get(tier).add(card.id());
 		m.lastFired.put(tier, card.id());
 		m.lastGivenUp.remove(tier);
+		m.deckStuckSince.remove(tier);
 		if (oncePerWorld(card)) {
 			m.signaturesFired.add(card.id());
 		}
@@ -554,9 +629,13 @@ public final class DirectorBrain {
 			m.fakeFires++;
 		}
 		env.addTension(rules.tensionFor(tier) * (fake ? rules.fakeTensionFactor : 1), "fired " + card.id());
-		double tension = env.tension();
-		rec.fired(c, card, fake, false, stage, tension);
-		if (tension >= rules.tensionThreshold) {
+		rec.fired(c, card, fake, false, stage, env.tension());
+		checkQuiet(m, c, env, random, rec);
+	}
+
+	/** Tension at the threshold starts a quiet, whatever raised it. A running quiet is never restarted. */
+	private void checkQuiet(DirectorMemory m, Clock c, Env env, RandomSource random, Recorder rec) {
+		if (!inQuiet(m, c) && env.tension() >= rules.tensionThreshold) {
 			startQuiet(m, c, env, random, rec);
 		}
 	}

@@ -134,17 +134,17 @@ public final class DirectorImpl implements Director {
 		data.setDirty();
 	}
 
-	/** Lore fired {@code TELLING}: move to Telling (never back, never into Removal) and note the day for "obeyed". */
-	void onTelling(MinecraftServer server) {
+	/**
+	 * Lore fired {@code TELLING}: every telling notes the day for "obeyed", but only one that names him moves to
+	 * Telling (D-041; never back, never into Removal). Writing near his traces leaves the stage alone.
+	 */
+	void onTelling(MinecraftServer server, boolean namesHim) {
 		DirectorData data = DirectorData.get(server);
-		DirectorBrain.Clock c = clock(server);
+		brain(server, rules(server)).onTelling(data.memory(), clock(server), new WorldEnv(server, null), namesHim, DirectorLog.INSTANCE);
 		HerobrineState state = HerobrineState.get(server);
-		brain(server, rules(server)).enterTelling(c, new WorldEnv(server, null), DirectorLog.INSTANCE);
-		if (!state.tellingStarted()) {
+		if (namesHim && !state.tellingStarted()) {
 			state.setTellingStarted(true);
 		}
-		data.memory().lastTellingDay = c.day();
-		data.memory().obeyCounted = false;
 		data.setDirty();
 	}
 

@@ -88,8 +88,11 @@ final class DirectorDebug {
 				(used ? fired : undrawn).add(card.id());
 			}
 			int drawable = brain.candidates(tier, m, c, stage).size();
-			lines.add(String.format(Locale.ROOT, "deck %s: undrawn %s, fired %s, last %s, drawable now %d", tier, undrawn, fired,
-					m.lastFired.getOrDefault(tier, "-"), drawable));
+			Long stuck = m.deckStuckSince.get(tier);
+			String waiting = stuck == null ? "" : String.format(Locale.ROOT, ", waiting on gated cards for %.1f days",
+					(c.dayTicks() - stuck) / (double) DirectorBrain.DAY_TICKS);
+			lines.add(String.format(Locale.ROOT, "deck %s: undrawn %s, fired %s, last %s, drawable now %d%s", tier, undrawn, fired,
+					m.lastFired.getOrDefault(tier, "-"), drawable, waiting));
 		}
 		List<DirectorMemory.HistoryEntry> history = m.history();
 		int from = Math.max(0, history.size() - 5);

@@ -47,6 +47,8 @@ public final class DirectorMemory {
 	final Map<Tier, String> held = new EnumMap<>(Tier.class);
 	final Map<Tier, Long> heldSince = new EnumMap<>(Tier.class);
 	final Map<Tier, String> lastGivenUp = new EnumMap<>(Tier.class);
+	/** Day ticks at which a deck first found nothing to draw while only gated cards held its reshuffle back. */
+	final Map<Tier, Long> deckStuckSince = new EnumMap<>(Tier.class);
 	final Set<String> signaturesFired = new LinkedHashSet<>();
 
 	// --- pacing ---
@@ -152,6 +154,7 @@ public final class DirectorMemory {
 		tag.put("held", strings(held));
 		tag.put("heldSince", longs(heldSince));
 		tag.put("lastGivenUp", strings(lastGivenUp));
+		tag.put("deckStuckSince", longs(deckStuckSince));
 		tag.putString("signaturesFired", String.join(",", signaturesFired));
 
 		tag.putLong("lastFireAny", lastFireAny);
@@ -220,6 +223,7 @@ public final class DirectorMemory {
 		readStrings(tag.getCompoundOrEmpty("held"), m.held);
 		readLongs(tag.getCompoundOrEmpty("heldSince"), m.heldSince, Tier::valueOf);
 		readStrings(tag.getCompoundOrEmpty("lastGivenUp"), m.lastGivenUp);
+		readLongs(tag.getCompoundOrEmpty("deckStuckSince"), m.deckStuckSince, Tier::valueOf);
 		m.signaturesFired.addAll(split(tag.getStringOr("signaturesFired", "")));
 
 		m.lastFireAny = tag.getLongOr("lastFireAny", NEVER);
