@@ -45,7 +45,15 @@ final class ChunkGate {
 	 * as waiting for chunks, and returns false: the caller must not read the area now.
 	 */
 	static boolean ready(Placing.Request req, int minX, int minZ, int maxX, int maxZ) {
-		ServerLevel level = req.level();
+		boolean ready = request(req.level(), minX, minZ, maxX, maxZ);
+		if (!ready) {
+			req.loads().waiting = true;
+		}
+		return ready;
+	}
+
+	/** True if every chunk under the horizontal box is loaded; otherwise queues the missing ones and returns false. */
+	static boolean request(ServerLevel level, int minX, int minZ, int maxX, int maxZ) {
 		boolean ready = true;
 		for (int cx = Math.min(minX, maxX) >> 4; cx <= Math.max(minX, maxX) >> 4; cx++) {
 			for (int cz = Math.min(minZ, maxZ) >> 4; cz <= Math.max(minZ, maxZ) >> 4; cz++) {
@@ -55,10 +63,12 @@ final class ChunkGate {
 				}
 			}
 		}
-		if (!ready) {
-			req.loads().waiting = true;
-		}
 		return ready;
+	}
+
+	/** {@link #request} for the square of {@code radius} blocks around {@code center}. */
+	static boolean request(ServerLevel level, BlockPos center, int radius) {
+		return request(level, center.getX() - radius, center.getZ() - radius, center.getX() + radius, center.getZ() + radius);
 	}
 
 	/** {@link #ready} for the square of {@code radius} blocks around {@code center}. */

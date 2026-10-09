@@ -3,9 +3,12 @@
 	"package": "com.forzacode.a1016_02.lore.mixin",
 	"compatibilityLevel": "JAVA_25",
 	"mixins": [
+		"ItemEntityMixin",
 		"LevelMixin",
 		"PistonBaseBlockMixin",
 		"ServerExplosionMixin",
+		"ServerGamePacketListenerImplMixin",
+		"SignBlockEntityMixin",
 		"TraceEditMixin"
 	],
 	"client": [],

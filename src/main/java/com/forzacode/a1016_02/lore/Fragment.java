@@ -31,10 +31,11 @@ import net.minecraft.resources.Identifier;
  * @param placement  where and how the engine places it
  * @param requires   what must have happened first
  * @param depends    profile dependencies (D-003), for reference
+ * @param lastLine   a line the book gains later (F10's "* removed [PLAYER NAME]" in Ending B, see {@link LiveBooks})
  */
 public record Fragment(String id, String name, Form form, String where, String title, int generation, List<String> pages,
 		List<String> lines, Optional<Identifier> item, Optional<String> itemName, Stage stage, Placement placement,
-		Requires requires, List<String> depends) {
+		Requires requires, List<String> depends, Optional<String> lastLine) {
 	/** The fragment's form in the world. */
 	public enum Form {
 		BOOK, SIGN, ITEM, STRUCTURE, ABSENCE;
@@ -115,7 +116,8 @@ public record Fragment(String id, String name, Form form, String where, String t
 			STAGE_CODEC.fieldOf("stage").forGetter(Fragment::stage),
 			Placement.CODEC.fieldOf("placement").forGetter(Fragment::placement),
 			Requires.CODEC.optionalFieldOf("requires", Requires.NONE).forGetter(Fragment::requires),
-			Codec.STRING.listOf().optionalFieldOf("depends", List.of()).forGetter(Fragment::depends)
+			Codec.STRING.listOf().optionalFieldOf("depends", List.of()).forGetter(Fragment::depends),
+			Codec.STRING.optionalFieldOf("last_line").forGetter(Fragment::lastLine)
 	).apply(i, Fragment::new)).validate(Fragment::validate);
 
 	private static DataResult<Fragment> validate(Fragment fragment) {

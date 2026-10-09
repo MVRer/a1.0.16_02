@@ -46,6 +46,8 @@ final class ReadWatcher {
 			if (!level.isClientSide() && player instanceof ServerPlayer serverPlayer) {
 				ItemStack stack = player.getItemInHand(hand);
 				if (stack.is(Items.WRITTEN_BOOK) || stack.is(Items.FILLED_MAP)) {
+					// Opened books show their current text (F23's cause, F10's last line) before vanilla opens them.
+					LiveBooks.refreshForReading(stack, serverPlayer);
 					FragmentItems.fragmentId(stack).ifPresent(id -> Services.fragments().markRead(serverPlayer, id));
 				}
 			}
@@ -54,6 +56,9 @@ final class ReadWatcher {
 		UseBlockCallback.EVENT.register((player, level, hand, hit) -> {
 			if (!level.isClientSide() && hand == InteractionHand.MAIN_HAND && player instanceof ServerPlayer serverPlayer
 					&& level.getBlockEntity(hit.getBlockPos()) instanceof LecternBlockEntity lectern && lectern.hasBook()) {
+				if (LiveBooks.refreshForReading(lectern.getBook(), serverPlayer)) {
+					lectern.setChanged();
+				}
 				FragmentItems.fragmentId(lectern.getBook()).ifPresent(id -> Services.fragments().markRead(serverPlayer, id));
 			}
 			return InteractionResult.PASS;

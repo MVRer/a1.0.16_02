@@ -30,7 +30,15 @@ final class LoreCommands {
 				.then(Commands.literal("list").executes(LoreCommands::list))
 				.then(Commands.literal("place").then(idArgument().executes(ctx -> place(ctx, engine))))
 				.then(Commands.literal("give").then(idArgument().executes(LoreCommands::give)))
-				.then(Commands.literal("read").then(idArgument().executes(LoreCommands::read)))));
+				.then(Commands.literal("read").then(idArgument().executes(LoreCommands::read)))
+				.then(Commands.literal("telling").executes(TellingCommands::telling))
+				.then(Commands.literal("tell").then(Commands.argument("text", StringArgumentType.greedyString()).executes(TellingCommands::tell)))
+				.then(Commands.literal("listcause").then(Commands.argument("cause", StringArgumentType.greedyString())
+						.executes(TellingCommands::listCause)))
+				.then(Commands.literal("ending")
+						.then(Commands.literal("finishf10").executes(TellingCommands::finishF10))
+						.then(Commands.literal("placef20").executes(TellingCommands::placeF20))
+						.then(Commands.literal("stoptocross").executes(TellingCommands::stopToCross)))));
 	}
 
 	private static RequiredArgumentBuilder<CommandSourceStack, String> idArgument() {

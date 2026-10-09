@@ -134,8 +134,16 @@ final class Builders {
 	record Pyramid(List<Move> moves, BlockPos core) {
 	}
 
-	/** A small sand pyramid on a flat sea floor at this column, built from sea-floor sand nearby. */
+	/** A small sand pyramid on a flat sea floor at this column, built from sea-floor sand nearby; its core is left to fill. */
 	static Optional<Pyramid> planPyramid(ServerLevel level, BlockPos column) {
+		return planPyramid(level, column, false);
+	}
+
+	/**
+	 * A small sand pyramid on a flat sea floor at this column, built from sea-floor sand nearby. With
+	 * {@code solidCore} the core is moved sand too (a pyramid with nothing inside); otherwise it is left to fill.
+	 */
+	static Optional<Pyramid> planPyramid(ServerLevel level, BlockPos column, boolean solidCore) {
 		int depth = Terrain.waterDepth(level, column.getX(), column.getZ());
 		if (depth < 2 || depth > 12) {
 			return Optional.empty();
@@ -147,7 +155,7 @@ final class Builders {
 			for (int dx = -half; dx <= half; dx++) {
 				for (int dz = -half; dz <= half; dz++) {
 					BlockPos target = new BlockPos(column.getX() + dx, floorY + 1 + layer, column.getZ() + dz);
-					if (layer == 1 && dx == 0 && dz == 0) {
+					if (layer == 1 && dx == 0 && dz == 0 && !solidCore) {
 						continue; // the core
 					}
 					BlockState state = level.getBlockState(target);

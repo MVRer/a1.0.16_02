@@ -1,5 +1,8 @@
 package com.forzacode.a1016_02.lore;
 
+import java.util.ArrayList;
+import java.util.List;
+
 import com.forzacode.a1016_02.core.ModConfig;
 
 /**
@@ -47,6 +50,32 @@ public final class LoreConfig {
 	public double rulesBookIntervalMinutes = 30;
 	/** RULES_BOOK_NEAR_BASE: "near your base" radius, blocks. */
 	public int rulesBookBaseRadius = 16;
+
+	// --- telling (the telling radius itself is pacing.tellingRadius) ---
+
+	/** Place not found: how often placed fragments are checked for a first visit (PlayerWatch samples every 5 s). */
+	public double visitCheckSeconds = 10;
+	/**
+	 * Place not found: fragments whose site it never takes, besides the ones it never may (the Ending D chain, F03,
+	 * F04, F10, F20, F27). Only sites with a built structure on the surface qualify anyway (huts, houses, crosses).
+	 */
+	public List<String> notFoundExclude = new ArrayList<>();
+	/** Place not found: sites this close to the player's base (blocks, horizontal) are left alone. */
+	public int notFoundMinFromBase = 48;
+	/** Place not found: at most this many built blocks make up one site (a bigger find is someone's base, not a site). */
+	public int notFoundMaxBlocks = 600;
+	/** Place not found: a site needs at least this many built blocks to be "a structure". */
+	public int notFoundMinBlocks = 6;
+	/** Place not found: blocks around the site's center searched for its first built blocks. */
+	public int notFoundSeedRadius = 5;
+	/** The list in lava: at most this many new pyramids per world, however many copies burn. */
+	public int listPyramidMax = 3;
+	/** The list in lava: how often a pyramid still to be raised is tried again (needs an ocean out of view). */
+	public double listPyramidRetrySeconds = 60;
+	/** The list in lava: how far from where it burned the ocean is searched (blocks). */
+	public int listPyramidOceanRadius = 1500;
+	/** A sign that should have come back blank but was in view is tried again this often. */
+	public double pendingBlankRetrySeconds = 30;
 
 	/** {@code /a1016 lore place}: distance band around the player. */
 	public int debugMinDistance = 6;
