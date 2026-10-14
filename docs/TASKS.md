@@ -51,6 +51,8 @@ Status values: queued, running, review, fix, merged, blocked. Only the orchestra
 | FIX-3 | Flaky `dig_game_tests_torches_gone_from_acave_the_player_left` (1 in 6 on main, seen by MP-0) | dig | feat/mp-world-dig | - | queued | Goes with MP-6 |
 | FIX-2 | Flaky `enderman_is_moved_onto_your_bridge_ahead` (End chunks not ticking by tick 200 on CI) | accident | main | - | merged | maxTicks 1200; CI now names failed tests and uploads the report |
 
+**Paused 2026-10-14 (Mariano):** MP-1 to MP-5 finish on their branches and stop there, unmerged until reviewed. Nothing new is started: MP-6, FIX-3, MP-7, STORY-1 and MP-8 wait for the next session. `main` stays playable (v1.0 plus the MP-0 core and the two flaky-test fixes, 340 tests green).
+
 ## Milestones
 | Tag | Closes when | Status |
 | --- | --- | --- |
