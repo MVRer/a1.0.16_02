@@ -6,9 +6,14 @@ import java.util.UUID;
 import java.util.concurrent.CopyOnWriteArrayList;
 
 import com.forzacode.a1016_02.atmosphere.AtmosphereData;
+import com.forzacode.a1016_02.atmosphere.Gates;
+import com.forzacode.a1016_02.core.CardTag;
+import com.forzacode.a1016_02.core.Director;
 import com.forzacode.a1016_02.core.FireContext;
 import com.forzacode.a1016_02.core.FireResult;
 import com.forzacode.a1016_02.core.GameClock;
+import com.forzacode.a1016_02.core.ModConfig;
+import com.forzacode.a1016_02.core.SoundCues;
 
 import net.fabricmc.fabric.api.gametest.v1.GameTest;
 
@@ -28,8 +33,8 @@ import net.minecraft.world.phys.Vec3;
 /**
  * Where the cards' sounds go (D-060): a sound he makes at a position is heard by everyone in hearing range, not only
  * by the player the card fired for. Each test gives its own card instance a recording {@link SoundOut} that hears
- * with vanilla's rule ({@code SoundCues.playAt}: same level, within {@code max(volume, 1) * 16} blocks) over the test's
- * own players. Run in the End, where no other test keeps chests or stone, so the cards can only find this test's.
+ * with the rule {@code SoundCues.playAt} uses ({@link SoundCues#hearers}: same level, within {@code max(volume, 1) * 16}
+ * blocks) over the test's own players. Run in the End, where no other test keeps chests or stone, so the cards can only find this test's.
  * {@code atmosphere.AtmosphereGameTests} extends this (through {@code SharedMomentGameTests}).
  */
 public class CardSoundGameTests {
@@ -39,11 +44,10 @@ public class CardSoundGameTests {
 	record Heard(Holder<SoundEvent> sound, Vec3 pos, float volume, List<UUID> hearers) {
 	}
 
-	/** Records every sound and hears it among {@code candidates} by vanilla's range rule. */
+	/** Records every sound and hears it among {@code candidates} by core's own range rule ({@link SoundCues#hearers}). */
 	static SoundOut recorder(List<Heard> log, List<ServerPlayer> candidates) {
 		return (level, sound, source, pos, volume, pitch) -> {
-			double range = Math.max(volume, 1.0F) * 16.0;
-			List<ServerPlayer> hearers = candidates.stream().filter(p -> p.level() == level && p.distanceToSqr(pos) < range * range).toList();
+			List<ServerPlayer> hearers = SoundCues.hearers(level, candidates, pos, volume);
 			log.add(new Heard(sound, pos, volume, hearers.stream().map(ServerPlayer::getUUID).toList()));
 			return hearers;
 		};
@@ -128,6 +132,62 @@ public class CardSoundGameTests {
 		List<ServerPlayer> heardStep = FootstepLateCard.playStep(a, recorder(log, List.of(a, b, c)));
 		helper.assertTrue(heardStep.size() == 2 && log.size() == 2 && log.get(1).pos().distanceTo(a.position()) < 1.0E-6,
 				"the late step was not at A's feet for A and B: " + log.get(log.size() - 1));
+		helper.succeed();
+	}
+
+	/**
+	 * Mining in the dark waits out the gap after a sound card on the player's own pacing (D-059): a sound card that just
+	 * fired for B, far away, holds back B's mining but never A's, though it is the world's newest sound. A director
+	 * without a per-player memory (core's stub) answers for the world.
+	 */
+	@GameTest
+	public void theMiningSoundGapIsEachPlayersOwn(GameTestHelper helper) {
+		MinecraftServer server = helper.getLevel().getServer();
+		ServerPlayer a = at(helper, new Vec3(1.5, 1.0, 1.5));
+		ServerPlayer b = at(helper, new Vec3(1.5, 1.0, 1.5));
+		Director soundForB = new Director() {
+			@Override
+			public void tick(MinecraftServer forServer) {
+			}
+
+			@Override
+			public FireResult fire(MinecraftServer forServer, ServerPlayer player, String cardId, boolean fake) {
+				return FireResult.SKIPPED;
+			}
+
+			@Override
+			public List<String> timewarp(MinecraftServer forServer, int days) {
+				return List.of();
+			}
+
+			@Override
+			public long ticksSinceTag(MinecraftServer forServer, CardTag tag) {
+				return tag == CardTag.SOUND ? 0 : Long.MAX_VALUE;
+			}
+
+			@Override
+			public long ticksSinceTag(MinecraftServer forServer, UUID player, CardTag tag) {
+				return tag == CardTag.SOUND && player.equals(b.getUUID()) ? 0 : Long.MAX_VALUE;
+			}
+
+			@Override
+			public boolean inQuiet(MinecraftServer forServer) {
+				return false;
+			}
+
+			@Override
+			public List<String> debugLines(MinecraftServer forServer) {
+				return List.of();
+			}
+		};
+		long gap = ModConfig.pacing().miningDarkSoundGapTicks();
+		long sinceA = MiningInTheDarkCard.sinceSound(soundForB, server, a);
+		long sinceB = MiningInTheDarkCard.sinceSound(soundForB, server, b);
+		helper.assertTrue(sinceA == Long.MAX_VALUE && Gates.miningInTheDark(true, true, 0, 0, sinceA, gap, 0, 1),
+				"B's sound far away held back A's mining (" + sinceA + " ticks)");
+		helper.assertTrue(sinceB == 0 && !Gates.miningInTheDark(true, true, 0, 0, sinceB, gap, 0, 1), "B's own gap was open right after B's sound");
+		Director stub = new Director.Stub();
+		helper.assertTrue(MiningInTheDarkCard.sinceSound(stub, server, a) == stub.ticksSinceTag(server, CardTag.SOUND), "the stub's own answer is not the world's");
 		helper.succeed();
 	}
 

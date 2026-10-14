@@ -8,6 +8,7 @@ import com.forzacode.a1016_02.atmosphere.AtmosphereData;
 import com.forzacode.a1016_02.atmosphere.Gates;
 import com.forzacode.a1016_02.atmosphere.WorldScan;
 import com.forzacode.a1016_02.core.CardTag;
+import com.forzacode.a1016_02.core.Director;
 import com.forzacode.a1016_02.core.FireContext;
 import com.forzacode.a1016_02.core.FireResult;
 import com.forzacode.a1016_02.core.GameClock;
@@ -32,7 +33,9 @@ import net.minecraft.world.phys.Vec3;
  * Mining in the dark: at night, in bed or still for a while, one block-break sound close by. Nothing is broken.
  * At most once per night for each player, and never within the gap after another sound card. The sound is his, at a
  * place in the stone, so everyone in hearing range hears it (D-060), and it counts as tonight's for each of them too:
- * two players in one house hear one, never one each. The false positive is a vanilla cave sound.
+ * two players in one house hear one, never one each. The gap is the player's own (D-059): a sound card that fired for
+ * them or reached them (felt, D-060.3) on their own clock, never one that fired for a friend far away. The false
+ * positive is a vanilla cave sound.
  */
 public final class MiningInTheDarkCard extends AtmosphereCard {
 	public static final String ID = "mining_in_the_dark";
@@ -46,8 +49,13 @@ public final class MiningInTheDarkCard extends AtmosphereCard {
 		MinecraftServer server = world.getServer();
 		Pacing pacing = ModConfig.pacing();
 		return Gates.miningInTheDark(Gates.isNight(world), Services.watch().isSleeping(player), Services.watch().stillTicks(player),
-				pacing.miningDarkStillTicks(), Services.director().ticksSinceTag(server, CardTag.SOUND), pacing.miningDarkSoundGapTicks(),
+				pacing.miningDarkStillTicks(), sinceSound(Services.director(), server, player), pacing.miningDarkSoundGapTicks(),
 				AtmosphereData.get(server).miningOn(player.getUUID(), GameClock.day(server)), pacing.miningDarkPerNight);
+	}
+
+	/** This player's own play ticks since a sound card fired for them or reached them (D-059, D-060.3). */
+	static long sinceSound(Director director, MinecraftServer server, ServerPlayer player) {
+		return director.ticksSinceTag(server, player.getUUID(), CardTag.SOUND);
 	}
 
 	@Override

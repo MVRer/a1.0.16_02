@@ -34,7 +34,9 @@ public interface DeathMarker {
 
 	/**
 	 * The bottom of the post of the cross built for the marked death at {@code death} (the exact spot the death was
-	 * marked at), once it stands and while it is the newest cross. Default: none.
+	 * marked at), once it stands. Any of the recent crosses answers, not only the newest (every player's deaths get
+	 * their own cross, D-063; the accident workstream remembers the last 64); two deaths on the same block answer with
+	 * the newer one's. Default: none.
 	 */
 	default Optional<GlobalPos> crossFor(MinecraftServer server, GlobalPos death) {
 		return Optional.empty();

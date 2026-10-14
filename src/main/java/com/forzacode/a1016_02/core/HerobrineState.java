@@ -386,6 +386,38 @@ public final class HerobrineState extends SavedData {
 		return false;
 	}
 
+	/**
+	 * Tests and debug only (game code never calls it: core records each player itself once they take part): makes
+	 * {@code uuid} a known player of this state, as {@link #recordPlayer} does, at the end of the first-join order with
+	 * empty records and zero play ticks. A player already known keeps their place and records and only takes the new
+	 * name. For two-player tests over a private state, in any package.
+	 *
+	 * @return true if the player is new
+	 */
+	public boolean addKnownPlayer(UUID uuid, String name) {
+		return addKnownPlayer(uuid, name, FirstBlocks.NONE);
+	}
+
+	/**
+	 * Tests and debug only: {@link #addKnownPlayer(UUID, String)}, then these first blocks as theirs, each only where
+	 * that slot is still empty (as their own placements would record them; null leaves a slot as it is).
+	 *
+	 * @return true if the player is new
+	 */
+	public boolean addKnownPlayer(UUID uuid, String name, FirstBlocks firstBlocks) {
+		boolean added = recordPlayer(uuid, name);
+		if (firstBlocks.block() != null) {
+			recordFirst(uuid, FirstKind.BLOCK, firstBlocks.block());
+		}
+		if (firstBlocks.craftingTable() != null) {
+			recordFirst(uuid, FirstKind.CRAFTING_TABLE, firstBlocks.craftingTable());
+		}
+		if (firstBlocks.chest() != null) {
+			recordFirst(uuid, FirstKind.CHEST, firstBlocks.chest());
+		}
+		return added;
+	}
+
 	/** Updates a known player's name. Does nothing for someone unknown. */
 	void updateName(UUID uuid, String name) {
 		PlayerRecord record = players.get(uuid);

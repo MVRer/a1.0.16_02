@@ -42,8 +42,12 @@ public final class SoundCues {
 		return playAt(level, BuiltInRegistries.SOUND_EVENT.wrapAsHolder(sound), source, pos, volume, pitch);
 	}
 
-	/** The players of {@code candidates} in {@code level} within hearing range of {@code pos} (vanilla's range rule). */
-	static List<ServerPlayer> hearers(ServerLevel level, Collection<ServerPlayer> candidates, Vec3 pos, float volume) {
+	/**
+	 * The players of {@code candidates} in {@code level} within hearing range of {@code pos} (vanilla's range rule,
+	 * {@code max(volume, 1) * 16} blocks), in the candidates' order. The rule {@link #playAt} uses; public so a test
+	 * or a recording sound sink can hear with exactly the same rule over its own players.
+	 */
+	public static List<ServerPlayer> hearers(ServerLevel level, Collection<ServerPlayer> candidates, Vec3 pos, float volume) {
 		double range = Math.max(volume, 1.0F) * 16.0;
 		List<ServerPlayer> hearers = new ArrayList<>();
 		for (ServerPlayer player : candidates) {

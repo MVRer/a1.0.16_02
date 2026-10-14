@@ -139,6 +139,7 @@ public final class AccidentPlannerImpl implements AccidentPlanner {
 	}
 
 	/** This player's armed trap. */
+	@Override
 	public Optional<TrapType> armed(UUID player) {
 		return server == null ? Optional.empty() : data(server).armed(player).map(t -> new TrapType(t.type()));
 	}
@@ -173,6 +174,14 @@ public final class AccidentPlannerImpl implements AccidentPlanner {
 	public void disarm() {
 		if (server != null) {
 			disarmAll(server, "disarmed");
+		}
+	}
+
+	/** Drops this player's armed trap only (anyone else's stays armed). */
+	@Override
+	public void disarm(UUID player) {
+		if (server != null) {
+			disarm(server, player, "disarmed");
 		}
 	}
 

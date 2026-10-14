@@ -8,8 +8,10 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 
+import com.forzacode.a1016_02.core.AccidentPlanner;
 import com.forzacode.a1016_02.core.HerobrineEvents;
 import com.forzacode.a1016_02.core.MarkedDeath;
+import com.forzacode.a1016_02.core.TrapType;
 
 import net.fabricmc.fabric.api.gametest.v1.GameTest;
 
@@ -366,6 +368,33 @@ public class GroupGameTests {
 		planner.onParticipation(server, alex.getUUID(), true);
 		helper.assertTrue(planner.sessionArms(alex.getUUID()) == 0 && planner.sessionArms(sam.getUUID()) == 1, "a new session of Alex's touched Sam's");
 		helper.assertTrue(planner.canArm(server, alex.getUUID()) && !planner.canArm(server, sam.getUUID()), "the gate after Alex's new session");
+		y.succeedWithoutDrops();
+	}
+
+	/** Core's {@code AccidentPlanner} answers per player: {@code armed(uuid)} and {@code disarm(uuid)} touch only that player's trap. */
+	@GameTest(structure = Yard.STRUCTURE, maxTicks = 40)
+	public void theCorePlannerIsOneTrapPerPlayer(GameTestHelper helper) {
+		Yard y = dirtYard(helper);
+		ServerPlayer alex = y.player;
+		ServerPlayer sam = mock(helper);
+		AccidentPlannerImpl impl = new Group(helper, alex, sam).planner(y.data, Yard.NOBODY);
+		impl.attach(y.level.getServer());
+		AccidentPlanner planner = impl;
+		pocket(y, alex);
+		pocket(y, sam);
+		helper.assertTrue(planner.armed(alex.getUUID()).map(TrapType::id).orElse("").equals(Traps.LAVA_FLOOR.id())
+				&& planner.armed(sam.getUUID()).isPresent(), "each player's trap: " + planner.armed(alex.getUUID()) + ", " + planner.armed(sam.getUUID()));
+		helper.assertTrue(planner.armed(UUID.randomUUID()).isEmpty(), "someone who never had a trap has one");
+		planner.disarm(alex.getUUID());
+		helper.assertTrue(planner.armed(alex.getUUID()).isEmpty() && planner.armed(sam.getUUID()).isPresent() && planner.armed().isPresent(),
+				"disarming Alex's trap touched Sam's: " + y.data.traps().keySet());
+		planner.disarm(alex.getUUID());
+		helper.assertTrue(planner.armed(sam.getUUID()).isPresent(), "disarming nothing of Alex's dropped Sam's");
+		planner.disarm();
+		helper.assertTrue(planner.armed().isEmpty() && planner.armed(sam.getUUID()).isEmpty(), "disarm() left a trap armed");
+		AccidentPlanner stub = new AccidentPlanner.Stub();
+		stub.disarm(alex.getUUID());
+		helper.assertTrue(stub.armed(alex.getUUID()).isEmpty() && stub.armed().isEmpty(), "the stub has a trap");
 		y.succeedWithoutDrops();
 	}
 

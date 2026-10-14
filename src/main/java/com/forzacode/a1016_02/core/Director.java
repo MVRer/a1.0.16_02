@@ -4,6 +4,7 @@ import java.util.EnumMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.UUID;
 
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerPlayer;
@@ -47,11 +48,33 @@ public interface Director {
 	 */
 	List<String> timewarp(MinecraftServer server, int days);
 
-	/** Play ticks since a card with this tag fired, or {@link Long#MAX_VALUE} if none ever did. */
+	/**
+	 * The world's answer: ticks of the world clock ({@link GameClock#playTicks(MinecraftServer)}) since a card with
+	 * this tag fired for anyone, or {@link Long#MAX_VALUE} if none ever did. For what the whole story waits on (the
+	 * endings' "no accident lately"). A gap that is one player's own pacing (D-059) asks
+	 * {@link #ticksSinceTag(MinecraftServer, UUID, CardTag)}.
+	 */
 	long ticksSinceTag(MinecraftServer server, CardTag tag);
 
-	/** True during a forced quiet period. */
+	/**
+	 * That player's answer (D-059, D-060.3): ticks of their own clock ({@link GameClock#playTicks(MinecraftServer, UUID)})
+	 * since a card with this tag fired for them or was felt by them (it fired for someone close by), or
+	 * {@link Long#MAX_VALUE} if none ever did, or for someone the director never paced. Default: the world's answer.
+	 */
+	default long ticksSinceTag(MinecraftServer server, UUID player, CardTag tag) {
+		return ticksSinceTag(server, tag);
+	}
+
+	/**
+	 * True while any participant is in a forced quiet of their own (D-059): the conservative answer for one flag.
+	 * Who is in quiet is per player: {@link #inQuiet(MinecraftServer, UUID)}.
+	 */
 	boolean inQuiet(MinecraftServer server);
+
+	/** True while this player is in a forced quiet of their own. Default: the world's answer. */
+	default boolean inQuiet(MinecraftServer server, UUID player) {
+		return inQuiet(server);
+	}
 
 	/** Lines for {@code /a1016 state}. */
 	List<String> debugLines(MinecraftServer server);

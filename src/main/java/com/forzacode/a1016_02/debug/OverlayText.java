@@ -8,7 +8,7 @@ import com.forzacode.a1016_02.director.DirectorMemory;
 
 /**
  * The overlay's rows from a director snapshot (the viewing player's own pacing and tension, plus the shared stage and
- * attention), the armed trap and the sighting phase. Pure text, {@code Locale.ROOT}.
+ * attention), the viewer's armed trap with the others' count and the sighting phase. Pure text, {@code Locale.ROOT}.
  */
 final class OverlayText {
 	private static final long DAY_TICKS = 24000L;
@@ -17,7 +17,7 @@ final class OverlayText {
 	}
 
 	/**
-	 * @param trap     the armed trap ("none" if nothing is armed)
+	 * @param trap     the viewer's own armed trap ("none" if they have none), then how many other players have one armed
 	 * @param sighting the sighting phase ("none" if no figure is out)
 	 */
 	static List<String> rows(DirectorApi.Snapshot s, String trap, String sighting) {

@@ -355,7 +355,7 @@ public final class DirectorBrain {
 					continue;
 				}
 				Set<String> passedOver = new HashSet<>();
-				card = draw(tier, w, m, c, stage, random, rec, passedOver);
+				card = draw(tier, w, m, c, stage, sharers, random, rec, passedOver);
 				if (card == null) {
 					if (tier == Tier.MAJOR && !passedOver.isEmpty()) {
 						// A stage weight passed the slot's card over: the slot is spent, as a probabilistic tier's
@@ -489,10 +489,24 @@ public final class DirectorBrain {
 		if (why == null) {
 			why = fireBlock(card, w, m, c, stage);
 		}
-		if (why == null && (m.cycleFired.get(card.tier()).contains(card.id()) || card.id().equals(m.lastFired.get(card.tier())))) {
+		if (why == null && had(card, m)) {
 			why = "already had it";
 		}
 		return why;
+	}
+
+	/** True if this player already had the card: it is in their no-repeat cycle, or was their last of its tier. */
+	private static boolean had(CardInfo card, PacingMemory m) {
+		return m.cycleFired.get(card.tier()).contains(card.id()) || card.id().equals(m.lastFired.get(card.tier()));
+	}
+
+	private static boolean anyHad(CardInfo card, List<Sharer> sharers) {
+		for (Sharer sharer : sharers) {
+			if (had(card, sharer.memory())) {
+				return true;
+			}
+		}
+		return false;
 	}
 
 	/** The first sharer's reason ({@link #sharedBlock(CardInfo, WorldMemory, PacingMemory, Clock, Stage)}), or null. */
@@ -623,14 +637,26 @@ public final class DirectorBrain {
 	 * the last one fired) only if the deck has {@link #runOut run out}, or if it has drawn nothing for
 	 * {@code deckStall} of in-game time since it got stuck. Otherwise it waits for its gated cards.
 	 *
+	 * <p>With friends close by ({@code sharers}, D-060.3) it never draws a card one of them already had (in their
+	 * cycle, or their last of the tier): the moment could not reach them, so it would only sit held, blocking the tier
+	 * while they stay together. If only such cards are left, nothing is drawn this time and no deck is refilled for it.
+	 * Alone, the draw is exactly the solo one.
+	 *
 	 * @param skipped filled with the cards a stage weight passed over in this draw
 	 */
-	private CardInfo draw(Tier tier, WorldMemory w, PacingMemory m, Clock c, Stage stage, RandomSource random, Recorder rec, Set<String> skipped) {
+	private CardInfo draw(Tier tier, WorldMemory w, PacingMemory m, Clock c, Stage stage, List<Sharer> sharers, RandomSource random, Recorder rec,
+			Set<String> skipped) {
 		boolean refilled = false;
 		String givenUp = m.lastGivenUp.get(tier);
 		while (true) {
 			List<CardInfo> eligible = candidates(tier, w, m, c, stage);
 			eligible.removeIf(card -> skipped.contains(card.id()));
+			if (!eligible.isEmpty() && !sharers.isEmpty()) {
+				eligible.removeIf(card -> anyHad(card, sharers));
+				if (eligible.isEmpty()) {
+					return null;
+				}
+			}
 			if (eligible.isEmpty()) {
 				if (refilled || tier == Tier.SIGNATURE || m.cycleFired.get(tier).isEmpty()) {
 					return null;
@@ -787,7 +813,9 @@ public final class DirectorBrain {
 	 * Someone else's card reached this player (D-060.3): it counts in their pacing as if it had been theirs (the gaps
 	 * and hard limits of its tier, the major schedule, the Alone cap, sightings per day, the no-repeat cycle, tension
 	 * and the quiet it may start), but not as their own draw: their held cards (other than this one) and their fire
-	 * counts stay as they were.
+	 * counts stay as they were. A forced (debug) fire skipped every gate, so it counts for them as it does for its
+	 * target: the history, the no-repeat cycle and the tag times only, never their gaps, major slot, Alone cap,
+	 * tension or quiet.
 	 */
 	private void recordFelt(Sharer sharer, CardInfo card, boolean fake, boolean forced, Stage stage, RandomSource random) {
 		PacingMemory m = sharer.memory();
@@ -807,6 +835,10 @@ public final class DirectorBrain {
 		}
 		countSighting(m, c, card);
 		m.addHistory(new DirectorMemory.HistoryEntry(now, c.day(), card.id(), tier, fake, forced, stage, true), historySize);
+		if (forced) {
+			rec.felt(c, card, fake, true, stage, Double.NaN);
+			return;
+		}
 		m.feltFires++;
 		m.lastFireAny = now;
 		m.lastFireTier.put(tier, now);
