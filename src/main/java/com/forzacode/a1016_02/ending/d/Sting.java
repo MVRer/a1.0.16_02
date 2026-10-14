@@ -49,7 +49,8 @@ public final class Sting {
 	/**
 	 * Fills the noise caves of a freshly filled chunk: in each column, every cell that is air or fluid below the top
 	 * solid block (the {@code OCEAN_FLOOR_WG} height) becomes {@code stone}. The sea, lakes and the sky above the ground
-	 * stay as they are. Returns how many cells were filled. Worldgen threads; touches only this chunk.
+	 * stay as they are, and so does the sea under a frozen ocean's icebergs, which the surface step builds on the sea
+	 * afterwards. Returns how many cells were filled. Worldgen threads; touches only this chunk.
 	 */
 	public static int fill(ChunkAccess chunk, BlockState stone, int minY) {
 		Heightmap floor = chunk.getOrCreateHeightmapUnprimed(Heightmap.Types.OCEAN_FLOOR_WG);

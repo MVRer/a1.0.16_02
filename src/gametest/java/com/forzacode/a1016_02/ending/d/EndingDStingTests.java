@@ -1,5 +1,6 @@
 package com.forzacode.a1016_02.ending.d;
 
+import java.util.ArrayList;
 import java.util.EnumSet;
 import java.util.List;
 import java.util.function.Predicate;
@@ -46,14 +47,31 @@ public class EndingDStingTests {
 		return new ProtoChunk(pos, UpgradeData.EMPTY, level, PalettedContainerFactory.create(level.registryAccess()), null);
 	}
 
-	/** Open cells (air or fluid) under each column's top solid block. */
-	private static int caveCells(ChunkAccess chunk, int minY) {
-		Heightmap floor = chunk.getOrCreateHeightmapUnprimed(Heightmap.Types.OCEAN_FLOOR_WG);
+	/**
+	 * Each column's ground: the noise terrain's {@code OCEAN_FLOOR_WG} height as the generator itself reports it, the
+	 * top {@link Sting#fill} sees (the same in every column of {@link #STING_CHUNKS}). Not the chunk's heightmap after
+	 * generation: the surface step then builds a frozen ocean's icebergs on the sea (packed ice and snow, with holes on
+	 * purpose), that heightmap moves up onto the ice, and the sea under the iceberg and in its holes would count as
+	 * underground.
+	 */
+	private static int[] ground(NoiseBasedChunkGenerator generator, RandomState random, ChunkAccess chunk) {
+		int[] ground = new int[256];
+		for (int x = 0; x < 16; x++) {
+			for (int z = 0; z < 16; z++) {
+				ground[x + z * 16] = generator.getBaseHeight(chunk.getPos().getMinBlockX() + x, chunk.getPos().getMinBlockZ() + z, Heightmap.Types.OCEAN_FLOOR_WG,
+						chunk, random);
+			}
+		}
+		return ground;
+	}
+
+	/** Open cells (air or fluid) under each column's top solid block of the {@link #ground}. */
+	private static int caveCells(ChunkAccess chunk, int[] ground, int minY) {
 		int open = 0;
 		BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos();
 		for (int x = 0; x < 16; x++) {
 			for (int z = 0; z < 16; z++) {
-				int top = floor.getFirstAvailable(x, z) - 1;
+				int top = ground[x + z * 16] - 1;
 				for (int y = top - 1; y > minY + 8; y--) {
 					BlockState state = chunk.getBlockState(pos.set(chunk.getPos().getMinBlockX() + x, y, chunk.getPos().getMinBlockZ() + z));
 					if (state.isAir() || !state.getFluidState().isEmpty() && state.canBeReplaced()) {
@@ -98,7 +116,7 @@ public class EndingDStingTests {
 	}
 
 	/**
-	 * Chunks {@link #stingChunksHaveNoCaves} is generating right now. The gate is one global flag read by the worldgen
+	 * Set while {@link #stingChunksHaveNoCaves} has chunks generating. The gate is one global flag read by the worldgen
 	 * threads, so {@link #stingGateFollowsTheCompleteFlag} waits until none is (game test batches overlap).
 	 */
 	private static final java.util.concurrent.atomic.AtomicInteger GENERATING = new java.util.concurrent.atomic.AtomicInteger();
@@ -122,11 +140,30 @@ public class EndingDStingTests {
 		});
 	}
 
+	/** The dev world's seed. */
+	private static final long STING_SEED = -4180345853331630785L;
+
 	/**
-	 * The real overworld generator, on fresh chunks off the server thread: with the gate open the chunk has caves;
-	 * with it closed (D complete) nothing under the ground is open. Same chunks, same seed.
+	 * The chunks {@link #stingChunksHaveNoCaves} generates: fixed, so every run sees the same terrain (it used to take
+	 * the chunk at its own test position, random per run). Picked from a scan of {@link #STING_SEED}.
 	 */
-	@GameTest(maxTicks = 6000)
+	private static final List<ChunkPos> STING_CHUNKS = List.of(
+			new ChunkPos(-122913, 901261), // frozen ocean, an iceberg on the sea (failed on CI when the count used the heightmap)
+			new ChunkPos(-35, 24), // frozen ocean, a big iceberg, and a canyon starts here
+			new ChunkPos(-39, 0), // snowy plains, a canyon full of aquifer water
+			new ChunkPos(42, 6), // deep ocean, water and lava aquifers under the floor
+			new ChunkPos(72, -60), // stony peaks, big noise caves
+			new ChunkPos(66, -54), // jagged peaks over the deep dark
+			new ChunkPos(24, -24), // plains over the deep dark, ancient city depth
+			new ChunkPos(54, -186), // eroded badlands, with the pillars the surface step builds
+			new ChunkPos(-108, 120), // swamp, water in its caves
+			new ChunkPos(0, 0)); // the dev world's spawn, a dappled forest
+
+	/**
+	 * The real overworld generator, on fresh chunks off the server thread: with the gate open each chunk has caves;
+	 * with it closed (D complete) nothing under the ground is open. Same chunks ({@link #STING_CHUNKS}), same seed.
+	 */
+	@GameTest(maxTicks = 12000)
 	public void stingChunksHaveNoCaves(GameTestHelper helper) {
 		ServerLevel level = helper.getLevel();
 		HolderGetter<NoiseGeneratorSettings> settingsLookup = level.registryAccess().lookupOrThrow(Registries.NOISE_SETTINGS);
@@ -135,8 +172,7 @@ public class EndingDStingTests {
 		MultiNoiseBiomeSource biomes = MultiNoiseBiomeSource.createFromPreset(presets.getOrThrow(MultiNoiseBiomeSourceParameterLists.OVERWORLD));
 		NoiseBasedChunkGenerator generator = new NoiseBasedChunkGenerator(biomes, settings);
 		HolderGetter<NormalNoise> noises = level.registryAccess().lookupOrThrow(Registries.NOISE);
-		RandomState random = RandomState.create(noises, -4180345853331630785L, settings.value());
-		ChunkPos pos = ChunkPos.containing(helper.absolutePos(BlockPos.ZERO));
+		RandomState random = RandomState.create(noises, STING_SEED, settings.value());
 		// No structures here: the generator's structure lookup would otherwise wait on the server thread.
 		StructureManager structures = new StructureManager(level, level.getServer().getWorldGenSettings().options(), null) {
 			@Override
@@ -145,45 +181,49 @@ public class EndingDStingTests {
 			}
 		};
 		Set<Holder<Biome>> possible = Set.copyOf(biomes.possibleBiomes());
+		int minY = level.getMinY();
 
-		ProtoChunk open = freshChunk(level, pos);
-		ProtoChunk closed = freshChunk(level, pos);
-		// Worldgen threads do the work; the test polls each tick (slowed a little, since the test server does not wait).
+		List<ProtoChunk> open = STING_CHUNKS.stream().map(pos -> freshChunk(level, pos)).toList();
+		List<ProtoChunk> closed = STING_CHUNKS.stream().map(pos -> freshChunk(level, pos)).toList();
+		// Worldgen threads do the work: every chunk with the gate open, then every chunk with it closed (the gate is
+		// global). The test polls each tick (slowed a little, since the test server does not wait).
 		GENERATING.incrementAndGet();
 		Sting.set(false, false);
-		CompletableFuture<ChunkAccess> before = generate(generator, random, structures, level, possible, open);
-		CompletableFuture<?>[] after = new CompletableFuture<?>[1];
-		helper.succeedWhen(() -> {
-			if (after[0] == null) {
-				if (!before.isDone()) {
-					pause();
-					throw helper.assertionException("still generating the open chunk");
-				}
-				Sting.set(true, true);
-				after[0] = generate(generator, random, structures, level, possible, closed).whenComplete((c, e) -> {
+		CompletableFuture<List<String>> done = CompletableFuture.allOf(open.stream().map(c -> generate(generator, random, structures, level, possible, c))
+				.toArray(CompletableFuture[]::new)).thenCompose(v -> {
+					Sting.set(true, true);
+					List<CompletableFuture<String>> checks = new ArrayList<>();
+					for (int i = 0; i < STING_CHUNKS.size(); i++) {
+						ProtoChunk before = open.get(i);
+						checks.add(generate(generator, random, structures, level, possible, closed.get(i)).thenApply(after -> {
+							int[] ground = ground(generator, random, after);
+							int caves = caveCells(before, ground, minY);
+							int sealed = caveCells(after, ground, minY);
+							return caves == 0 ? after.getPos() + ": the open chunk had no caves to compare with"
+									: sealed > 0 ? after.getPos() + ": " + sealed + " open cells underground (" + caves + " before)" : null;
+						}));
+					}
+					return CompletableFuture.allOf(checks.toArray(CompletableFuture[]::new))
+							.thenApply(w -> checks.stream().map(CompletableFuture::join).filter(java.util.Objects::nonNull).toList());
+				}).whenComplete((failures, error) -> {
 					Sting.set(false, false);
 					GENERATING.decrementAndGet();
 				});
-			}
-			if (!after[0].isDone()) {
+		helper.succeedWhen(() -> {
+			if (!done.isDone()) {
 				pause();
-				throw helper.assertionException("still generating the closed chunk");
+				throw helper.assertionException("still generating the chunks");
 			}
-			for (CompletableFuture<?> future : new CompletableFuture<?>[] {before, after[0]}) {
-				if (future.isCompletedExceptionally()) {
-					Throwable error = future.exceptionNow();
-					while (error.getCause() != null) {
-						error = error.getCause();
-					}
-					error.printStackTrace();
-					throw helper.assertionException("chunk generation failed: " + error);
+			if (done.isCompletedExceptionally()) {
+				Throwable error = done.exceptionNow();
+				while (error.getCause() != null) {
+					error = error.getCause();
 				}
+				error.printStackTrace();
+				throw helper.assertionException("chunk generation failed: " + error);
 			}
-			int minY = level.getMinY();
-			int caves = caveCells(open, minY);
-			int sealed = caveCells(closed, minY);
-			helper.assertTrue(caves > 0, "the open chunk had no caves to compare with");
-			helper.assertTrue(sealed == 0, "a chunk generated after D still has " + sealed + " open cells underground (" + caves + " before)");
+			List<String> failures = done.join();
+			helper.assertTrue(failures.isEmpty(), "chunks generated after D are not closed: " + String.join("; ", failures));
 		});
 	}
 
