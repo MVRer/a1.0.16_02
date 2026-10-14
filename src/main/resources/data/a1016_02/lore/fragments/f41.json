@@ -1,0 +1,25 @@
+{
+	"id": "F41",
+	"name": "the light on the seed",
+	"form": "structure",
+	"where": "The seed (F07) pyramid: a torch on a lone cobblestone block rising from it to just above the water, with a sign on the block. Step 4, 5 days",
+	"lines": [
+		"under the sign",
+		"inside. all",
+		"the way down",
+		""
+	],
+	"stage": "proximity",
+	"placement": {
+		"rule": "seed_light"
+	},
+	"requires": {
+		"placed": [
+			"F07"
+		],
+		"stuck": {
+			"step": 4,
+			"days": 5
+		}
+	}
+}

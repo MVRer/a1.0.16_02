@@ -1,0 +1,25 @@
+{
+	"id": "F40",
+	"name": "the nearest one",
+	"form": "sign",
+	"where": "On dry ground at the shore nearest the cairn. Step 3, 5 days",
+	"lines": [
+		"nearest one has",
+		"your first",
+		"thing in it.",
+		"take it home"
+	],
+	"stage": "proximity",
+	"placement": {
+		"rule": "shore_sign"
+	},
+	"requires": {
+		"placed": [
+			"F13"
+		],
+		"stuck": {
+			"step": 3,
+			"days": 5
+		}
+	}
+}

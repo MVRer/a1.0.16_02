@@ -1,0 +1,20 @@
+{
+	"id": "F44",
+	"name": "his cross",
+	"form": "book",
+	"where": "The chamber chest. Step 7, 2 days",
+	"title": "",
+	"pages": [
+		"his cross goes here, on the bedrock. the first thing you ever put in at the bottom. poplar from where he didnt at the top. arms on both sides. like everybody else got"
+	],
+	"stage": "proximity",
+	"placement": {
+		"rule": "chamber_chest"
+	},
+	"requires": {
+		"stuck": {
+			"step": 7,
+			"days": 2
+		}
+	}
+}

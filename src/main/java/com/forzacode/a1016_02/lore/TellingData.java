@@ -35,8 +35,8 @@ import org.jspecify.annotations.Nullable;
  * <li>the "Stop." sign: the candidate (first sign about him written in Stage 3) and, once it fired, the sign</li>
  * <li>visited: placed fragments in the order any participant first came near them (place not found takes the first)</li>
  * <li>the list in lava: lists burned, pyramids still to raise, and where</li>
- * <li>the list's lines: each player's latest cause (by UUID), whose marked death came last, and whose name F10's
- * Ending B line finishes</li>
+ * <li>the list's lines: each player's latest cause (by UUID), whose marked death came last, and whose names F10's
+ * Ending B lines finish (one line per finished player, in the order they were finished)</li>
  * </ul>
  */
 public final class TellingData extends SavedData {
@@ -181,15 +181,18 @@ public final class TellingData extends SavedData {
 	/**
 	 * The list's lines and F10's last line (D-063), stored as top-level fields: the latest cause MARKED_DEATH gave
 	 * for each player ({@code listCauses}), whose marked death came last ({@code lastMarked}), and whose name F10's
-	 * Ending B line finishes ({@code f10Removed}). {@code listCause} is v1.0's one cause (the subject's): it is
+	 * Ending B lines finish, in order ({@code f10RemovedAll}; {@code f10Removed} keeps the first, the only one before
+	 * F10 named every finished player, and is read when the list is missing). {@code listCause} is v1.0's one cause (the subject's): it is
 	 * handed to the first known player on the first {@link #get}, and written only until then.
 	 */
-	private record Lines(Optional<String> legacyCause, Map<UUID, String> causes, Optional<UUID> lastMarked, Optional<UUID> f10Removed) {
+	private record Lines(Optional<String> legacyCause, Map<UUID, String> causes, Optional<UUID> lastMarked, Optional<UUID> f10Removed,
+			List<UUID> f10RemovedAll) {
 		static final MapCodec<Lines> MAP_CODEC = RecordCodecBuilder.mapCodec(i -> i.group(
 				Codec.STRING.optionalFieldOf("listCause").forGetter(Lines::legacyCause),
 				Codec.unboundedMap(UUIDUtil.STRING_CODEC, Codec.STRING).optionalFieldOf("listCauses", Map.of()).forGetter(Lines::causes),
 				UUIDUtil.CODEC.optionalFieldOf("lastMarked").forGetter(Lines::lastMarked),
-				UUIDUtil.CODEC.optionalFieldOf("f10Removed").forGetter(Lines::f10Removed)
+				UUIDUtil.CODEC.optionalFieldOf("f10Removed").forGetter(Lines::f10Removed),
+				UUIDUtil.CODEC.listOf().optionalFieldOf("f10RemovedAll", List.of()).forGetter(Lines::f10RemovedAll)
 		).apply(i, Lines::new));
 	}
 
@@ -205,7 +208,7 @@ public final class TellingData extends SavedData {
 			GlobalPos.CODEC.listOf().optionalFieldOf("pendingBlanks", List.of()).forGetter(d -> d.pendingBlanks),
 			Burned.CODEC.optionalFieldOf("burned", Burned.NONE).forGetter(d -> d.burned),
 			Lines.MAP_CODEC.forGetter(d -> new Lines(Optional.ofNullable(d.legacyCause), new TreeMap<>(d.listCauses), Optional.ofNullable(d.lastMarked),
-					Optional.ofNullable(d.f10Removed)))
+					d.f10Removed.stream().findFirst(), List.copyOf(d.f10Removed)))
 	).apply(i, TellingData::new));
 
 	public static final SavedDataType<TellingData> TYPE = new SavedDataType<>(A1016_02.id("lore_telling"), TellingData::new, CODEC, null);
@@ -226,7 +229,8 @@ public final class TellingData extends SavedData {
 	/** The latest cause on each player's line of the list (D-062.2: by UUID, never "the player's"). */
 	private final Map<UUID, String> listCauses = new HashMap<>();
 	private @Nullable UUID lastMarked;
-	private @Nullable UUID f10Removed;
+	/** Whose names F10's Ending B lines finish, in the order they were finished (D-062.2: by UUID). */
+	private final List<UUID> f10Removed = new ArrayList<>();
 
 	/** A fresh record (tests use their own). */
 	public TellingData() {
@@ -249,7 +253,7 @@ public final class TellingData extends SavedData {
 		this.legacyCause = lines.legacyCause().orElse(null);
 		this.listCauses.putAll(lines.causes());
 		this.lastMarked = lines.lastMarked().orElse(null);
-		this.f10Removed = lines.f10Removed().orElse(null);
+		this.f10Removed.addAll(lines.f10RemovedAll().isEmpty() ? lines.f10Removed().stream().toList() : lines.f10RemovedAll());
 	}
 
 	/** The world's record; an old save's single list cause is handed to its player first (D-062.8). */
@@ -482,13 +486,18 @@ public final class TellingData extends SavedData {
 		return Optional.ofNullable(lastMarked);
 	}
 
-	/** Whose name F10's Ending B line finishes, once the ending finished it. */
-	public Optional<UUID> f10Removed() {
-		return Optional.ofNullable(f10Removed);
+	/** Whose names F10's Ending B lines finish, one line each, in the order they were finished (empty before Ending B). */
+	public List<UUID> f10Removed() {
+		return Collections.unmodifiableList(f10Removed);
 	}
 
-	void setF10Removed(UUID player) {
-		f10Removed = player;
+	/** One more finished player for F10's last lines, after the ones before; false if they are already there. */
+	boolean addF10Removed(UUID player) {
+		if (f10Removed.contains(player)) {
+			return false;
+		}
+		f10Removed.add(player);
 		setDirty();
+		return true;
 	}
 }

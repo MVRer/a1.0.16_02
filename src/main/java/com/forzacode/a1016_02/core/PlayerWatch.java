@@ -205,6 +205,16 @@ public final class PlayerWatch {
 	 * that player is offline or another one has played longer since.
 	 */
 	public Optional<UUID> ownerFor(MinecraftServer server, String key) {
+		return ownerFor(server, key, player -> true);
+	}
+
+	/**
+	 * {@link #ownerFor(MinecraftServer, String)}, choosing only among the online participants {@code eligible} accepts
+	 * (for example "has placed a block", so a story that needs that player's first block never waits on someone who
+	 * has none). Empty, storing nothing, while no participant is eligible. The stored choice is returned as it is,
+	 * whatever {@code eligible} says now: it persists and never flips.
+	 */
+	public Optional<UUID> ownerFor(MinecraftServer server, String key, Predicate<UUID> eligible) {
 		HerobrineState state = source.state(server);
 		Optional<UUID> stored = state.owner(key);
 		if (stored.isPresent()) {
@@ -213,6 +223,9 @@ public final class PlayerWatch {
 		UUID best = null;
 		long bestTicks = -1;
 		for (ServerPlayer player : participants(server)) {
+			if (!eligible.test(player.getUUID())) {
+				continue;
+			}
 			long ticks = state.playTicks(player.getUUID());
 			if (ticks > bestTicks) {
 				best = player.getUUID();

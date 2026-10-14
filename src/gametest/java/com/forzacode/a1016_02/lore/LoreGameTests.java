@@ -16,7 +16,7 @@ import net.minecraft.world.phys.Vec3;
  * {@link LoreTextTests}, placement in {@link LorePlacementTests}, the telling in {@link LoreTellingTests}, two players in
  * {@link LoreMultiplayerTests}; reading and triggers here.
  */
-public class LoreGameTests extends LoreMultiplayerTests {
+public class LoreGameTests extends LoreClueTests {
 	@GameTest
 	public void readingASignNeedsToBeCloseAndFacingIt(GameTestHelper helper) {
 		helper.setBlock(new BlockPos(3, 1, 4), Placers.standingSign(Direction.NORTH));

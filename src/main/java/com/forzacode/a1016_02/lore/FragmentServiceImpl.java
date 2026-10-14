@@ -28,7 +28,7 @@ final class FragmentServiceImpl implements FragmentService {
 
 	@Override
 	public boolean isEnabled(MinecraftServer server, String id) {
-		return HerobrineState.get(server).profile().fragments().contains(id);
+		return HerobrineState.get(server).profile().isEnabled(id);
 	}
 
 	/**
@@ -45,7 +45,7 @@ final class FragmentServiceImpl implements FragmentService {
 
 	/** The gate of {@link #place}: disabled fragments are never placed, placed ones never again. */
 	static boolean placeOnce(HerobrineState state, String id, BooleanSupplier placer) {
-		if (!state.profile().fragments().contains(id)) {
+		if (!state.profile().isEnabled(id)) {
 			return false;
 		}
 		return state.fragmentsPlaced().containsKey(id) || placer.getAsBoolean();

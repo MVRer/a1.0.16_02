@@ -154,7 +154,17 @@ public final class Telling {
 			return;
 		}
 		MinecraftServer server = level.getServer();
-		writeSign(player, level, sign.getBlockPos(), SignEdits.text(sign), HerobrineState.get(server), TellingData.get(server), live(server));
+		LoreData lore = LoreData.get(server);
+		writeSign(player, level, sign.getBlockPos(), SignEdits.text(sign), HerobrineState.get(server), TellingData.get(server),
+				outsideChamber(live(server), pos -> TeamChamber.contains(lore, pos)));
+	}
+
+	/**
+	 * M9 (D-066): a sign written inside Ending D's bedrock chamber is never "near his traces", even when the stair above
+	 * lost blocks to him: the true sentence is not telling. Naming him there still counts as naming.
+	 */
+	static Traces outsideChamber(Traces traces, java.util.function.Predicate<GlobalPos> inChamber) {
+		return (pos, radius) -> !inChamber.test(pos) && traces.near(pos, radius);
 	}
 
 	/** A player saved or signed a book in this inventory slot (lore's book mixin, after vanilla changed it). */

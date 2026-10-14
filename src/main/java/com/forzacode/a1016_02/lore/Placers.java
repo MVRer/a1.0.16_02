@@ -6,6 +6,8 @@ import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 import java.util.function.Function;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 import com.forzacode.a1016_02.A1016_02;
 import com.forzacode.a1016_02.core.HerobrineState;
@@ -68,10 +70,11 @@ final class Placers {
 	/** Rules the fragment engine does not place (telling and Ending B, the next task). */
 	static final Set<String> NOT_PLACED = Set.of("telling", "ending_b");
 	/** Every rule {@link #place} knows. */
-	static final Set<String> RULES = Set.of("ruined_hut", "hut_or_tunnel", "cave_chest", "tunnel_end_chest", "tunnel_end_sign",
-			"pyramid_core", "pyramid_chest", "cairn", "grove_burial", "visited_grove_burial", "first_table", "white_eyes_room",
+	static final Set<String> RULES = Stream.concat(Stream.of("ruined_hut", "hut_or_tunnel", "cave_chest", "tunnel_end_chest",
+			"tunnel_end_sign", "pyramid_core", "pyramid_chest", "cairn", "grove_burial", "visited_grove_burial", "first_table", "white_eyes_room",
 			"under_base_chest", "below_spawn", "test_room", "test_room_chest", "test_room_loft", "test_room_below", "emptied_house",
-			"panic_tower", "cross_sign", "stair_bottom", "restored_tree", "house_copy", "camp_map", "twin_signs", "telling", "ending_b");
+			"panic_tower", "cross_sign", "stair_bottom", "restored_tree", "house_copy", "camp_map", "twin_signs", "telling", "ending_b"),
+			CluePlacers.RULES.stream()).collect(Collectors.toUnmodifiableSet());
 
 	private static final ResourceKey<LootTable> CAMP_SECRET_CHEST = ResourceKey.create(Registries.LOOT_TABLE,
 			Identifier.withDefaultNamespace("chests/abandoned_camp_secret_chest"));
@@ -112,6 +115,7 @@ final class Placers {
 			case "camp_map" -> campMap(req);
 			case "twin_signs" -> twinSigns(req);
 			case "telling", "ending_b" -> Optional.empty();
+			case "chamber_plates", "chamber_chest", "camp_light", "grove_sign", "shore_sign", "seed_light" -> CluePlacers.place(req);
 			default -> {
 				A1016_02.LOGGER.warn("[a1016] lore: {} has unknown placement rule {}", req.id(), req.placement().rule());
 				yield Optional.empty();
@@ -122,7 +126,7 @@ final class Placers {
 	// --- shared helpers ---
 
 	/** The fragment's book as it reads now: the list with every known player's line (F06, F23), "you" the request's name. */
-	private static ItemStack book(Request req) {
+	static ItemStack book(Request req) {
 		return FragmentItems.book(req.fragment(), req.playerName(), req.facts().list());
 	}
 
@@ -139,7 +143,7 @@ final class Placers {
 		return Blocks.OAK_WALL_SIGN.defaultBlockState().setValue(WallSignBlock.FACING, facing);
 	}
 
-	private static Build left(Request req) {
+	static Build left(Request req) {
 		return Build.left(req.traces(), req.level(), req.id());
 	}
 
@@ -513,8 +517,9 @@ final class Placers {
 
 	/**
 	 * The story owner's first crafting table, else first chest, else first block ({@link Placing.Facts#firstBlocks},
-	 * D-061: one stored player, never anyone else's), if it is still where it was put. Empty (and waiting) while its
-	 * chunk is not loaded.
+	 * D-061: one stored player, never anyone else's), if it is still where it was put; with all three gone, the
+	 * owner's oldest placed block still standing at their base ({@link #fallbackBlock}, D-066 M11). Empty (and
+	 * waiting) while a chunk it must read is not loaded.
 	 */
 	static Optional<PlacedBlock> firstBlock(Request req) {
 		ServerLevel level = req.level();
@@ -530,7 +535,62 @@ final class Placers {
 				return Optional.of(block);
 			}
 		}
-		return Optional.empty();
+		return fallbackBlock(req);
+	}
+
+	/**
+	 * M11: the first table, chest and block are all gone (many players pick up their first table), so F13 takes the
+	 * owner's oldest placed block that still stands within {@link LoreConfig#cairnFallbackRadius} of their base, from
+	 * lore's log of their placements ({@link Placing.Facts#ownerPlacements}, oldest first); when none of those stands
+	 * (or the save is from before the log), the player-placed block nearest their base. The choice is stored and kept
+	 * while it stands, so the cairn's block never flips between tries. Only plain full blocks (no block entity) move.
+	 */
+	static Optional<PlacedBlock> fallbackBlock(Request req) {
+		ServerLevel level = req.level();
+		Placing.Facts facts = req.facts();
+		Optional<PlacedBlock> stored = facts.cairnFallback().filter(b -> b.pos().dimension().equals(level.dimension()));
+		if (stored.isPresent()) {
+			if (!ready(req, stored.get().pos().pos(), 1)) {
+				return Optional.empty();
+			}
+			if (standing(level, stored.get())) {
+				return stored;
+			}
+		}
+		BlockPos base = facts.base();
+		int radius = Math.max(1, LoreConfig.get().cairnFallbackRadius);
+		if (!ready(req, base, radius)) {
+			return Optional.empty();
+		}
+		double r2 = (double) radius * radius;
+		for (PlacedBlock block : facts.ownerPlacements()) {
+			if (block.pos().dimension().equals(level.dimension()) && block.pos().pos().distSqr(base) <= r2 && standing(level, block)) {
+				facts.rememberCairnFallback(block);
+				return Optional.of(block);
+			}
+		}
+		List<BlockPos> near = new ArrayList<>(Services.watch().placedNear(level, base, radius, state -> !state.isAir()));
+		near.removeIf(pos -> pos.distSqr(base) > r2 || !movable(level, pos));
+		near.sort(Comparator.comparingDouble((BlockPos pos) -> pos.distSqr(base)).thenComparingLong(BlockPos::asLong));
+		if (near.isEmpty()) {
+			return Optional.empty();
+		}
+		BlockPos at = near.getFirst().immutable();
+		PlacedBlock chosen = new PlacedBlock(GlobalPos.of(level.dimension(), at), level.getBlockState(at));
+		facts.rememberCairnFallback(chosen);
+		return Optional.of(chosen);
+	}
+
+	/** The block is still where it was put, still a player's, and plain enough to move. */
+	static boolean standing(ServerLevel level, PlacedBlock block) {
+		BlockPos pos = block.pos().pos();
+		return level.getBlockState(pos).is(block.state().getBlock()) && Services.watch().wasPlacedByPlayer(level, pos) && movable(level, pos);
+	}
+
+	/** A plain full block with no block entity, that can be broken (F13 moves it into the cairn). */
+	static boolean movable(ServerLevel level, BlockPos pos) {
+		BlockState state = level.getBlockState(pos);
+		return state.isSolidRender() && !state.hasBlockEntity() && state.getDestroySpeed(level, pos) >= 0 && !UnbreakableSigns.isProtected(level, pos);
 	}
 
 	/** The ocean nearest the origin (a biome search, no chunk loads), searched once per fragment and remembered. */
@@ -1288,20 +1348,28 @@ final class Placers {
 					result.read(spot);
 				}
 				case STRUCTURE -> {
-					if (fragment.hasSign()) {
+					String rule = fragment.placement().rule();
+					if (rule.equals("white_eyes_room")) {
 						BlockPos sign = spot.relative(facing);
 						if (!Terrain.isFloor(level, sign)) {
 							continue;
 						}
 						build.jukebox(spot, FragmentItems.item(fragment)).sign(sign, standingSign(facing), FragmentItems.signText(fragment, req.playerName()));
 						result.read(sign);
-					} else {
+					} else if (rule.equals("cairn")) {
 						Optional<PlacedBlock> first = firstBlock(req);
 						if (first.isEmpty()) {
 							return Optional.empty();
 						}
 						build.move(first.get().pos().pos(), spot);
 						result.read(spot);
+					} else if (fragment.hasSign()) {
+						// A late clue's sign (F41), plainly: only its words.
+						build.sign(spot, standingSign(facing), FragmentItems.signText(fragment, req.playerName()));
+						result.read(spot);
+					} else {
+						// The chamber's plates and the camp's light have no plain form: only their own rules place them.
+						return Optional.empty();
 					}
 				}
 			}

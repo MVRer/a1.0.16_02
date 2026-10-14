@@ -65,7 +65,7 @@ public final class FragmentItems {
 	 * any other {@code [PLAYER NAME]} {@code reader}. Opening it later brings it up to date again.
 	 */
 	public static ItemStack book(Fragment fragment, String reader, List<LiveBooks.Line> list) {
-		return book(fragment, LiveBooks.pages(fragment, reader, list, Optional.empty()));
+		return book(fragment, LiveBooks.pages(fragment, reader, list, List.of()));
 	}
 
 	private static ItemStack book(Fragment fragment, List<String> text) {
@@ -117,8 +117,13 @@ public final class FragmentItems {
 
 	/** Sign text for the front of a fragment sign. */
 	public static SignText signText(Fragment fragment, String playerName) {
+		return signText(fragment.linesFor(playerName));
+	}
+
+	/** Sign text with these lines on both sides (at most 4; missing ones blank). */
+	public static SignText signText(List<String> lines) {
 		List<Component> messages = new ArrayList<>(4);
-		for (String line : fragment.linesFor(playerName)) {
+		for (String line : lines) {
 			messages.add(Component.literal(line));
 		}
 		while (messages.size() < 4) {

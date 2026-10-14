@@ -123,7 +123,7 @@ public class EndingDGroupTests extends EndingDDangerTests {
 			real.setFragmentPlaced("F13", GlobalPos.of(level.dimension(), cairn));
 			Cairn.clear();
 			b.snapTo(helper.absoluteVec(new Vec3(3.5, 1, 5.5)), 0, 0);
-			Cairn.watch(both, cfg);
+			Cairn.watch(both, data, cfg);
 			ItemEntity offering = new ItemEntity(level, cairn.getX() + 0.5, cairn.getY() + 1, cairn.getZ() + 0.5, new ItemStack(Items.BREAD));
 			offering.setThrower(a);
 			Cairn.onItemAdded(level, offering, cfg, watch::isParticipant);
@@ -132,17 +132,18 @@ public class EndingDGroupTests extends EndingDDangerTests {
 			helper.assertFalse(data.has(EndingDState.FIRST_TAKEN), "it counted with A's offering on the visit");
 			// Everyone leaves: the visit ends. Only then is the offering forgotten.
 			b.snapTo(helper.absoluteVec(new Vec3(3.5, 1, 30.5)), 0, 0);
-			Cairn.watch(both, cfg);
+			Cairn.watch(both, data, cfg);
 			helper.assertTrue(Cairn.offering() && Cairn.atCairn(), "the visit ended while B was still near");
 			b.snapTo(helper.absoluteVec(new Vec3(3.5, 1, 60.5)), 0, 0);
-			Cairn.watch(both, cfg);
+			Cairn.watch(both, data, cfg);
 			helper.assertFalse(Cairn.offering() || Cairn.atCairn(), "the visit did not end once everyone was far");
 			b.snapTo(helper.absoluteVec(new Vec3(3.5, 1, 5.5)), 0, 0);
-			Cairn.watch(both, cfg);
+			Cairn.watch(both, data, cfg);
 			helper.assertFalse(Cairn.onBreak(level, stranger, cairn, Blocks.CRAFTING_TABLE.defaultBlockState(), data, watch::isParticipant),
 					"someone who takes no part took it back");
+			// M4: it gets out cleanly once it leaves the cairn on this visit, with nothing left on it.
 			helper.assertTrue(Cairn.onBreak(level, b, cairn, Blocks.CRAFTING_TABLE.defaultBlockState(), data, watch::isParticipant)
-					&& data.has(EndingDState.FIRST_TAKEN), "B taking A's block back cleanly did not count");
+					&& data.has(EndingDState.FIRST_NEAR), "B taking A's block back was not seen");
 			Marks.clear();
 			ItemStack first = new ItemStack(Items.CRAFTING_TABLE);
 			Marks.set(first, Marks.FIRST_BLOCK);

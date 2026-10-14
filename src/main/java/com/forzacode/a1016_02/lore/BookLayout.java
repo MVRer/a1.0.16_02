@@ -82,6 +82,11 @@ public final class BookLayout {
 				problems.add("sign line '" + line + "' is " + width(line) + " px wide (max " + SIGN_WIDTH + ")");
 			}
 		}
+		for (String plate : fragment.plates()) {
+			if (width(plate) > SIGN_WIDTH) {
+				problems.add("plate '" + plate + "' is " + width(plate) + " px wide (max " + SIGN_WIDTH + ")");
+			}
+		}
 		if (fragment.title().length() > 32) {
 			problems.add("title is longer than 32 characters");
 		}

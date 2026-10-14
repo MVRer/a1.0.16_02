@@ -2,9 +2,11 @@ package com.forzacode.a1016_02.core;
 
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Optional;
 import java.util.Random;
+import java.util.Set;
 import java.util.UUID;
 
 import com.mojang.authlib.GameProfile;
@@ -17,6 +19,7 @@ import net.minecraft.gametest.framework.GameTestHelper;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.nbt.ListTag;
 import net.minecraft.nbt.NbtOps;
+import net.minecraft.nbt.StringTag;
 import net.minecraft.nbt.Tag;
 import net.minecraft.resources.RegistryOps;
 import net.minecraft.server.MinecraftServer;
@@ -431,6 +434,66 @@ public class MultiplayerCoreTests {
 		helper.assertFalse(state.addKnownPlayer(ann, "Annie", new HerobrineState.FirstBlocks(other, other, other)), "Ann was added twice");
 		helper.assertTrue(known(state).equals(List.of("Annie", "Ben")) && state.firstBlocks(ann).equals(new HerobrineState.FirstBlocks(table, table, other)),
 				"adding Ann again moved her or replaced a first block: " + known(state) + " " + state.firstBlocks(ann));
+		helper.succeed();
+	}
+
+	/**
+	 * {@code ownerFor} with a predicate (the story's first blocks: only someone who placed a block): it chooses only among
+	 * the eligible participants, by the same rule, stores the choice and never flips it, even once the predicate would
+	 * say no; with nobody eligible it chooses nobody and stores nothing.
+	 */
+	@GameTest
+	public void ownersCanBeChosenAmongTheEligibleOnly(GameTestHelper helper) {
+		MinecraftServer server = helper.getLevel().getServer();
+		Roster r = new Roster();
+		PlayerWatch w = r.watch;
+		TestPlayer a = player(helper, "A", GameType.SURVIVAL, new Vec3(1.5, 1, 1.5));
+		TestPlayer b = player(helper, "B", GameType.SURVIVAL, new Vec3(2.5, 1, 1.5));
+		r.join(a);
+		r.join(b);
+		r.tick(server, 1);
+		r.state.addPlayTicks(a.getUUID(), 5_000); // A has played far longer, but has placed nothing
+		Set<UUID> placed = new HashSet<>();
+		helper.assertTrue(w.ownerFor(server, "test:first", placed::contains).isEmpty() && w.owner(server, "test:first").isEmpty(),
+				"an owner was chosen with nobody eligible");
+		placed.add(b.getUUID());
+		helper.assertTrue(w.ownerFor(server, "test:first", placed::contains).equals(Optional.of(b.getUUID()))
+				&& w.owner(server, "test:first").equals(Optional.of(b.getUUID())), "the only eligible player was not chosen and stored");
+		// A becomes eligible and B no longer is: the stored choice holds, with or without the predicate.
+		placed.add(a.getUUID());
+		placed.remove(b.getUUID());
+		helper.assertTrue(w.ownerFor(server, "test:first", placed::contains).equals(Optional.of(b.getUUID()))
+				&& w.ownerFor(server, "test:first").equals(Optional.of(b.getUUID())), "the owner flipped");
+		// Among several eligible ones, the usual rule: the most play ticks.
+		placed.add(b.getUUID());
+		helper.assertTrue(w.ownerFor(server, "test:other", placed::contains).equals(Optional.of(a.getUUID())), "the rule among the eligible");
+		helper.succeed();
+	}
+
+	/**
+	 * The profile (D-066 M0, M2): F08 is fixed now, and the clue fragments past F30 are always enabled, old saves
+	 * included: a v1.0 profile without F08 loads with it, and never lists the clues yet enables them.
+	 */
+	@GameTest
+	public void oldProfilesGainF08AndTheClues(GameTestHelper helper) {
+		RegistryOps<Tag> ops = helper.getLevel().registryAccess().createSerializationContext(NbtOps.INSTANCE);
+		WorldProfile rolled = WorldProfile.roll(7L, 11L);
+		helper.assertTrue(rolled.fragments().contains("F08") && WorldProfile.FIXED_FRAGMENTS.contains("F08"), "F08 is not fixed");
+		CompoundTag tag = (CompoundTag) WorldProfile.CODEC.encodeStart(ops, rolled).getOrThrow();
+		ListTag old = new ListTag();
+		for (String id : rolled.fragments()) {
+			if (!id.equals("F08")) {
+				old.add(StringTag.valueOf(id));
+			}
+		}
+		tag.put("fragments", old);
+		WorldProfile loaded = WorldProfile.CODEC.parse(ops, tag).getOrThrow();
+		helper.assertTrue(loaded.fragments().contains("F08") && loaded.isEnabled("F08") && loaded.equals(rolled), "the old save did not gain F08");
+		for (String id : WorldProfile.CLUE_FRAGMENTS) {
+			helper.assertTrue(loaded.isEnabled(id) && !loaded.fragments().contains(id), id + " is not always enabled, or is listed as rolled");
+		}
+		helper.assertTrue(WorldProfile.allFragmentIds().size() == 30 + WorldProfile.CLUE_FRAGMENTS.size()
+				&& WorldProfile.storyFragmentIds().size() == 30, "the id lists");
 		helper.succeed();
 	}
 

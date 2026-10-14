@@ -1,0 +1,19 @@
+{
+	"id": "F36",
+	"name": "nothing he took",
+	"form": "book",
+	"where": "A chest in a chamber corner (F25's, if F25 was offered there). Placed with F35",
+	"title": "",
+	"pages": [
+		"nothing he took can go in his cross. it has to stand on something you got back from him. wood from where he didnt at the top. we got this far. none of us could say it"
+	],
+	"stage": "proximity",
+	"placement": {
+		"rule": "chamber_chest"
+	},
+	"requires": {
+		"placed": [
+			"F35"
+		]
+	}
+}

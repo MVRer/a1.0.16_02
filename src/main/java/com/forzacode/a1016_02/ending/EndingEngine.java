@@ -324,10 +324,10 @@ public final class EndingEngine {
 				data.setDeath(pos, c.now());
 				setBeat(c, EndingPath.A, A.SIGN, accident ? "the ordinary accident" : "hardcore: this death was the ending");
 			} else if (path == EndingPath.B && (finalDeath || nobodyLeft)) {
-				toRecord(c, finalDeath ? "the final death, inside the copy" : "hardcore: nobody is left in it");
+				toRecord(c, finalDeath ? "the final death, inside the copy" : "hardcore: nobody is left in it", player);
 			} else if (nobodyLeft && path != EndingPath.A && path != EndingPath.B) {
 				commit(c, EndingPath.B, "hardcore: " + c.name(player) + " was the last one in it");
-				toRecord(c, "hardcore: nobody is left in it");
+				toRecord(c, "hardcore: nobody is left in it", player);
 			}
 			if (nobodyLeft) {
 				endStory(c, "hardcore: nobody is left in it");
@@ -340,7 +340,7 @@ public final class EndingEngine {
 			data.setDeath(pos, c.now());
 			setBeat(c, EndingPath.A, A.SIGN, "the ordinary accident");
 		} else if (finalDeath) {
-			toRecord(c, "the final death, inside the copy");
+			toRecord(c, "the final death, inside the copy", player);
 		}
 		if (player != null) {
 			thirdDeath(c, player, c.state().markedDeaths(player).size());
@@ -459,6 +459,8 @@ public final class EndingEngine {
 	 */
 	void aAccident(Ctx c) {
 		EndingState data = c.data();
+		// Intended to stay group-wide (unlike B's traps): A's quiet disarmed everything and the director is silent, so the
+		// only trap left can be this one accident's own; while any trap is armed for anyone, A's one accident waits.
 		if (c.players().isEmpty() || ports.trapArmed()) {
 			return;
 		}
@@ -520,7 +522,8 @@ public final class EndingEngine {
 	 * "Your house" for B (D-061, never flips once B stored it): the house the copy elsewhere copies, the house copy
 	 * owner's ({@code world:house_copy}, world's choice) base while they are online, else their first crafting table,
 	 * chest or block; with no house copy owner (or the same player as the home's), the group's home
-	 * ({@code ending:home}, see {@link EndingWatch#sampleHome}); else the first one in it's base.
+	 * ({@code ending:home}, see {@link EndingWatch#sampleHome}); else the first one in it's base. Once world offers
+	 * {@code HouseCopyApi.realHouse(server)} (MP-6), the copied house should come from it first (a port call).
 	 */
 	Optional<GlobalPos> bHouse(Ctx c) {
 		PlayerWatch watch = ports.watch();
@@ -745,7 +748,9 @@ public final class EndingEngine {
 		EndingState data = c.data();
 		EndingConfig cfg = c.cfg();
 		Optional<GlobalPos> house = data.house();
-		if (c.players().isEmpty() || house.isEmpty() || ports.trapArmed()) {
+		// One trap per player (accident's rule): a friend's trap elsewhere never holds B's escalation up for the group;
+		// whoever it is armed around must have none of their own armed.
+		if (c.players().isEmpty() || house.isEmpty()) {
 			return;
 		}
 		List<ServerPlayer> near = c.players().stream().filter(p -> p.level().dimension().equals(house.get().dimension())
@@ -761,7 +766,7 @@ public final class EndingEngine {
 			Collections.rotate(order, c.random().nextInt(order.size()));
 		}
 		for (ServerPlayer player : near) {
-			if (!c.force() && !pastJoinGrace(player)) {
+			if (!c.force() && !pastJoinGrace(player) || ports.trapArmed(c.server(), player.getUUID())) {
 				continue;
 			}
 			Optional<String> armed = armFirst(player, order);
@@ -805,12 +810,14 @@ public final class EndingEngine {
 	void bFinal(Ctx c) {
 		EndingState data = c.data();
 		EndingConfig cfg = c.cfg();
-		Optional<EndingState.Trap> armed = ports.armedTrap(c.server());
-		if (data.finalTrap().isPresent() && !data.finalTrap().equals(armed)) {
+		List<EndingState.Trap> armed = ports.armedTraps(c.server());
+		if (data.finalTrap().isPresent() && !armed.contains(data.finalTrap().get())) {
 			data.setFinalTrap(null);
 			data.log("B: the final trap's time ran out; it waits for them again");
 		}
-		if (data.finalTrap().isPresent() || c.players().isEmpty() || armed.isPresent()) {
+		// One trap per player: a friend's trap elsewhere does not hold the final one up; whoever it is set for must have
+		// none of their own armed (accident's planner keeps it off ground another trap holds).
+		if (data.finalTrap().isPresent() || c.players().isEmpty()) {
 			return;
 		}
 		Optional<Bounds> bounds = finalBounds(c);
@@ -822,12 +829,12 @@ public final class EndingEngine {
 			return;
 		}
 		for (ServerPlayer player : inside.isEmpty() ? c.players() : inside) {
-			if (!c.force() && !pastJoinGrace(player)) {
+			if (!c.force() && !pastJoinGrace(player) || ports.trapArmed(c.server(), player.getUUID())) {
 				continue;
 			}
 			for (String id : cfg.bFinalTraps) {
 				if (ports.armTrapInside(player, id, bounds.get())) {
-					data.setFinalTrap(ports.armedTrap(c.server())
+					data.setFinalTrap(ports.armedTrap(c.server(), player.getUUID())
 							.orElse(new EndingState.Trap(id, GlobalPos.of(player.level().dimension(), player.blockPosition()))));
 					data.setLastArmAt(c.now());
 					data.setLastArmPlay(c.play());
@@ -855,12 +862,13 @@ public final class EndingEngine {
 	}
 
 	/**
-	 * B's final death: the planner's own final trap did it (it is still the armed trap when the death is marked, which
-	 * the planner does only for a death it attributes to that trap) and the death is inside the copy.
+	 * B's final death: the planner's own final trap did it (it is still armed when the death is marked, which the
+	 * planner does only for a death it attributes to that trap; other players' traps may be armed too) and the death is
+	 * inside the copy.
 	 */
 	private boolean isFinalDeath(Ctx c, GlobalPos pos) {
 		Optional<EndingState.Trap> trap = c.data().finalTrap();
-		if (trap.isEmpty() || !trap.equals(ports.armedTrap(c.server()))) {
+		if (trap.isEmpty() || !ports.armedTraps(c.server()).contains(trap.get())) {
 			return false;
 		}
 		Optional<Bounds> bounds = finalBounds(c);
@@ -868,12 +876,24 @@ public final class EndingEngine {
 	}
 
 	/**
-	 * F10 gains its last line, "* removed [PLAYER NAME]": Ending B's record, once for the world (the beat it sets is the
-	 * guard). A friend's line finished in hardcore while others play is only {@code ending:line_finished=<uuid>}.
+	 * Ending B's record, once for the world (the beat it sets is the guard): F10 gains one "* removed [PLAYER NAME]" line
+	 * for every player whose line is finished, in the order they were finished (lore's {@code finishF10(server, UUID)},
+	 * once each). Only finished lines are ever named, never a living friend: in hardcore each marked death finished its
+	 * player's line; B's final death inside the copy finishes the line of whoever died there ({@code victim}, normal mode
+	 * too: "your name is not erased; it is finished"). A friend's line finished in hardcore while others play is only
+	 * {@code ending:line_finished=<uuid>} until then.
 	 */
-	private void toRecord(Ctx c, String why) {
-		ports.finishF10(c.server());
-		setBeat(c, EndingPath.B, B.RECORD, why + "; F10 is finished");
+	private void toRecord(Ctx c, String why, @Nullable UUID victim) {
+		EndingState data = c.data();
+		if (victim != null && data.finishLine(victim)) {
+			c.state().setFlag(EndingApi.LINE_FINISHED_FLAG + victim, true);
+			data.log(c.name(victim) + "'s line is finished (B's final death)");
+		}
+		List<UUID> finished = List.copyOf(data.finishedLines());
+		for (UUID player : finished) {
+			ports.finishF10(c.server(), player);
+		}
+		setBeat(c, EndingPath.B, B.RECORD, why + (finished.isEmpty() ? "; F10 names nobody (no line is finished)" : "; F10 is finished"));
 	}
 
 	/** F20 lies under F10. Then B is done. */
@@ -972,7 +992,7 @@ public final class EndingEngine {
 			case DOORWAY -> bDoorway(f);
 			case FINAL -> {
 				bFinal(f);
-				toRecord(f, "debug: as if the final death happened");
+				toRecord(f, "debug: as if the final death happened", f.first().map(ServerPlayer::getUUID).orElse(null));
 			}
 			case RECORD -> bRecord(f);
 			case DONE -> {

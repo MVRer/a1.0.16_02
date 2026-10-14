@@ -7,5 +7,5 @@ package com.forzacode.a1016_02.ending;
  * {@link EndingGroupTests} (with friends: D-058, D-063, D-064), then Ending D's {@code ending.d.EndingDGameTests} chain
  * above {@link EndingRuleTests}.
  */
-public class EndingGameTests extends EndingGroupTests {
+public class EndingGameTests extends EndingWiringTests {
 }

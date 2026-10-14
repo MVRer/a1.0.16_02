@@ -554,6 +554,9 @@ public class LoreTellingTests extends LorePlacementTests {
 		List<String> f10 = lines(LiveBooks.pages(fragment("F10"), NAME, Optional.empty(), true));
 		helper.assertTrue(f10.getLast().equals("* removed " + NAME) && f10.size() == 6, "F10 reads " + f10);
 		helper.assertTrue(lines(LiveBooks.pages(fragment("F10"), NAME, Optional.empty(), false)).equals(DESIGN_TEXT.get("F10")), "F10 changed early");
+		// With friends: one last line for each finished player, in the order they were finished.
+		List<String> two = lines(LiveBooks.pages(fragment("F10"), NAME, List.of(), List.of("Sam", "Alex")));
+		helper.assertTrue(two.subList(5, 7).equals(List.of("* removed Sam", "* removed Alex")) && two.size() == 7, "F10 reads " + two);
 		helper.succeed();
 	}
 
@@ -659,18 +662,14 @@ public class LoreTellingTests extends LorePlacementTests {
 		List<String> f10 = lines(pages(((Container) level.getBlockEntity(chest)).getItem(0)));
 		helper.assertTrue(f10.getLast().equals("* removed Sam"), "F10 reads " + f10);
 		helper.assertTrue(lines(pages(frame.getItem())).getLast().equals("* removed Sam"), "the framed F10 reads " + pages(frame.getItem()));
-		// The old call (the ending before it migrates) keeps whoever is named; with nobody named it takes the latest marked death's player.
-		LiveBooks.finishF10(server, state, data, null);
-		helper.assertTrue(LiveBooks.removedName(state, data).equals(Optional.of("Sam")), "the old call renamed F10's player");
-		TellingData fresh = new TellingData();
-		fresh.setListCause(alex.uuid(), "fell");
-		HerobrineState again = LoreRoster.state(helper, alex, sam);
-		LiveBooks.finishF10(server, again, fresh, null);
-		helper.assertTrue(LiveBooks.removedName(again, fresh).equals(Optional.of("Alex")), "without a player, F10 does not name the latest marked death's");
-		// Someone who never took part is never named: the call falls back as without a player.
+		// Naming Sam again changes nothing: one line each, in the order the ending finished them.
+		LiveBooks.finishF10(server, state, data, sam.uuid());
+		helper.assertTrue(LiveBooks.removedNames(state, data).equals(List.of("Sam")), "Sam was named twice: " + LiveBooks.removedNames(state, data));
+		// Someone who never took part is never named, and nobody is named in their place (no guessing).
 		TellingData stranger = new TellingData();
-		LiveBooks.finishF10(server, LoreRoster.state(helper, alex), stranger, java.util.UUID.randomUUID());
-		helper.assertTrue(stranger.f10Removed().equals(Optional.of(alex.uuid())), "a stranger was named on F10");
+		HerobrineState alone = LoreRoster.state(helper, alex);
+		helper.assertTrue(LiveBooks.finishF10(server, alone, stranger, java.util.UUID.randomUUID()) == 0 && stranger.f10Removed().isEmpty()
+				&& !alone.hasFlag(LiveBooks.F10_FINISHED), "a stranger, or someone in their place, was named on F10");
 		frame.discard();
 
 		int ledgered = TraceLedger.get(server).entries().size();

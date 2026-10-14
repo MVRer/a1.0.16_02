@@ -14,6 +14,7 @@ import com.forzacode.a1016_02.core.PlacedBlock;
 import com.forzacode.a1016_02.core.Services;
 import com.forzacode.a1016_02.core.Stage;
 import com.forzacode.a1016_02.core.Tier;
+import com.forzacode.a1016_02.lore.LoreApi;
 
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
@@ -75,9 +76,12 @@ final class MissingFirstBlockCard implements EventCard {
 		return FireResult.SKIPPED;
 	}
 
-	/** Whose first blocks the story uses ({@code story:first_blocks}, D-061: the same owner as lore's F13 and F10). */
+	/**
+	 * Whose first blocks the story uses ({@code story:first_blocks}, D-061: the same owner as lore's F13 and F10, chosen
+	 * only among players who have placed a block).
+	 */
 	private static @Nullable UUID owner(MinecraftServer server) {
-		return Services.watch().ownerFor(server, EndingApi.FIRST_BLOCKS_OWNER).orElse(null);
+		return Services.watch().ownerFor(server, EndingApi.FIRST_BLOCKS_OWNER, LoreApi.hasPlacedBlock(HerobrineState.get(server))).orElse(null);
 	}
 
 	/**
