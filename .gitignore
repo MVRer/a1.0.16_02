@@ -44,3 +44,6 @@ replay_*.log
 
 # datagen output cache
 .cache/
+
+# local builds to share
+dist/
