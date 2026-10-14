@@ -32,6 +32,8 @@ import net.minecraft.world.level.block.VegetationBlock;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.levelgen.Heightmap;
 
+import org.jspecify.annotations.Nullable;
+
 /**
  * The recorded dead mountains ({@code SiteType.DEAD_MOUNTAIN} sites): "no animals ever spawn there" and "it is quieter
  * than anywhere else". A position counts as dead mountain when its column is inside a site's circle (radius = the
@@ -223,20 +225,30 @@ public final class DeadMountains {
 
 	/** Sends this player the dead mountains near them if they changed chunk or dimension, or the circles changed. */
 	static void sync(ServerPlayer player) {
+		DeadMountainsPayload payload = toSend(player);
+		if (payload != null) {
+			DeadMountainsPayload.send(player, payload);
+		}
+	}
+
+	/**
+	 * What this player's client needs now: the dead mountains near them, or null if it already knows. Remembered per
+	 * player (by UUID): each client gets its own areas, around its own player, and one player's update never changes
+	 * what another was told.
+	 */
+	static @Nullable DeadMountainsPayload toSend(ServerPlayer player) {
 		Snapshot current = snapshot;
 		ResourceKey<Level> dimension = player.level().dimension();
 		ChunkPos chunk = player.chunkPosition();
 		Sent last = SENT.get(player.getUUID());
 		if (last != null && last.version() == current.version() && last.dimension().equals(dimension) && last.chunk().equals(chunk)) {
-			return;
+			return null;
 		}
 		List<Area> areas = near(dimension, player.getX(), player.getZ(), AtmosphereConfig.get().deadMountainSendBlocks);
 		// The client starts empty after every join; tell it only what it does not know yet.
 		boolean changed = last == null ? !areas.isEmpty() : !last.dimension().equals(dimension) || !last.areas().equals(areas);
-		if (changed) {
-			DeadMountainsPayload.send(player, new DeadMountainsPayload(dimension, areas));
-		}
 		SENT.put(player.getUUID(), new Sent(dimension, chunk, current.version(), areas));
+		return changed ? new DeadMountainsPayload(dimension, areas) : null;
 	}
 
 	/** The areas this player's client was last sent (for status). */
@@ -245,6 +257,7 @@ public final class DeadMountains {
 		return last == null ? List.of() : last.areas();
 	}
 
+	/** The client connection closed (spectators too): its next connection starts empty, so it is told everything again. */
 	static void onLeave(ServerPlayer player) {
 		SENT.remove(player.getUUID());
 	}

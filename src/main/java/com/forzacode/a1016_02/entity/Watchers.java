@@ -17,8 +17,10 @@ import net.minecraft.world.phys.Vec3;
 
 /**
  * Everyone who could see him: each player's viewpoint (built like {@link TraceService#viewers}) and that player's
- * full, un-pulled render distance. Holds the one despawn rule: he is never removed while in view, unless he is past
- * every watcher's full render distance (where the client fogs him out completely).
+ * full, un-pulled render distance. Every player in the level counts, spectators and the dead included (D-060.4,
+ * D-062.7): he appears out of view of all of them and never vanishes while any of them sees him. Holds the one
+ * despawn rule: he is never removed while in view, unless he is past every watcher's full render distance (where the
+ * client fogs him out completely), and the one spawn rule ({@link #hides}).
  */
 public record Watchers(List<Watcher> all) {
 	/**
@@ -28,6 +30,7 @@ public record Watchers(List<Watcher> all) {
 	public record Watcher(TraceService.Viewer viewer, double renderLimit) {
 	}
 
+	/** Every player in the level, spectators and the dead included. */
 	public static Watchers of(ServerLevel level) {
 		return of(level.players(), level.getServer().getPlayerList().getViewDistance());
 	}
@@ -69,6 +72,19 @@ public record Watchers(List<Watcher> all) {
 			}
 		}
 		return true;
+	}
+
+	/** Every watcher's eyes. */
+	public List<Vec3> eyes() {
+		return all.stream().map(w -> w.viewer().eye()).toList();
+	}
+
+	/**
+	 * The one spawn rule: no watcher sees the box and none is closer than {@code minDistance} to it
+	 * ({@link FigureApi#tooClose}). He never pops in on anyone's screen and never appears close to anyone.
+	 */
+	public boolean hides(Level level, AABB box, double minDistance) {
+		return !FigureApi.tooClose(eyes(), box, minDistance) && !sees(level, box);
 	}
 
 	/** The one rule for every despawn: out of view, or past everyone's full render distance. */

@@ -1,5 +1,6 @@
 package com.forzacode.a1016_02.atmosphere.card;
 
+import java.util.List;
 import java.util.Set;
 
 import com.forzacode.a1016_02.atmosphere.AtmosphereConfig;
@@ -14,7 +15,6 @@ import com.forzacode.a1016_02.core.Habit;
 import com.forzacode.a1016_02.core.ModConfig;
 import com.forzacode.a1016_02.core.Pacing;
 import com.forzacode.a1016_02.core.Services;
-import com.forzacode.a1016_02.core.SoundCues;
 import com.forzacode.a1016_02.core.Stage;
 import com.forzacode.a1016_02.core.Tier;
 
@@ -30,8 +30,9 @@ import net.minecraft.world.phys.Vec3;
 
 /**
  * Mining in the dark: at night, in bed or still for a while, one block-break sound close by. Nothing is broken.
- * At most once per night, and never within the gap after another sound card. The false positive is a vanilla cave
- * sound.
+ * At most once per night for each player, and never within the gap after another sound card. The sound is his, at a
+ * place in the stone, so everyone in hearing range hears it (D-060), and it counts as tonight's for each of them too:
+ * two players in one house hear one, never one each. The false positive is a vanilla cave sound.
  */
 public final class MiningInTheDarkCard extends AtmosphereCard {
 	public static final String ID = "mining_in_the_dark";
@@ -46,7 +47,7 @@ public final class MiningInTheDarkCard extends AtmosphereCard {
 		Pacing pacing = ModConfig.pacing();
 		return Gates.miningInTheDark(Gates.isNight(world), Services.watch().isSleeping(player), Services.watch().stillTicks(player),
 				pacing.miningDarkStillTicks(), Services.director().ticksSinceTag(server, CardTag.SOUND), pacing.miningDarkSoundGapTicks(),
-				AtmosphereData.get(server).miningOn(GameClock.day(server)), pacing.miningDarkPerNight);
+				AtmosphereData.get(server).miningOn(player.getUUID(), GameClock.day(server)), pacing.miningDarkPerNight);
 	}
 
 	@Override
@@ -64,10 +65,13 @@ public final class MiningInTheDarkCard extends AtmosphereCard {
 		}
 		BlockState state = level.getBlockState(spot);
 		SoundType sound = state.getSoundType();
-		SoundCues.playTo(player, BuiltInRegistries.SOUND_EVENT.wrapAsHolder(sound.getBreakSound()), SoundSource.BLOCKS, Vec3.atCenterOf(spot),
-				(sound.getVolume() + 1.0F) / 2.0F, sound.getPitch() * 0.8F);
+		List<ServerPlayer> heard = sounds.play(level, BuiltInRegistries.SOUND_EVENT.wrapAsHolder(sound.getBreakSound()), SoundSource.BLOCKS,
+				Vec3.atCenterOf(spot), (sound.getVolume() + 1.0F) / 2.0F, sound.getPitch() * 0.8F);
 		MinecraftServer server = level.getServer();
-		AtmosphereData.get(server).recordMining(GameClock.day(server));
+		long night = GameClock.day(server);
+		AtmosphereData data = AtmosphereData.get(server);
+		data.recordMining(player.getUUID(), night);
+		heard.stream().filter(p -> !p.getUUID().equals(player.getUUID())).forEach(p -> data.recordMining(p.getUUID(), night));
 		return FireResult.FIRED;
 	}
 }

@@ -45,8 +45,9 @@ public class EntityGameTests extends GoUnderGameTests {
 	}
 
 	private static HimEntity figure(GameTestHelper helper, Variant variant, Vec3 relative) {
-		// No players in the test level, so every spot is out of view.
-		return FigureApi.spawnAt(helper.getLevel(), variant, helper.absoluteVec(relative), 0.0F)
+		// No players in the test level, so every spot is out of view. The raw spawn: other tests have figures out at
+		// the same time, which the one-him rule of spawnAt would refuse.
+		return FigureApi.spawn(helper.getLevel(), variant, helper.absoluteVec(relative), 0.0F, null, Watchers.of(helper.getLevel()))
 				.orElseThrow(() -> helper.assertionException("the figure did not spawn"));
 	}
 

@@ -14,7 +14,7 @@ import net.minecraft.gametest.framework.GameTestHelper;
  * days and across level changes, starting from vanilla's overworld fog, and no step may move the fog by more than a
  * small share of the render distance. Deep dusk and the night keep the look tuned in v0.4.
  */
-public class DuskFogGameTests {
+public class DuskFogGameTests extends SharedMomentGameTests {
 	/** Render distances in chunks: vanilla's minimum, short, default-ish, long. */
 	private static final int[] CHUNKS = {2, 4, 6, 12, 16, 32};
 	/** Sampling step: one second. */

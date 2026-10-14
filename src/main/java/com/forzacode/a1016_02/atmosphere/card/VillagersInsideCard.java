@@ -64,6 +64,7 @@ public final class VillagersInsideCard extends AtmosphereCard {
 			mobs().freeze(villager, ticks);
 			mobs().face(villager, outside, ticks);
 			mobs().silence(villager, ticks);
+			forTarget(villager, ctx.player());
 			placed++;
 		}
 		return placed > 0 ? FireResult.FIRED : FireResult.NO_SPOT;

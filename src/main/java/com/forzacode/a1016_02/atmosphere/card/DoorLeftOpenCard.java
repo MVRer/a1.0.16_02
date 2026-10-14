@@ -25,8 +25,9 @@ import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.state.properties.DoubleBlockHalf;
 
 /**
- * Door left open: a wooden door the player placed (and that is closed now) is open when they come back. Only while
- * they are away, out of view, silently.
+ * Door left open: a wooden door a player placed (and that is closed now) near this player's own base (D-061) is open
+ * when they come back. Only while this player is away and nobody at all (another player, a spectator) is near that
+ * door, out of everyone's view, silently.
  */
 public final class DoorLeftOpenCard extends AtmosphereCard {
 	public static final String ID = "door_left_open";
@@ -101,6 +102,7 @@ public final class DoorLeftOpenCard extends AtmosphereCard {
 				&& state.getValue(DoorBlock.HALF) == DoubleBlockHalf.LOWER && !state.getValue(DoorBlock.OPEN);
 	}
 
+	/** Nobody in the level, spectators included, within {@code blocks} of the door: not this player, not a friend at home. */
 	private static boolean farFromEveryone(ServerLevel level, BlockPos pos, int blocks) {
 		double r2 = (double) blocks * blocks;
 		for (ServerPlayer player : level.players()) {

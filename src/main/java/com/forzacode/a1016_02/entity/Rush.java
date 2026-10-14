@@ -28,6 +28,17 @@ public final class Rush {
 	/** A planned path follows a chaser at constant velocity at most this many ticks. */
 	static final int PLAN_TICKS = 80;
 
+	/**
+	 * Someone else near the rush (not the chaser): where they stand and their horizontal velocity in blocks per tick.
+	 * He has no collision, so his line must keep the pass offset from them too.
+	 */
+	public record Bystander(Vec3 pos, Vec3 velocity) {
+		/** Where they are after {@code ticks} ticks at their velocity. */
+		Vec3 at(int ticks) {
+			return pos.add(flat(velocity).scale(ticks));
+		}
+	}
+
 	/** One simulated tick: where he ends it, and where the player is then. */
 	public record Step(Vec3 him, Vec3 player) {
 		/** Horizontal unit vector from the player to him (out of the pass), or zero. */
@@ -174,6 +185,35 @@ public final class Rush {
 		Vec3 dir = d > 1.0E-6 ? away.scale(1.0 / d) : fallback.lengthSqr() > 1.0E-8 ? fallback.normalize() : new Vec3(1.0, 0.0, 0.0);
 		// A hair past the radius, so rounding never leaves him inside it.
 		return closest.add(dir.scale(radius + 1.0E-4));
+	}
+
+	/**
+	 * True if every step of a planned path stays at least {@code offset} (horizontally) from every bystander: from where
+	 * each one will be in that tick and the next at their current velocity (the capsule between). A path that passes
+	 * anyone else inside the offset is not a pass he takes.
+	 */
+	public static boolean passesClear(List<Step> path, List<Bystander> others, double offset) {
+		double radius = Math.max(MIN_OFFSET, offset);
+		for (int i = 0; i < path.size(); i++) {
+			Vec3 him = path.get(i).him();
+			for (Bystander other : others) {
+				if (distanceToSegment(him, other.at(i), other.at(i + 1)) < radius) {
+					return false;
+				}
+			}
+		}
+		return true;
+	}
+
+	/** True if {@code next} is at least {@code offset} from every bystander now and where they will be next tick. */
+	public static boolean clearOf(Vec3 next, List<Bystander> others, double offset) {
+		double radius = Math.max(MIN_OFFSET, offset);
+		for (Bystander other : others) {
+			if (distanceToSegment(next, other.at(0), other.at(1)) < radius) {
+				return false;
+			}
+		}
+		return true;
 	}
 
 	/** Horizontal distance from {@code point} to the segment a..b. */

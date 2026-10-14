@@ -38,6 +38,7 @@ public final class FogDriftCard extends AtmosphereCard {
 		}
 		float strength = (float) (cfg.fogDriftStrengthMin + ctx.random().nextDouble() * (cfg.fogDriftStrengthMax - cfg.fogDriftStrengthMin));
 		int hold = (int) ModConfig.pacing().fogDrift().pick(ctx.random());
-		return ActiveEffects.fogSurge(ctx.player(), strength, cfg.fogDriftRampTicks, hold, cfg.fogDriftFadeTicks) ? FireResult.FIRED : FireResult.SKIPPED;
+		// A shared moment (D-060): everyone near the player gets the same surge at the same time.
+		return ActiveEffects.fogSurge(ctx.player(), strength, cfg.fogDriftRampTicks, hold, cfg.fogDriftFadeTicks).isEmpty() ? FireResult.SKIPPED : FireResult.FIRED;
 	}
 }

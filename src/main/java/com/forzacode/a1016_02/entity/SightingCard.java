@@ -57,8 +57,16 @@ final class SightingCard implements EventCard {
 		return SightingGates.check(player, world, variant).isEmpty();
 	}
 
+	/**
+	 * Fires for the player the director picked, in their own level. While he is already out (for anyone, in any
+	 * dimension) a real sighting is {@link FireResult#NO_SPOT}: he is one being, and the director keeps the card for
+	 * later. A debug fire tells him to walk away first ({@link FigureApi#spawnAtFogEdge}), and is refused the same.
+	 */
 	@Override
 	public FireResult fire(FireContext ctx) {
+		if (!ctx.fake() && !ctx.forced() && FigureApi.anyOut(ctx.level().getServer())) {
+			return FireResult.NO_SPOT;
+		}
 		if (!ctx.forced()) {
 			if (!contextFits(ctx.player(), ctx.level())) {
 				return FireResult.SKIPPED;

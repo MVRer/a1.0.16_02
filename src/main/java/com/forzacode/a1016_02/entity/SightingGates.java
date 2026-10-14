@@ -1,5 +1,6 @@
 package com.forzacode.a1016_02.entity;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 
@@ -9,6 +10,7 @@ import com.forzacode.a1016_02.core.ModConfig;
 import com.forzacode.a1016_02.core.Pacing;
 import com.forzacode.a1016_02.core.Services;
 import com.forzacode.a1016_02.core.SiteType;
+import com.forzacode.a1016_02.core.TraceService;
 
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.GlobalPos;
@@ -29,8 +31,13 @@ import net.minecraft.world.phys.Vec3;
  * combat, never indoors, never at the base, 300+ blocks from the last one, never two in one in-game day, never the
  * same variant twice in a row, one figure at a time. Debug fires skip all of this; never the out-of-view rule.
  *
+ * <p>Multiplayer (D-058 to D-062): the gates are asked for the player the director picked, in that player's own
+ * level. He is one being, so one figure at a time, the day count, the variant rule and the 300-block rule are the
+ * world's. Combat counts for the player and for everyone sharing the moment with them (they would see him too).
+ * During Ending D's last minute ({@code ending:last_minute}) no sighting starts: the ending owns him then.
+ *
  * <p>Each variant runs only in its own dimension (D-034), checked first and against the level the card is asked
- * about (the subject's own). In the End and the Nether time stands still, so the daylight, dusk and night gates do
+ * about (the player's own). In the End and the Nether time stands still, so the daylight, dusk and night gates do
  * not apply; the Nether's roof does not make it indoors; and he needs existing endermen or zombified piglins near the
  * edge to stand among.
  */
@@ -64,6 +71,9 @@ public final class SightingGates {
 		if (FigureApi.anyOut(server)) {
 			return Optional.of("he is already out");
 		}
+		if (state.hasFlag(TraceService.LAST_MINUTE_FLAG)) {
+			return Optional.of("Ending D's last minute");
+		}
 		// No daylight, dusk or night where time stands still (the End, the Nether): the time gates are the overworld's.
 		if (!level.dimensionType().hasFixedTime()) {
 			long time = timeOfDay(server);
@@ -78,7 +88,7 @@ public final class SightingGates {
 				return Optional.of("not night");
 			}
 		}
-		if (Services.watch().ticksSinceCombat(player) < ModConfig.realTicks(config.combatCooldownSeconds)) {
+		if (inCombat(Services.watch().sharingWith(player), ModConfig.realTicks(config.combatCooldownSeconds))) {
 			return Optional.of("combat");
 		}
 		if (indoors(level, player)) {
@@ -170,16 +180,51 @@ public final class SightingGates {
 		return Math.floorMod(server.overworld().getOverworldClockTime(), 24000L);
 	}
 
-	/** True if {@code pos} is within {@code radius} blocks (horizontal) of the player's base. */
+	/** True if {@code pos} is within {@code radius} blocks (horizontal) of the player's own base (D-061). */
 	public static boolean nearBase(ServerPlayer player, BlockPos pos, int radius) {
 		Optional<GlobalPos> base = Services.watch().base(player);
 		if (base.isEmpty() || !base.get().dimension().equals(player.level().dimension())) {
 			return false;
 		}
-		BlockPos b = base.get().pos();
-		long dx = b.getX() - pos.getX();
-		long dz = b.getZ() - pos.getZ();
-		return dx * dx + dz * dz < (long) radius * radius;
+		return near(List.of(base.get().pos()), pos, radius);
+	}
+
+	/** True if any of {@code players} fought or was hurt within the last {@code cooldownTicks}. */
+	public static boolean inCombat(List<ServerPlayer> players, long cooldownTicks) {
+		for (ServerPlayer player : players) {
+			if (Services.watch().ticksSinceCombat(player) < cooldownTicks) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	/**
+	 * The bases in {@code level} he keeps away from when he picks a spot: {@code player}'s own and every online
+	 * participant's (each one's respawn point, else their own first block, D-061).
+	 */
+	public static List<BlockPos> basesIn(ServerLevel level, ServerPlayer player) {
+		List<ServerPlayer> players = new ArrayList<>(Services.watch().participants(level.getServer()));
+		if (players.stream().noneMatch(p -> p.getUUID().equals(player.getUUID()))) {
+			players.add(player);
+		}
+		List<BlockPos> bases = new ArrayList<>();
+		for (ServerPlayer p : players) {
+			Services.watch().base(p).filter(base -> base.dimension().equals(level.dimension())).ifPresent(base -> bases.add(base.pos()));
+		}
+		return bases;
+	}
+
+	/** True if {@code pos} is within {@code radius} blocks (horizontal) of any of {@code bases}. */
+	public static boolean near(List<BlockPos> bases, BlockPos pos, int radius) {
+		for (BlockPos b : bases) {
+			long dx = b.getX() - pos.getX();
+			long dz = b.getZ() - pos.getZ();
+			if (dx * dx + dz * dz < (long) radius * radius) {
+				return true;
+			}
+		}
+		return false;
 	}
 
 	/**

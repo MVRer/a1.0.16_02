@@ -13,7 +13,6 @@ import com.forzacode.a1016_02.core.FireContext;
 import com.forzacode.a1016_02.core.FireResult;
 import com.forzacode.a1016_02.core.Habit;
 import com.forzacode.a1016_02.core.Services;
-import com.forzacode.a1016_02.core.SoundCues;
 import com.forzacode.a1016_02.core.Stage;
 import com.forzacode.a1016_02.core.Tier;
 
@@ -61,7 +60,8 @@ public final class DogWontGoCard extends AtmosphereCard {
 			return FireResult.SKIPPED;
 		}
 		mobs().face(wolf, player.getEyePosition(), ticks);
-		Tasks.start(new Stay(player.getUUID(), wolf, ticks));
+		forTarget(wolf, player);
+		Tasks.start(new Stay(player.getUUID(), wolf, ticks, sounds));
 		return FireResult.FIRED;
 	}
 
@@ -73,35 +73,40 @@ public final class DogWontGoCard extends AtmosphereCard {
 		return wolf.isBaby() ? variant.value().babySounds().whineSound() : variant.value().adultSounds().whineSound();
 	}
 
-	/** Keeps the wolf watching the player and whimpering now and then. */
+	/**
+	 * Keeps the wolf watching its owner (the card's player, looked up again every tick) and whimpering now and then,
+	 * for everyone in hearing range. The owner gone (left, dead, spectating, another dimension): the wolf is released.
+	 */
 	private static final class Stay implements Tasks.Episode {
 		private final UUID player;
 		private final Wolf wolf;
 		private final int length;
+		private final SoundOut sounds;
 		private int age;
 
-		Stay(UUID player, Wolf wolf, int length) {
+		Stay(UUID player, Wolf wolf, int length, SoundOut sounds) {
 			this.player = player;
 			this.wolf = wolf;
 			this.length = length;
+			this.sounds = sounds;
 		}
 
 		@Override
 		public boolean tick(MinecraftServer server) {
 			age++;
-			ServerPlayer subject = server.getPlayerList().getPlayer(player);
-			if (age > length || !wolf.isAlive() || subject == null || subject.level() != wolf.level() || !MobTamperImpl.INSTANCE.isFrozen(wolf)) {
+			ServerPlayer owner = target(server, player, wolf.level()).orElse(null);
+			if (age > length || !wolf.isAlive() || owner == null || !MobTamperImpl.INSTANCE.isFrozen(wolf)) {
 				mobs().release(wolf);
 				return false;
 			}
 			if (age % 20 == 0) {
-				mobs().face(wolf, subject.getEyePosition(), length - age + 1);
+				mobs().face(wolf, owner.getEyePosition(), length - age + 1);
 			}
 			for (int at : WHINES) {
-				if (age == at) {
+				if (age == at && wolf.level() instanceof ServerLevel level) {
 					Holder<SoundEvent> sound = whine(wolf);
 					if (sound != null) {
-						SoundCues.playTo(subject, sound, SoundSource.NEUTRAL, wolf.position(), 1.0F, 0.9F + wolf.getRandom().nextFloat() * 0.2F);
+						sounds.play(level, sound, SoundSource.NEUTRAL, wolf.position(), 1.0F, 0.9F + wolf.getRandom().nextFloat() * 0.2F);
 					}
 				}
 			}

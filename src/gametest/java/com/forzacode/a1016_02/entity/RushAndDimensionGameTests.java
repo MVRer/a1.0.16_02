@@ -345,7 +345,7 @@ public class RushAndDimensionGameTests extends SightingRuleGameTests {
 		helper.assertTrue(Variant.AMONG_ENDERMEN.cardId().equals("sighting_among_endermen") && Variant.AMONG_PIGLINS.cardId().equals("sighting_among_piglins"),
 				"card ids");
 		helper.assertTrue(Variant.AMONG_ENDERMEN.fake() == Variant.Fake.NONE && Variant.AMONG_PIGLINS.fake() == Variant.Fake.NONE, "a fake that needs a mob held");
-		// The director asks each card with the subject's own level: the dimension gate is checked against it, first.
+		// The director asks each card with the player's own level: the dimension gate is checked against it, first.
 		ServerPlayer player = (ServerPlayer) helper.makeMockServerPlayer(GameType.SURVIVAL);
 		for (ServerLevel level : List.of(overworld, nether, end)) {
 			for (Variant variant : Variant.values()) {
