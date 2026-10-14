@@ -1,14 +1,17 @@
 package com.forzacode.a1016_02.debug;
 
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.regex.Pattern;
 
 import com.forzacode.a1016_02.A1016_02;
+import com.forzacode.a1016_02.accident.ArmedTrap;
 import com.forzacode.a1016_02.core.CardTag;
 import com.forzacode.a1016_02.core.HerobrineState;
 import com.forzacode.a1016_02.core.Stage;
@@ -28,9 +31,15 @@ import net.fabricmc.fabric.api.gametest.v1.GameTest;
 
 import net.minecraft.commands.CommandSource;
 import net.minecraft.commands.CommandSourceStack;
+import net.minecraft.commands.Commands;
+import net.minecraft.core.BlockPos;
 import net.minecraft.gametest.framework.GameTestHelper;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.MinecraftServer;
+import net.minecraft.server.permissions.LevelBasedPermissionSet;
+import net.minecraft.world.level.Level;
+import net.minecraft.world.phys.Vec2;
+import net.minecraft.world.phys.Vec3;
 
 /**
  * Game tests of the debug workstream: the scripted playthrough (20 h, every tempo, every hard 4b limit asserted,
@@ -159,6 +168,33 @@ public class DebugGameTests {
 		helper.succeed();
 	}
 
+	/**
+	 * The overlay's trap row is the viewer's own (one trap per player): Ana sees hers and how many others are armed,
+	 * Ben (no trap of his) sees none and the count, someone alone with their trap sees no count, nobody's sees "none".
+	 */
+	@GameTest
+	public void overlayTrapRowIsTheViewersOwnPlusTheOthersCount(GameTestHelper helper) {
+		UUID ana = UUID.randomUUID();
+		UUID ben = UUID.randomUUID();
+		UUID cal = UUID.randomUUID();
+		Map<UUID, ArmedTrap> traps = new LinkedHashMap<>();
+		traps.put(cal, trap("lava_floor", new BlockPos(100, 12, -40)));
+		traps.put(ana, trap("dark_corner", new BlockPos(1, 64, 2)));
+		String anas = DebugOverlay.trap(traps, ana);
+		String bens = DebugOverlay.trap(traps, ben);
+		helper.assertTrue(anas.startsWith("dark_corner (set) at 1, 64, 2") && anas.endsWith("| 1 other armed") && !anas.contains("lava_floor"),
+				"Ana's row: " + anas);
+		helper.assertTrue(bens.equals("none | 2 others armed"), "Ben's row: " + bens);
+		helper.assertTrue(DebugOverlay.trap(Map.of(ana, traps.get(ana)), ana).equals("dark_corner (set) at 1, 64, 2"), "a lone trap got a count");
+		helper.assertTrue(DebugOverlay.trap(Map.of(), ana).equals("none"), "nobody's trap: " + DebugOverlay.trap(Map.of(), ana));
+		helper.succeed();
+	}
+
+	private static ArmedTrap trap(String type, BlockPos pos) {
+		return new ArmedTrap(type, Level.OVERWORLD, pos, List.of(), List.of(), Optional.empty(), List.of(), ArmedTrap.Phase.SET,
+				new ArmedTrap.Window(0, 0, 0, ArmedTrap.NO_CLOCK), pos, pos, "test", 0, Set.of(), Optional.empty());
+	}
+
 	@GameTest
 	public void overlayPayloadRoundTrips(GameTestHelper helper) {
 		OverlayPayload payload = new OverlayPayload(true, List.of("stage\tPROXIMITY", "tension\t12.5/60"));
@@ -193,16 +229,9 @@ public class DebugGameTests {
 		helper.succeed();
 	}
 
-	/**
-	 * D-062.9 from the console with nobody taking part (the game test server): the read-only commands show the world
-	 * part, the ones that act on a player say nobody takes part instead of failing, and every form with a player
-	 * argument parses. Nothing here changes the world or the director (no timewarp, no fire lands).
-	 */
-	@GameTest
-	public void consoleCommandsActOnTheFirstParticipantOrSaySoWhenNobodyTakesPart(GameTestHelper helper) {
-		MinecraftServer server = helper.getLevel().getServer();
-		List<String> said = new ArrayList<>();
-		CommandSourceStack console = server.createCommandSourceStack().withSource(new CommandSource() {
+	/** A console that writes down what it is told (successes and failures alike). */
+	private static CommandSource capture(List<String> said) {
+		return new CommandSource() {
 			@Override
 			public void sendSystemMessage(Component message) {
 				said.add(message.getString());
@@ -222,7 +251,60 @@ public class DebugGameTests {
 			public boolean shouldInformAdmins() {
 				return false;
 			}
-		});
+		};
+	}
+
+	/**
+	 * Why {@code ./gradlew runServer} answered "unexpected error" to every console line piped in through stdin, vanilla
+	 * {@code stop} included (WIRE-1). A dedicated server makes each console line's source on its console thread as it
+	 * reads the line ({@code createCommandSourceStack()}). Lines piped in at once are read while the server is still
+	 * starting, before any level exists, so their source has no level, and vanilla's
+	 * {@code Commands.executeCommandInContext} reads that level's game rules before running anything: every such line
+	 * fails, whatever the command, before any mod code runs. The same lines read once the world is up run normally.
+	 * Shown with a vanilla command beside ours, on a source made exactly as the console thread makes it then.
+	 */
+	@GameTest
+	public void consoleLinesReadBeforeTheWorldLoadsFailInVanillaToo(GameTestHelper helper) {
+		MinecraftServer server = helper.getLevel().getServer();
+		List<String> said = new ArrayList<>();
+		CommandSourceStack early = new CommandSourceStack(capture(said), Vec3.ZERO, Vec2.ZERO, null, LevelBasedPermissionSet.OWNER,
+				Component.literal("Server"), server);
+		CommandSourceStack late = server.createCommandSourceStack().withSource(capture(said));
+		for (String command : List.of("list", "a1016 state")) {
+			said.clear();
+			server.getCommands().performPrefixedCommand(early, command);
+			String before = String.join("\n", said);
+			helper.assertTrue(before.contains("unexpected error"), "'" + command + "' read before the world loaded said:\n" + before);
+			said.clear();
+			server.getCommands().performPrefixedCommand(late, command);
+			String after = String.join("\n", said);
+			helper.assertTrue(!said.isEmpty() && !after.contains("unexpected error"), "'" + command + "' once the world is up said:\n" + after);
+		}
+		// What throws (vanilla logs it only at debug level): the missing level, read by Commands itself before any node runs.
+		NullPointerException thrown = null;
+		try {
+			Commands.executeCommandInContext(early, context -> {
+			});
+		} catch (NullPointerException e) {
+			thrown = e;
+		}
+		helper.assertTrue(thrown != null && thrown.getStackTrace()[0].getClassName().equals(Commands.class.getName())
+				&& thrown.getStackTrace()[0].getMethodName().equals("executeCommandInContext"), "not vanilla's missing level: " + thrown);
+		StackTraceElement[] trace = thrown.getStackTrace();
+		A1016_02.LOGGER.info("[a1016] a console line read before the world loads: {} at {}, {}", thrown.getMessage(), trace[0], trace[1]);
+		helper.succeed();
+	}
+
+	/**
+	 * D-062.9 from the console with nobody taking part (the game test server): the read-only commands show the world
+	 * part, the ones that act on a player say nobody takes part instead of failing, and every form with a player
+	 * argument parses. Nothing here changes the world or the director (no timewarp, no fire lands).
+	 */
+	@GameTest
+	public void consoleCommandsActOnTheFirstParticipantOrSaySoWhenNobodyTakesPart(GameTestHelper helper) {
+		MinecraftServer server = helper.getLevel().getServer();
+		List<String> said = new ArrayList<>();
+		CommandSourceStack console = server.createCommandSourceStack().withSource(capture(said));
 		String memoryBefore = DirectorData.get(server).memory().toTag().toString();
 		for (String command : List.of("a1016 state", "a1016 director", "a1016 fire debug_ping", "a1016 fire debug_ping fake", "a1016 director tick",
 				"a1016 director quiet clear")) {

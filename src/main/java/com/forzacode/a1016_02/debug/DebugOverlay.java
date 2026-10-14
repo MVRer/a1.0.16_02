@@ -1,6 +1,7 @@
 package com.forzacode.a1016_02.debug;
 
 import java.util.List;
+import java.util.Map;
 import java.util.StringJoiner;
 import java.util.UUID;
 
@@ -25,8 +26,8 @@ import net.minecraft.server.level.ServerPlayer;
 /**
  * Dev overlay, server side. Only in a development environment and only after {@code /a1016 debug overlay on} (off
  * by default, never saved): once per second, every op player gets the director's state as they see it (their own
- * pacing and tension, the shared stage and attention) as an {@link OverlayPayload}. Read-only: it never changes the
- * director or the world.
+ * pacing and tension, the shared stage and attention, their own armed trap and how many others are armed) as an
+ * {@link OverlayPayload}. Read-only: it never changes the director or the world.
  */
 final class DebugOverlay {
 	private static final int PERIOD_TICKS = 20;
@@ -64,10 +65,10 @@ final class DebugOverlay {
 		}
 	}
 
-	/** The overlay for one viewer: their own pacing and tension, the shared stage and attention. */
+	/** The overlay for one viewer: their own pacing, tension and trap, the shared stage and attention. */
 	static OverlayPayload build(MinecraftServer server, UUID viewer) {
 		try {
-			return new OverlayPayload(true, OverlayText.rows(DirectorApi.snapshot(server, viewer), trap(server), sighting(server)));
+			return new OverlayPayload(true, OverlayText.rows(DirectorApi.snapshot(server, viewer), trap(server, viewer), sighting(server)));
 		} catch (RuntimeException e) {
 			A1016_02.LOGGER.error("[a1016] debug overlay failed", e);
 			return new OverlayPayload(true, List.of("error" + OverlayPayload.SEPARATOR + e));
@@ -83,13 +84,21 @@ final class DebugOverlay {
 		}
 	}
 
-	/** The armed trap and its phase, or "none". */
-	static String trap(MinecraftServer server) {
+	/** The viewer's own armed trap and its phase (or "none"), and how many other players have one armed (one each). */
+	static String trap(MinecraftServer server, UUID viewer) {
 		AccidentPlanner planner = Services.accidents();
 		if (planner instanceof AccidentPlannerImpl impl) {
-			return impl.armedTrap(server).map(DebugOverlay::describe).orElse("none");
+			return trap(impl.armedTraps(server), viewer);
 		}
-		return planner.armed().map(TrapType::id).orElse("none");
+		return planner.armed(viewer).map(TrapType::id).orElse("none");
+	}
+
+	/** {@link #trap(MinecraftServer, UUID)} from every armed trap by its player. */
+	static String trap(Map<UUID, ArmedTrap> traps, UUID viewer) {
+		ArmedTrap own = traps.get(viewer);
+		int others = traps.size() - (own == null ? 0 : 1);
+		String text = own == null ? "none" : describe(own);
+		return others == 0 ? text : text + Fmt.f(" | %d other%s armed", others, others == 1 ? "" : "s");
 	}
 
 	private static String describe(ArmedTrap trap) {
