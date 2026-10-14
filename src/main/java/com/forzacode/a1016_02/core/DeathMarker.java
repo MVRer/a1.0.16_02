@@ -1,6 +1,7 @@
 package com.forzacode.a1016_02.core;
 
 import java.util.Optional;
+import java.util.UUID;
 
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.GlobalPos;
@@ -12,11 +13,16 @@ import net.minecraft.server.level.ServerPlayer;
  * workstream installs the real one.
  */
 public interface DeathMarker {
-	/** Marks a death: records a {@link MarkedDeath} in {@link HerobrineState} and fires the event. */
+	/** Marks a death: records a {@link MarkedDeath} as that player's in {@link HerobrineState} and fires the event. */
 	void mark(ServerPlayer player, String cause, BlockPos pos);
 
-	/** How many deaths are marked in this world. */
+	/** How many deaths are marked in this world, everyone's together. */
 	int count(MinecraftServer server);
+
+	/** How many of this player's own deaths are marked (D-063: the third-death rule counts each player's own). */
+	default int count(MinecraftServer server, UUID player) {
+		return HerobrineState.get(server).markedDeaths(player).size();
+	}
 
 	/**
 	 * The bottom of the post of the newest cross that stands for a marked death (the cross is built once the spot is

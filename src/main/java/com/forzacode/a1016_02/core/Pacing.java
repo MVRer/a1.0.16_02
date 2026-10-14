@@ -118,6 +118,13 @@ public final class Pacing {
 	public int visitRadiusChunks = 1;
 	public int footprintMaxPerDimension = 200_000;
 
+	// --- multiplayer (D-060) ---
+	/**
+	 * Shared moments: participants within this many blocks of the target (same dimension) feel the same fog surge,
+	 * silence and fired card, and it counts for each of them.
+	 */
+	public int sharedMomentRadius = 48;
+
 	/** Weight per {@link AttentionTrigger}, by name. Missing entries are filled with the defaults. */
 	public Map<String, Double> attentionWeights = new LinkedHashMap<>();
 

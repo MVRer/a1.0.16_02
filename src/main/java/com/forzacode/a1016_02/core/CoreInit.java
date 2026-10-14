@@ -30,6 +30,7 @@ public final class CoreInit {
 			Services.watch().clear();
 		});
 
+		// Per player (D-062.4): a join or a leave only ever touches that player.
 		ServerPlayConnectionEvents.JOIN.register((handler, sender, server) -> {
 			Services.watch().onJoin(handler.player);
 			ClientEffects.sync(handler.player);
@@ -37,8 +38,8 @@ public final class CoreInit {
 		ServerPlayConnectionEvents.DISCONNECT.register((handler, server) -> Services.watch().onLeave(handler.player));
 
 		ServerTickEvents.END_SERVER_TICK.register(server -> {
-			boolean subjectOnline = Services.watch().subject(server).isPresent();
-			GameClock.tick(server, subjectOnline);
+			// Participation first (known players, the clocks, PARTICIPATION events), so everything after sees this tick's.
+			Services.watch().tickParticipation(server);
 			Services.watch().tick(server);
 			Services.director().tick(server);
 		});

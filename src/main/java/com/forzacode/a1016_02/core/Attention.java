@@ -1,12 +1,16 @@
 package com.forzacode.a1016_02.core;
 
+import java.util.UUID;
+
 import com.forzacode.a1016_02.A1016_02;
 
 import net.minecraft.server.MinecraftServer;
+import net.minecraft.server.level.ServerPlayer;
 
 /**
- * The only way to change attention and tension (both 0 to 100, clamped). Attention is moved by the player's
- * actions (DESIGN.md "Triggers") and only speeds stages up or slows them down. Tension is the director's.
+ * The only way to change attention and tension (both 0 to 100, clamped). Attention is one value for the world
+ * (D-058): anyone's actions (DESIGN.md "Triggers") move it, and it only speeds stages up or slows them down.
+ * Tension is the director's and belongs to each player (D-059); a player who was never a participant has none.
  */
 public final class Attention {
 	private Attention() {
@@ -25,14 +29,40 @@ public final class Attention {
 		change(server, -Math.abs(amount), reason);
 	}
 
-	public static void raiseTension(MinecraftServer server, double amount, String reason) {
-		HerobrineState.get(server).addTension(Math.abs(amount));
-		A1016_02.LOGGER.debug("[a1016] tension +{} ({})", amount, reason);
+	/** Raises that player's tension. Does nothing for someone who was never a participant. */
+	public static void raiseTension(MinecraftServer server, UUID player, double amount, String reason) {
+		HerobrineState.get(server).addTension(player, Math.abs(amount));
+		A1016_02.LOGGER.debug("[a1016] tension {} +{} ({})", player, amount, reason);
 	}
 
+	/** Lowers that player's tension. Does nothing for someone who was never a participant. */
+	public static void lowerTension(MinecraftServer server, UUID player, double amount, String reason) {
+		HerobrineState.get(server).addTension(player, -Math.abs(amount));
+		A1016_02.LOGGER.debug("[a1016] tension {} -{} ({})", player, amount, reason);
+	}
+
+	/**
+	 * Raises the tension of every online participant.
+	 *
+	 * @deprecated tension is per player (D-059); use {@link #raiseTension(MinecraftServer, UUID, double, String)}. Removed in MP-8.
+	 */
+	@Deprecated(forRemoval = true)
+	public static void raiseTension(MinecraftServer server, double amount, String reason) {
+		for (ServerPlayer player : Services.watch().participants(server)) {
+			raiseTension(server, player.getUUID(), amount, reason);
+		}
+	}
+
+	/**
+	 * Lowers the tension of every online participant.
+	 *
+	 * @deprecated tension is per player (D-059); use {@link #lowerTension(MinecraftServer, UUID, double, String)}. Removed in MP-8.
+	 */
+	@Deprecated(forRemoval = true)
 	public static void lowerTension(MinecraftServer server, double amount, String reason) {
-		HerobrineState.get(server).addTension(-Math.abs(amount));
-		A1016_02.LOGGER.debug("[a1016] tension -{} ({})", amount, reason);
+		for (ServerPlayer player : Services.watch().participants(server)) {
+			lowerTension(server, player.getUUID(), amount, reason);
+		}
 	}
 
 	private static void change(MinecraftServer server, double delta, String reason) {

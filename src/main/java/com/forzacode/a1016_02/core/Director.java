@@ -23,10 +23,22 @@ public interface Director {
 	void tick(MinecraftServer server);
 
 	/**
-	 * Debug: fires a card for the subject now. Skips gates and pacing, never the out-of-view rule.
-	 * Returns {@link FireResult#SKIPPED} if the card is unknown or the subject is offline.
+	 * Debug: fires a card for that player now. Skips gates and pacing, never the out-of-view rule.
+	 * Returns {@link FireResult#SKIPPED} if the card is unknown or the player is not
+	 * {@linkplain PlayerWatch#isTargetable targetable} (not a participant, or dead).
 	 */
-	FireResult fire(MinecraftServer server, String cardId, boolean fake);
+	FireResult fire(MinecraftServer server, ServerPlayer player, String cardId, boolean fake);
+
+	/**
+	 * Debug: fires a card for the first participant (in join order) now. {@link FireResult#SKIPPED} if nobody takes part.
+	 *
+	 * @deprecated fire for a player: {@link #fire(MinecraftServer, ServerPlayer, String, boolean)}. Removed in MP-8.
+	 */
+	@Deprecated(forRemoval = true)
+	default FireResult fire(MinecraftServer server, String cardId, boolean fake) {
+		List<ServerPlayer> participants = Services.watch().participants(server);
+		return participants.isEmpty() ? FireResult.SKIPPED : fire(server, participants.getFirst(), cardId, fake);
+	}
 
 	/**
 	 * Moves time forward by whole in-game days (see {@link GameClock#warp}) and applies what time alone does.
@@ -53,19 +65,17 @@ public interface Director {
 		}
 
 		@Override
-		public FireResult fire(MinecraftServer server, String cardId, boolean fake) {
+		public FireResult fire(MinecraftServer server, ServerPlayer player, String cardId, boolean fake) {
 			Optional<EventCard> card = CardRegistry.get(cardId);
-			Optional<ServerPlayer> player = Services.watch().subject(server);
-			if (card.isEmpty() || player.isEmpty()) {
+			if (card.isEmpty() || !Services.watch().isTargetable(player)) {
 				return FireResult.SKIPPED;
 			}
-			ServerPlayer subject = player.get();
 			boolean asFake = fake && card.get().hasFake();
-			FireResult result = card.get().fire(new FireContext(subject, subject.level(), asFake, true, RandomSource.create()));
+			FireResult result = card.get().fire(new FireContext(player, player.level(), asFake, true, RandomSource.create()));
 			if (result == FireResult.FIRED) {
 				long now = GameClock.playTicks(server);
 				card.get().tags().forEach(tag -> lastFired.put(tag, now));
-				HerobrineEvents.CARD_FIRED.invoker().onCardFired(subject, cardId, asFake);
+				HerobrineEvents.CARD_FIRED.invoker().onCardFired(player, cardId, asFake);
 			}
 			return result;
 		}

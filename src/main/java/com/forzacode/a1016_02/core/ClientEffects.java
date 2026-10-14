@@ -1,5 +1,7 @@
 package com.forzacode.a1016_02.core;
 
+import java.util.List;
+
 import com.forzacode.a1016_02.A1016_02;
 
 import io.netty.buffer.ByteBuf;
@@ -16,7 +18,8 @@ import net.minecraft.server.level.ServerPlayer;
 /**
  * Server-to-client effects. Payload types live here and are registered on both sides; atmosphere does the
  * client side by installing a {@code core.client.ClientEffectsClient.Handler}. Persistent effects (music off,
- * dusk fog) are stored in {@link HerobrineState} and sent again on every join.
+ * dusk fog) are stored in {@link HerobrineState}, sent to everyone online and sent again on every join. Fog surges
+ * and silences he makes reach everyone sharing the moment ({@link #fogSurgeShared}, {@link #silenceShared}, D-060).
  */
 public final class ClientEffects {
 	/** Fog closes in to {@code strength} (0 to 1) over {@code rampTicks}, holds, then fades back. */
@@ -97,12 +100,40 @@ public final class ClientEffects {
 		PayloadTypeRegistry.clientboundPlay().register(Sync.TYPE, Sync.CODEC);
 	}
 
+	/** A fog surge for this player only. One he makes uses {@link #fogSurgeShared} (D-060). */
 	public static void fogSurge(ServerPlayer player, float strength, int rampTicks, int holdTicks, int fadeTicks) {
 		send(player, new FogSurge(strength, rampTicks, holdTicks, fadeTicks));
 	}
 
+	/** A silence for this player only. One he makes uses {@link #silenceShared} (D-060). */
 	public static void silence(ServerPlayer player, int ticks, int fadeTicks) {
 		send(player, new Silence(ticks, fadeTicks));
+	}
+
+	/**
+	 * The same fog surge, at the same moment, for {@code target} and everyone sharing the moment with them
+	 * ({@link PlayerWatch#sharingWith}, D-060).
+	 *
+	 * @return who it went to, target first (for server-side bookkeeping per player)
+	 */
+	public static List<ServerPlayer> fogSurgeShared(ServerPlayer target, float strength, int rampTicks, int holdTicks, int fadeTicks) {
+		List<ServerPlayer> players = Services.watch().sharingWith(target);
+		FogSurge payload = new FogSurge(strength, rampTicks, holdTicks, fadeTicks);
+		players.forEach(player -> send(player, payload));
+		return players;
+	}
+
+	/**
+	 * The same silence, at the same moment, for {@code target} and everyone sharing the moment with them
+	 * ({@link PlayerWatch#sharingWith}, D-060).
+	 *
+	 * @return who it went to, target first (for server-side bookkeeping per player)
+	 */
+	public static List<ServerPlayer> silenceShared(ServerPlayer target, int ticks, int fadeTicks) {
+		List<ServerPlayer> players = Services.watch().sharingWith(target);
+		Silence payload = new Silence(ticks, fadeTicks);
+		players.forEach(player -> send(player, payload));
+		return players;
 	}
 
 	/** Stores the setting and sends it to everyone online. */
@@ -120,7 +151,7 @@ public final class ClientEffects {
 		server.getPlayerList().getPlayers().forEach(player -> send(player, new DuskFog(clamped)));
 	}
 
-	/** Sends every persistent effect. Core calls this on join. */
+	/** Sends every persistent effect. Core calls this on every join, spectators included. */
 	public static void sync(ServerPlayer player) {
 		HerobrineState.Effects effects = HerobrineState.get(player.level().getServer()).effects();
 		send(player, new Sync(effects.musicOff(), effects.duskFogLevel()));

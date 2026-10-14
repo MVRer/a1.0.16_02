@@ -27,7 +27,7 @@ import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.levelgen.structure.BoundingBox;
 
 /** Tests for the core contract batch (fog limits, salts, sites, protected areas, clock); {@link TraceContractTests} extends this. */
-public class CoreContractTests {
+public class CoreContractTests extends MultiplayerCoreTests {
 	@GameTest
 	public void fogLimitsMatchAtmosphereClientCurve(GameTestHelper helper) {
 		AtmosphereConfig cfg = new AtmosphereConfig();

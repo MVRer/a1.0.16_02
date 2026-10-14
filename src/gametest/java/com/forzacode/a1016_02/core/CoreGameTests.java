@@ -2,6 +2,7 @@ package com.forzacode.a1016_02.core;
 
 import java.util.HashSet;
 import java.util.List;
+import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 
@@ -60,17 +61,26 @@ public class CoreGameTests extends TraceGameTests {
 		HerobrineState state = new HerobrineState();
 		state.reroll(1234L, 5678L);
 		state.addAttention(42.5);
-		state.addTension(140.0); // clamps to 100
-		state.setSubject(UUID.fromString("00000000-0000-0000-0000-00000000a016"), "subject");
+		UUID first = UUID.fromString("00000000-0000-0000-0000-00000000a016");
+		UUID friend = UUID.fromString("00000000-0000-0000-0000-00000000b016");
+		state.recordPlayer(first, "subject");
+		state.recordPlayer(friend, "friend");
+		state.addTension(first, 140.0); // clamps to 100
+		state.addTension(friend, 7.5);
 		state.addPlayTicks(123_456L);
+		state.addPlayTicks(first, 100_000L);
+		state.addPlayTicks(friend, 2_000L);
 		state.addWarpDays(3);
+		state.setOwner("test:house", friend);
 		state.setStopFired(true);
 		state.setTellingStarted(true);
 		state.markFragmentRead("F03");
 		state.setFragmentPlaced("F01", GlobalPos.of(Level.OVERWORLD, new BlockPos(300, 64, -20)));
-		state.addMarkedDeath(new MarkedDeath("fell", GlobalPos.of(Level.NETHER, new BlockPos(1, 2, 3)), 9));
-		state.recordFirst(HerobrineState.FirstKind.BLOCK, new PlacedBlock(GlobalPos.of(Level.OVERWORLD, BlockPos.ZERO), Blocks.OAK_PLANKS.defaultBlockState()));
-		state.recordFirst(HerobrineState.FirstKind.CHEST, new PlacedBlock(GlobalPos.of(Level.OVERWORLD, new BlockPos(5, 5, 5)), Blocks.CHEST.defaultBlockState()));
+		state.addMarkedDeath(friend, new MarkedDeath("fell", GlobalPos.of(Level.NETHER, new BlockPos(1, 2, 3)), 9));
+		state.recordFirst(first, HerobrineState.FirstKind.BLOCK, new PlacedBlock(GlobalPos.of(Level.OVERWORLD, BlockPos.ZERO), Blocks.OAK_PLANKS.defaultBlockState()));
+		state.recordFirst(first, HerobrineState.FirstKind.CHEST, new PlacedBlock(GlobalPos.of(Level.OVERWORLD, new BlockPos(5, 5, 5)), Blocks.CHEST.defaultBlockState()));
+		state.recordFirst(friend, HerobrineState.FirstKind.CRAFTING_TABLE, new PlacedBlock(GlobalPos.of(Level.NETHER, new BlockPos(7, 7, 7)),
+				Blocks.CRAFTING_TABLE.defaultBlockState()));
 		state.setEffects(new HerobrineState.Effects(true, 0.4F));
 		state.setFlag("lore:f04_done", true);
 		state.incrementTellingCount();
@@ -83,14 +93,21 @@ public class CoreGameTests extends TraceGameTests {
 
 		helper.assertTrue(encoded.equals(reencoded), "re-encoded state differs:\n" + encoded + "\n" + reencoded);
 		helper.assertTrue(decoded.stage() == Stage.PROXIMITY, "stage");
-		helper.assertTrue(decoded.attention() == 42.5 && decoded.tension() == 100.0, "attention/tension");
+		helper.assertTrue(decoded.attention() == 42.5 && decoded.tension(first) == 100.0 && decoded.tension(friend) == 7.5, "attention/tension");
 		helper.assertTrue(decoded.profile().equals(WorldProfile.roll(1234L, 5678L)) && decoded.salt() == 5678L, "profile/salt");
-		helper.assertTrue(decoded.subject().map(HerobrineState.Subject::name).orElse("").equals("subject"), "subject");
+		helper.assertTrue(decoded.players().equals(List.of(new HerobrineState.Subject(first, "subject"), new HerobrineState.Subject(friend, "friend"))),
+				"players " + decoded.players());
 		helper.assertTrue(decoded.playTicks() == 123_456L && decoded.warpDays() == 3, "clock");
+		helper.assertTrue(decoded.playTicks(first) == 100_000L && decoded.playTicks(friend) == 2_000L, "per-player clocks");
+		helper.assertTrue(decoded.owner("test:house").equals(Optional.of(friend)) && decoded.owners().size() == 1, "owners " + decoded.owners());
 		helper.assertTrue(decoded.stopFired() && !decoded.listRead() && decoded.tellingStarted(), "story flags");
 		helper.assertTrue(decoded.fragmentsRead().equals(Set.of("F03")) && decoded.fragmentsPlaced().containsKey("F01"), "fragments");
-		helper.assertTrue(decoded.markedDeaths().equals(state.markedDeaths()), "marked deaths");
-		helper.assertTrue(decoded.firstBlocks().equals(state.firstBlocks()) && decoded.firstBlocks().craftingTable() == null, "first blocks");
+		helper.assertTrue(decoded.markedDeaths().equals(state.markedDeaths()) && decoded.markedDeaths(friend).size() == 1
+				&& decoded.markedDeaths(first).isEmpty(), "marked deaths " + decoded.markedDeaths());
+		helper.assertTrue(decoded.firstBlocks(first).equals(state.firstBlocks(first)) && decoded.firstBlocks(first).craftingTable() == null
+				&& decoded.firstBlocks(friend).equals(state.firstBlocks(friend)) && decoded.firstBlocks(friend).block() == null, "first blocks");
+		helper.assertTrue(!encoded.contains("subject") && !encoded.contains("firstBlocks") && !encoded.contains("tension"),
+				"the new format still writes v1.0's single-subject fields: " + encoded.keySet());
 		helper.assertTrue(decoded.effects().equals(state.effects()) && decoded.hasFlag("lore:f04_done"), "effects/flags");
 		helper.assertTrue(decoded.tellingCount() == 2 && decoded.hasFlag(HerobrineState.TELLING_COUNT_FLAG + "=2")
 				&& !decoded.hasFlag(HerobrineState.TELLING_COUNT_FLAG + "=1"), "telling count " + decoded.tellingCount() + " " + decoded.flags());

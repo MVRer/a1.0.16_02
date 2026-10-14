@@ -7,8 +7,8 @@ import net.minecraft.util.RandomSource;
 /**
  * What a card gets when it fires.
  *
- * @param player the subject
- * @param level  the subject's level
+ * @param player the participant the card fires for (D-059); look them up again by UUID if anything runs later
+ * @param level  that player's level
  * @param fake   fire the false-positive version (an ordinary cow, a real cave sound)
  * @param forced fired by a debug command: gates and pacing were skipped, the out-of-view rule never is
  * @param random use this for every roll

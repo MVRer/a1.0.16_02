@@ -53,13 +53,11 @@ public final class DirectorImpl implements Director {
 	}
 
 	@Override
-	public FireResult fire(MinecraftServer server, String cardId, boolean fake) {
+	public FireResult fire(MinecraftServer server, ServerPlayer subject, String cardId, boolean fake) {
 		Optional<EventCard> card = CardRegistry.get(cardId);
-		Optional<ServerPlayer> player = Services.watch().subject(server);
-		if (card.isEmpty() || player.isEmpty()) {
+		if (card.isEmpty() || !Services.watch().isTargetable(subject)) {
 			return FireResult.SKIPPED;
 		}
-		ServerPlayer subject = player.get();
 		boolean asFake = fake && card.get().hasFake();
 		FireResult result;
 		try {

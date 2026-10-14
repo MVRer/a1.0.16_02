@@ -1,5 +1,7 @@
 package com.forzacode.a1016_02.core;
 
+import java.util.UUID;
+
 import net.fabricmc.fabric.api.event.Event;
 import net.fabricmc.fabric.api.event.EventFactory;
 
@@ -51,6 +53,29 @@ public final class HerobrineEvents {
 					listener.onCardFired(player, cardId, fake);
 				}
 			});
+
+	/**
+	 * Fired by core once per change of a player's participation (D-058): {@code true} when they start (they joined
+	 * as a non-spectator, or left spectator mode), {@code false} when they stop (they disconnected while a
+	 * participant, or became a spectator). Never twice in a row with the same value for one player; nothing for a
+	 * spectator who joins and leaves; nothing on server stop; nothing for a death or an ordinary respawn (a hardcore
+	 * respawn as a spectator is a stop). Starts fire at the end of the tick, from core's tick; a disconnect fires
+	 * from Fabric's DISCONNECT, while the player is still listed. Core's own bookkeeping is done first: on {@code true}
+	 * the player is a known player ({@link HerobrineState#player}) and fully online, so
+	 * {@link PlayerWatch#participant(MinecraftServer, UUID)} finds them; on {@code false} their play clock has
+	 * stopped. Use it for sessions instead of Fabric's JOIN and DISCONNECT.
+	 */
+	public static final Event<Participation> PARTICIPATION = EventFactory.createArrayBacked(Participation.class,
+			listeners -> (server, player, participating) -> {
+				for (Participation listener : listeners) {
+					listener.onParticipation(server, player, participating);
+				}
+			});
+
+	@FunctionalInterface
+	public interface Participation {
+		void onParticipation(MinecraftServer server, UUID player, boolean participating);
+	}
 
 	@FunctionalInterface
 	public interface StageChanged {
