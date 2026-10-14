@@ -5,6 +5,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.UUID;
 import java.util.regex.Pattern;
 
 import com.forzacode.a1016_02.A1016_02;
@@ -25,7 +26,10 @@ import io.netty.buffer.Unpooled;
 
 import net.fabricmc.fabric.api.gametest.v1.GameTest;
 
+import net.minecraft.commands.CommandSource;
+import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.gametest.framework.GameTestHelper;
+import net.minecraft.network.chat.Component;
 import net.minecraft.server.MinecraftServer;
 
 /**
@@ -131,10 +135,10 @@ public class DebugGameTests {
 
 	@GameTest
 	public void overlayTextIgnoresTheSystemLocale(GameTestHelper helper) {
-		DirectorApi.Snapshot snapshot = new DirectorApi.Snapshot(Stage.PROXIMITY, 12.5, 34.5, 60, Tempo.EARLY, 0.6, 2 * 72_000 + 14 * 1_200,
-				3 * 24_000 + 100, 72_000, true, 5 * 24_000, 0.15, "quiet until day 5",
+		DirectorApi.Snapshot snapshot = new DirectorApi.Snapshot("Ana", true, 2, Stage.PROXIMITY, 12.5, 34.5, 60, Tempo.EARLY, 0.6,
+				2 * 72_000 + 14 * 1_200, 5 * 72_000 + 30 * 1_200, 3 * 24_000 + 100, 72_000, true, 5 * 24_000, 0.15, "quiet until day 5",
 				List.of(new DirectorApi.Held(Tier.MINOR, "chest_opens", 4 * 1_200, "minor gap")),
-				new DirectorMemory.HistoryEntry(72_000, 3, "sighting_close", Tier.MAJOR, true, false, Stage.PROXIMITY), 23 * 1_200,
+				new DirectorMemory.HistoryEntry(72_000, 3, "sighting_close", Tier.MAJOR, true, false, Stage.PROXIMITY, true), 23 * 1_200,
 				new DirectorApi.Next("minor gap", 11 * 1_200, -1), new DirectorApi.Next("major gap", 47 * 1_200, 80 * 1_200), 45 * 1_200, false);
 		Locale before = Locale.getDefault();
 		List<String> rows;
@@ -147,8 +151,9 @@ public class DebugGameTests {
 		String text = String.join("\n", rows);
 		helper.assertTrue(rows.stream().allMatch(row -> row.indexOf(OverlayPayload.SEPARATOR) > 0), "a row without a label: " + rows);
 		helper.assertFalse(LOCALIZED_DECIMAL.matcher(text).find(), "a localized decimal in the overlay: " + text);
-		for (String expected : List.of("PROXIMITY", "x0.60", "12.5", "34.5/60", "+15%", "until day 5", "chest_opens", "sighting_close (fake)",
-				"23m00s ago", "in 11m00s (minor gap)", "due in 1h20m", "dark_corner", "ridge rising", "play 2h14m", "day 3")) {
+		for (String expected : List.of("Ana", "2 taking part", "PROXIMITY", "x0.60", "12.5 (shared)", "your tension 34.5/60", "+15%", "until day 5",
+				"chest_opens", "sighting_close (fake)", "felt, someone else's", "23m00s ago", "in 11m00s (minor gap)", "due in 1h20m", "dark_corner",
+				"ridge rising", "play 2h14m (world 5h30m)", "day 3")) {
 			helper.assertTrue(text.contains(expected), "the overlay is missing '" + expected + "':\n" + text);
 		}
 		helper.succeed();
@@ -174,14 +179,71 @@ public class DebugGameTests {
 		MinecraftServer server = helper.getLevel().getServer();
 		String memoryBefore = DirectorData.get(server).memory().toTag().toString();
 		HerobrineState state = HerobrineState.get(server);
-		double tensionBefore = state.tension();
-		DirectorApi.Snapshot snapshot = DirectorApi.snapshot(server);
-		OverlayPayload payload = DebugOverlay.build(server);
+		// A viewer the director has never paced (nobody takes part on the test server): nothing is created for them.
+		UUID viewer = UUID.randomUUID();
+		DirectorApi.Snapshot snapshot = DirectorApi.snapshot(server, viewer);
+		OverlayPayload payload = DebugOverlay.build(server, viewer);
 		helper.assertTrue(snapshot.stage() == state.stage(), "snapshot stage " + snapshot.stage() + ", state " + state.stage());
+		helper.assertTrue(!snapshot.participating() && snapshot.tension() == 0 && snapshot.sessionTicks() == -1, "a stranger's pacing: " + snapshot);
 		helper.assertTrue(payload.on() && payload.rows().size() >= 10, "overlay rows " + payload.rows());
 		helper.assertTrue(payload.rows().stream().noneMatch(row -> row.startsWith("error")), "overlay error " + payload.rows());
+		helper.assertTrue(DirectorData.get(server).memory().find(viewer).isEmpty(), "the snapshot made a pacing for its viewer");
 		helper.assertTrue(DirectorData.get(server).memory().toTag().toString().equals(memoryBefore), "the snapshot changed the director's memory");
-		helper.assertTrue(state.tension() == tensionBefore, "the snapshot changed tension");
+		helper.assertTrue(state.tension(viewer) == 0, "the snapshot changed tension");
+		helper.succeed();
+	}
+
+	/**
+	 * D-062.9 from the console with nobody taking part (the game test server): the read-only commands show the world
+	 * part, the ones that act on a player say nobody takes part instead of failing, and every form with a player
+	 * argument parses. Nothing here changes the world or the director (no timewarp, no fire lands).
+	 */
+	@GameTest
+	public void consoleCommandsActOnTheFirstParticipantOrSaySoWhenNobodyTakesPart(GameTestHelper helper) {
+		MinecraftServer server = helper.getLevel().getServer();
+		List<String> said = new ArrayList<>();
+		CommandSourceStack console = server.createCommandSourceStack().withSource(new CommandSource() {
+			@Override
+			public void sendSystemMessage(Component message) {
+				said.add(message.getString());
+			}
+
+			@Override
+			public boolean acceptsSuccess() {
+				return true;
+			}
+
+			@Override
+			public boolean acceptsFailure() {
+				return true;
+			}
+
+			@Override
+			public boolean shouldInformAdmins() {
+				return false;
+			}
+		});
+		String memoryBefore = DirectorData.get(server).memory().toTag().toString();
+		for (String command : List.of("a1016 state", "a1016 director", "a1016 fire debug_ping", "a1016 fire debug_ping fake", "a1016 director tick",
+				"a1016 director quiet clear")) {
+			said.clear();
+			server.getCommands().performPrefixedCommand(console, command);
+			String text = String.join("\n", said);
+			helper.assertTrue(!said.isEmpty() && !text.contains("unexpected error"), "'" + command + "' said:\n" + text);
+			if (command.contains("fire") || command.contains("tick")) {
+				helper.assertTrue(text.contains("nobody takes part right now"), "'" + command + "' did not say nobody takes part:\n" + text);
+			}
+			if (command.equals("a1016 state") || command.equals("a1016 director")) {
+				helper.assertTrue(text.contains("director: world stage clock"), "'" + command + "' lacks the world part:\n" + text);
+			}
+		}
+		helper.assertTrue(DirectorData.get(server).memory().toTag().toString().equals(memoryBefore), "a console command changed the director's memory");
+		for (String command : List.of("a1016 fire debug_ping Ana", "a1016 fire debug_ping fake Ana", "a1016 director Ana", "a1016 director tick Ana",
+				"a1016 director quiet clear Ana", "a1016 director sim 3 Ana", "a1016 director sim 3 synthetic telling 1.5 Ana", "a1016 director timewarp 2 Ana")) {
+			var parse = server.getCommands().getDispatcher().parse(command, console);
+			helper.assertTrue(parse.getExceptions().isEmpty() && !parse.getReader().canRead() && parse.getContext().getCommand() != null,
+					"'" + command + "' does not parse: " + parse.getExceptions());
+		}
 		helper.succeed();
 	}
 

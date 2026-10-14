@@ -1,8 +1,11 @@
 package com.forzacode.a1016_02.director;
 
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.EnumSet;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.function.Function;
 import java.util.function.Predicate;
@@ -21,7 +24,10 @@ import com.forzacode.a1016_02.debug.DebugPingCard;
 
 import net.minecraft.util.RandomSource;
 
-/** Fixtures for {@link DirectorGameTests}: fixed-seed 20 h playthroughs over the synthetic deck, and a scripted env. */
+/**
+ * Fixtures for {@link DirectorGameTests}: fixed-seed 20 h playthroughs over the synthetic deck, group runs over the
+ * registered deck, the 4b hard limits replayed per player, and scripted envs for one player or several.
+ */
 class DirectorTestSupport {
 	static final long[] SEEDS = {1L, 7L, 42L, 1016L, 0xA1016L, 99_991L};
 	static final double HOURS = 20;
@@ -77,6 +83,157 @@ class DirectorTestSupport {
 		return out;
 	}
 
+	/**
+	 * The scripted playthrough's dry runs for several players on the code defaults ({@link #registryRuns}'s deck,
+	 * profiles and attention), one group run per seed, 20 h of world play each.
+	 */
+	static List<DirectorSim.Group> groupRuns(Tempo tempo, List<DirectorSim.Seat> seats, DirectorSim.Sharing sharing, List<Long> seeds) {
+		List<CardInfo> deck = DirectorApi.registeredCards().stream().filter(card -> !DebugPingCard.ID.equals(card.id())).toList();
+		List<DirectorSim.Group> out = new ArrayList<>();
+		for (long seed : seeds) {
+			DirectorConfig config = new DirectorConfig();
+			DirectorRules rules = DirectorRules.from(new Pacing(), config, com.forzacode.a1016_02.debug.Playthrough.profile(seed, tempo));
+			DirectorSim.Params params = DirectorSim.Params.from(config, rules);
+			params.hours = HOURS;
+			params.seed = seed;
+			params.attention = config.attentionNeutral;
+			out.add(DirectorSim.runGroup(rules, deck, Math.max(config.historySize, 1), seats, sharing, params));
+		}
+		return out;
+	}
+
+	/** Every player's result of these group runs, in run order. */
+	static List<DirectorSim.Result> seats(List<DirectorSim.Group> groups) {
+		List<DirectorSim.Result> out = new ArrayList<>();
+		groups.forEach(group -> out.addAll(group.players));
+		return out;
+	}
+
+	/**
+	 * DESIGN.md 4b's "never" rules replayed on what one player went through (their own fires and what they felt from
+	 * others, on their own clock), independently of {@link DirectorSim#check}: nothing in the first minutes after
+	 * joining, at least the minor gap between minors, no two majors (or signatures) within a real hour, no major in
+	 * their own first in-game day, at most the Alone ambient cap and nothing else in Alone, no accident card before
+	 * their own first-accident time. One line per breach.
+	 */
+	static List<String> feltHardLimits(DirectorSim.Result r, Collection<CardInfo> cards) {
+		DirectorRules rules = r.rules;
+		Map<String, CardInfo> byId = new HashMap<>();
+		cards.forEach(card -> byId.put(card.id(), card));
+		long firstDayEnd = r.startPacing.firstDayTicks() + rules.noMajorBeforeDay * DirectorBrain.DAY_TICKS;
+		List<String> out = new ArrayList<>();
+		long session = Long.MIN_VALUE;
+		DirectorSim.Event lastMinor = null;
+		DirectorSim.Event lastMajor = null;
+		int alone = 0;
+		for (DirectorSim.Event e : r.events) {
+			if (e.kind() == DirectorSim.Kind.SESSION_START) {
+				session = e.play();
+				continue;
+			}
+			if (!e.felt()) {
+				continue;
+			}
+			String at = e.kind() + " " + e.cardId() + " at " + e.play() + ": ";
+			if (session != Long.MIN_VALUE && e.play() - session < rules.joinGrace) {
+				out.add(at + "in the join grace");
+			}
+			if (e.tier() == Tier.MINOR) {
+				if (lastMinor != null && e.play() - lastMinor.play() < rules.minorGap) {
+					out.add(at + "minors " + (e.play() - lastMinor.play()) + " ticks apart");
+				}
+				lastMinor = e;
+			}
+			if (e.tier() == Tier.MAJOR || e.tier() == Tier.SIGNATURE) {
+				if (lastMajor != null && e.play() - lastMajor.play() < rules.hourTicks) {
+					out.add(at + "two majors " + (e.play() - lastMajor.play()) + " ticks apart");
+				}
+				if (e.dayTicks() < firstDayEnd) {
+					out.add(at + "a major in their first in-game day");
+				}
+				lastMajor = e;
+			}
+			if (e.stage() == Stage.ALONE && (e.tier() != Tier.AMBIENT || ++alone > rules.aloneMaxAmbient)) {
+				out.add(at + "too much in Alone");
+			}
+			CardInfo card = byId.get(e.cardId());
+			if (card != null && card.has(CardTag.ACCIDENT) && e.play() < rules.firstAccident) {
+				out.add(at + "an accident before " + rules.firstAccident);
+			}
+		}
+		return out;
+	}
+
+	/** The registered deck the scripted playthrough plays (without the debug ping card). */
+	static List<CardInfo> registryDeck() {
+		return DirectorApi.registeredCards().stream().filter(card -> !DebugPingCard.ID.equals(card.id())).toList();
+	}
+
+	/** One shared stage for several {@link PlayerEnv}s, counting its changes. */
+	static final class SharedStage {
+		Stage stage;
+		final List<Stage> changes = new ArrayList<>();
+
+		SharedStage(Stage stage) {
+			this.stage = stage;
+		}
+	}
+
+	/** One player's hand-driven env over a {@link SharedStage}: their own tension, fits, fires and sharers. */
+	static final class PlayerEnv implements DirectorBrain.Env {
+		final SharedStage world;
+		double tension;
+		Predicate<CardInfo> fits = card -> true;
+		List<DirectorBrain.Sharer> sharers = List.of();
+		final List<String> fired = new ArrayList<>();
+
+		PlayerEnv(SharedStage world) {
+			this.world = world;
+		}
+
+		@Override
+		public Stage stage() {
+			return world.stage;
+		}
+
+		@Override
+		public void setStage(Stage stage) {
+			world.stage = stage;
+			world.changes.add(stage);
+		}
+
+		@Override
+		public double attention() {
+			return 10;
+		}
+
+		@Override
+		public double tension() {
+			return tension;
+		}
+
+		@Override
+		public void addTension(double delta, String reason) {
+			tension = Math.max(0, Math.min(100, tension + delta));
+		}
+
+		@Override
+		public boolean contextFits(CardInfo card) {
+			return fits.test(card);
+		}
+
+		@Override
+		public FireResult fire(CardInfo card, boolean fake) {
+			fired.add(card.id());
+			return FireResult.FIRED;
+		}
+
+		@Override
+		public List<DirectorBrain.Sharer> sharers() {
+			return sharers;
+		}
+	}
+
 	/** Every tempo times every seed, 20 h each, attention at neutral. Computed once. */
 	static synchronized List<Playthrough> playthroughs() {
 		if (cached == null) {
@@ -104,27 +261,56 @@ class DirectorTestSupport {
 		return new CardInfo(id, tier, stage, Set.of(), tags.length == 0 ? Set.of() : EnumSet.copyOf(List.of(tags)), fake);
 	}
 
+	/** One player's memories for scripted runs: the shared world part and their own pacing. */
+	static final class Solo {
+		final WorldMemory world = new WorldMemory();
+		final PacingMemory pacing;
+
+		Solo() {
+			this(new PacingMemory());
+		}
+
+		Solo(PacingMemory pacing) {
+			this.pacing = pacing;
+		}
+
+		/** Both time steps start at this clock (no decay or stage clock from tick 0). */
+		void startAt(DirectorBrain.Clock clock) {
+			world.lastStepPlay = clock.worldTicks();
+			pacing.lastStepPlay = clock.playTicks();
+		}
+
+		String step(DirectorBrain brain, DirectorBrain.Clock clock, DirectorBrain.Env env, RandomSource random, DirectorBrain.Recorder rec) {
+			return brain.step(world, pacing, clock, env, random, rec);
+		}
+	}
+
 	/** Memory for scripted runs: a session already past its join grace and stage points that never come. */
-	static DirectorMemory pinned(DirectorRules rules) {
-		DirectorMemory memory = new DirectorMemory();
-		memory.sessionStart = 0;
-		memory.tracesAt = Long.MAX_VALUE / 4;
-		memory.proximityAt = Long.MAX_VALUE / 4;
-		memory.rolledTempo = rules.profile.tempo().name();
+	static Solo pinned(DirectorRules rules) {
+		Solo memory = new Solo();
+		pin(memory.world, rules);
+		memory.pacing.sessionStart = 0;
 		return memory;
 	}
 
+	/** Stage points that never come, for scripted runs in a fixed stage. */
+	static void pin(WorldMemory world, DirectorRules rules) {
+		world.tracesAt = Long.MAX_VALUE / 4;
+		world.proximityAt = Long.MAX_VALUE / 4;
+		world.rolledTempo = rules.profile.tempo().name();
+	}
+
 	/** Steps the brain {@code ticks} times from hour 1, day 2, in a fixed stage, with tension held at 0 (no quiet). */
-	static ScriptEnv drive(DirectorBrain brain, DirectorMemory memory, Stage stage, int ticks, long seed, DirectorBrain.Recorder rec) {
+	static ScriptEnv drive(DirectorBrain brain, Solo memory, Stage stage, int ticks, long seed, DirectorBrain.Recorder rec) {
 		DirectorRules rules = brain.rules();
 		ScriptEnv env = new ScriptEnv(stage, 0, rules.attentionNeutral);
 		RandomSource random = RandomSource.create(seed);
 		DirectorBrain.Clock clock = new DirectorBrain.Clock(rules.hourTicks, 2 * DirectorBrain.DAY_TICKS);
-		memory.lastStepPlay = clock.playTicks();
+		memory.startAt(clock);
 		for (int i = 0; i < ticks; i++) {
 			clock = clock.plus(rules.tickInterval);
 			env.tension = 0;
-			brain.step(memory, clock, env, random, rec);
+			memory.step(brain, clock, env, random, rec);
 		}
 		return env;
 	}

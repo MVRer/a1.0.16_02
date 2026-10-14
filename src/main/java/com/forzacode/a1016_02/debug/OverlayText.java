@@ -6,7 +6,10 @@ import java.util.List;
 import com.forzacode.a1016_02.director.DirectorApi;
 import com.forzacode.a1016_02.director.DirectorMemory;
 
-/** The overlay's rows from a director snapshot, the armed trap and the sighting phase. Pure text, {@code Locale.ROOT}. */
+/**
+ * The overlay's rows from a director snapshot (the viewing player's own pacing and tension, plus the shared stage and
+ * attention), the armed trap and the sighting phase. Pure text, {@code Locale.ROOT}.
+ */
 final class OverlayText {
 	private static final long DAY_TICKS = 24000L;
 
@@ -20,8 +23,10 @@ final class OverlayText {
 	static List<String> rows(DirectorApi.Snapshot s, String trap, String sighting) {
 		long h = s.hourTicks();
 		List<String> rows = new ArrayList<>();
-		row(rows, "stage", Fmt.f("%s | tempo %s x%.2f", s.stage(), s.tempo(), s.paceFactor()));
-		row(rows, "attention", Fmt.f("%.1f | tension %.1f/%.0f | pity +%.0f%%", s.attention(), s.tension(), s.tensionThreshold(), s.pity() * 100));
+		row(rows, "you", Fmt.f("%s%s | %d taking part", s.player(), s.participating() ? "" : " (not taking part)", s.participants()));
+		row(rows, "stage", Fmt.f("%s | tempo %s x%.2f (shared)", s.stage(), s.tempo(), s.paceFactor()));
+		row(rows, "attention", Fmt.f("%.1f (shared) | your tension %.1f/%.0f | pity +%.0f%%", s.attention(), s.tension(), s.tensionThreshold(),
+				s.pity() * 100));
 		row(rows, "quiet", !s.inQuiet() ? "no"
 				: Fmt.f("until day %d (%.2f d left)", Math.floorDiv(s.quietUntilDayTicks(), DAY_TICKS),
 						(s.quietUntilDayTicks() - s.dayTicks()) / (double) DAY_TICKS));
@@ -34,14 +39,15 @@ final class OverlayText {
 		}
 		DirectorMemory.HistoryEntry last = s.lastFire();
 		row(rows, "last", last == null ? "-"
-				: Fmt.f("%s %s%s%s, %s ago", Fmt.lower(last.tier()), last.cardId(), last.fake() ? " (fake)" : " (real)", last.forced() ? " forced" : "",
-						Fmt.dur(s.lastFireAgo(), h)));
+				: Fmt.f("%s %s%s%s%s, %s ago", Fmt.lower(last.tier()), last.cardId(), last.fake() ? " (fake)" : " (real)", last.forced() ? " forced" : "",
+						last.felt() ? " felt, someone else's" : "", Fmt.dur(s.lastFireAgo(), h)));
 		row(rows, "next minor", next(s.minor(), h));
 		row(rows, "next major", next(s.major(), h) + (s.major().dueInTicks() < 0 ? "" : " | due in " + Fmt.dur(s.major().dueInTicks(), h)));
 		row(rows, "trap", trap);
 		row(rows, "sighting", sighting);
-		row(rows, "clock", Fmt.f("play %s | day %d | %s", Fmt.hm(s.playTicks(), h), Math.floorDiv(s.dayTicks(), DAY_TICKS),
-				s.sessionTicks() < 0 ? "no session" : "session " + Fmt.dur(s.sessionTicks(), h) + (s.sessionEmpty() ? " (empty)" : "")));
+		row(rows, "clock", Fmt.f("play %s (world %s) | day %d | %s", Fmt.hm(s.playTicks(), h), Fmt.hm(s.worldPlayTicks(), h),
+				Math.floorDiv(s.dayTicks(), DAY_TICKS), s.sessionTicks() < 0 ? "no session" : "session " + Fmt.dur(s.sessionTicks(), h)
+						+ (s.sessionEmpty() ? " (empty)" : "")));
 		return rows;
 	}
 

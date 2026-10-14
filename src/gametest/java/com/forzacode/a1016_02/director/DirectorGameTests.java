@@ -18,6 +18,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.UUID;
 
 import com.forzacode.a1016_02.A1016_02;
 import com.forzacode.a1016_02.core.CardTag;
@@ -34,6 +35,7 @@ import com.forzacode.a1016_02.director.DirectorSim.Event;
 import com.forzacode.a1016_02.director.DirectorSim.Kind;
 import com.forzacode.a1016_02.director.DirectorTestSupport.Playthrough;
 import com.forzacode.a1016_02.director.DirectorTestSupport.ScriptEnv;
+import com.forzacode.a1016_02.director.DirectorTestSupport.Solo;
 
 import net.fabricmc.fabric.api.gametest.v1.GameTest;
 
@@ -55,9 +57,9 @@ import net.minecraft.world.level.block.entity.JukeboxBlockEntity;
  * synthetic deck) through the same {@link DirectorBrain} the live director runs, and check every limit
  * independently of {@link DirectorSim#check}. The soft-rate floors pool the scripted playthrough (registered deck)
  * over {@link DirectorApi#tuningSeeds()}. Only {@code liveRulesReadTheFlags} touches the shared world state, and
- * puts it back.
+ * puts it back. The two-player tests are in {@link DirectorMultiplayerTests}.
  */
-public class DirectorGameTests {
+public class DirectorGameTests extends DirectorMultiplayerTests {
 	@GameTest
 	public void directorIsInstalled(GameTestHelper helper) {
 		helper.assertTrue(Services.director() instanceof DirectorImpl, "the real director is not installed: " + Services.director());
@@ -66,7 +68,7 @@ public class DirectorGameTests {
 
 	@GameTest
 	public void jukeboxMixinApplies(GameTestHelper helper) {
-		// No subject in the test world, so nothing counts; this proves the hooks are woven in and harmless.
+		// Nobody takes part in the test world, so nothing counts; this proves the hooks are woven in and harmless.
 		BlockPos rel = new BlockPos(1, 1, 1);
 		helper.setBlock(rel, Blocks.JUKEBOX);
 		ServerLevel level = helper.getLevel();
@@ -122,33 +124,34 @@ public class DirectorGameTests {
 		DirectorRules rules = rules(Tempo.SLOW_BURN, Signature.CROSS_ROW);
 		DirectorBrain brain = new DirectorBrain(rules, SyntheticDeck.cards(), 100);
 		ScriptEnv env = new ScriptEnv(Stage.PROXIMITY, 0, rules.attentionNeutral);
-		DirectorMemory memory = new DirectorMemory();
+		Solo memory = new Solo();
 		RandomSource random = RandomSource.create(5);
 		DirectorBrain.Clock clock = new DirectorBrain.Clock(0, 0);
 		for (int i = 0; i < 2000; i++) {
 			clock = clock.plus(rules.tickInterval);
-			brain.step(memory, clock, env, random, DirectorBrain.Recorder.NONE);
+			memory.step(brain, clock, env, random, DirectorBrain.Recorder.NONE);
 		}
 		helper.assertTrue(env.stage == Stage.PROXIMITY, "no timed fallback into Telling (D-006), got " + env.stage);
 
 		// D-041: writing near his traces counts as telling but never moves the stage, in any stage before Telling.
+		WorldMemory world = memory.world;
 		DirectorBrain.Clock day5 = new DirectorBrain.Clock(clock.playTicks(), 5 * DirectorBrain.DAY_TICKS + 100);
 		for (Stage before : List.of(Stage.ALONE, Stage.TRACES, Stage.PROXIMITY)) {
 			env.stage = before;
-			memory.lastTellingDay = -1;
-			memory.obeyCounted = true;
-			helper.assertFalse(brain.onTelling(memory, day5, env, false, DirectorBrain.Recorder.NONE), "writing near his traces started Telling in " + before);
+			world.lastTellingDay = -1;
+			world.obeyCounted = true;
+			helper.assertFalse(brain.onTelling(world, day5, env, false, DirectorBrain.Recorder.NONE), "writing near his traces started Telling in " + before);
 			helper.assertTrue(env.stage == before, "writing near his traces moved " + before + " to " + env.stage);
-			helper.assertTrue(memory.lastTellingDay == 5 && !memory.obeyCounted, "writing near his traces did not count as telling");
+			helper.assertTrue(world.lastTellingDay == 5 && !world.obeyCounted, "writing near his traces did not count as telling");
 		}
 		// Only naming him starts Stage 3.
-		memory.lastTellingDay = -1;
-		helper.assertTrue(brain.onTelling(memory, day5, env, true, DirectorBrain.Recorder.NONE) && env.stage == Stage.TELLING,
+		world.lastTellingDay = -1;
+		helper.assertTrue(brain.onTelling(world, day5, env, true, DirectorBrain.Recorder.NONE) && env.stage == Stage.TELLING,
 				"naming him did not start Telling, got " + env.stage);
-		helper.assertTrue(memory.lastTellingDay == 5, "naming him did not count as telling");
-		helper.assertFalse(brain.onTelling(memory, day5, env, true, DirectorBrain.Recorder.NONE), "Telling started twice");
+		helper.assertTrue(world.lastTellingDay == 5, "naming him did not count as telling");
+		helper.assertFalse(brain.onTelling(world, day5, env, true, DirectorBrain.Recorder.NONE), "Telling started twice");
 		env.stage = Stage.REMOVAL;
-		helper.assertFalse(brain.onTelling(memory, day5, env, true, DirectorBrain.Recorder.NONE) || env.stage != Stage.REMOVAL, "Telling replaced Removal");
+		helper.assertFalse(brain.onTelling(world, day5, env, true, DirectorBrain.Recorder.NONE) || env.stage != Stage.REMOVAL, "Telling replaced Removal");
 		helper.succeed();
 	}
 
@@ -156,7 +159,7 @@ public class DirectorGameTests {
 	@GameTest
 	public void obeyedAfterStopSetsItsFlagUntilTheNextTelling(GameTestHelper helper) {
 		HerobrineState state = new HerobrineState();
-		DirectorMemory memory = new DirectorMemory();
+		WorldMemory memory = new WorldMemory();
 		helper.assertFalse(DirectorTriggers.obeyRule(state, memory, 10, 3) || state.hasFlag(DirectorFlags.OBEYED_AFTER_STOP), "fired without Stop.");
 		state.setStopFired(true);
 		helper.assertFalse(DirectorTriggers.obeyRule(state, memory, 10, 3) || DirectorTriggers.obeyRule(state, memory, 12, 3), "fired too early");
@@ -256,13 +259,13 @@ public class DirectorGameTests {
 				card("c", Tier.AMBIENT, Stage.ALONE, false), card("d", Tier.AMBIENT, Stage.ALONE, false));
 		DirectorBrain brain = new DirectorBrain(rules, deck, 100);
 		ScriptEnv env = new ScriptEnv(Stage.PROXIMITY, 0, rules.attentionNeutral);
-		DirectorMemory memory = new DirectorMemory();
+		Solo memory = new Solo();
 		RandomSource random = RandomSource.create(77);
 		DirectorBrain.Clock clock = new DirectorBrain.Clock(0, 0);
 		while (env.fired.size() < 40 && clock.playTicks() < 100 * rules.hourTicks) {
 			clock = clock.plus(rules.tickInterval);
 			env.tension = 0; // no quiet in this check
-			brain.step(memory, clock, env, random, DirectorBrain.Recorder.NONE);
+			memory.step(brain, clock, env, random, DirectorBrain.Recorder.NONE);
 		}
 		helper.assertTrue(env.fired.size() == 40, "only " + env.fired.size() + " fires");
 		for (int i = 0; i + 4 <= env.fired.size(); i += 4) {
@@ -325,7 +328,7 @@ public class DirectorGameTests {
 		rules.firstAccident = 3 * rules.hourTicks; // two hours into the run
 		rules.deckStall = Long.MAX_VALUE / 4;
 		DeckWatch watch = new DeckWatch("a", "b", "c", "s", "x");
-		DirectorMemory memory = DirectorTestSupport.pinned(rules);
+		Solo memory = DirectorTestSupport.pinned(rules);
 		ScriptEnv env = DirectorTestSupport.drive(new DirectorBrain(rules, deck, 100), memory, Stage.PROXIMITY, 6 * ticksPerHour, 21, watch);
 		helper.assertTrue(watch.violations.isEmpty(), "gated: " + watch.violations);
 		int xAt = env.fired.indexOf("x");
@@ -379,30 +382,31 @@ public class DirectorGameTests {
 	public void quietFromTensionRaisedElsewhere(GameTestHelper helper) {
 		DirectorRules rules = rules(Tempo.SLOW_BURN, Signature.CROSS_ROW);
 		DirectorBrain brain = new DirectorBrain(rules, List.of(), 10); // nothing can fire: only outside tension counts
-		DirectorMemory memory = DirectorTestSupport.pinned(rules);
+		Solo memory = DirectorTestSupport.pinned(rules);
+		PacingMemory pacing = memory.pacing;
 		ScriptEnv env = new ScriptEnv(Stage.PROXIMITY, rules.tensionThreshold - 10, rules.attentionNeutral);
 		RandomSource random = RandomSource.create(8);
 		DirectorBrain.Clock clock = new DirectorBrain.Clock(rules.hourTicks, 2 * DirectorBrain.DAY_TICKS);
-		memory.lastStepPlay = clock.playTicks();
+		memory.startAt(clock);
 		clock = clock.plus(rules.tickInterval);
-		brain.step(memory, clock, env, random, DirectorBrain.Recorder.NONE);
-		helper.assertFalse(brain.inQuiet(memory, clock), "a quiet started below the threshold");
+		memory.step(brain, clock, env, random, DirectorBrain.Recorder.NONE);
+		helper.assertFalse(brain.inQuiet(pacing, clock), "a quiet started below the threshold");
 
 		// Another system raises tension between two director ticks (Attention.raiseTension).
 		env.addTension(20, "elsewhere");
 		clock = clock.plus(rules.tickInterval);
-		brain.step(memory, clock, env, random, DirectorBrain.Recorder.NONE);
-		helper.assertTrue(brain.inQuiet(memory, clock) && memory.quietCount == 1, "tension raised elsewhere did not start a quiet");
+		memory.step(brain, clock, env, random, DirectorBrain.Recorder.NONE);
+		helper.assertTrue(brain.inQuiet(pacing, clock) && pacing.quietCount == 1, "tension raised elsewhere did not start a quiet");
 		helper.assertTrue(env.fireCalls == 0 && env.tension <= rules.tensionAfterQuiet + 1e-9, "fires " + env.fireCalls + ", tension " + env.tension);
-		long days = (memory.quietUntilDayTicks - clock.dayTicks()) / DirectorBrain.DAY_TICKS;
+		long days = (pacing.quietUntilDayTicks - clock.dayTicks()) / DirectorBrain.DAY_TICKS;
 		helper.assertTrue(days >= rules.quietMinDays && days <= rules.quietMaxDays, "quiet of " + days + " days");
 
 		// A running quiet is never restarted or stretched.
-		long until = memory.quietUntilDayTicks;
+		long until = pacing.quietUntilDayTicks;
 		env.addTension(100, "elsewhere");
 		clock = clock.plus(rules.tickInterval);
-		brain.step(memory, clock, env, random, DirectorBrain.Recorder.NONE);
-		helper.assertTrue(memory.quietUntilDayTicks == until && memory.quietCount == 1, "the quiet restarted while running");
+		memory.step(brain, clock, env, random, DirectorBrain.Recorder.NONE);
+		helper.assertTrue(pacing.quietUntilDayTicks == until && pacing.quietCount == 1, "the quiet restarted while running");
 		helper.succeed();
 	}
 
@@ -454,13 +458,14 @@ public class DirectorGameTests {
 		DirectorRules rules = rules(Tempo.EARLY, Signature.CROSS_ROW);
 		rules.proximityAmbientPerHour = 60;
 		rules.emptySessionChance = 0;
-		DirectorMemory memory = new DirectorMemory();
+		PacingMemory memory = new PacingMemory();
 		memory.nextMajorDue = 0;
 		DirectorSim.Params params = DirectorTestSupport.params(rules, 3, rules.attentionNeutral, 3);
 		params.fitChance = 1;
 		params.noSpotChance = 0;
 		params.sessionMin = params.sessionMax = 12 * 60 * 20 * rules.hourTicks / 72000;
-		DirectorSim.Result result = DirectorSim.run(rules, SyntheticDeck.cards(), 100, memory, Stage.PROXIMITY, 0, new DirectorBrain.Clock(0, 0), params);
+		DirectorSim.Result result = DirectorSim.run(rules, SyntheticDeck.cards(), 100, new WorldMemory(), memory, Stage.PROXIMITY, 0,
+				new DirectorBrain.Clock(0, 0), params);
 		long session = -1;
 		boolean firedOnDayZero = false;
 		long firstMajor = -1;
@@ -513,13 +518,14 @@ public class DirectorGameTests {
 		// Direct: below the threshold nothing happens; crossing it starts a quiet and spends the tension.
 		DirectorRules rules = rules(Tempo.SLOW_BURN, Signature.CROSS_ROW);
 		DirectorBrain brain = new DirectorBrain(rules, List.of(card("m", Tier.MAJOR, Stage.ALONE, false)), 10);
-		DirectorMemory memory = new DirectorMemory();
+		Solo solo = new Solo();
+		PacingMemory memory = solo.pacing;
 		memory.nextMajorDue = 0;
 		memory.sessionStart = 0;
 		ScriptEnv env = new ScriptEnv(Stage.PROXIMITY, rules.tensionThreshold - rules.tensionFor(Tier.MAJOR) - 1, rules.attentionNeutral);
 		DirectorBrain.Clock clock = new DirectorBrain.Clock(rules.hourTicks, 2 * DirectorBrain.DAY_TICKS);
-		memory.lastStepPlay = clock.playTicks();
-		brain.step(memory, clock, env, RandomSource.create(1), DirectorBrain.Recorder.NONE);
+		solo.startAt(clock);
+		solo.step(brain, clock, env, RandomSource.create(1), DirectorBrain.Recorder.NONE);
 		helper.assertTrue(env.fired.size() == 1 && !brain.inQuiet(memory, clock), "a fire below the threshold started a quiet");
 		env.tension = rules.tensionThreshold - rules.tensionFor(Tier.MAJOR) + 0.5; // a little decays before the fire
 		memory.cycleFired.get(Tier.MAJOR).clear();
@@ -528,7 +534,7 @@ public class DirectorGameTests {
 		memory.lastMajorOrSignature = DirectorMemory.NEVER;
 		memory.lastFireAny = DirectorMemory.NEVER;
 		clock = clock.plus(rules.tickInterval);
-		brain.step(memory, clock, env, RandomSource.create(2), DirectorBrain.Recorder.NONE);
+		solo.step(brain, clock, env, RandomSource.create(2), DirectorBrain.Recorder.NONE);
 		helper.assertTrue(env.fired.size() == 2 && brain.inQuiet(memory, clock), "reaching the threshold did not start a quiet");
 		helper.assertTrue(env.tension <= rules.tensionAfterQuiet + 1e-9, "tension stayed at " + env.tension + " after the quiet started");
 		helper.succeed();
@@ -629,7 +635,8 @@ public class DirectorGameTests {
 		env.fits = card -> card != never;
 		Map<String, Integer> noSpots = new HashMap<>();
 		env.result = card -> card == spot && noSpots.merge(card.id(), 1, Integer::sum) <= 3 ? FireResult.NO_SPOT : FireResult.FIRED;
-		DirectorMemory memory = new DirectorMemory();
+		Solo solo = new Solo();
+		PacingMemory memory = solo.pacing;
 		RandomSource random = RandomSource.create(11);
 		List<String> drawn = new ArrayList<>();
 		List<long[]> gaveUp = new ArrayList<>();
@@ -649,7 +656,7 @@ public class DirectorGameTests {
 		for (int i = 0; i < 2000 && (gaveUp.isEmpty() || !env.fired.contains("needs_spot")); i++) {
 			clock = clock.plus(rules.tickInterval);
 			env.tension = 0;
-			brain.step(memory, clock, env, random, rec);
+			solo.step(brain, clock, env, random, rec);
 			if ("never_fits".equals(memory.held(Tier.AMBIENT)) && heldNeverAt < 0) {
 				heldNeverAt = memory.heldSince.get(Tier.AMBIENT);
 			}
@@ -687,7 +694,7 @@ public class DirectorGameTests {
 	}
 
 	/**
-	 * The dry run that reaches Telling: every tempo and seed plays 20 h from a fresh world and the subject names him
+	 * The dry run that reaches Telling: every tempo and seed plays 20 h from a fresh world and someone names him
 	 * at {@code tellingAtHour}. Telling starts on that tick and only then (D-041), the stage never moves on, every
 	 * limit holds in Stage 3 (checked here, independently of {@link DirectorSim#check}, and by it), Stage 3's own
 	 * cards fire, and sightings almost stop: over the same hours, at most a fifth of what the same worlds see when
@@ -805,38 +812,65 @@ public class DirectorGameTests {
 		DirectorRules rules = rules(Tempo.SLOW_BURN, Signature.CROSS_ROW);
 		CardInfo sighting = card("forced_card", Tier.MAJOR, Stage.PROXIMITY, true, CardTag.SIGHTING);
 		DirectorBrain brain = new DirectorBrain(rules, List.of(sighting), 10);
-		DirectorMemory memory = new DirectorMemory();
-		DirectorBrain.Clock clock = new DirectorBrain.Clock(1234, 100);
-		brain.recordForced(memory, clock, sighting, true, Stage.ALONE, DirectorBrain.Recorder.NONE);
+		WorldMemory world = new WorldMemory();
+		PacingMemory memory = new PacingMemory();
+		DirectorBrain.Clock clock = new DirectorBrain.Clock(1234, 100, 5000);
+		// A friend close by (D-060.3), on their own clock: they count it as felt, pacing and tension included.
+		PacingMemory friend = new PacingMemory();
+		ScriptEnv friendEnv = new ScriptEnv(Stage.ALONE, 0, rules.attentionNeutral);
+		DirectorBrain.Sharer close = new DirectorBrain.Sharer(friend, new DirectorBrain.Clock(77, 100, 5000), friendEnv, DirectorBrain.Recorder.NONE);
+		brain.recordForced(world, memory, clock, sighting, true, Stage.ALONE, List.of(close), RandomSource.create(3), DirectorBrain.Recorder.NONE);
 		DirectorMemory.HistoryEntry last = memory.history().getLast();
-		helper.assertTrue(last.cardId().equals("forced_card") && last.forced() && last.fake() && last.playTicks() == 1234, "history: " + memory.history());
-		helper.assertTrue(memory.lastTagFire(CardTag.SIGHTING) == 1234, "tag time not recorded");
+		helper.assertTrue(last.cardId().equals("forced_card") && last.forced() && last.fake() && !last.felt() && last.playTicks() == 1234,
+				"history: " + memory.history());
+		helper.assertTrue(world.lastTagFire(CardTag.SIGHTING) == 5000 && memory.lastTagFire(CardTag.SIGHTING) == 1234
+				&& friend.lastTagFire(CardTag.SIGHTING) == 77, "tag time not recorded on the world clock and each player's own");
 		helper.assertTrue(memory.lastFireAny == DirectorMemory.NEVER && memory.lastMajorOrSignature == DirectorMemory.NEVER, "a forced fire moved the pacing timers");
 		helper.assertTrue(memory.cycleFired(Tier.MAJOR).contains("forced_card"), "a forced fire did not count in its deck");
+
+		DirectorMemory.HistoryEntry felt = friend.history().getLast();
+		helper.assertTrue(felt.cardId().equals("forced_card") && felt.felt() && felt.forced() && felt.playTicks() == 77, "the friend's history: " + friend.history());
+		helper.assertTrue(friend.lastFireAny == 77 && friend.lastMajorOrSignature == 77 && friend.nextMajorDue >= 77 + rules.majorEvery.min(),
+				"the friend's gaps and major slot did not count it");
+		helper.assertTrue(Math.abs(friendEnv.tension - rules.tensionFor(Tier.MAJOR) * rules.fakeTensionFactor) < 1e-9, "the friend's tension " + friendEnv.tension);
+		helper.assertTrue(friend.totalFires == 0 && friend.feltFires == 1 && friend.cycleFired(Tier.MAJOR).contains("forced_card"),
+				"felt is not the friend's own draw, but their deck saw it");
 		helper.succeed();
 	}
 
 	@GameTest
 	public void memoryRoundTripsAndDryRunsChangeNothing(GameTestHelper helper) {
+		// Two players' pacings and the world part go through a save and load unchanged, in first-join order.
 		Playthrough p = playthroughs().getFirst();
-		DirectorMemory played = p.result().memory;
+		UUID first = new UUID(1, 1);
+		UUID second = new UUID(2, 2);
+		DirectorMemory played = new DirectorMemory(p.result().world);
+		played.put(first, p.result().pacing);
+		played.put(second, playthroughs().get(1).result().pacing);
 		DirectorMemory copy = DirectorMemory.fromTag(played.toTag());
 		helper.assertTrue(copy.toTag().equals(played.toTag()), "memory changed through a save and load");
-		helper.assertTrue(copy.history().equals(played.history()) && copy.quietUntilDayTicks() == played.quietUntilDayTicks(), "history or quiet lost");
+		helper.assertTrue(List.copyOf(copy.players().keySet()).equals(List.of(first, second)), "players or their order lost: " + copy.players().keySet());
+		PacingMemory a = copy.find(first).orElseThrow();
+		PacingMemory b = copy.find(second).orElseThrow();
+		helper.assertTrue(a.history().equals(p.result().pacing.history()) && a.quietUntilDayTicks() == p.result().pacing.quietUntilDayTicks()
+				&& b.history().equals(playthroughs().get(1).result().pacing.history()), "history or quiet lost");
+		helper.assertTrue(copy.world().signaturesFired().equals(p.result().world.signaturesFired()), "the world part lost its signatures");
 
 		// A dry run never touches the memory it starts from; advancing time alone never fires anything.
 		DirectorMemory before = played.copy();
+		DirectorSim.Params params = DirectorTestSupport.params(p.rules(), 9, 10, 5);
+		params.player = second;
 		DirectorSim.run(p.rules(), SyntheticDeck.cards(), 100, played, p.result().stage, p.result().tension,
-				new DirectorBrain.Clock(p.result().endPlay, p.result().endPlay), DirectorTestSupport.params(p.rules(), 9, 10, 5));
+				new DirectorBrain.Clock(p.result().endPlay, p.result().endPlay), params);
 		helper.assertTrue(before.toTag().equals(played.toTag()), "a dry run changed the live memory");
 		DirectorBrain brain = new DirectorBrain(p.rules(), SyntheticDeck.cards(), 1000);
 		ScriptEnv env = new ScriptEnv(Stage.ALONE, 50, p.rules().attentionNeutral);
-		DirectorMemory fresh = new DirectorMemory();
+		Solo fresh = new Solo();
 		RandomSource random = RandomSource.create(4);
 		for (long t = 0; t <= 30 * DirectorBrain.DAY_TICKS; t += p.rules().tickInterval) {
-			brain.advanceTime(fresh, new DirectorBrain.Clock(t, t), env, random, DirectorBrain.Recorder.NONE);
+			brain.advanceTime(fresh.world, fresh.pacing, new DirectorBrain.Clock(t, t), env, random, DirectorBrain.Recorder.NONE);
 		}
-		helper.assertTrue(env.fireCalls == 0 && fresh.history().isEmpty(), "advancing time fired a card");
+		helper.assertTrue(env.fireCalls == 0 && fresh.pacing.history().isEmpty(), "advancing time fired a card");
 		helper.assertTrue(env.stage == Stage.PROXIMITY && env.tension < 50, "time alone did not move the stage or decay tension: " + env.stage + " " + env.tension);
 		helper.succeed();
 	}
@@ -976,7 +1010,7 @@ public class DirectorGameTests {
 		// The silence is one more gate: the brain says so, and clearing the flag opens it again.
 		DirectorRules rules = DirectorFlags.apply(rules(Tempo.SLOW_BURN, Signature.CROSS_ROW), DirectorFlags.parse(Set.of("director:silence_forever")));
 		DirectorBrain brain = new DirectorBrain(rules, SyntheticDeck.cards(), 10);
-		DirectorMemory memory = DirectorTestSupport.pinned(rules);
+		PacingMemory memory = DirectorTestSupport.pinned(rules).pacing;
 		DirectorBrain.Clock day9 = new DirectorBrain.Clock(5 * rules.hourTicks, 9 * DirectorBrain.DAY_TICKS);
 		helper.assertTrue("silenced for good".equals(brain.globalBlock(memory, day9)), "gate: " + brain.globalBlock(memory, day9));
 		DirectorBrain cleared = new DirectorBrain(rules(Tempo.SLOW_BURN, Signature.CROSS_ROW), SyntheticDeck.cards(), 10);
@@ -1032,7 +1066,7 @@ public class DirectorGameTests {
 			state.setFlag(pace, true);
 			DirectorRules live = director.rules(server);
 			helper.assertTrue(live.silenceUntilDay == 999_999 && live.paceMultiplier == 2, "live rules ignored the flags");
-			String blocked = DirectorApi.snapshot(server).blocked();
+			String blocked = DirectorApi.snapshot(server, UUID.randomUUID()).blocked();
 			helper.assertTrue(blocked != null && blocked.startsWith("silenced"), "snapshot: " + blocked);
 			String lines = String.join("\n", director.debugLines(server));
 			helper.assertTrue(lines.contains("silence until day 999999, pace x2.00"), "debug lines:\n" + lines);
