@@ -5,6 +5,7 @@ import java.util.HashSet;
 import java.util.Set;
 import java.util.EnumSet;
 import java.util.List;
+import java.util.UUID;
 
 import com.forzacode.a1016_02.accident.AccidentConfig;
 import com.forzacode.a1016_02.accident.AccidentData;
@@ -32,10 +33,13 @@ import org.jspecify.annotations.Nullable;
 
 /**
  * The lure, disc 13 in the white eyes room: the track runs about three minutes in a dark room, the torches go out
- * one by one, each out of view, and the dark does the rest. A live, stepwise trap. The clue: every torch is gone and
- * none dropped.
+ * one by one, each out of view, and the dark does the rest. A live, stepwise trap, for whoever is in the room. The
+ * clue: every torch is gone and none dropped.
  */
 public final class WhiteEyesLureTrap extends BaseTrap {
+	/** Whose progress it is when a context has no player (tests). */
+	private static final UUID NOBODY = new UUID(0L, 0L);
+
 	public WhiteEyesLureTrap() {
 		super("lure_white_eyes", true, "dark", EnumSet.of(Habit.WATCHER));
 	}
@@ -97,13 +101,14 @@ public final class WhiteEyesLureTrap extends BaseTrap {
 		return torches;
 	}
 
+	/** Whoever is in the room while the disc plays, not only the player it was set for. */
 	@Override
 	public @Nullable ArmedTrap tick(TrapContext ctx, ArmedTrap armed) {
-		ServerPlayer player = ctx.player();
 		ServerLevel level = ctx.level();
-		AccidentData.LureWatch watch = ctx.data().lure;
+		AccidentData.RoomWatch watch = ctx.data().room(ctx.target() == null ? NOBODY : ctx.target());
 		int radius = ctx.cfg().whiteEyesRoomRadius;
-		if (player == null || player.level() != level || !armed.zone(0).contains(player.position()) || !disc13Playing(level, armed.pos(), radius)) {
+		ServerPlayer player = here(ctx).stream().filter(p -> armed.zone(0).contains(p.position())).findFirst().orElse(null);
+		if (player == null || !disc13Playing(level, armed.pos(), radius)) {
 			watch.playStart = -1;
 			return armed;
 		}

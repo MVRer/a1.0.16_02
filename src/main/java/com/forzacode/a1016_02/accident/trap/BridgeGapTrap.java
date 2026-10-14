@@ -25,8 +25,8 @@ import net.minecraft.world.phys.AABB;
 /**
  * D-034, his part out of the overworld: one block of your own bridge goes missing, out of view, ahead on your route.
  * {@code void_bridge}: over the End's void. {@code lava_bridge}: over a Nether lava lake. You misstepped in the dark.
- * The clue: a perfect 1x1 gap, the blocks either side untouched, nothing broken off. A death counts only after you
- * dropped through that gap.
+ * The clue: a perfect 1x1 gap, the blocks either side untouched, nothing broken off. A death counts only after the
+ * one who died dropped through that gap. It is set on the route of whichever player is out there, in their own level.
  */
 public final class BridgeGapTrap extends BaseTrap {
 	private final Bridges.Below below;
@@ -90,11 +90,14 @@ public final class BridgeGapTrap extends BaseTrap {
 		return found;
 	}
 
-	/** Every tick while set: notes when the subject drops through the gap (from the deck down to three blocks under it). */
+	/**
+	 * Every tick while set, for every player in its level: notes when that player drops through the gap (from the deck
+	 * down to three blocks under it). Whoever drops through it can die of it, not only the player it was set for.
+	 */
 	@Override
-	public void watch(ServerPlayer subject, ArmedTrap armed, AccidentData data, AccidentConfig cfg, long now) {
-		if (subject.getBoundingBox().intersects(gapShaft(armed.pos()))) {
-			data.gapPassTick = now;
+	public void watch(ServerPlayer player, ArmedTrap armed, AccidentData data, AccidentConfig cfg, long now) {
+		if (player.getBoundingBox().intersects(gapShaft(armed.pos()))) {
+			data.personal(player.getUUID()).gapPassTick = now;
 		}
 	}
 
@@ -110,10 +113,11 @@ public final class BridgeGapTrap extends BaseTrap {
 				: source.is(DamageTypes.LAVA) || source.is(DamageTypes.IN_FIRE) || source.is(DamageTypes.ON_FIRE);
 	}
 
-	/** The void, a fall or the lava, and only after dropping through the gap since it was made. */
+	/** The void, a fall or the lava, and only after the victim dropped through the gap since it was made. */
 	@Override
-	public boolean claims(ServerPlayer player, DamageSource source, ArmedTrap armed, AccidentData data, long now) {
+	public boolean claims(ServerPlayer victim, DamageSource source, ArmedTrap armed, AccidentData data, long now) {
 		long memory = AccidentConfig.get().bridgeFallMemoryTicks();
-		return matches(source, armed) && data.gapPassTick >= armed.setAt() && now - data.gapPassTick <= memory;
+		long passed = data.personal(victim.getUUID()).gapPassTick;
+		return matches(source, armed) && passed >= armed.setAt() && now - passed <= memory;
 	}
 }

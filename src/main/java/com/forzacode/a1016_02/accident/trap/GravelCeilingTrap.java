@@ -24,8 +24,8 @@ import org.jspecify.annotations.Nullable;
 
 /**
  * Gravel ceiling: the block under a gravel or sand column above the shaft where you dig up. A live trap: it waits
- * until you are in the shaft, far enough below that the block is out of reach and out of view, then takes it
- * ({@code TraceService.removeLettingFall}) and the column comes down by the game's own rules. Only the taken block
+ * until someone (whoever it is) is in the shaft, far enough below that the block is out of reach and out of view, then
+ * takes it ({@code TraceService.removeLettingFall}) and the column comes down by the game's own rules. Only the taken block
  * must be out of view; the gravel may be seen falling (D-038). You suffocated. The clue: the hollow shaft above, where
  * the gravel came from.
  */
@@ -74,14 +74,17 @@ public final class GravelCeilingTrap extends BaseTrap {
 		if (!Scan.takeable(level, support) || column(level, support) < ctx.cfg().gravelMinColumn) {
 			return null;
 		}
-		ServerPlayer player = ctx.player();
-		if (armed.isSet() || player == null || player.level() != level) {
+		if (armed.isSet()) {
 			return armed;
 		}
-		BlockPos feet = player.blockPosition();
-		boolean underIt = feet.getX() == support.getX() && feet.getZ() == support.getZ() && feet.getY() <= support.getY() - 5
-				&& feet.getY() >= armed.zoneMin().getY();
-		if (!underIt) {
+		// Whoever is down in the shaft, not only the player it was set for.
+		boolean anyoneUnder = false;
+		for (ServerPlayer player : here(ctx)) {
+			BlockPos feet = player.blockPosition();
+			anyoneUnder |= feet.getX() == support.getX() && feet.getZ() == support.getZ() && feet.getY() <= support.getY() - 5
+					&& feet.getY() >= armed.zoneMin().getY();
+		}
+		if (!anyoneUnder) {
 			return armed;
 		}
 		// D-038: only the support must be out of view; the column may be seen coming down.

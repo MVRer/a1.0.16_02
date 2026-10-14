@@ -40,7 +40,7 @@ import net.minecraft.world.phys.AABB;
  * the chest it was moved to, onto that zombie), the clue (it's yours), nothing in view, and only that zombie's kill
  * while it holds the stack counts.
  */
-public class SwordGameTests {
+public class SwordGameTests extends GroupGameTests {
 	/** The player's chest at (2, 1, 2), a chest that is not theirs at (4, 1, 2), a zombie 30 blocks from the player. */
 	private record Setup(Yard y, BlockPos own, BlockPos other, Zombie zombie, Zombie tooNear, String cause) {
 		/** A context days after the theft, with room for every stack and zombie pair. */
@@ -164,8 +164,8 @@ public class SwordGameTests {
 		helper.assertTrue(Traps.ZOMBIE_SWORD.setup(s.later(Yard.NOBODY), spot), "not equipped");
 		ArmedTrap armed = AccidentPlannerImpl.build(Traps.ZOMBIE_SWORD, s.later(Yard.NOBODY), spot, y.cfg);
 		helper.assertTrue(armed.isSet() && armed.blames(s.zombie.getUUID()) && armed.mobs().size() == 1 && armed.worn().isPresent(), "the zombie and stack are not remembered");
-		y.data.setArmed(armed);
-		AccidentPlannerImpl planner = new AccidentPlannerImpl(server -> y.data, Yard.NOBODY);
+		y.data.setArmed(y.owner(), armed);
+		AccidentPlannerImpl planner = y.planner(Yard.NOBODY);
 		DamageSources damage = level.damageSources();
 
 		helper.assertTrue(planner.causedBy(y.player, damage.mobAttack(s.zombie)), "the zombie with your sword killing you was not claimed");

@@ -26,7 +26,7 @@ import net.minecraft.world.level.block.state.BlockState;
 import org.jspecify.annotations.Nullable;
 
 /**
- * Falling dripstone: the block holding a stalactite over your path in a dripstone cave. A live trap: when you walk
+ * Falling dripstone: the block holding a stalactite over your path in a dripstone cave. A live trap: when anyone walks
  * under it and the block is out of view, it goes ({@code TraceService.removeLettingFall}) and the stalactite falls.
  * Only the taken block must be out of view; the stalactite may be seen falling and shattering (D-038). Dripstone
  * falls, it happens. The clue: the block above it is gone.
@@ -83,12 +83,16 @@ public final class FallingDripstoneTrap extends BaseTrap {
 		if (!Scan.takeable(level, holder) || !stalactite(level.getBlockState(holder.below()))) {
 			return null;
 		}
-		ServerPlayer player = ctx.player();
-		if (armed.isSet() || player == null || player.level() != level) {
+		if (armed.isSet()) {
 			return armed;
 		}
-		BlockPos feet = player.blockPosition();
-		if (feet.getX() != holder.getX() || feet.getZ() != holder.getZ() || feet.getY() > armed.zoneMin().getY() + 2) {
+		// Whoever walks under it, not only the player it was set for.
+		boolean anyoneUnder = false;
+		for (ServerPlayer player : here(ctx)) {
+			BlockPos feet = player.blockPosition();
+			anyoneUnder |= feet.getX() == holder.getX() && feet.getZ() == holder.getZ() && feet.getY() <= armed.zoneMin().getY() + 2;
+		}
+		if (!anyoneUnder) {
 			return armed;
 		}
 		// D-038: only the holder must be out of view; the stalactite may be seen falling.

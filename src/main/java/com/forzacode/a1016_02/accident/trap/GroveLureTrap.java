@@ -29,10 +29,10 @@ import org.jspecify.annotations.Nullable;
 
 /**
  * The lure, restoring his groves: he lets you finish. While you are up placing the last leaves, the blocks under you
- * go. A live trap: it springs while you are placing leaves high up and looking up at the canopy, and takes the pillar
- * you climbed, from the block under your feet to the ground. D-027: blocks strictly under your feet are out of view
- * while you look 30 degrees or more up, so nothing vanishes on camera. The clue: the whole pillar is gone and not one
- * block of it dropped.
+ * go. A live trap: it springs while someone (whoever it is) is placing leaves high up and looking up at the canopy,
+ * and takes the pillar they climbed, from the block under their feet to the ground. D-027: blocks strictly under your
+ * feet are out of view while you look 30 degrees or more up, so nothing vanishes on camera. The clue: the whole pillar
+ * is gone and not one block of it dropped.
  */
 public final class GroveLureTrap extends BaseTrap {
 	public GroveLureTrap() {
@@ -64,17 +64,27 @@ public final class GroveLureTrap extends BaseTrap {
 		return found;
 	}
 
+	/** Whoever is up there placing leaves and looking up at the canopy, not only the player it was set for. */
 	@Override
 	public @Nullable ArmedTrap tick(TrapContext ctx, ArmedTrap armed) {
-		ServerPlayer player = ctx.player();
+		if (armed.isSet() || ctx.data().grove(GlobalPos.of(ctx.level().dimension(), armed.pos())).leavesTick < ctx.now() - ctx.cfg().groveRecentTicks()) {
+			return armed;
+		}
+		for (ServerPlayer player : here(ctx)) {
+			if (armed.zone(0).contains(player.position()) && player.onGround() && lookingUp(player)) {
+				ArmedTrap sprung = spring(ctx, armed, player);
+				if (sprung != armed) {
+					return sprung;
+				}
+			}
+		}
+		return armed;
+	}
+
+	/** Takes the pillar under this player's feet, if it is tall enough and every block of it is out of view. */
+	private ArmedTrap spring(TrapContext ctx, ArmedTrap armed, ServerPlayer player) {
 		ServerLevel level = ctx.level();
 		AccidentConfig cfg = ctx.cfg();
-		if (armed.isSet() || player == null || player.level() != level || !armed.zone(0).contains(player.position()) || !player.onGround()) {
-			return armed;
-		}
-		if (ctx.data().lure.groveLeavesTick < ctx.now() - cfg.groveRecentTicks() || !lookingUp(player)) {
-			return armed;
-		}
 		BlockPos feet = player.blockPosition();
 		List<BlockPos> column = new ArrayList<>();
 		BlockPos cursor = feet.below();

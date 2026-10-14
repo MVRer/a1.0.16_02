@@ -24,9 +24,9 @@ import net.minecraft.world.phys.Vec3;
 import org.jspecify.annotations.Nullable;
 
 /**
- * The lure, sleeping near his places: you wake to the floor gone. A live trap: while you sleep near a pyramid or a
- * cross, the floor a few blocks from the bed (never within reach) is taken where it lies over a drop or lava. The
- * clue: the edge of the hole is cut clean and nothing dropped.
+ * The lure, sleeping near his places: you wake to the floor gone. A live trap: while someone (whoever it is) sleeps
+ * near a pyramid or a cross, the floor a few blocks from the bed (never within reach) is taken where it lies over a drop
+ * or lava. The clue: the edge of the hole is cut clean and nothing dropped.
  */
 public final class SleepLureTrap extends BaseTrap {
 	public SleepLureTrap() {
@@ -51,17 +51,27 @@ public final class SleepLureTrap extends BaseTrap {
 		return found;
 	}
 
+	/** Whoever sleeps near his place, not only the player it was set for. */
 	@Override
 	public @Nullable ArmedTrap tick(TrapContext ctx, ArmedTrap armed) {
-		ServerPlayer player = ctx.player();
+		if (armed.isSet()) {
+			return armed;
+		}
+		for (ServerPlayer player : here(ctx)) {
+			BlockPos bed = player.isSleeping() ? player.getSleepingPos().orElse(null) : null;
+			if (bed != null && armed.zone(0).contains(Vec3.atCenterOf(bed))) {
+				ArmedTrap sprung = spring(ctx, armed, bed);
+				if (sprung != armed) {
+					return sprung;
+				}
+			}
+		}
+		return armed;
+	}
+
+	/** Takes the floor a few steps from this bed where it lies over a drop or lava, all out of view. */
+	private ArmedTrap spring(TrapContext ctx, ArmedTrap armed, BlockPos bed) {
 		ServerLevel level = ctx.level();
-		if (armed.isSet() || player == null || player.level() != level || !player.isSleeping()) {
-			return armed;
-		}
-		BlockPos bed = player.getSleepingPos().orElse(null);
-		if (bed == null || !armed.zone(0).contains(Vec3.atCenterOf(bed))) {
-			return armed;
-		}
 		AccidentConfig cfg = ctx.cfg();
 		List<Scan.Hollow> holes = floor(level, bed, cfg);
 		if (holes.isEmpty()) {

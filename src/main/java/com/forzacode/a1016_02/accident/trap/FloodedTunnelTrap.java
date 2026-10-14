@@ -22,8 +22,9 @@ import net.minecraft.world.damagesource.DamageTypes;
 import org.jspecify.annotations.Nullable;
 
 /**
- * Flooded tunnel: the block holding back the water over your underwater route. A live trap: it waits until you are
- * deep in the tunnel, with the block behind you and out of view. You drowned. The clue: the gap is exactly one block.
+ * Flooded tunnel: the block holding back the water over your underwater route. A live trap: it waits until someone is
+ * deep in the tunnel (whoever it is), with the block behind them and out of view. You drowned. The clue: the gap is
+ * exactly one block.
  */
 public final class FloodedTunnelTrap extends BaseTrap {
 	public FloodedTunnelTrap() {
@@ -80,13 +81,15 @@ public final class FloodedTunnelTrap extends BaseTrap {
 		if (!Scan.takeable(level, plug)) {
 			return null;
 		}
-		ServerPlayer player = ctx.player();
-		if (player == null || player.level() != level || !Scan.covered(level, player.blockPosition())) {
-			return armed;
+		// Whoever is deep in the tunnel (on its player's walked cells, or in any dug-out cell), not only that player.
+		boolean anyoneDeep = false;
+		for (ServerPlayer player : here(ctx)) {
+			BlockPos feet = player.blockPosition();
+			double dist = Math.sqrt(feet.distSqr(plug));
+			anyoneDeep |= Scan.covered(level, feet) && dist >= ctx.cfg().floodSpringMin && dist <= ctx.cfg().floodSpringMax
+					&& (ctx.walked(feet) || ctx.dugByPlayer(feet));
 		}
-		double dist = Math.sqrt(player.blockPosition().distSqr(plug));
-		if (dist < ctx.cfg().floodSpringMin || dist > ctx.cfg().floodSpringMax
-				|| !ctx.walked(player.blockPosition()) && !ctx.dugByPlayer(player.blockPosition())) {
+		if (!anyoneDeep) {
 			return armed;
 		}
 		if (!TraceOp.apply(level, ctx.view(), "accident:" + id(), List.of(TraceOp.remove(plug)))) {

@@ -24,7 +24,8 @@ import net.minecraft.world.level.block.BedBlock;
 /**
  * No bed: your bed, taken while you are out, only if you slept in the last day. Phantoms after three sleepless
  * nights, and death sends you to world spawn. The clue: the bed is gone and no item dropped. Only a phantom that
- * appeared near you while you had not slept since the bed went counts.
+ * appeared near you while you had not slept since the bed went counts. "Your bed" is the trap's player's own respawn
+ * point, never a friend's; the trap is {@linkplain #personal() personal}.
  */
 public final class NoBedTrap extends BaseTrap {
 	/** TIME_SINCE_REST and play ticks can drift apart by a few ticks. */
@@ -55,7 +56,16 @@ public final class NoBedTrap extends BaseTrap {
 		return true;
 	}
 
-	/** A phantom appearing near the subject who has not slept since the bed was taken is one of the bed's phantoms. */
+	/** Their bed and their sleepless nights: a friend killed by one of these phantoms died an ordinary death. */
+	@Override
+	public boolean personal() {
+		return true;
+	}
+
+	/**
+	 * A phantom appearing near the trap's own player (looked up this tick) while they have not slept since the bed was
+	 * taken is one of the bed's phantoms.
+	 */
 	@Override
 	public ArmedTrap onSpawned(TrapContext ctx, Entity entity, ArmedTrap armed) {
 		ServerPlayer player = ctx.player();

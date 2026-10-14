@@ -140,8 +140,8 @@ public class TrapGameTests extends AttributionGameTests {
 		helper.assertTrue(y.ledgered("accident:gravel_ceiling", Set.of(cap)) == 1, "the cap is not ledgered");
 		helper.assertTrue(y.ledgered("accident:gravel_ceiling", Set.of(y.abs(5, 9, 5), y.abs(5, 10, 5), y.abs(5, 11, 5))) == 0, "the fallen gravel was ledgered");
 
-		y.data.setArmed(sprung);
-		AccidentPlannerImpl planner = new AccidentPlannerImpl(server -> y.data, Yard.NOBODY);
+		y.data.setArmed(y.owner(), sprung);
+		AccidentPlannerImpl planner = y.planner(Yard.NOBODY);
 		DamageSources damage = y.level.damageSources();
 		helper.assertTrue(planner.causedBy(digger, damage.inWall()), "suffocating under the gravel was not claimed");
 		helper.assertFalse(planner.causedBy(digger, damage.fall()), "a fall was claimed by the gravel ceiling");
@@ -183,8 +183,8 @@ public class TrapGameTests extends AttributionGameTests {
 		helper.assertTrue(y.state(5, 12, 5).isAir() && y.ledgered("accident:falling_dripstone", Set.of(holder)) == 1, "the holder is not gone and ledgered");
 		helper.assertTrue(y.ledgered("accident:falling_dripstone/dependent", Set.of(y.abs(5, 11, 5))) == 0, "the stalactite was removed instead of falling");
 
-		y.data.setArmed(sprung);
-		AccidentPlannerImpl planner = new AccidentPlannerImpl(server -> y.data, Yard.NOBODY);
+		y.data.setArmed(y.owner(), sprung);
+		AccidentPlannerImpl planner = y.planner(Yard.NOBODY);
 		DamageSources damage = y.level.damageSources();
 		helper.assertTrue(planner.causedBy(walker, damage.fallingStalactite(walker)), "the stalactite on the path was not claimed");
 		helper.assertFalse(planner.causedBy(walker, damage.fall()), "a fall was claimed by the dripstone");
@@ -411,13 +411,13 @@ public class TrapGameTests extends AttributionGameTests {
 		y.fill(0, 0, 0, 10, 0, 10, Blocks.STONE);
 		y.fill(3, 10, 3, 7, 10, 7, Blocks.STONE);
 		y.walk(5, 11, 5, 0, 2, y.today());
-		y.data.setCairn(net.minecraft.core.GlobalPos.of(y.level.dimension(), y.abs(20, 1, 20)));
-		y.data.addCairnVisit();
+		y.data.setCairn(y.owner(), net.minecraft.core.GlobalPos.of(y.level.dimension(), y.abs(20, 1, 20)));
+		y.data.addCairnVisit(y.owner());
 		helper.assertTrue(Traps.LURE_CAIRN.candidates(y.ctx(Yard.NOBODY, y.abs(5, 11, 5))).isEmpty(), "hollow after one visit");
-		y.data.addCairnVisit();
-		y.data.atCairn = true;
+		y.data.addCairnVisit(y.owner());
+		y.data.personal(y.owner()).atCairn = true;
 		helper.assertTrue(Traps.LURE_CAIRN.candidates(y.ctx(Yard.NOBODY, y.abs(5, 11, 5))).isEmpty(), "set while the player is at the cairn");
-		y.data.atCairn = false;
+		y.data.personal(y.owner()).atCairn = false;
 		BlockPos ground = y.abs(5, 10, 5);
 		Candidate spot = y.taking(Traps.LURE_CAIRN.candidates(y.ctx(Yard.NOBODY, y.abs(5, 11, 5))), ground);
 		y.checkPreset(Traps.LURE_CAIRN, spot, y.viewer(5.5, 11, 3.5, 0, 30), Yard.NOBODY, y.abs(5, 11, 5));
@@ -441,7 +441,7 @@ public class TrapGameTests extends AttributionGameTests {
 
 		ArmedTrap idle = Traps.LURE_GROVE.tick(y.ctx(Yard.eyesOf(climber), grove, climber), armed);
 		helper.assertTrue(idle != null && !idle.isSet(), "sprang while no leaves were being placed");
-		y.data.lure.groveLeavesTick = y.now();
+		y.data.grove(net.minecraft.core.GlobalPos.of(y.level.dimension(), grove)).leavesTick = y.now();
 		// Looking ahead, not up: the blocks under the feet count as seen.
 		y.face(climber, 5.5, 10, 5.5, 0, 0);
 		ArmedTrap ahead = Traps.LURE_GROVE.tick(y.ctx(Yard.eyesOf(climber), grove, climber), armed);
@@ -460,8 +460,8 @@ public class TrapGameTests extends AttributionGameTests {
 		}
 		helper.assertTrue(y.ledgered("accident:lure_grove", Set.copyOf(sprung.targets())) == 9, "the pillar is not ledgered");
 
-		y.data.setArmed(sprung);
-		AccidentPlannerImpl planner = new AccidentPlannerImpl(server -> y.data, Yard.NOBODY);
+		y.data.setArmed(y.owner(), sprung);
+		AccidentPlannerImpl planner = y.planner(Yard.NOBODY);
 		DamageSources damage = y.level.damageSources();
 		y.face(climber, 5.5, 1, 5.5, 0, 0);
 		helper.assertTrue(planner.causedBy(climber, damage.fall()), "the fall from the pillar was not claimed");

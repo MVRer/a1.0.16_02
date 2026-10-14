@@ -3,6 +3,7 @@ package com.forzacode.a1016_02.accident;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -24,7 +25,8 @@ import net.minecraft.world.level.block.state.BlockState;
  * each side 1 block under its top, so its foot runs 3 to 4 blocks below the arms. It is built only by moving blocks
  * that are already there, taken from the ground around the spot (he cannot create), and never glass (D-051: glass
  * crosses are left by others). Where the room or the material runs short it is the tallest Latin cross that fits, never
- * shorter than {@link #MIN_HEIGHT}; with less than that there is no plan and the cross waits.
+ * shorter than {@link #MIN_HEIGHT}; with less than that there is no plan and the cross waits. Crosses already standing
+ * are left alone: none is taken apart for another, and two never touch.
  */
 public final class CrossBuilder {
 	/** D-050: the shortest cross that still reads as a Latin cross (3 to 4 tall read as a plus sign). */
@@ -74,14 +76,29 @@ public final class CrossBuilder {
 		return cells;
 	}
 
+	/** {@link #plan(ServerLevel, BlockPos, int, AccidentConfig, Set)} with no other cross around. */
+	public static Optional<Plan> plan(ServerLevel level, BlockPos death, int height, AccidentConfig cfg) {
+		return plan(level, death, height, cfg, Set.of());
+	}
+
 	/**
 	 * The nearest buildable cross at {@code death}, with its material taken from around it, or empty. At each spot
 	 * (nearest first) it is the tallest Latin cross from {@code height} down to {@link #MIN_HEIGHT} that has room and
-	 * enough material there.
+	 * enough material there. {@code others} are the cells of the crosses already standing (and the blocks their posts
+	 * stand on): never taken as material, and never touched, so two deaths side by side get two crosses that read as
+	 * two, not one cross robbed to build the next.
 	 */
-	public static Optional<Plan> plan(ServerLevel level, BlockPos death, int height, AccidentConfig cfg) {
+	public static Optional<Plan> plan(ServerLevel level, BlockPos death, int height, AccidentConfig cfg, Set<BlockPos> allOthers) {
 		int tallest = Math.clamp(height, MIN_HEIGHT, MAX_HEIGHT);
 		int r = cfg.crossSearchRadius;
+		// Only the crosses this plan could reach matter (usually none).
+		int reach = r + cfg.crossGatherRadius + MAX_HEIGHT + 2;
+		Set<BlockPos> others = new HashSet<>();
+		for (BlockPos cell : allOthers) {
+			if (cell.closerThan(death, reach)) {
+				others.add(cell);
+			}
+		}
 		List<BlockPos> bases = new ArrayList<>();
 		for (BlockPos pos : BlockPos.betweenClosed(death.offset(-r, -4, -r), death.offset(r, 4, r))) {
 			bases.add(pos.immutable());
@@ -96,14 +113,14 @@ public final class CrossBuilder {
 				boolean counted = false;
 				for (int h = tallest; h >= MIN_HEIGHT; h--) {
 					List<BlockPos> cells = cells(base, h, axis);
-					if (!cells.stream().allMatch(cell -> fillable(level, cell))) {
+					if (!cells.stream().allMatch(cell -> fillable(level, cell) && !touches(cell, others))) {
 						continue;
 					}
 					if (!counted && ++tried > MAX_BASES) {
 						return Optional.empty();
 					}
 					counted = true;
-					List<BlockPos> sources = sources(level, base, cells, cfg.crossGatherRadius);
+					List<BlockPos> sources = sources(level, base, cells, cfg.crossGatherRadius, others);
 					if (sources.size() < cells.size()) {
 						continue;
 					}
@@ -124,18 +141,32 @@ public final class CrossBuilder {
 		return level.isLoaded(pos) && state.canBeReplaced() && !state.hasBlockEntity();
 	}
 
+	/** In or right next to (any of the 26 cells around) another cross's cells. */
+	static boolean touches(BlockPos cell, Set<BlockPos> others) {
+		if (others.isEmpty()) {
+			return false;
+		}
+		for (BlockPos near : BlockPos.betweenClosed(cell.offset(-1, -1, -1), cell.offset(1, 1, 1))) {
+			if (others.contains(near)) {
+				return true;
+			}
+		}
+		return false;
+	}
+
 	/**
 	 * Natural blocks around the cross that can be taken without consequence: plain full blocks, not placed by a
-	 * player, never glass, open on top, with nothing attached and no fluid they hold back. The most common kind comes
-	 * first so the cross is of one material where it can be.
+	 * player, never glass, never part of another cross ({@code others}), open on top, with nothing attached and no
+	 * fluid they hold back. The most common kind comes first so the cross is of one material where it can be.
 	 */
-	static List<BlockPos> sources(ServerLevel level, BlockPos base, List<BlockPos> cells, int radius) {
+	static List<BlockPos> sources(ServerLevel level, BlockPos base, List<BlockPos> cells, int radius, Set<BlockPos> others) {
 		Set<BlockPos> keep = new LinkedHashSet<>(cells);
 		keep.add(base.below());
+		keep.addAll(others);
 		List<BlockPos> found = new ArrayList<>();
 		for (BlockPos pos : BlockPos.betweenClosed(base.offset(-radius, -SOURCE_DEPTH, -radius), base.offset(radius, SOURCE_DEPTH, radius))) {
 			BlockPos p = pos.immutable();
-			if (keep.contains(p) || !level.isLoaded(p) || !Scan.takeable(level, p) || Scan.ore(level.getBlockState(p))
+			if (keep.contains(p) || touches(p, others) || !level.isLoaded(p) || !Scan.takeable(level, p) || Scan.ore(level.getBlockState(p))
 					|| !level.getBlockState(p).isSolidRender() || glass(level.getBlockState(p)) || Services.watch().wasPlacedByPlayer(level, p) || !safeToTake(level, p, keep)) {
 				continue;
 			}

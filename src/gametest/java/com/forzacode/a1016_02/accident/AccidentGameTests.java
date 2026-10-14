@@ -2,6 +2,7 @@ package com.forzacode.a1016_02.accident;
 
 import java.util.List;
 import java.util.Optional;
+import java.util.UUID;
 
 import com.forzacode.a1016_02.core.CardRegistry;
 import com.forzacode.a1016_02.core.CardTag;
@@ -14,6 +15,7 @@ import com.forzacode.a1016_02.core.TrapType;
 import net.fabricmc.fabric.api.gametest.v1.GameTest;
 
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.GlobalPos;
 import net.minecraft.gametest.framework.GameTestHelper;
 import net.minecraft.nbt.NbtOps;
 import net.minecraft.nbt.Tag;
@@ -24,9 +26,9 @@ import net.minecraft.world.damagesource.DamageSources;
 import net.minecraft.world.level.block.Blocks;
 
 /**
- * Game tests of the accident workstream (the trap tests live in {@link TrapGameTests}): the planner's one-at-a-time
+ * Game tests of the accident workstream (the trap tests live in {@link TrapGameTests}): the planner's one-per-player
  * and once-per-session rules, which deaths it claims, the cards, and saved data. The death marker and its cross are in
- * {@link CrossGameTests}.
+ * {@link CrossGameTests}, the rules with friends in {@link GroupGameTests}.
  */
 public class AccidentGameTests extends CrossGameTests {
 	@GameTest
@@ -50,7 +52,7 @@ public class AccidentGameTests extends CrossGameTests {
 	public void plannerArmsOneAtATimeAndOncePerSession(GameTestHelper helper) {
 		Yard y = lavaTunnel(helper);
 		ServerLevel level = y.level;
-		AccidentPlannerImpl planner = new AccidentPlannerImpl(server -> y.data, Yard.NOBODY);
+		AccidentPlannerImpl planner = y.planner(Yard.NOBODY);
 		ServerPlayer player = y.player;
 
 		AccidentPlannerImpl.ArmResult first = planner.arm(player, Traps.LAVA_FLOOR, false);
@@ -70,9 +72,9 @@ public class AccidentGameTests extends CrossGameTests {
 		helper.assertFalse(planner.causedBy(player, damage.lava()), "a lava death far away was claimed");
 		player.snapTo(y.absVec(10.5, 4, 8.5), 0, 0);
 		ArmedTrap set = y.data.armed().orElseThrow();
-		y.data.setArmed(set.withPhase(ArmedTrap.Phase.SET, set.setAt() - 1));
+		y.data.setArmed(y.owner(), set.withPhase(ArmedTrap.Phase.SET, set.setAt() - 1));
 		helper.assertFalse(planner.causedBy(player, damage.lava()), "a death after the window was claimed");
-		y.data.setArmed(set);
+		y.data.setArmed(y.owner(), set);
 
 		planner.disarm(level.getServer(), "test");
 		helper.assertTrue(y.data.armed().isEmpty(), "disarm left the trap armed");
@@ -87,7 +89,7 @@ public class AccidentGameTests extends CrossGameTests {
 	@GameTest(structure = Yard.STRUCTURE, maxTicks = 40)
 	public void plannerArmsAroundACenter(GameTestHelper helper) {
 		Yard y = lavaTunnel(helper);
-		AccidentPlannerImpl planner = new AccidentPlannerImpl(server -> y.data, Yard.NOBODY);
+		AccidentPlannerImpl planner = y.planner(Yard.NOBODY);
 		BlockPos tunnel = y.abs(3, 5, 8);
 		y.player.snapTo(y.absVec(3.5, 5, 8.5).add(200, 0, 0), 90, 0);
 		helper.assertTrue(planner.candidates(y.player, Traps.LAVA_FLOOR).isEmpty(), "a spot was found around a player far from the tunnel");
@@ -101,10 +103,10 @@ public class AccidentGameTests extends CrossGameTests {
 	@GameTest(structure = Yard.STRUCTURE, maxTicks = 40)
 	public void plannerNeverArmsInView(GameTestHelper helper) {
 		Yard y = lavaTunnel(helper);
-		AccidentPlannerImpl planner = new AccidentPlannerImpl(server -> y.data, Yard.EVERYONE);
+		AccidentPlannerImpl planner = y.planner(Yard.EVERYONE);
 		AccidentPlannerImpl.ArmResult result = planner.arm(y.player, Traps.LAVA_FLOOR, true);
 		helper.assertTrue(result.status() == AccidentPlannerImpl.Status.IN_VIEW, "expected IN_VIEW, got " + result.status());
-		helper.assertTrue(y.data.armed().isEmpty() && planner.sessionArms() == 0, "a refused arm counted");
+		helper.assertTrue(y.data.armed().isEmpty() && planner.sessionArms(y.owner()) == 0, "a refused arm counted");
 		helper.assertBlockPresent(Blocks.STONE, new BlockPos(10, 4, 8));
 		AccidentPlannerImpl.ArmResult none = planner.arm(y.player, Traps.BARE_WOOL, true);
 		helper.assertTrue(none.status() == AccidentPlannerImpl.Status.NO_SPOT, "bare wool found a spot in a stone tunnel");
@@ -120,7 +122,7 @@ public class AccidentGameTests extends CrossGameTests {
 		for (int x = 1; x <= 18; x++) {
 			y.walk(x, 3, 8, RouteBook.UNDER);
 		}
-		AccidentPlannerImpl planner = new AccidentPlannerImpl(server -> y.data, Yard.NOBODY);
+		AccidentPlannerImpl planner = y.planner(Yard.NOBODY);
 		y.player.snapTo(y.absVec(2.5, 3, 8.5), 90, 0);
 		AccidentPlannerImpl.ArmResult result = planner.arm(y.player, Traps.FLOODED_TUNNEL, false);
 		helper.assertTrue(result.armed() && !result.trap().isSet(), "flooded tunnel should arm as a watch");
@@ -130,8 +132,8 @@ public class AccidentGameTests extends CrossGameTests {
 		}
 		helper.assertFalse(planner.causedBy(y.player, y.level.damageSources().drown()), "a watch that never sprang claimed a death");
 		// The watch runs out: the planner drops it.
-		y.data.setArmed(result.trap().withPhase(ArmedTrap.Phase.WATCHING, y.now() - 1));
-		planner.step(y.level.getServer(), y.data, null, y.cfg, y.now());
+		y.data.setArmed(y.owner(), result.trap().withPhase(ArmedTrap.Phase.WATCHING, y.now() - 1));
+		planner.step(y.level.getServer(), y.data, y.cfg, y.now());
 		helper.assertTrue(y.data.armed().isEmpty(), "an expired watch stayed armed");
 		helper.succeed();
 	}
@@ -154,27 +156,45 @@ public class AccidentGameTests extends CrossGameTests {
 		ServerLevel level = helper.getLevel();
 		RegistryOps<Tag> ops = level.registryAccess().createSerializationContext(NbtOps.INSTANCE);
 		AccidentData data = new AccidentData();
+		UUID alex = UUID.fromString("00000000-0000-0000-0000-0000000a1e01");
+		UUID sam = UUID.fromString("00000000-0000-0000-0000-00000005a301");
 		BlockPos pos = new BlockPos(10, 64, -20);
-		data.routes().record(level.dimension(), pos, 3, RouteBook.UNDER | RouteBook.LADDER, 0, 100, 10);
-		data.routes().record(level.dimension(), pos, 4, RouteBook.WATER, 500, 100, 10);
-		data.routes().record(level.dimension(), pos.east(), 4, 0, 500, 100, 10);
-		data.setArmed(new ArmedTrap("dark_corner", level.dimension(), pos, List.of(pos.north()),
+		data.routes(alex).record(level.dimension(), pos, 3, RouteBook.UNDER | RouteBook.LADDER, 0, 100, 10);
+		data.routes(alex).record(level.dimension(), pos, 4, RouteBook.WATER, 500, 100, 10);
+		data.routes(alex).record(level.dimension(), pos.east(), 4, 0, 500, 100, 10);
+		data.routes(sam).record(level.dimension(), pos.west(9), 4, 0, 500, 100, 10);
+		ArmedTrap corner = new ArmedTrap("dark_corner", level.dimension(), pos, List.of(pos.north()),
 				List.of(new ArmedTrap.SavedBlock(pos.north(), Blocks.TORCH.defaultBlockState())), Optional.of(pos.east()),
-				List.of(java.util.UUID.fromString("00000000-0000-0000-0000-00000000a016")), ArmedTrap.Phase.SET, 5, 6, 700, 22500, pos.offset(-3, -3, -3),
-				pos.offset(3, 3, 3), "one torch a block off", 2).withLit(java.util.Set.of(pos, pos.above(), pos.west(3))));
-		data.addCross(new AccidentData.PendingCross(net.minecraft.core.GlobalPos.of(level.dimension(), pos), "fell", 4, 1));
-		data.setCairn(net.minecraft.core.GlobalPos.of(level.dimension(), pos.south(40)));
-		data.addCairnVisit();
+				List.of(UUID.fromString("00000000-0000-0000-0000-00000000a016")), ArmedTrap.Phase.SET, 5, 6, 700, 22500, pos.offset(-3, -3, -3),
+				pos.offset(3, 3, 3), "one torch a block off", 2).withLit(java.util.Set.of(pos, pos.above(), pos.west(3)));
+		ArmedTrap floor = new ArmedTrap("lava_floor", level.dimension(), pos.west(60), List.of(pos.west(60)), List.of(), Optional.empty(), List.of(),
+				ArmedTrap.Phase.SET, 7, 7, 900, ArmedTrap.NO_CLOCK, pos.west(65), pos.west(55), "a pocket", 0);
+		data.setArmed(alex, corner);
+		data.setArmed(sam, floor);
+		data.addRestoring(corner.withClue("waiting"));
+		GlobalPos death = GlobalPos.of(level.dimension(), pos);
+		data.addCross(new AccidentData.PendingCross(death, "fell", 4, 1, Optional.of(sam)));
+		data.addBuilt(new AccidentData.BuiltCross(death, GlobalPos.of(level.dimension(), pos.east(2)), java.util.Set.of(pos.east(2), pos.east(2).above()),
+				Optional.of(alex), true));
+		data.setCairn(alex, GlobalPos.of(level.dimension(), pos.south(40)));
+		data.addCairnVisit(alex);
 		data.log("a line");
 		Tag saved = AccidentData.CODEC.encodeStart(ops, data).getOrThrow();
 		AccidentData loaded = AccidentData.CODEC.parse(ops, saved).getOrThrow();
-		helper.assertTrue(loaded.armed().equals(data.armed()), "armed trap did not round-trip");
-		helper.assertTrue(loaded.crosses().equals(data.crosses()) && loaded.cairnVisits() == 1 && loaded.cairn().equals(data.cairn()), "crosses or cairn");
-		RouteBook.Point point = loaded.routes().get(level.dimension(), pos);
+		helper.assertTrue(loaded.traps().equals(data.traps()) && List.copyOf(loaded.traps().keySet()).equals(List.of(alex, sam)),
+				"armed traps did not round-trip with their players and order: " + loaded.traps());
+		helper.assertTrue(loaded.armed().equals(Optional.of(floor)), "the newest trap is not the last armed");
+		helper.assertTrue(loaded.restoring().equals(data.restoring()), "the corner waiting for its torches");
+		helper.assertTrue(loaded.crosses().equals(data.crosses()) && loaded.built().equals(data.built()), "crosses");
+		helper.assertTrue(loaded.crossFor(death).equals(Optional.of(GlobalPos.of(level.dimension(), pos.east(2)))), "a built cross's death");
+		helper.assertTrue(loaded.personal(alex).cairnVisits() == 1 && loaded.personal(alex).cairn().equals(data.personal(alex).cairn())
+				&& loaded.personal(sam).cairn().isEmpty(), "cairn");
+		RouteBook.Point point = loaded.routes(alex).get(level.dimension(), pos);
 		helper.assertTrue(point != null && point.passes == 2 && point.firstDay == 3 && point.lastDay == 4 && point.has(RouteBook.WATER) && point.has(RouteBook.LADDER),
 				"route point did not round-trip");
-		helper.assertTrue(loaded.routes().near(level.dimension(), pos, 2, 10).size() == 2, "route index not rebuilt");
-		helper.assertTrue(loaded.history().equals(List.of("a line")), "history");
+		helper.assertTrue(loaded.routes(alex).near(level.dimension(), pos, 2, 10).size() == 2, "route index not rebuilt");
+		helper.assertTrue(loaded.routes(sam).size(level.dimension()) == 1 && !loaded.routes(sam).contains(level.dimension(), pos), "routes are not kept apart");
+		helper.assertTrue(loaded.history().equals(List.of("a line")) && !loaded.hasLegacy(), "history");
 		helper.succeed();
 	}
 

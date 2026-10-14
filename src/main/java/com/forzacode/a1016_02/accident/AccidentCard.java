@@ -15,8 +15,9 @@ import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 
 /**
- * One trap as a director card: MAJOR, ACCIDENT, from Proximity on, never fake. The director paces it (no accident
- * before the first-accident time, the major gap, quiet); the planner keeps one armed at a time and one per session.
+ * One trap as a director card: MAJOR, ACCIDENT, from Proximity on, never fake. The director paces it per player (no
+ * accident before the first-accident time, the major gap, quiet); the planner keeps one armed per player and one per
+ * session of theirs, and two traps never on the same ground.
  */
 public final class AccidentCard implements EventCard {
 	private final TrapKind trap;
@@ -57,12 +58,14 @@ public final class AccidentCard implements EventCard {
 		return false;
 	}
 
+	/** Room for a trap for this player (their own one, their own session), and spots on their routes clear of others' traps. */
 	@Override
 	public boolean contextFits(ServerPlayer player, ServerLevel world) {
-		return planner.canArm(world.getServer()) && trap.blocked() == null && trap.contextFits(player, world, AccidentConfig.get())
-				&& planner.cachedCandidates(trap) > 0;
+		return planner.canArm(world.getServer(), player.getUUID()) && trap.blocked() == null && trap.contextFits(player, world, AccidentConfig.get())
+				&& planner.cachedCandidates(player.getUUID(), trap) > 0;
 	}
 
+	/** Arms the trap for the player the director fired it for. */
 	@Override
 	public FireResult fire(FireContext ctx) {
 		if (ctx.fake()) {
@@ -72,7 +75,7 @@ public final class AccidentCard implements EventCard {
 		return switch (result.status()) {
 			case ARMED -> FireResult.FIRED;
 			case NO_SPOT, IN_VIEW -> FireResult.NO_SPOT;
-			case BUSY, SESSION, BLOCKED -> FireResult.SKIPPED;
+			case BUSY, SESSION, BLOCKED, UNTARGETABLE -> FireResult.SKIPPED;
 		};
 	}
 }

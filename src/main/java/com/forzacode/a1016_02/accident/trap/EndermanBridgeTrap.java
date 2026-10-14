@@ -137,9 +137,9 @@ public final class EndermanBridgeTrap extends BaseTrap {
 		return Services.mobs().moveOutOfView(mob, to);
 	}
 
-	/** Struck by that enderman, or fell (into the void, or onto something far below) right after it hit you. */
+	/** Whoever it struck, or who fell (into the void, or onto something far below) right after it hit them. */
 	@Override
-	public boolean claims(ServerPlayer player, DamageSource source, ArmedTrap armed, AccidentData data, long now) {
+	public boolean claims(ServerPlayer victim, DamageSource source, ArmedTrap armed, AccidentData data, long now) {
 		Entity attacker = source.getEntity();
 		if (attacker != null) {
 			return armed.blames(attacker.getUUID());
@@ -147,8 +147,8 @@ public final class EndermanBridgeTrap extends BaseTrap {
 		if (!source.is(DamageTypes.FELL_OUT_OF_WORLD) && !source.is(DamageTypes.FALL)) {
 			return false;
 		}
-		LivingEntity last = player.getLastHurtByMob();
-		LivingEntity credit = player.getKillCredit();
+		LivingEntity last = victim.getLastHurtByMob();
+		LivingEntity credit = victim.getKillCredit();
 		return last != null && armed.blames(last.getUUID()) || credit != null && armed.blames(credit.getUUID());
 	}
 

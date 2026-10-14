@@ -22,7 +22,8 @@ import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.AABB;
 
 /**
- * The one armed trap, saved with the world.
+ * One player's armed trap, saved with the world under that player's UUID ({@link AccidentData#traps()}). It keeps
+ * no player object: whoever sets it off is looked up when it happens (D-062.1).
  *
  * @param type    trap id ({@link TrapKind#id()})
  * @param pos     the trap's spot: the block he takes, or the place a live trap watches
