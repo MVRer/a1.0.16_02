@@ -526,7 +526,7 @@ Fabric, singleplayer-first, built in episodes so each video ships a working, sca
 - [x] Fabric Loader and Fabric API builds for 26.3: confirmed.
 - [x] Seed: reference only (F07). The same seed in 26.3 generates a different world, because terrain generation has changed since Alpha. Recreating the original terrain would need a custom Alpha-style chunk generator; stretch goal at most
 - [x] Package com.forzacode.a1016\_02: confirmed, Forzacode owns forzacode.com
-- [ ] Multiplayer: out of scope, or one shared Attention per server?
+- [x] Multiplayer: one shared story per server, each player at the solo pace, shared moments for players together (D-058 to D-064)
 - [x] Rare means surprise, built over many sessions, never packed into one. Targets are in The director, pacing targets; tune them by playtesting
 - [x] Disc 11 (F12) stays in alongside disc 13, as our interpretation. Mod page should say "best played in hardcore".
 - [ ] Check every invented username in F06 against real players before release.

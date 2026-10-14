@@ -36,6 +36,15 @@ Status values: queued, running, review, fix, merged, blocked. Only the orchestra
 | P2-2a | Integration cleanup: audit literals moved to config, Locale.ROOT, retire stale Pacing fields, world camp distance, director sim reaching Telling, lore contract asks | multi (not ending) | feat/integration-cleanup | v1.0 | merged | From the guardrail audit (no blockers) |
 | P2-2b | Final integration: wire the endings in, full guardrail pass, 20 h sim | (multi) | feat/integration-final | v1.0 | merged | 9 items: house copier stop hook, D-048 visible restore, ending contract asks, the left-cause convention, the C ever-held list, guardrail grep, 20 h sim, ARCHITECTURE |
 | P2-3 | Playtest tooling: dev overlay and a 20 h scripted timewarp log | debug | feat/debug-playtest | v1.0 | merged | Narrow exception: one public read-only DirectorApi |
+| MP-0 | Multiplayer core: participants, per-player records and play clock, per-player tension, stored owners (D-061), shared sounds and effects helpers, old-save migration, deprecated `subject()` | core | feat/mp-core | v1.1-multiplayer | queued | Goes first; every other MP task builds on it |
+| MP-1 | Director: pacing memory per player (D-059), shared moments count for everyone near (D-060), per-player triggers; debug commands and overlay per player | director + debug | feat/mp-director | v1.1-multiplayer | queued | After MP-0 |
+| MP-2 | Lore: fragments and telling from any player, "you" names the reader, the list has a line per player, once-per-world guards | lore | feat/mp-lore | v1.1-multiplayer | queued | After MP-0 |
+| MP-3 | Endings with friends (D-063, D-064): shared progress, group rules, join/leave mid-ending, hardcore spectators | ending | feat/mp-ending | v1.1-multiplayer | queued | After MP-0 |
+| MP-4 | Accidents: one trap per player's pace, any victim, death marker per player | accident | feat/mp-accident | v1.1-multiplayer | queued | After MP-0 |
+| MP-5 | The figure and the dread layer with several players: sightings out of everyone's view, shared sounds, fog and silence (D-060) | entity + atmosphere | feat/mp-entity-atmosphere | v1.1-multiplayer | queued | After MP-0 |
+| MP-6 | World signatures and diggers with several players: owners stored (D-061), once-per-world guards, each player's base | world + dig | feat/mp-world-dig | v1.1-multiplayer | queued | After MP-0 |
+| MP-7 | Multiplayer bug hunt: adversarial review of every workstream against D-062, two-player game tests for each finding | (all) | feat/mp-bughunt | v1.1-multiplayer | queued | After MP-1 to MP-6 merge |
+| MP-8 | Multiplayer integration: remove the deprecated `subject()`, ARCHITECTURE, 3/3 green | core | feat/mp-integration | v1.1-multiplayer | queued | Last |
 
 ## Milestones
 | Tag | Closes when | Status |
@@ -49,6 +58,7 @@ Status values: queued, running, review, fix, merged, blocked. Only the orchestra
 | v0.7-accidents | P1-8 merged | tagged (pacing check: director 20 h game tests green) |
 | v0.8-endings | P2-1a and P2-1b merged | tagged (300 tests green 3/3, including the 20 h pacing sims for every tempo) |
 | v1.0 | P2-2 and P2-3 merged, 20 h simulation passes | tagged (329 tests green 3/3, 20 h sims for all tempos with all 70 real cards) |
+| v1.1-multiplayer | MP-0 to MP-8 merged, two-player game tests in every workstream, 3/3 green | open |
 
 ## Tuning from playtests (apply as code defaults on the next atmosphere touch)
 - `fogDriftStrengthMin` 0.45, `fogDriftStrengthMax` 0.7 (D-022). Already set in Mariano's run/config.
