@@ -8,6 +8,7 @@ import com.forzacode.a1016_02.core.Services;
 import com.forzacode.a1016_02.core.TraceLedger;
 
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.GlobalPos;
 import net.minecraft.core.component.DataComponents;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
@@ -26,9 +27,11 @@ import net.minecraft.world.item.enchantment.EnchantmentHelper;
 import org.jspecify.annotations.Nullable;
 
 /**
- * Weapons and armor he took from the player's containers earlier (D-032): the ledger's REMOVE_STACK entries (he still
+ * Weapons and armor he took from the players' containers earlier (D-032): the ledger's REMOVE_STACK entries (he still
  * holds the stack) and MOVE_STACK entries (the stack sits in the chest it was moved to, such as dig's network chest).
  * Only these can turn up on a zombie later, through {@code TraceService.equipFromLedger}; nothing is ever created.
+ * With friends it is the group's gear: anything taken from a container any player placed (friends share chests), the
+ * target's own (from the chests at their base) first.
  */
 public final class StolenGear {
 	/**
@@ -159,18 +162,27 @@ public final class StolenGear {
 	}
 
 	/**
-	 * The stacks that can come back on a mob in {@code level} on {@code day}: theirs, old enough, not cursed, and held
-	 * by him or still in a loaded chest of this level. Renamed and enchanted ones first, then the oldest.
+	 * The stacks that can come back on a mob in {@code level} on {@code day}: the group's own (taken from a container a
+	 * player placed), old enough, not cursed, and held by him or still in a loaded chest of this level. The target's own
+	 * come first (taken from a container within {@code baseRadius} of {@code base}, their base), then renamed and
+	 * enchanted ones, then the oldest.
 	 */
-	public static List<Stolen> usable(ServerLevel level, long day, AccidentConfig cfg) {
+	public static List<Stolen> usable(ServerLevel level, long day, AccidentConfig cfg, @Nullable GlobalPos base) {
 		List<Stolen> found = new ArrayList<>();
 		for (Stolen stolen : all(level.getServer())) {
 			if (stolen.canComeBack() && stolen.oldEnough(day, cfg) && (stolen.held() || stolen.entry().pos().dimension().equals(level.dimension()))) {
 				found.add(stolen);
 			}
 		}
-		found.sort(Comparator.comparingInt((Stolen s) -> -score(s.stack())).thenComparingLong(s -> s.entry().day()));
+		found.sort(Comparator.comparingInt((Stolen s) -> nearBase(s, base, cfg.baseRadius) ? 0 : 1).thenComparingInt(s -> -score(s.stack()))
+				.thenComparingLong(s -> s.entry().day()));
 		return found;
+	}
+
+	/** Taken from a container at that base (same level, within {@code radius} blocks). */
+	public static boolean nearBase(Stolen stolen, @Nullable GlobalPos base, int radius) {
+		GlobalPos from = stolen.entry().pos();
+		return base != null && from.dimension().equals(base.dimension()) && from.pos().closerThan(base.pos(), radius);
 	}
 
 	/** A moved stack is still in the slot it was moved to (a loaded chest only; unloaded counts as not there). */

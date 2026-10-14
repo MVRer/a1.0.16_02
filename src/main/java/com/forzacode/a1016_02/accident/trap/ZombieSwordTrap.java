@@ -18,6 +18,7 @@ import com.forzacode.a1016_02.core.Services;
 import com.forzacode.a1016_02.core.TraceLedger;
 
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.GlobalPos;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.damagesource.DamageSource;
@@ -37,7 +38,9 @@ import org.jspecify.annotations.Nullable;
  * drop, undamaged, the zombie no longer despawns, so no MobTamper is needed). It walks and fights by the game's own
  * rules; nothing is spawned, buffed or sent at you. It hits harder because it has your gear. Deniable: zombies pick up
  * loot. The clue: it's yours (renamed and enchanted stacks are picked first). Only a death by that zombie while it
- * still holds the stack counts; the list reads "own sword".
+ * still holds the stack counts; the list reads "own sword". With friends it wears the group's gear (from any chest a
+ * player placed, the target's own chests first, see {@link StolenGear#usable}), and whoever it kills with it is the
+ * marked death: "own" is the group's own.
  */
 public final class ZombieSwordTrap extends BaseTrap {
 	public static final String CAUSE = "accident:zombie_has_your_sword";
@@ -60,11 +63,12 @@ public final class ZombieSwordTrap extends BaseTrap {
 		if (level.dimensionType().hasFixedTime()) {
 			return found;
 		}
-		List<StolenGear.Stolen> stolen = StolenGear.usable(level, ctx.day(), cfg);
+		ServerPlayer player = ctx.player();
+		GlobalPos base = player == null ? null : ctx.watch().base(player).orElse(null);
+		List<StolenGear.Stolen> stolen = StolenGear.usable(level, ctx.day(), cfg, base);
 		if (stolen.isEmpty()) {
 			return found;
 		}
-		ServerPlayer player = ctx.player();
 		Vec3 from = player != null && player.level() == level ? player.position() : Vec3.atCenterOf(ctx.center());
 		double min = cfg.swordZombieMinDistance;
 		double max = cfg.swordZombieMaxDistance;

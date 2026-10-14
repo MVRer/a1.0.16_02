@@ -56,8 +56,8 @@ public interface TrapKind {
 	}
 
 	/**
-	 * One planner step while this trap is armed (live traps spring here, the dark corner puts its torches back).
-	 * Returns the updated trap; null disarms it.
+	 * One planner step while this trap is armed (live traps spring here for whichever of {@code ctx.players()} is in
+	 * place, the dark corner puts its torches back). Returns the updated trap; null disarms it.
 	 */
 	default @Nullable ArmedTrap tick(TrapContext ctx, ArmedTrap armed) {
 		return armed;
@@ -67,10 +67,11 @@ public interface TrapKind {
 	boolean matches(DamageSource source, ArmedTrap armed);
 
 	/**
-	 * True if this death is this trap's doing, given what the planner saw (place and window are already checked).
-	 * Defaults to {@link #matches}. False positives are worse than misses: a marked death ends a hardcore run.
+	 * True if this death of {@code victim} (whoever set the trap off, not only its own player) is this trap's doing,
+	 * given what the planner saw (place and window are already checked). Defaults to {@link #matches}. False positives
+	 * are worse than misses: a marked death ends a hardcore run.
 	 */
-	default boolean claims(ServerPlayer player, DamageSource source, ArmedTrap armed, AccidentData data, long now) {
+	default boolean claims(ServerPlayer victim, DamageSource source, ArmedTrap armed, AccidentData data, long now) {
 		return matches(source, armed);
 	}
 
@@ -79,7 +80,10 @@ public interface TrapKind {
 		return armed;
 	}
 
-	/** A mob was just added to the world (spawned, not loaded) while this trap is armed. Returns the updated trap. */
+	/**
+	 * A mob was just added to the world (spawned, not loaded) while this trap is armed. {@code ctx.player()} is the
+	 * trap's own player, looked up now (null while they are away or dead). Returns the updated trap.
+	 */
 	default ArmedTrap onSpawned(TrapContext ctx, Entity entity, ArmedTrap armed) {
 		return armed;
 	}
@@ -104,6 +108,15 @@ public interface TrapKind {
 		return false;
 	}
 
+	/**
+	 * True if only its own player can set it off (the bed: their bed, their sleepless nights). Every other trap kills
+	 * whoever sets it off (D-062.6) and stays armed and deniable when its player leaves or dies (D-062.5). A personal trap
+	 * never claims a friend's death, and is dropped when its player turns spectator (it could never count again).
+	 */
+	default boolean personal() {
+		return false;
+	}
+
 	/** True if the trap is over once its mob dies (the zombie wearing the sword, the moved enderman). */
 	default boolean endsWithMob() {
 		return false;
@@ -118,9 +131,9 @@ public interface TrapKind {
 	}
 
 	/**
-	 * Every tick while this trap is set and the subject is in its level: a chance to note what only shows for a moment
-	 * (falling through a bridge's gap).
+	 * Every tick while this trap is set, for every participant in its level: a chance to note what only shows for a
+	 * moment (that player falling through a bridge's gap), kept per player.
 	 */
-	default void watch(ServerPlayer subject, ArmedTrap armed, AccidentData data, AccidentConfig cfg, long now) {
+	default void watch(ServerPlayer player, ArmedTrap armed, AccidentData data, AccidentConfig cfg, long now) {
 	}
 }

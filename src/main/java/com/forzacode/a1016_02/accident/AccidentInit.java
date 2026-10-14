@@ -3,20 +3,20 @@ package com.forzacode.a1016_02.accident;
 import com.forzacode.a1016_02.core.AccidentPlanner;
 import com.forzacode.a1016_02.core.DeathMarker;
 import com.forzacode.a1016_02.core.Director;
+import com.forzacode.a1016_02.core.HerobrineEvents;
 import com.forzacode.a1016_02.core.Services;
 
 import net.fabricmc.fabric.api.entity.event.v1.ServerLivingEntityEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerChunkEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
-import net.fabricmc.fabric.api.networking.v1.ServerPlayConnectionEvents;
 
 import net.minecraft.server.level.ServerPlayer;
 
 /**
  * Common entrypoint of the accident workstream: installs the real {@link AccidentPlanner} and {@link DeathMarker},
- * registers one director card per trap, the route sampler and planner tick, the death hook and
- * {@code /a1016 accident}.
+ * registers one director card per trap, the route sampler and planner tick, sessions from
+ * {@link HerobrineEvents#PARTICIPATION}, the death hook and {@code /a1016 accident}.
  */
 public final class AccidentInit {
 	private static final AccidentPlannerImpl PLANNER = new AccidentPlannerImpl(AccidentData::get, ViewGate.TRACES);
@@ -46,7 +46,8 @@ public final class AccidentInit {
 			AccidentConfig.get();
 		});
 		ServerLifecycleEvents.SERVER_STOPPED.register(server -> PLANNER.attach(null));
-		ServerPlayConnectionEvents.JOIN.register((handler, sender, server) -> PLANNER.onJoin(handler.player));
+		// Sessions are per player (D-059, D-062.4): a start is a new session of theirs, a stop is theirs alone.
+		HerobrineEvents.PARTICIPATION.register(PLANNER::onParticipation);
 		ServerChunkEvents.CHUNK_LOAD.register((level, chunk, generated) -> PLANNER.onChunkLoad(level, chunk.getPos()));
 		ServerTickEvents.END_SERVER_TICK.register(server -> {
 			PLANNER.tick(server);

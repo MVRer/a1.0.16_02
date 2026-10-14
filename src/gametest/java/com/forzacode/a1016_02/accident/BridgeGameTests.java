@@ -59,12 +59,12 @@ public class BridgeGameTests extends SwordGameTests {
 			sampler.sample(a.player, a.data, a.cfg, a.now(), a.today());
 			a.stand(2.5, 1, 0.5, -90, 0);
 			sampler.sample(a.player, a.data, a.cfg, a.now(), a.today());
-			RouteBook.Point walked = a.data.routes().get(dimension, first.above());
+			RouteBook.Point walked = a.data.routes(a.player.getUUID()).get(dimension, first.above());
 			helper.assertTrue(walked != null && walked.has(RouteBook.ON_PLACED), "the route missed a walk on a placed block in " + dimension.identifier());
-			helper.assertTrue(a.data.routes().contains(dimension, a.at(1, 1, 0)), "the step between two samples was not filled in, in " + dimension.identifier()
-					+ ": walked " + a.data.routes().near(dimension, first, 4, 10).stream().map(spot -> spot.pos().subtract(a.origin).toShortString()).toList());
-			helper.assertFalse(a.data.routes().contains(Level.OVERWORLD, first.above()), "the walk went into the overworld's routes");
-			helper.assertTrue(dimension.equals(a.data.headingDimension) && a.data.heading != null && a.data.heading.x > 0.99, "no heading along the bridge");
+			helper.assertTrue(a.data.routes(a.player.getUUID()).contains(dimension, a.at(1, 1, 0)), "the step between two samples was not filled in, in " + dimension.identifier()
+					+ ": walked " + a.data.routes(a.player.getUUID()).near(dimension, first, 4, 10).stream().map(spot -> spot.pos().subtract(a.origin).toShortString()).toList());
+			helper.assertFalse(a.data.routes(a.player.getUUID()).contains(Level.OVERWORLD, first.above()), "the walk went into the overworld's routes");
+			helper.assertTrue(dimension.equals(a.mine().headingDimension) && a.mine().heading != null && a.mine().heading.x > 0.99, "no heading along the bridge");
 			a.done();
 		}
 		helper.succeed();
@@ -144,15 +144,15 @@ public class BridgeGameTests extends SwordGameTests {
 				"not one ledgered removal: " + logged);
 
 		// Which deaths count: out of the world after dropping through the gap.
-		AccidentPlannerImpl planner = new AccidentPlannerImpl(server -> a.data, Yard.NOBODY);
+		AccidentPlannerImpl planner = new Group(helper).planner(a.data, Yard.NOBODY);
 		ArmedTrap armed = AccidentPlannerImpl.build(Traps.VOID_BRIDGE, a.ctx(Yard.NOBODY), spot, a.cfg);
-		a.data.setArmed(armed);
+		a.data.setArmed(a.player.getUUID(), armed);
 		DamageSources damage = a.level.damageSources();
 		a.stand(8.5, -70 - a.origin.getY() + a.level.getMinY(), 0.5, 0, 0);
 		helper.assertFalse(planner.causedBy(a.player, damage.fellOutOfWorld()), "a void death without a drop through the gap was claimed");
 		a.stand(8.5, -1.5, 0.5, 0, 0);
 		Traps.VOID_BRIDGE.watch(a.player, armed, a.data, a.cfg, a.now());
-		helper.assertTrue(a.data.gapPassTick == a.now(), "the drop through the gap was not noticed");
+		helper.assertTrue(a.mine().gapPassTick == a.now(), "the drop through the gap was not noticed");
 		a.stand(8.5, -70 - a.origin.getY() + a.level.getMinY(), 0.5, 0, 0);
 		helper.assertTrue(planner.causedBy(a.player, damage.fellOutOfWorld()), "falling out of the world through the gap was not claimed");
 		helper.assertFalse(planner.causedBy(a.player, damage.drown()), "drowning was claimed by the void bridge");
@@ -193,9 +193,9 @@ public class BridgeGameTests extends SwordGameTests {
 		helper.assertTrue(level.getBlockState(spot.pos).isAir() && level.getBlockState(a.at(0, 0, 0)).is(Blocks.COBBLESTONE)
 				&& level.getBlockState(a.at(2, 0, 0)).is(Blocks.COBBLESTONE), "not a 1x1 gap");
 
-		AccidentPlannerImpl planner = new AccidentPlannerImpl(server -> a.data, Yard.NOBODY);
+		AccidentPlannerImpl planner = new Group(helper).planner(a.data, Yard.NOBODY);
 		ArmedTrap armed = AccidentPlannerImpl.build(Traps.LAVA_BRIDGE, a.ctx(Yard.NOBODY), spot, a.cfg);
-		a.data.setArmed(armed);
+		a.data.setArmed(a.player.getUUID(), armed);
 		DamageSources damage = level.damageSources();
 		a.stand(1.5, floor + 0.2, 0.5, 0, 0);
 		helper.assertFalse(planner.causedBy(a.player, damage.lava()), "lava without a drop through the gap was claimed");
@@ -271,9 +271,9 @@ public class BridgeGameTests extends SwordGameTests {
 			// One stands on the bridge now: no spot within its reach is offered again (the clue would not hold).
 			helper.assertTrue(Traps.ENDERMAN_ON_BRIDGE.candidates(a.ctx(Yard.NOBODY)).isEmpty(), "a spot within an enderman's reach was offered");
 
-			AccidentPlannerImpl planner = new AccidentPlannerImpl(server -> a.data, Yard.NOBODY);
+			AccidentPlannerImpl planner = new Group(helper).planner(a.data, Yard.NOBODY);
 			ArmedTrap armed = AccidentPlannerImpl.build(Traps.ENDERMAN_ON_BRIDGE, a.ctx(Yard.NOBODY), spot, a.cfg);
-			a.data.setArmed(armed);
+			a.data.setArmed(a.player.getUUID(), armed);
 			helper.assertTrue(armed.blames(enderman.getUUID()) && armed.mobs().size() == 1, "the moved enderman is not remembered");
 			DamageSources damage = level.damageSources();
 			a.stand(spot.mobTo.getX() - a.origin.getX() - 1.5, 1, 0.5, -90, 0);

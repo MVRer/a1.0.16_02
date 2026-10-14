@@ -3,6 +3,7 @@ package com.forzacode.a1016_02.accident;
 import java.util.Collection;
 import java.util.List;
 import java.util.Set;
+import java.util.UUID;
 
 import com.forzacode.a1016_02.core.GameClock;
 import com.forzacode.a1016_02.core.Services;
@@ -25,7 +26,7 @@ import org.jspecify.annotations.Nullable;
 /**
  * A test setup in the 24x20x24 {@code accident/yard} structure: blocks in relative coordinates, a private
  * {@link AccidentData} (so tests never share the world's armed trap), player-placed blocks and walked cells, and view
- * gates from fixed viewpoints (a mock player in the level would join the shared test server as the subject).
+ * gates from fixed viewpoints (a real player in the level would take part in every test on the shared test server).
  */
 final class Yard {
 	static final String STRUCTURE = "a1016_02:accident/yard";
@@ -103,11 +104,21 @@ final class Yard {
 		placed(x, y, z, block.defaultBlockState());
 	}
 
+	/** The stand-in player's UUID: their routes, records and armed trap are keyed by it. */
+	UUID owner() {
+		return player.getUUID();
+	}
+
 	/** A cell the player walked through, with {@code passes} separate passes, first seen on {@code day}. */
 	void walk(int x, int y, int z, int flags, int passes, long day) {
+		walk(player, x, y, z, flags, passes, day);
+	}
+
+	/** A cell {@code who} walked through (their own routes), with {@code passes} separate passes, first seen on {@code day}. */
+	void walk(ServerPlayer who, int x, int y, int z, int flags, int passes, long day) {
 		long gap = cfg.routePassGapTicks();
 		for (int n = 0; n < passes; n++) {
-			data.routes().record(level.dimension(), abs(x, y, z), (int) day, flags, n * (gap + 1), gap, cfg.routeMaxPointsPerDimension);
+			data.routes(who.getUUID()).record(level.dimension(), abs(x, y, z), (int) day, flags, n * (gap + 1), gap, cfg.routeMaxPointsPerDimension);
 		}
 	}
 
@@ -123,8 +134,14 @@ final class Yard {
 		return GameClock.playTicks(level.getServer());
 	}
 
+	/** A context for {@code who} (null: nobody in place), on the stand-in player's routes. */
 	TrapContext ctx(ViewGate view, BlockPos center, @Nullable ServerPlayer who) {
-		return new TrapContext(level, who, center, data, view, cfg, now(), today());
+		return new TrapContext(level, who, owner(), who == null ? List.of() : List.of(who), center, data, view, cfg, now(), today(), Services.watch());
+	}
+
+	/** A planner over this yard's data that sees nobody take part (so other tests' online players never step its traps). */
+	AccidentPlannerImpl planner(ViewGate view) {
+		return new Group(helper).planner(data, view);
 	}
 
 	TrapContext ctx(ViewGate view, BlockPos center) {

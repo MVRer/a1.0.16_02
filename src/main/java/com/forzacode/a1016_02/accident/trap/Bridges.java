@@ -5,6 +5,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
 
+import com.forzacode.a1016_02.accident.AccidentData;
 import com.forzacode.a1016_02.accident.RouteBook;
 import com.forzacode.a1016_02.accident.Scan;
 import com.forzacode.a1016_02.accident.TrapContext;
@@ -19,8 +20,9 @@ import net.minecraft.world.phys.Vec3;
 import org.jspecify.annotations.Nullable;
 
 /**
- * The player's own bridges out of the overworld (D-034): blocks they placed and walked on, over the End's void or a
- * Nether lava lake. Built on the footprint ({@code PlayerWatch}) and the learned routes, both kept per dimension.
+ * The player's own bridges out of the overworld (D-034): placed blocks they walked on, over the End's void or a
+ * Nether lava lake. Built on the footprint ({@code PlayerWatch}) and that player's own learned routes and heading,
+ * both kept per dimension, in whichever level that player is.
  */
 public final class Bridges {
 	/** What is under the bridge. */
@@ -138,8 +140,9 @@ public final class Bridges {
 		if (player == null) {
 			return null;
 		}
-		Vec3 walked = ctx.data().heading;
-		if (walked != null && ctx.level().dimension().equals(ctx.data().headingDimension)) {
+		AccidentData.PlayerData mine = ctx.data().personal(player.getUUID());
+		Vec3 walked = mine.heading;
+		if (walked != null && ctx.level().dimension().equals(mine.headingDimension)) {
 			return walked;
 		}
 		Vec3 look = player.getViewVector(1.0F);

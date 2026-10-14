@@ -15,7 +15,8 @@ import net.minecraft.world.phys.AABB;
 /**
  * The out-of-view question the planner asks before it touches anything. In play it is
  * {@link TraceService#isOutOfView} (and every edit is checked again by core). Game tests use fixed viewpoints,
- * since a mock player in the level would join the shared test server as the subject.
+ * since a real player in the level would take part in every test on the shared test server. In play every player counts
+ * as a viewer, spectators included (D-062.7).
  */
 public interface ViewGate {
 	boolean outOfView(ServerLevel level, Collection<BlockPos> positions);

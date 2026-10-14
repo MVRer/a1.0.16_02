@@ -229,15 +229,17 @@ public final class DarkCornerTrap extends BaseTrap {
 		return null;
 	}
 
-	/** Puts the torches back when the morning comes on the game clock (or the player sleeps through the night). */
+	/**
+	 * Puts the torches back when the morning comes on the game clock (or someone in the level sleeps through the night),
+	 * whether or not the player it was set for is still around.
+	 */
 	@Override
 	public @Nullable ArmedTrap tick(TrapContext ctx, ArmedTrap armed) {
 		if (armed.phase() != ArmedTrap.Phase.SET) {
 			return armed;
 		}
 		long clock = ctx.level().getServer().overworld().getOverworldClockTime();
-		ServerPlayer player = ctx.player();
-		boolean morning = armed.hasClock() && clock >= armed.clockUntil() || player != null && player.isSleeping();
+		boolean morning = armed.hasClock() && clock >= armed.clockUntil() || here(ctx).stream().anyMatch(ServerPlayer::isSleeping);
 		ArmedTrap back = morning ? restore(ctx.level(), ctx.view(), armed) : null;
 		if (back == null) {
 			return armed;

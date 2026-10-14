@@ -24,7 +24,8 @@ import net.minecraft.world.damagesource.DamageTypes;
 /**
  * The lure, offerings at the cairn: you come back to check along the same route, and by the third visit the ground
  * on it is hollow over a drop or lava. Set while you are away from the cairn, after your second visit. The clue: a
- * clean hole exactly on the way you always walked.
+ * clean hole exactly on the way you always walked. Visits and routes are the target's own; once hollow, the hole
+ * takes whoever walks there.
  */
 public final class CairnLureTrap extends BaseTrap {
 	public CairnLureTrap() {
@@ -32,19 +33,26 @@ public final class CairnLureTrap extends BaseTrap {
 				DamageTypes.ON_FIRE, DamageTypes.DROWN);
 	}
 
+	/** This player's own visits to their cairn (D-061). */
 	@Override
 	public boolean contextFits(ServerPlayer player, ServerLevel level, AccidentConfig cfg) {
-		AccidentData data = AccidentData.get(level.getServer());
-		return data.cairn().isPresent() && data.cairnVisits() >= cfg.cairnVisitsBeforeTrap && !data.atCairn;
+		return ready(AccidentData.get(level.getServer()).personal(player.getUUID()), cfg);
 	}
 
+	/** Their cairn is known, they went back to it often enough, and they are away from it now. */
+	private static boolean ready(AccidentData.PlayerData mine, AccidentConfig cfg) {
+		return mine.cairn().isPresent() && mine.cairnVisits() >= cfg.cairnVisitsBeforeTrap && !mine.atCairn;
+	}
+
+	/** On the target's own usual way to their cairn. */
 	@Override
 	public List<Candidate> candidates(TrapContext ctx) {
 		ServerLevel level = ctx.level();
 		AccidentConfig cfg = ctx.cfg();
 		List<Candidate> found = new ArrayList<>();
-		GlobalPos cairn = ctx.data().cairn().orElse(null);
-		if (cairn == null || !cairn.dimension().equals(level.dimension()) || ctx.data().cairnVisits() < cfg.cairnVisitsBeforeTrap || ctx.data().atCairn) {
+		AccidentData.PlayerData mine = ctx.target() == null ? null : ctx.data().personal(ctx.target());
+		GlobalPos cairn = mine == null ? null : mine.cairn().orElse(null);
+		if (cairn == null || !cairn.dimension().equals(level.dimension()) || !ready(mine, cfg)) {
 			return found;
 		}
 		Set<BlockPos> seen = new HashSet<>();

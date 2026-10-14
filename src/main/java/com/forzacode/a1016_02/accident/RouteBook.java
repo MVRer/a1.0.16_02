@@ -24,9 +24,9 @@ import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.Level;
 
 /**
- * Where the subject actually walks: the cells their feet passed through, sampled by {@link RouteSampler}, with how
+ * Where one player actually walks: the cells their feet passed through, sampled by {@link RouteSampler}, with how
  * many separate passes, the first and last in-game day, and what kind of place it was. Capped per dimension (the
- * least recently walked spots go first). Part of {@link AccidentData}.
+ * least recently walked spots go first). Each player has their own, in {@link AccidentData} (D-061).
  */
 public final class RouteBook {
 	/** The player was climbing. */
@@ -178,6 +178,11 @@ public final class RouteBook {
 	public int size(ResourceKey<Level> dimension) {
 		Dimension dim = dimensions.get(dimension);
 		return dim == null ? 0 : dim.points.size();
+	}
+
+	/** True if no cell is recorded in any dimension. */
+	public boolean isEmpty() {
+		return dimensions.values().stream().allMatch(dim -> dim.points.isEmpty());
 	}
 
 	private static RouteBook unpack(Map<ResourceKey<Level>, Packed> packed) {

@@ -82,16 +82,18 @@ public final class HouseFireTrap extends BaseTrap {
 		return false;
 	}
 
+	/** Whoever burns: the victim touched traced fire or lava just now, or (burning) a little while ago. */
 	@Override
-	public boolean claims(ServerPlayer player, DamageSource source, ArmedTrap armed, AccidentData data, long now) {
-		ServerLevel level = player.level();
+	public boolean claims(ServerPlayer victim, DamageSource source, ArmedTrap armed, AccidentData data, long now) {
+		ServerLevel level = victim.level();
 		AccidentConfig cfg = AccidentConfig.get();
-		boolean touchedJustNow = data.tracedBurnTick >= now - TOUCH_TICKS || touchesTraced(level, armed, player.getBoundingBox(), cfg);
+		long touched = data.personal(victim.getUUID()).tracedBurnTick;
+		boolean touchedJustNow = touched >= now - TOUCH_TICKS || touchesTraced(level, armed, victim.getBoundingBox(), cfg);
 		if (source.is(DamageTypes.LAVA) || source.is(DamageTypes.IN_FIRE)) {
 			return touchedJustNow;
 		}
 		if (source.is(DamageTypes.ON_FIRE)) {
-			return touchedJustNow || data.tracedBurnTick >= now - cfg.fireBurnMemoryTicks();
+			return touchedJustNow || touched >= now - cfg.fireBurnMemoryTicks();
 		}
 		return false;
 	}

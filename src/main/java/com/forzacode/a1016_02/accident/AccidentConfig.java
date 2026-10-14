@@ -9,8 +9,19 @@ import com.forzacode.a1016_02.core.ModConfig;
  */
 public final class AccidentConfig {
 	// --- planner ---
-	/** "Never two deaths' worth of setup in the same session." */
+	/** "Never two deaths' worth of setup in the same session": per player and per session of theirs (D-059). */
 	public int maxTrapsPerSession = 1;
+	/**
+	 * Two armed traps never share ground (D-059 with D-060): a new trap's spot stays at least this far (blocks, same
+	 * dimension) from every other armed trap's spot, and its zone never overlaps theirs. The default is the shared
+	 * moment radius (48), so friends standing together never get two traps set in the same place.
+	 */
+	public int trapSpacingBlocks = 48;
+	/**
+	 * A trap that just killed still claims another player's death this long (seconds of game time): two friends in the
+	 * same lava pocket, under the same gravel or in one creeper's blast are one accident with two marked deaths.
+	 */
+	public double spentGraceSeconds = 10;
 	/** How many candidates an arm attempt tries before giving up (each may be in view). */
 	public int maxSetupTries = 6;
 	/** Planner cadence for live traps, restores and crosses (cost setting, seconds). */
@@ -184,6 +195,11 @@ public final class AccidentConfig {
 	/** Game ticks (falling is game physics, not pacing, so never divided by devFastMode). */
 	public long bridgeFallMemoryTicks() {
 		return Math.round(bridgeFallMemorySeconds * 20.0);
+	}
+
+	/** Game ticks (the same accident's moment is game time, not pacing, so never divided by devFastMode). */
+	public long spentGraceTicks() {
+		return Math.round(spentGraceSeconds * 20.0);
 	}
 
 	/** TIME_SINCE_REST counts game ticks. */

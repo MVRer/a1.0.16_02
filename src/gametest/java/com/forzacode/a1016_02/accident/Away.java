@@ -30,7 +30,7 @@ import net.minecraft.world.phys.Vec3;
  * A test patch in another dimension (the test server's flat End or Nether), far from everything and unique to the
  * test (its own slot, never shared with another test running at the same time): chunks held loaded, blocks in
  * coordinates relative to {@link #origin}, a private {@link AccidentData}, and a stand-in player who lives in that
- * level (not in the player list, so never the subject).
+ * level (not in the player list, so never a participant).
  */
 final class Away {
 	/** Half the width of the patch held loaded, in blocks. */
@@ -157,7 +157,8 @@ final class Away {
 	void bridge(int x1, int x2) {
 		for (int x = x1; x <= x2; x++) {
 			placed(at(x, 0, 0), Blocks.COBBLESTONE);
-			data.routes().record(level.dimension(), at(x, 1, 0), (int) today(), RouteBook.ON_PLACED, 0, cfg.routePassGapTicks(), cfg.routeMaxPointsPerDimension);
+			data.routes(player.getUUID()).record(level.dimension(), at(x, 1, 0), (int) today(), RouteBook.ON_PLACED, 0, cfg.routePassGapTicks(),
+					cfg.routeMaxPointsPerDimension);
 		}
 	}
 
@@ -170,8 +171,14 @@ final class Away {
 
 	/** Which way the stand-in was walking, as the route sampler would have noted. */
 	void walking(Vec3 heading) {
-		data.heading = heading.normalize();
-		data.headingDimension = level.dimension();
+		AccidentData.PlayerData mine = data.personal(player.getUUID());
+		mine.heading = heading.normalize();
+		mine.headingDimension = level.dimension();
+	}
+
+	/** The stand-in's own records. */
+	AccidentData.PlayerData mine() {
+		return data.personal(player.getUUID());
 	}
 
 	/** What the stand-in sees, as a gate. */

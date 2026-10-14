@@ -50,7 +50,7 @@ public class AttributionGameTests extends BridgeGameTests {
 	public void darkCornerBlamesOnlyMonstersBornInTheDark(GameTestHelper helper) {
 		Yard y = darkBase(helper);
 		ServerLevel level = y.level;
-		AccidentPlannerImpl planner = new AccidentPlannerImpl(server -> y.data, Yard.NOBODY);
+		AccidentPlannerImpl planner = y.planner(Yard.NOBODY);
 		AccidentPlannerImpl.ArmResult armed = planner.arm(y.player, Traps.DARK_CORNER, true);
 		helper.assertTrue(armed.armed() && armed.trap().saved().size() == 3, "the corner was not darkened: " + armed.message());
 		helper.assertTrue(armed.trap().clockUntil() > level.getServer().overworld().getOverworldClockTime(), "no morning on the clock");
@@ -90,7 +90,7 @@ public class AttributionGameTests extends BridgeGameTests {
 			y.placed(t[0], 1, t[1], Blocks.TORCH);
 		}
 		y.player.snapTo(y.absVec(11.5, 1, 11.5), 0, 0);
-		AccidentPlannerImpl planner = new AccidentPlannerImpl(server -> y.data, Yard.NOBODY);
+		AccidentPlannerImpl planner = y.planner(Yard.NOBODY);
 		ArmedTrap trap = planner.arm(y.player, Traps.DARK_CORNER, true).trap();
 		helper.assertTrue(trap != null && trap.saved().size() == 3, "the corner room was not darkened");
 		helper.assertTrue(trap.lit().contains(y.abs(3, 1, 3)), "the room is not among the darkened cells");
@@ -115,7 +115,7 @@ public class AttributionGameTests extends BridgeGameTests {
 	public void darkCornerEndsByTheClockAndComesBackWhenLoaded(GameTestHelper helper) {
 		Yard y = darkBase(helper);
 		ServerLevel level = y.level;
-		AccidentPlannerImpl planner = new AccidentPlannerImpl(server -> y.data, Yard.NOBODY);
+		AccidentPlannerImpl planner = y.planner(Yard.NOBODY);
 		ArmedTrap trap = planner.arm(y.player, Traps.DARK_CORNER, true).trap();
 		helper.assertTrue(trap != null, "not armed");
 		long clock = level.getServer().overworld().getOverworldClockTime();
@@ -124,10 +124,10 @@ public class AttributionGameTests extends BridgeGameTests {
 				"still armed after the morning plus the grace, by the clock");
 
 		// The morning passed while the base was not ticked: the window closes, and the torches wait to go back.
-		y.data.setArmed(trap.withClockUntil(clock - y.cfg.darkCornerGraceTicks() - 10));
-		planner.step(level.getServer(), y.data, null, y.cfg, y.now());
+		y.data.setArmed(y.owner(), trap.withClockUntil(clock - y.cfg.darkCornerGraceTicks() - 10));
+		planner.step(level.getServer(), y.data, y.cfg, y.now());
 		helper.assertTrue(y.data.armed().isEmpty(), "the window did not close by the clock");
-		ArmedTrap waiting = y.data.restoring().orElse(null);
+		ArmedTrap waiting = y.data.restoring().stream().findFirst().orElse(null);
 		helper.assertTrue(waiting != null || torchesBack(y, trap), "the torches were dropped instead of put back");
 		if (waiting != null) {
 			planner.onChunkLoad(level, ChunkPos.containing(waiting.saved().get(0).pos()));
@@ -141,7 +141,7 @@ public class AttributionGameTests extends BridgeGameTests {
 	@GameTest(structure = Yard.STRUCTURE, maxTicks = 40, padding = Yard.BASE_PADDING)
 	public void darkCornerTorchFindsAnotherSpotWhenItsOffSpotIsBlocked(GameTestHelper helper) {
 		Yard y = darkBase(helper);
-		AccidentPlannerImpl planner = new AccidentPlannerImpl(server -> y.data, Yard.NOBODY);
+		AccidentPlannerImpl planner = y.planner(Yard.NOBODY);
 		ArmedTrap trap = planner.arm(y.player, Traps.DARK_CORNER, true).trap();
 		helper.assertTrue(trap != null && trap.offPos().isPresent(), "not armed");
 		ArmedTrap.SavedBlock moved = trap.saved().get(0);
@@ -173,7 +173,7 @@ public class AttributionGameTests extends BridgeGameTests {
 	@GameTest(structure = Yard.STRUCTURE, maxTicks = 40, padding = Yard.BASE_PADDING)
 	public void darkCornerPutsAnotherTorchABlockOffWhenTheFirstHasNoSpot(GameTestHelper helper) {
 		Yard y = darkBase(helper);
-		AccidentPlannerImpl planner = new AccidentPlannerImpl(server -> y.data, Yard.NOBODY);
+		AccidentPlannerImpl planner = y.planner(Yard.NOBODY);
 		ArmedTrap trap = planner.arm(y.player, Traps.DARK_CORNER, true).trap();
 		helper.assertTrue(trap != null && trap.offPos().isPresent() && trap.saved().size() > 1, "not armed");
 		ArmedTrap.SavedBlock planned = trap.saved().get(0);
@@ -201,7 +201,7 @@ public class AttributionGameTests extends BridgeGameTests {
 	@GameTest(structure = Yard.STRUCTURE, maxTicks = 40, padding = Yard.BASE_PADDING)
 	public void darkCornerLeavesOneTorchMissingWhenNoSpotABlockOffIsLeft(GameTestHelper helper) {
 		Yard y = darkBase(helper);
-		AccidentPlannerImpl planner = new AccidentPlannerImpl(server -> y.data, Yard.NOBODY);
+		AccidentPlannerImpl planner = y.planner(Yard.NOBODY);
 		ArmedTrap trap = planner.arm(y.player, Traps.DARK_CORNER, true).trap();
 		helper.assertTrue(trap != null && trap.offPos().isPresent(), "not armed");
 		ArmedTrap.SavedBlock planned = trap.saved().get(0);
@@ -263,7 +263,7 @@ public class AttributionGameTests extends BridgeGameTests {
 		y.set(8, 1, 10, Blocks.LAVA);
 		ServerPlayer player = y.player;
 		player.snapTo(y.absVec(8.5, 1, 5.5), 0, 0);
-		AccidentPlannerImpl planner = new AccidentPlannerImpl(server -> y.data, Yard.NOBODY);
+		AccidentPlannerImpl planner = y.planner(Yard.NOBODY);
 		AccidentPlannerImpl.ArmResult armed = planner.arm(player, Traps.HOUSE_FIRE, true);
 		helper.assertTrue(armed.armed() && armed.trap().pos().equals(y.abs(8, 1, 9)), "the gap is not the stone by the wall: " + armed.message());
 		DamageSources damage = level.damageSources();
@@ -288,7 +288,7 @@ public class AttributionGameTests extends BridgeGameTests {
 			player.snapTo(y.absVec(4.5, 1, 4.5), 0, 0);
 			helper.assertTrue(planner.causedBy(player, damage.onFire()), "burning after the traced fire was not claimed");
 			helper.assertFalse(planner.causedBy(player, damage.fall()), "a fall was claimed by the house fire");
-			y.data.tracedBurnTick = Long.MIN_VALUE;
+			y.data.personal(player.getUUID()).tracedBurnTick = Long.MIN_VALUE;
 			helper.assertFalse(planner.causedBy(player, damage.onFire()), "burning with no traced fire was claimed");
 			helper.assertFalse(HouseFireTrap.touchesTraced(level, armed.trap(), player.getBoundingBox(), y.cfg), "nothing traced where nothing burns");
 			y.set(2, 1, 2, Blocks.AIR);
@@ -308,7 +308,8 @@ public class AttributionGameTests extends BridgeGameTests {
 		ServerPlayer owner = y.player;
 		owner.setRespawnPosition(new ServerPlayer.RespawnConfig(LevelData.RespawnData.of(level.dimension(), y.abs(5, 1, 5), 0, 0), false), false);
 		owner.snapTo(y.absVec(200.5, 1, 6.5), 0, 0);
-		AccidentPlannerImpl planner = new AccidentPlannerImpl(server -> y.data, Yard.NOBODY);
+		// The owner takes part, so the planner can look them up when a phantom appears.
+		AccidentPlannerImpl planner = new Group(helper, owner).planner(y.data, Yard.NOBODY);
 
 		owner.getStats().setValue(owner, Stats.CUSTOM.get(Stats.TIME_SINCE_REST), 30000);
 		helper.assertTrue(Traps.NO_BED.candidates(y.ctx(Yard.NOBODY, owner.blockPosition(), owner)).isEmpty(), "took the bed of a player who had not slept");
@@ -320,10 +321,10 @@ public class AttributionGameTests extends BridgeGameTests {
 		helper.assertTrue(armed.armed(), "the bed was not taken: " + armed.message());
 		owner.snapTo(y.absVec(8.5, 1, 8.5), 0, 0);
 		Phantom after = helper.spawn(EntityTypes.PHANTOM, new BlockPos(8, 6, 8));
-		planner.onSpawned(level, after, owner);
+		planner.onSpawned(level, after);
 		Phantom farAway = helper.spawn(EntityTypes.PHANTOM, new BlockPos(8, 6, 8));
 		farAway.teleportTo(farAway.getX() + 100, farAway.getY(), farAway.getZ());
-		planner.onSpawned(level, farAway, owner);
+		planner.onSpawned(level, farAway);
 
 		DamageSources damage = level.damageSources();
 		helper.assertTrue(planner.causedBy(owner, damage.mobAttack(after)), "a phantom of the sleepless nights after was not claimed");

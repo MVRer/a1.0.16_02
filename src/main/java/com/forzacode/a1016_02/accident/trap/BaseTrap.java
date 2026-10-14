@@ -7,7 +7,6 @@ import com.forzacode.a1016_02.accident.ArmedTrap;
 import com.forzacode.a1016_02.accident.TrapContext;
 import com.forzacode.a1016_02.accident.TrapKind;
 import com.forzacode.a1016_02.core.Habit;
-import com.forzacode.a1016_02.core.Services;
 
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.GlobalPos;
@@ -63,11 +62,14 @@ abstract class BaseTrap implements TrapKind {
 		return false;
 	}
 
-	/** The player's base in this level: their respawn point or first block, else the search center. */
+	/**
+	 * The trap's player's base in this level ("your house" is theirs, D-061): their respawn point or their own first
+	 * block, else the search center.
+	 */
 	static BlockPos base(TrapContext ctx) {
 		ServerPlayer player = ctx.player();
 		if (player != null) {
-			GlobalPos base = Services.watch().base(player).orElse(null);
+			GlobalPos base = ctx.watch().base(player).orElse(null);
 			if (base != null && base.dimension().equals(ctx.level().dimension())) {
 				return base.pos();
 			}
@@ -77,5 +79,10 @@ abstract class BaseTrap implements TrapKind {
 
 	static String at(BlockPos pos) {
 		return pos.getX() + " " + pos.getY() + " " + pos.getZ();
+	}
+
+	/** The players in the context's level who could set the trap off now, in its order (the trap's player first). */
+	static List<ServerPlayer> here(TrapContext ctx) {
+		return ctx.players().stream().filter(p -> p.level() == ctx.level() && p.isAlive() && !p.isSpectator()).toList();
 	}
 }
