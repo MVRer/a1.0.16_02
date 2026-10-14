@@ -74,6 +74,7 @@ public final class LoreInit {
 		PlayerBlockBreakEvents.AFTER.register((level, player, pos, state, blockEntity) -> {
 			if (player instanceof ServerPlayer serverPlayer && level instanceof ServerLevel serverLevel) {
 				Telling.onBlockBroken(serverPlayer, serverLevel, pos);
+				PlacementLog.onBroken(serverLevel, pos);
 			}
 		});
 		ServerMessageEvents.CHAT_MESSAGE.register((message, sender, params) -> Telling.onChat(sender, message.signedContent()));

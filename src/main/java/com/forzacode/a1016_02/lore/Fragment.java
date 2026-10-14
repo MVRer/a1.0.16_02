@@ -17,7 +17,7 @@ import net.minecraft.resources.Identifier;
  * One fragment, loaded from {@code data/a1016_02/lore/fragments/<id>.json} (reloads with {@code /reload}).
  * The text is DESIGN.md's, word for word; {@code [PLAYER NAME]} is filled in for the reader ({@link LiveBooks}).
  *
- * @param id         "F01".."F30"
+ * @param id         "F01".."F30", and the clue fragments past it (F35 to F44)
  * @param name       DESIGN.md's short name (not shown in game)
  * @param form       what it is in the world
  * @param where      DESIGN.md's "Where / when" cell, for reference (not shown in game)
@@ -32,10 +32,11 @@ import net.minecraft.resources.Identifier;
  * @param requires   what must have happened first
  * @param depends    profile dependencies (D-003), for reference
  * @param lastLine   a line the book gains later (F10's "* removed [PLAYER NAME]" in Ending B, see {@link LiveBooks})
+ * @param plates     name plates (F35): one sign each, the text on its second line
  */
 public record Fragment(String id, String name, Form form, String where, String title, int generation, List<String> pages,
 		List<String> lines, Optional<Identifier> item, Optional<String> itemName, Stage stage, Placement placement,
-		Requires requires, List<String> depends, Optional<String> lastLine) {
+		Requires requires, List<String> depends, Optional<String> lastLine, List<String> plates) {
 	/** The fragment's form in the world. */
 	public enum Form {
 		BOOK, SIGN, ITEM, STRUCTURE, ABSENCE;
@@ -87,17 +88,38 @@ public record Fragment(String id, String name, Form form, String where, String t
 	/**
 	 * What must have happened before the fragment can be placed.
 	 *
-	 * @param placed    fragments that must already be placed
-	 * @param read      fragments that must already be read
-	 * @param readCount at least this many fragments read
+	 * @param placed      fragments that must already be placed
+	 * @param read        fragments that must already be read
+	 * @param readCount   at least this many fragments read
+	 * @param notRead     fragments that must not be read yet (a late clue for a map nobody has read)
+	 * @param stageOrRead once every one of these is read, the fragment's stage no longer has to be reached (F13
+	 *                    once the map, F28, is read; D-066)
+	 * @param stuck       a late clue: the group has been stuck on one step of Ending D for some in-game days
 	 */
-	public record Requires(List<String> placed, List<String> read, int readCount) {
-		public static final Requires NONE = new Requires(List.of(), List.of(), 0);
+	public record Requires(List<String> placed, List<String> read, int readCount, List<String> notRead, List<String> stageOrRead,
+			Optional<Stuck> stuck) {
+		public static final Requires NONE = new Requires(List.of(), List.of(), 0, List.of(), List.of(), Optional.empty());
 		public static final Codec<Requires> CODEC = RecordCodecBuilder.create(i -> i.group(
 				Codec.STRING.listOf().optionalFieldOf("placed", List.of()).forGetter(Requires::placed),
 				Codec.STRING.listOf().optionalFieldOf("read", List.of()).forGetter(Requires::read),
-				Codec.INT.optionalFieldOf("read_count", 0).forGetter(Requires::readCount)
+				Codec.INT.optionalFieldOf("read_count", 0).forGetter(Requires::readCount),
+				Codec.STRING.listOf().optionalFieldOf("not_read", List.of()).forGetter(Requires::notRead),
+				Codec.STRING.listOf().optionalFieldOf("stage_or_read", List.of()).forGetter(Requires::stageOrRead),
+				Stuck.CODEC.optionalFieldOf("stuck").forGetter(Requires::stuck)
 		).apply(i, Requires::new));
+	}
+
+	/**
+	 * A late clue's trigger (D-066, STORY_CLUES M7): Ending D's chain has been on {@code step} for at least
+	 * {@code days} in-game days on the world clock (the shared flags {@code ending:d_step} and
+	 * {@code ending:d_step_day}; step 1's clock starts on the day F23 is first read). {@link LoreConfig#lateClueDays}
+	 * may override the days.
+	 */
+	public record Stuck(int step, int days) {
+		public static final Codec<Stuck> CODEC = RecordCodecBuilder.create(i -> i.group(
+				Codec.intRange(1, 7).fieldOf("step").forGetter(Stuck::step),
+				Codec.intRange(0, 365).fieldOf("days").forGetter(Stuck::days)
+		).apply(i, Stuck::new));
 	}
 
 	public static final Codec<Stage> STAGE_CODEC = lowerEnum(Stage.class);
@@ -117,7 +139,8 @@ public record Fragment(String id, String name, Form form, String where, String t
 			Placement.CODEC.fieldOf("placement").forGetter(Fragment::placement),
 			Requires.CODEC.optionalFieldOf("requires", Requires.NONE).forGetter(Fragment::requires),
 			Codec.STRING.listOf().optionalFieldOf("depends", List.of()).forGetter(Fragment::depends),
-			Codec.STRING.optionalFieldOf("last_line").forGetter(Fragment::lastLine)
+			Codec.STRING.optionalFieldOf("last_line").forGetter(Fragment::lastLine),
+			Codec.STRING.listOf().optionalFieldOf("plates", List.of()).forGetter(Fragment::plates)
 	).apply(i, Fragment::new)).validate(Fragment::validate);
 
 	private static DataResult<Fragment> validate(Fragment fragment) {

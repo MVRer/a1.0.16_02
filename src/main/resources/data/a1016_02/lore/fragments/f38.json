@@ -1,0 +1,25 @@
+{
+	"id": "F38",
+	"name": "the light at the camp",
+	"form": "structure",
+	"where": "At the edge of F28's Abandoned Camp. F23 read, F28 not read, 5 days",
+	"stage": "proximity",
+	"placement": {
+		"rule": "camp_light"
+	},
+	"requires": {
+		"placed": [
+			"F28"
+		],
+		"read": [
+			"F23"
+		],
+		"not_read": [
+			"F28"
+		],
+		"stuck": {
+			"step": 1,
+			"days": 5
+		}
+	}
+}

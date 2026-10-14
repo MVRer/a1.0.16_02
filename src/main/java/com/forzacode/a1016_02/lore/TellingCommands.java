@@ -73,7 +73,7 @@ final class TellingCommands {
 		List<LiveBooks.Line> lines = LiveBooks.lines(state, data);
 		say(ctx, "[a1016] the list's lines (" + lines.size() + "): " + (lines.isEmpty() ? "nobody known yet"
 				: String.join(" | ", lines.stream().map(LiveBooks.Line::text).toList()))
-				+ LiveBooks.removedName(state, data).map(name -> " | F10 removes " + name).orElse(""));
+				+ (data.f10Removed().isEmpty() ? "" : " | F10 removes " + String.join(", ", LiveBooks.removedNames(state, data))));
 		return state.tellingCount();
 	}
 
@@ -123,7 +123,7 @@ final class TellingCommands {
 			lines.add(new LiveBooks.Line(known.name(), them ? Optional.of(cause) : LiveBooks.cause(server, known.uuid())));
 		}
 		say(ctx, "[a1016] F23 would read (preview, nothing recorded):");
-		for (String page : LiveBooks.pages(f23.get(), name, lines, Optional.empty())) {
+		for (String page : LiveBooks.pages(f23.get(), name, lines, List.of())) {
 			for (String line : page.split("\n", -1)) {
 				say(ctx, "  " + line);
 			}
@@ -132,17 +132,21 @@ final class TellingCommands {
 	}
 
 	/**
-	 * {@code /a1016 lore ending finishf10 [player]}: Ending B's last F10 line now, naming that player (whoever runs
-	 * it; from the console, the first participant; with nobody at all, as the ending's old call would). Sets
-	 * lore:f10_finished for good.
+	 * {@code /a1016 lore ending finishf10 [player]}: one more Ending B line on F10 now, naming that player (whoever runs
+	 * it; from the console, the first participant), after any already named. Sets lore:f10_finished for good. Debug
+	 * only: in play the ending names only players whose line it finished.
 	 */
 	static int finishF10(CommandContext<CommandSourceStack> ctx, boolean named) throws CommandSyntaxException {
 		Optional<ServerPlayer> target = LoreCommands.find(ctx, named);
 		MinecraftServer server = ctx.getSource().getServer();
-		int updated = target.isPresent() ? LiveBooks.finishF10(server, target.get().getUUID()) : LiveBooks.finishF10(server);
-		say(ctx, "[a1016] F10 now ends with its last line for " + LiveBooks.removedName(HerobrineState.get(server), TellingData.get(server))
-				.orElse("nobody known (they never took part)") + " (" + updated + " copies updated now; others when opened). Flag "
-				+ LiveBooks.F10_FINISHED + " is set.");
+		if (target.isEmpty()) {
+			ctx.getSource().sendFailure(Component.literal("[a1016] nobody to name on F10 (no player)"));
+			return 0;
+		}
+		int updated = LiveBooks.finishF10(server, target.get().getUUID());
+		List<String> names = LiveBooks.removedNames(HerobrineState.get(server), TellingData.get(server));
+		say(ctx, "[a1016] F10 now ends with a line for " + (names.isEmpty() ? "nobody known (they never took part)" : String.join(", ", names)) + " ("
+				+ updated + " copies updated now; others when opened). Flag " + LiveBooks.F10_FINISHED + " is set.");
 		return 1;
 	}
 

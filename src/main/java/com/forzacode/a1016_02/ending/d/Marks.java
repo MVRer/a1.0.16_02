@@ -170,9 +170,14 @@ public final class Marks {
 		}
 	}
 
-	/** Copies the grove mark onto a crafting result made from grove wood (called by the crafting mixin). */
+	/**
+	 * Copies the grove mark onto a crafting result made from grove wood (called by the crafting mixin): its planks, and
+	 * the wood or stripped wood made from its logs (his cross takes grove wood in any shape on top, D-066 M5). A log
+	 * stripped where it stands keeps its place, so it stays tracked.
+	 */
 	public static ItemStack onCraft(Container grid, ItemStack result) {
-		if (result.isEmpty() || !result.is(Items.POPLAR_PLANKS) || has(result, GROVE_WOOD)) {
+		if (result.isEmpty() || !(result.is(Items.POPLAR_PLANKS) || result.is(Items.POPLAR_WOOD) || result.is(Items.STRIPPED_POPLAR_WOOD))
+				|| has(result, GROVE_WOOD)) {
 			return result;
 		}
 		for (int i = 0; i < grid.getContainerSize(); i++) {

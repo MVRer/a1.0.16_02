@@ -1,0 +1,20 @@
+{
+	"id": "F42",
+	"name": "one each",
+	"form": "book",
+	"where": "The chamber chest. Step 5, 2 days",
+	"title": "",
+	"pages": [
+		"six of them. one light each. nothing extra."
+	],
+	"stage": "proximity",
+	"placement": {
+		"rule": "chamber_chest"
+	},
+	"requires": {
+		"stuck": {
+			"step": 5,
+			"days": 2
+		}
+	}
+}

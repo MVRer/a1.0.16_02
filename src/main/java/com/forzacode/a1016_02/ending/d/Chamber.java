@@ -2,6 +2,7 @@ package com.forzacode.a1016_02.ending.d;
 
 import java.text.Normalizer;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
@@ -33,14 +34,18 @@ import net.minecraft.world.level.levelgen.structure.BoundingBox;
 /**
  * Steps 5 to 7, in the bedrock chamber: exactly six torches, or six and one more for each friend whose line was finished
  * ({@link Chain#torchesCount}; a wrong count does nothing); the sentence finished under F30's twin ("he is no longer
- * with us", the words F08 carries, any case and spacing; his name or "sorry" there counts as naming him, and the next
- * block someone stands on above bedrock is gone); his cross on bedrock between the torches, built (by anyone) on the
- * first block taken out of the cairn and topped with poplar planks from the untouched grove.
+ * with us", the words F08 carries, or "hes no longer with us", either one after the twin's "i did, but"; any case,
+ * spacing and punctuation, D-066 M1; his name or "sorry" there never counts and is naming him, and the next block
+ * someone stands on above bedrock is gone); his cross on bedrock between the torches, built (by anyone) with the first
+ * block taken out of the cairn anywhere in its post, the post standing on bedrock, topped with wood from the untouched
+ * grove in any shape (planks, log, wood, stripped; M5).
  */
 public final class Chamber {
 	public static final String NAMED_CAUSE = "ending:d/named";
 	/** The words of the sentence come from this fragment's lines. */
 	public static final String SENTENCE_FRAGMENT = "F08";
+	/** The twin's words, "i did, but", which the sentence may follow (M1). */
+	public static final String TWIN_FRAGMENT = "F30";
 	private static final String SORRY = "sorry";
 
 	private Chamber() {
@@ -88,6 +93,28 @@ public final class Chamber {
 		return FragmentData.get(SENTENCE_FRAGMENT).map(f -> letters(String.join(" ", f.linesFor(""))));
 	}
 
+	/**
+	 * Every way step 6 takes the sentence (M1), in {@link #letters} form: F08's "he is no longer with us", the same
+	 * with "hes", and either one after the twin's "i did, but" (the whole canon line). Empty if lore's data is not
+	 * loaded. "heisnolongerwithus", "hesnolongerwithus", "ididbutheisnolongerwithus", "ididbuthesnolongerwithus".
+	 */
+	public static List<String> sentences() {
+		Optional<String> said = sentence();
+		if (said.isEmpty() || said.get().isEmpty()) {
+			return List.of();
+		}
+		String full = said.get();
+		String hes = full.startsWith("heis") ? "hes" + full.substring("heis".length()) : full;
+		String twin = FragmentData.get(TWIN_FRAGMENT).map(f -> letters(String.join(" ", f.linesFor("")))).orElse("");
+		List<String> all = new ArrayList<>();
+		for (String one : List.of(full, hes, twin + full, twin + hes)) {
+			if (!all.contains(one)) {
+				all.add(one);
+			}
+		}
+		return List.copyOf(all);
+	}
+
 	/** One side of a sign, its lines joined with spaces. */
 	static String side(SignBlockEntity sign, SignTextSlot slot) {
 		StringBuilder text = new StringBuilder();
@@ -102,8 +129,9 @@ public final class Chamber {
 
 	/** A sign in the chamber, what it says on each side. */
 	public record Written(BlockPos pos, String front, String back) {
-		boolean says(String sentence) {
-			return letters(front).equals(sentence) || letters(back).equals(sentence);
+		/** One side says one of the sentences, letters only; a sign that names him or says sorry never does. */
+		boolean says(Collection<String> sentences) {
+			return !names() && (sentences.contains(letters(front)) || sentences.contains(letters(back)));
 		}
 
 		/** His name, or "sorry": counts as naming him. */
@@ -134,9 +162,12 @@ public final class Chamber {
 				&& Math.abs(pos.getY() - twin.getY()) <= 2;
 	}
 
-	/** Step 6: the finished sentence under the twin, if it is there. */
-	public static Optional<Written> finished(List<Written> signs, StairPlan plan, EndingDConfig cfg, String sentence) {
-		return signs.stream().filter(w -> underTwin(w.pos(), plan, cfg) && w.says(sentence)).findFirst();
+	/** Step 6: the finished sentence under the twin, if it is there ({@code sentences}: {@link #sentences}). */
+	public static Optional<Written> finished(List<Written> signs, StairPlan plan, EndingDConfig cfg, Collection<String> sentences) {
+		if (sentences.isEmpty()) {
+			return Optional.empty();
+		}
+		return signs.stream().filter(w -> underTwin(w.pos(), plan, cfg) && w.says(sentences)).findFirst();
 	}
 
 	/**
@@ -188,10 +219,17 @@ public final class Chamber {
 		return !state.isAir() && !state.canBeReplaced() && !(state.getBlock() instanceof BaseTorchBlock) && !(state.getBlock() instanceof SignBlock);
 	}
 
+	/** Wood from the grove's poplars in any shape (M5): planks, a log, wood, a stripped log or stripped wood. */
+	public static boolean groveWoodShape(BlockState state) {
+		return state.is(Blocks.POPLAR_PLANKS) || state.is(Blocks.POPLAR_LOG) || state.is(Blocks.POPLAR_WOOD) || state.is(Blocks.STRIPPED_POPLAR_LOG)
+				|| state.is(Blocks.STRIPPED_POPLAR_WOOD);
+	}
+
 	/**
-	 * Step 7: his cross, if it stands, whoever built it. On bedrock in the chamber, its foot is the first block (the
-	 * {@code story:first_blocks} owner's, placed from the item anyone took out of the cairn), a post goes up from it with
-	 * arms to both sides, and its top is poplar planks made from logs cut in the untouched grove.
+	 * Step 7: his cross, if it stands, whoever built it. In the chamber, a post of at least three blocks whose lowest
+	 * block stands on bedrock; the first block (the {@code story:first_blocks} owner's, placed from the item anyone took
+	 * out of the cairn) is anywhere in the post (M5); arms to both sides at some level between its foot and its top; and
+	 * its top is wood from the untouched grove, tracked as grove wood, in any shape (M5). Returns the post's foot.
 	 */
 	public static Optional<BlockPos> cross(ServerLevel level, StairPlan plan, EndingDState data) {
 		BoundingBox box = box(level, plan);
@@ -200,19 +238,27 @@ public final class Chamber {
 			if (!tracked.mark().equals(Marks.FIRST_BLOCK) || !at.dimension().equals(level.dimension()) || !box.isInside(at.pos())) {
 				continue;
 			}
-			BlockPos foot = at.pos();
-			if (!part(level.getBlockState(foot)) || !level.getBlockState(foot.below()).is(Blocks.BEDROCK)) {
+			BlockPos first = at.pos();
+			if (!part(level.getBlockState(first))) {
 				continue;
 			}
-			int height = 0;
-			while (height < 8 && part(level.getBlockState(foot.above(height + 1)))) {
-				height++;
+			// The post through the first block: down to its lowest block (which must stand on bedrock), up to its top.
+			BlockPos foot = first;
+			while (foot.getY() > box.minY() && !level.getBlockState(foot.below()).is(Blocks.BEDROCK) && part(level.getBlockState(foot.below()))) {
+				foot = foot.below();
 			}
-			if (height < 2) {
+			if (!level.getBlockState(foot.below()).is(Blocks.BEDROCK)) {
 				continue;
 			}
-			BlockPos top = foot.above(height);
-			if (!level.getBlockState(top).is(Blocks.POPLAR_PLANKS)
+			BlockPos top = first;
+			while (top.getY() < box.maxY() && top.getY() - foot.getY() < 12 && part(level.getBlockState(top.above()))) {
+				top = top.above();
+			}
+			int height = top.getY() - foot.getY();
+			if (height < 2 || top.equals(first)) {
+				continue;
+			}
+			if (!groveWoodShape(level.getBlockState(top))
 					|| !data.trackedAt(GlobalPos.of(level.dimension(), top)).filter(Marks.GROVE_WOOD::equals).isPresent()) {
 				continue;
 			}

@@ -27,15 +27,15 @@ import net.minecraft.world.item.component.WrittenBookContent;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.entity.LecternBlockEntity;
 
-import org.jspecify.annotations.Nullable;
 
 /**
  * Fragment books whose text names someone, brought up to date when they are opened (in a hand or on a lectern), so
  * they never change on camera (D-047). The list (F06) and its second copy (F23) are one shared list (D-063): their
  * {@code [PLAYER NAME] .} line becomes one line for every known player, in first-join order, each with that
  * player's own latest marked-death cause ("Alex . lava"); nobody who never took part is on it (D-061). In Ending B
- * the changelog (F10) gains its last line from its data, "* removed [PLAYER NAME]", naming the player the ending
- * finished. Any other {@code [PLAYER NAME]} names the reader. Every word is the fragment's own; only the cause is
+ * the changelog (F10) gains its last line from its data, "* removed [PLAYER NAME]", once for every player whose line
+ * the ending finished, in the order they were finished; never a living friend. Any other {@code [PLAYER NAME]} names
+ * the reader. Every word is the fragment's own; only the cause is
  * the list's word for the death. {@link #finishF10} also updates every copy it can reach at once.
  */
 public final class LiveBooks {
@@ -102,24 +102,30 @@ public final class LiveBooks {
 
 	/** The pages for one player who is everyone: the list with their line only, F10 finished naming them (previews, tests). */
 	public static List<String> pages(Fragment fragment, String playerName, Optional<String> cause, boolean f10Finished) {
-		return pages(fragment, playerName, List.of(new Line(playerName, cause)), f10Finished ? Optional.of(playerName) : Optional.empty());
+		return pages(fragment, playerName, List.of(new Line(playerName, cause)), f10Finished ? List.of(playerName) : List.of());
 	}
 
 	/**
 	 * The pages a fragment book shows now. The list's {@code [PLAYER NAME] .} line becomes {@code list}, one line
-	 * each (none while nobody is known); F10 gains its last line naming {@code removed} (Ending B, once it said
-	 * whom); any other {@code [PLAYER NAME]} is the reader's name. A list too long for its page goes on to the next.
+	 * each (none while nobody is known); F10 gains its last line once for each name in {@code removed}, in order
+	 * (Ending B's finished players); any other {@code [PLAYER NAME]} is the reader's name. A list too long for its
+	 * page goes on to the next, and so do F10's lines.
 	 */
-	public static List<String> pages(Fragment fragment, String reader, List<Line> list, Optional<String> removed) {
+	public static List<String> pages(Fragment fragment, String reader, List<Line> list, List<String> removed) {
 		List<String> pages = new ArrayList<>();
 		for (String page : fragment.pages()) {
 			String withList = withList(page, list);
 			// Only a page the list grew may go on to the next; every other page stays exactly as the data has it.
 			pages.addAll(withList.equals(page) ? List.of(page) : fit(withList));
 		}
-		if (removed.isPresent() && fragment.lastLine().isPresent() && !pages.isEmpty()) {
+		if (!removed.isEmpty() && fragment.lastLine().isPresent() && !pages.isEmpty()) {
 			int last = pages.size() - 1;
-			pages.set(last, pages.get(last) + "\n" + fragment.lastLine().get().replace(Fragment.PLAYER_NAME, removed.get()));
+			StringBuilder page = new StringBuilder(pages.get(last));
+			for (String name : removed) {
+				page.append('\n').append(fragment.lastLine().get().replace(Fragment.PLAYER_NAME, name));
+			}
+			pages.remove(last);
+			pages.addAll(fit(page.toString()));
 		}
 		pages.replaceAll(page -> page.replace(Fragment.PLAYER_NAME, reader));
 		return pages;
@@ -164,16 +170,16 @@ public final class LiveBooks {
 		return pages;
 	}
 
-	/** The name F10's Ending B line finishes: the player the ending said, once it did and while they are known. */
-	static Optional<String> removedName(HerobrineState state, TellingData data) {
-		return data.f10Removed().flatMap(state::player).map(HerobrineState.Subject::name);
+	/** The names F10's Ending B lines finish: each finished player the ending named, in order, while they are known. */
+	static List<String> removedNames(HerobrineState state, TellingData data) {
+		return data.f10Removed().stream().flatMap(uuid -> state.player(uuid).stream()).map(HerobrineState.Subject::name).toList();
 	}
 
 	/**
 	 * Brings a live fragment book up to date. True if its pages changed. The content is left unresolved so vanilla
 	 * sends the new pages before it opens the book.
 	 */
-	static boolean refresh(ItemStack stack, String reader, List<Line> list, Optional<String> removed) {
+	static boolean refresh(ItemStack stack, String reader, List<Line> list, List<String> removed) {
 		WrittenBookContent content = stack.get(DataComponents.WRITTEN_BOOK_CONTENT);
 		Optional<Fragment> fragment = FragmentItems.fragmentId(stack).flatMap(FragmentData::get).filter(LiveBooks::isLive);
 		if (fragment.isEmpty() || content == null) {
@@ -191,7 +197,7 @@ public final class LiveBooks {
 
 	/** {@link #refresh} for one name that is everyone (tests, previews). */
 	static boolean refresh(ItemStack stack, String playerName, Optional<String> cause, boolean f10Finished) {
-		return refresh(stack, playerName, List.of(new Line(playerName, cause)), f10Finished ? Optional.of(playerName) : Optional.empty());
+		return refresh(stack, playerName, List.of(new Line(playerName, cause)), f10Finished ? List.of(playerName) : List.of());
 	}
 
 	/** Refreshes a book that {@code reader} is about to read: the shared list now, F10 as the story stands, their own name elsewhere. */
@@ -201,43 +207,32 @@ public final class LiveBooks {
 	}
 
 	static boolean refreshForReading(ItemStack stack, String reader, HerobrineState state, TellingData data) {
-		Optional<String> removed = state.hasFlag(F10_FINISHED) ? removedName(state, data) : Optional.empty();
+		List<String> removed = state.hasFlag(F10_FINISHED) ? removedNames(state, data) : List.of();
 		return refresh(stack, reader, lines(state, data), removed);
 	}
 
 	// --- Ending B ---
 
 	/**
-	 * Ending B, before the ending says whom: F10's last line names the player whose marked death came last (Ending B
-	 * ends on a marked death), else the first known player. See {@link #finishF10(MinecraftServer, UUID)}.
-	 */
-	public static int finishF10(MinecraftServer server) {
-		return finishF10(server, HerobrineState.get(server), TellingData.get(server), null);
-	}
-
-	/**
-	 * Ending B: F10 gains "* removed [PLAYER NAME]" wherever it is, naming {@code player}, the player the ending
-	 * finished (a known player; anyone else falls back as without one). From now on every copy shows it when read;
-	 * the copies within reach now (players' inventories and ender chests, loaded containers and lecterns near where
-	 * it was placed, dropped items and item frames in loaded areas) are updated at once. Returns how many were.
+	 * Ending B: F10 gains one more "* removed [PLAYER NAME]" line, naming {@code player}: a player whose line the
+	 * ending finished (D-063; the ending calls this once for each, in the order they were finished). A player already
+	 * named keeps their place; someone who never took part is never named (D-061). From then on every copy shows the
+	 * lines when read; the copies within reach now (players' inventories and ender chests, loaded containers and
+	 * lecterns near where it was placed, dropped items and item frames in loaded areas) are updated at once. Returns
+	 * how many were.
 	 */
 	public static int finishF10(MinecraftServer server, UUID player) {
 		return finishF10(server, HerobrineState.get(server), TellingData.get(server), player);
 	}
 
-	/**
-	 * {@code player} null: keeps the player already named, else the one whose marked death came last, else the first
-	 * known player. Once named it stays named (D-062.3), unless a later call names a known player itself.
-	 */
-	static int finishF10(MinecraftServer server, HerobrineState state, TellingData data, @Nullable UUID player) {
-		if (player != null && state.player(player).isPresent()) {
-			data.setF10Removed(player);
-		} else if (data.f10Removed().flatMap(state::player).isEmpty()) {
-			defaultRemoved(state, data).ifPresent(data::setF10Removed);
+	static int finishF10(MinecraftServer server, HerobrineState state, TellingData data, UUID player) {
+		if (state.player(player).isEmpty()) {
+			return 0;
 		}
+		data.addF10Removed(player);
 		state.setFlag(F10_FINISHED, true);
 		List<Line> list = lines(state, data);
-		Optional<String> removed = removedName(state, data);
+		List<String> removed = removedNames(state, data);
 		int updated = 0;
 		for (ServerPlayer online : server.getPlayerList().getPlayers()) {
 			String name = online.getName().getString();
@@ -245,7 +240,7 @@ public final class LiveBooks {
 			updated += refreshAll(online.getEnderChestInventory(), name, list, removed);
 		}
 		// Copies nobody holds name nobody: the reader's name is written in when one of them opens it.
-		String nobody = removed.orElse("");
+		String nobody = removed.isEmpty() ? "" : removed.getFirst();
 		GlobalPos placed = state.fragmentsPlaced().get("F10");
 		if (placed != null) {
 			ServerLevel level = server.getLevel(placed.dimension());
@@ -263,27 +258,11 @@ public final class LiveBooks {
 				updated += refresh(frame.getItem(), nobody, list, removed) ? 1 : 0;
 			}
 		}
-		A1016_02.LOGGER.info("[a1016] lore: F10 gained its last line for {} ({} copies within reach)", removed.orElse("nobody known"), updated);
+		A1016_02.LOGGER.info("[a1016] lore: F10 now ends with a line for {} ({} copies within reach)", String.join(", ", removed), updated);
 		return updated;
 	}
 
-	/** Whose marked death came last (lore's own record from MARKED_DEATH, else the state's), else the first known player. */
-	static Optional<UUID> defaultRemoved(HerobrineState state, TellingData data) {
-		Optional<UUID> last = data.lastMarked().filter(uuid -> state.player(uuid).isPresent());
-		if (last.isPresent()) {
-			return last;
-		}
-		List<MarkedDeath> deaths = state.markedDeaths();
-		for (int n = deaths.size() - 1; n >= 0; n--) {
-			UUID player = deaths.get(n).player();
-			if (player != null && state.player(player).isPresent()) {
-				return Optional.of(player);
-			}
-		}
-		return state.players().stream().findFirst().map(HerobrineState.Subject::uuid);
-	}
-
-	private static int refreshAll(Container container, String reader, List<Line> list, Optional<String> removed) {
+	private static int refreshAll(Container container, String reader, List<Line> list, List<String> removed) {
 		int updated = 0;
 		for (int slot = 0; slot < container.getContainerSize(); slot++) {
 			if (FragmentItems.is(container.getItem(slot), "F10") && refresh(container.getItem(slot), reader, list, removed)) {
@@ -297,7 +276,7 @@ public final class LiveBooks {
 	}
 
 	/** Containers and lecterns in loaded chunks within {@code chunks} chunks of {@code center}. */
-	private static int refreshBlockEntities(ServerLevel level, BlockPos center, int chunks, String reader, List<Line> list, Optional<String> removed) {
+	private static int refreshBlockEntities(ServerLevel level, BlockPos center, int chunks, String reader, List<Line> list, List<String> removed) {
 		int updated = 0;
 		int cx = center.getX() >> 4;
 		int cz = center.getZ() >> 4;

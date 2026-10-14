@@ -30,8 +30,21 @@ public final class EndingApi {
 	 * and Ending B's house when there is no house copy owner).
 	 */
 	public static final String HOME_OWNER = "ending:home";
-	/** {@code ending:line_finished=<uuid>}: that player's line was finished by a hardcore marked death (D-063). */
+	/**
+	 * {@code ending:line_finished=<uuid>}: that player's line was finished, by a hardcore marked death (D-063) or by
+	 * Ending B's final death inside the copy (the record that ends the story). F10's "* removed" lines name exactly these.
+	 */
 	public static final String LINE_FINISHED_FLAG = "ending:line_finished=";
+	/**
+	 * {@code ending:d_step=<n>}: the step Ending D's chain is on (1 to 7, then 8 and 9), published on every advance for
+	 * lore's late clues (D-066). Step 1 is published once F23 has been read.
+	 */
+	public static final String D_STEP_FLAG = "ending:d_step=";
+	/**
+	 * {@code ending:d_step_day=<day>}: the in-game day (the world clock, {@code GameClock.day}) the chain reached that
+	 * step; step 1's clock starts on the day F23 is first read.
+	 */
+	public static final String D_STEP_DAY_FLAG = "ending:d_step_day=";
 
 	private EndingApi() {
 	}
@@ -118,12 +131,12 @@ public final class EndingApi {
 		return Services.watch().isParticipant(player) && !EndingState.get(player.level().getServer()).lineFinished(player.getUUID());
 	}
 
-	/** True if a hardcore marked death finished this player's line (D-063). */
+	/** True if this player's line is finished: a hardcore marked death (D-063), or Ending B's final death. */
 	public static boolean lineFinished(MinecraftServer server, UUID player) {
 		return EndingState.get(server).lineFinished(player);
 	}
 
-	/** Every player whose line a hardcore marked death finished, in the order it happened. */
+	/** Every player whose line is finished ({@link #lineFinished}), in the order it happened. */
 	public static Set<UUID> finishedLines(MinecraftServer server) {
 		return EndingState.get(server).finishedLines();
 	}

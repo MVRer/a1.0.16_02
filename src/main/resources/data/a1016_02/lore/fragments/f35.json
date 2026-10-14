@@ -1,0 +1,23 @@
+{
+	"id": "F35",
+	"name": "the plates",
+	"form": "structure",
+	"where": "In the bedrock chamber when the team's stair is finished. Six waxed wall signs, a name on line 2 of each, every one above a single cobblestone ledge on the floor with nothing on it. A seventh standing sign, blank and not waxed, on bedrock within 2 blocks of the twin",
+	"plates": [
+		"pk_alpha",
+		"t0rch",
+		"dyl4n_m",
+		"oreo_tm",
+		"stoneslab",
+		"kirbyfan_92"
+	],
+	"stage": "proximity",
+	"placement": {
+		"rule": "chamber_plates"
+	},
+	"requires": {
+		"placed": [
+			"F30"
+		]
+	}
+}

@@ -8,6 +8,7 @@ import java.util.Optional;
 import java.util.Set;
 
 import com.forzacode.a1016_02.core.HerobrineState;
+import com.forzacode.a1016_02.core.PlacedBlock;
 import com.forzacode.a1016_02.core.SiteRegistry;
 import com.forzacode.a1016_02.core.TraceService;
 
@@ -59,6 +60,27 @@ final class Placing {
 
 		/** World built the still-burning camp ({@code lore:still_burning}), where F21 goes (D-004). */
 		boolean stillBurning();
+
+		/** Every known player's base lore knows, in first-join order (late clues keep away from all of them). */
+		List<GlobalPos> bases();
+
+		/**
+		 * In-game days (the world clock) Ending D's chain has been on this step, from the shared flags
+		 * ({@link LateClues}); -1 while it is on another step or its clock has not started (step 1's starts when F23 is
+		 * first read).
+		 */
+		long daysStuck(int step);
+
+		/**
+		 * The story owner's oldest placed blocks, oldest first (lore's own log, D-066 M11); for a save from before the
+		 * log, the player-placed blocks nearest the owner's base. Some may be gone since. Empty with no owner.
+		 */
+		List<PlacedBlock> ownerPlacements();
+
+		/** The block F13 fell back on (M11), once chosen: it is kept, so the cairn's block never flips. */
+		Optional<PlacedBlock> cairnFallback();
+
+		void rememberCairnFallback(PlacedBlock block);
 	}
 
 	/**

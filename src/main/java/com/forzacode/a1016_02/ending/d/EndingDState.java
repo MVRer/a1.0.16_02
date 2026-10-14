@@ -35,8 +35,13 @@ public final class EndingDState extends SavedData {
 
 	/** Flag: the cairn lure was armed for step 3. */
 	public static final String CAIRN_ARMED = "cairn_armed";
-	/** Flag: the first block came out of the cairn with no offering left on that visit. */
+	/**
+	 * Flag: the first block got out of the cairn cleanly, with no offering left on the visit it left on (D-066 M4). Set
+	 * or cleared each time it leaves the cairn's radius; cleared when it is taken from the center again.
+	 */
 	public static final String FIRST_TAKEN = "first_taken";
+	/** Flag: the first block was last seen within the cairn's radius (taken from the center, or brought back), M4. */
+	public static final String FIRST_NEAR = "first_near";
 	/** Flag: the stairwell flood happened (step 4). */
 	public static final String FLOODED = "flooded";
 	/** Flag: the player named him (or said sorry) in the chamber; the next block they stand on goes. */

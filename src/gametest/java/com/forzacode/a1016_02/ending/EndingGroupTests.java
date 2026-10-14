@@ -96,8 +96,9 @@ public class EndingGroupTests extends EndingWorldTests {
 		helper.assertTrue(!onB.data.ended() && onB.beat(B.class, EndingPath.B) == B.ESCALATE && onB.ports.f10Finished == 0,
 				"one friend's death on B's path ended B");
 		onB.die(friend, onB.at(1, 1, 1));
-		helper.assertTrue(onB.data.ended() && onB.ports.f10Finished == 1 && onB.beat(B.class, EndingPath.B) == B.RECORD,
-				"the last one's death did not end B with its record");
+		// B's record names every finished line, once each, in the order they were finished.
+		helper.assertTrue(onB.data.ended() && onB.ports.f10Named.equals(List.of(onB.player.getUUID(), friend.getUUID()))
+				&& onB.beat(B.class, EndingPath.B) == B.RECORD, "the last one's death did not end B with its record: " + onB.ports.f10Named);
 		helper.succeed();
 	}
 
@@ -139,7 +140,8 @@ public class EndingGroupTests extends EndingWorldTests {
 		r.tick();
 		long ends = r.data.log().stream().filter(line -> line.startsWith("the story ends")).count();
 		helper.assertTrue(r.data.ended() && ends == 1, "the story did not end exactly once: " + ends);
-		helper.assertTrue(r.ports.f10Finished == 1, "F10 was finished " + r.ports.f10Finished + " times");
+		helper.assertTrue(r.ports.f10Named.equals(List.of(a.getUUID(), b.getUUID())), "F10 did not name each finished line once, in order: "
+				+ r.ports.f10Named);
 		helper.assertTrue(r.data.finishedLines().size() == 2 && r.data.deathsSeen() == 2, "the two deaths were not each handled once");
 		helper.succeed();
 	}
@@ -234,8 +236,8 @@ public class EndingGroupTests extends EndingWorldTests {
 		// A leaves: the one accident is armed around B, the one still there.
 		r.online.remove(a);
 		r.tick();
-		helper.assertTrue(r.ports.armed.equals(List.of("lava_floor")) && r.ports.armedRef != null
-				&& r.ports.armedRef.pos().pos().equals(b.blockPosition()), "the accident was not armed around the one still in it");
+		helper.assertTrue(r.ports.armed.equals(List.of("lava_floor")) && r.ports.traps.get(b.getUUID()) != null
+				&& r.ports.traps.get(b.getUUID()).pos().pos().equals(b.blockPosition()), "the accident was not armed around the one still in it");
 		// Nobody in it: nothing is armed, nothing breaks.
 		r.ports.disarmTraps();
 		r.online.clear();

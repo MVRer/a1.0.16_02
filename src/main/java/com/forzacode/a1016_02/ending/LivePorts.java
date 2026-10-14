@@ -2,6 +2,7 @@ package com.forzacode.a1016_02.ending;
 
 import java.util.List;
 import java.util.Optional;
+import java.util.UUID;
 
 import com.forzacode.a1016_02.accident.AccidentConfig;
 import com.forzacode.a1016_02.accident.AccidentInit;
@@ -58,12 +59,18 @@ final class LivePorts implements EndingPorts {
 		return Services.accidents().arm(player, new TrapType(trapId));
 	}
 
+	/**
+	 * Per player, as accident keeps them (one trap per player): only this player's own armed trap or used-up session
+	 * share holds it back, never a friend's trap elsewhere; the planner itself keeps every trap off ground another one
+	 * holds.
+	 */
 	@Override
 	public boolean armTrapInside(ServerPlayer player, String trapId, Bounds bounds) {
 		MinecraftServer server = player.level().getServer();
 		AccidentPlannerImpl planner = AccidentInit.planner();
 		Optional<TrapKind> kind = Traps.byId(trapId);
-		if (!player.level().dimension().equals(bounds.dimension()) || kind.isEmpty() || kind.get().blocked() != null || !planner.canArm(server)) {
+		UUID id = player.getUUID();
+		if (!player.level().dimension().equals(bounds.dimension()) || kind.isEmpty() || kind.get().blocked() != null || !planner.canArm(server, id)) {
 			return false;
 		}
 		// The planner looks around the middle of the copy and sets the first of its nearest spots that works: every
@@ -82,9 +89,9 @@ final class LivePorts implements EndingPorts {
 		if (!Services.accidents().arm(player, new TrapType(trapId), center)) {
 			return false;
 		}
-		Optional<ArmedTrap> armed = planner.armedTrap(server);
+		Optional<ArmedTrap> armed = planner.armedTrap(server, id);
 		if (armed.isEmpty() || !bounds.contains(armed.get().dimension(), armed.get().pos())) {
-			planner.disarm(server, "not inside the copy");
+			planner.disarm(server, id, "not inside the copy");
 			return false;
 		}
 		return true;
@@ -92,12 +99,27 @@ final class LivePorts implements EndingPorts {
 
 	@Override
 	public boolean trapArmed() {
+		// The planner's newest trap, whoever's: present while any trap is armed for anyone.
 		return Services.accidents().armed().isPresent();
 	}
 
 	@Override
-	public Optional<EndingState.Trap> armedTrap(MinecraftServer server) {
-		return AccidentInit.planner().armedTrap(server).map(t -> new EndingState.Trap(t.type(), GlobalPos.of(t.dimension(), t.pos())));
+	public boolean trapArmed(MinecraftServer server, UUID player) {
+		return AccidentInit.planner().armedTrap(server, player).isPresent();
+	}
+
+	@Override
+	public List<EndingState.Trap> armedTraps(MinecraftServer server) {
+		return AccidentInit.planner().armedTraps(server).values().stream().map(LivePorts::trap).toList();
+	}
+
+	@Override
+	public Optional<EndingState.Trap> armedTrap(MinecraftServer server, UUID player) {
+		return AccidentInit.planner().armedTrap(server, player).map(LivePorts::trap);
+	}
+
+	private static EndingState.Trap trap(ArmedTrap armed) {
+		return new EndingState.Trap(armed.type(), GlobalPos.of(armed.dimension(), armed.pos()));
 	}
 
 	@Override
@@ -171,8 +193,8 @@ final class LivePorts implements EndingPorts {
 	}
 
 	@Override
-	public boolean finishF10(MinecraftServer server) {
-		return LoreApi.finishF10(server);
+	public boolean finishF10(MinecraftServer server, UUID player) {
+		return LoreApi.finishF10(server, player);
 	}
 
 	@Override

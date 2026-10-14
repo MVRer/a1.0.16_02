@@ -1,0 +1,25 @@
+{
+	"id": "F39",
+	"name": "cut one",
+	"form": "sign",
+	"where": "2 to 4 blocks from F30's oldest poplar. Step 2, 3 days",
+	"lines": [
+		"cut one down.",
+		"this wood is",
+		"the only thing",
+		"he never took"
+	],
+	"stage": "proximity",
+	"placement": {
+		"rule": "grove_sign"
+	},
+	"requires": {
+		"placed": [
+			"F30"
+		],
+		"stuck": {
+			"step": 2,
+			"days": 3
+		}
+	}
+}

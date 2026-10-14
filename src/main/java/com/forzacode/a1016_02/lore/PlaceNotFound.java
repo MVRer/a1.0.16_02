@@ -45,12 +45,16 @@ import net.minecraft.world.level.block.state.properties.RotationSegment;
  * F04, "not found" (the 404): after "Stop.", a fragment site a participant visited is gone. The structure there (a
  * hut, a house, a cross: the built blocks connected to the site, never a player's own) is removed down to its
  * floor, the floor becomes flat dirt, and one of the site's own signs, if it had one, is moved to the middle and
- * blanked. Nothing is created. Never a site of the Ending D chain, F03, F10, F20 or F27; never near any known
+ * blanked. Nothing is created. Never a site of the Ending D chain or its clues, F03, F10, F20 or F27; never near any known
  * player's base. The first visited site (anyone's visit) that has such a structure is taken; one per world.
  */
 final class PlaceNotFound {
-	/** Fragments whose place must stay: the Ending D chain, the player's own sign, F04 itself, Ending B's places. */
-	static final Set<String> NEVER = Set.of("F07", "F13", "F23", "F25", "F28", "F30", "F03", "F04", "F10", "F20", "F27");
+	/**
+	 * Fragments whose place must stay: the Ending D chain and every one of its clues (F08's sentence, the chamber's
+	 * plates and note, the late clues, D-066), the player's own sign, F04 itself, Ending B's places.
+	 */
+	static final Set<String> NEVER = Set.of("F07", "F13", "F23", "F25", "F28", "F30", "F08", "F35", "F36", "F38", "F39", "F40", "F41", "F42", "F43",
+			"F44", "F03", "F04", "F10", "F20", "F27");
 	/** Set once F04 happened. */
 	static final String DONE_FLAG = "lore:f04_done";
 	static final String CAUSE = "F04";

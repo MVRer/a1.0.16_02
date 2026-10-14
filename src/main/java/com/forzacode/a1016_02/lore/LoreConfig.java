@@ -2,6 +2,8 @@ package com.forzacode.a1016_02.lore;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.TreeMap;
 
 import com.forzacode.a1016_02.core.ModConfig;
 
@@ -82,6 +84,31 @@ public final class LoreConfig {
 	public int tellingMaxBooks = 256;
 	/** A sign that should have come back blank but was in view is tried again this often. */
 	public double pendingBlankRetrySeconds = 30;
+
+	// --- story clues (D-066) ---
+
+	/**
+	 * F13 (M11): when the story owner's first crafting table, chest and block are all gone, the cairn takes their
+	 * oldest placed block still standing within this many blocks of their base.
+	 */
+	public int cairnFallbackRadius = 24;
+	/** F13 (M11): how many of each player's oldest placed blocks lore remembers for that fallback. */
+	public int placementLogMax = 64;
+	/** Late clues (F38 to F44): never this close to any known player's base (blocks, horizontal). */
+	public int lateClueMinFromBase = 48;
+	/**
+	 * Late clues: in-game days a group must be stuck on a step before its clue turns up, by fragment id, overriding
+	 * the data's own {@code stuck.days} (the design's: steps 1, 3 and 4 after 5 days, step 2 after 3, steps 5 to 7
+	 * after 2). Empty: the data's days.
+	 */
+	public Map<String, Integer> lateClueDays = new TreeMap<>();
+	/** F38: the light stands this far from the camp's map chest (blocks, horizontal), at the camp's edge. */
+	public int campLightMinDistance = 10;
+	public int campLightMaxDistance = 16;
+	/** F40: how far from the cairn the nearest dry shore is looked for (blocks, horizontal), in growing rings. */
+	public int shoreSearchRadius = 96;
+	/** F40: the shore is at least this far from the cairn's center, so never on the cairn's own pyramid. */
+	public int shoreMinDistance = 12;
 
 	/** {@code /a1016 lore place}: distance band around the player. */
 	public int debugMinDistance = 6;

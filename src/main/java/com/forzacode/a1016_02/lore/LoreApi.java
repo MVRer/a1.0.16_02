@@ -3,6 +3,7 @@ package com.forzacode.a1016_02.lore;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.function.Predicate;
 
 import com.forzacode.a1016_02.A1016_02;
 import com.forzacode.a1016_02.core.HerobrineState;
@@ -12,9 +13,11 @@ import com.forzacode.a1016_02.core.TraceService;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.core.GlobalPos;
+import net.minecraft.resources.ResourceKey;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.Level;
+import net.minecraft.world.level.levelgen.structure.BoundingBox;
 import net.minecraft.world.level.block.CeilingHangingSignBlock;
 import net.minecraft.world.level.block.StandingSignBlock;
 import net.minecraft.world.level.block.SupportType;
@@ -37,6 +40,24 @@ public final class LoreApi {
 	public static final String FIRST_BLOCKS_OWNER = Homes.FIRST_BLOCKS;
 
 	private LoreApi() {
+	}
+
+	/**
+	 * Who may become the {@link #FIRST_BLOCKS_OWNER}: a known player who has placed a block (so F13 never waits for
+	 * the first block of someone who has none). Pass it to {@code PlayerWatch.ownerFor(server, key, eligible)}.
+	 */
+	public static Predicate<UUID> hasPlacedBlock(HerobrineState state) {
+		return player -> state.firstBlocks(player).block() != null;
+	}
+
+	/**
+	 * Ending D: the team's stair is finished, and this is its bedrock chamber (inside, wall to wall; the stair's own
+	 * {@code chamberBox}). Lore remembers it: F35's plates and F36's note go in it once it is known (out of view, each
+	 * once), the late chamber books go in its chest, and a sign written inside it is never "near his traces" (M9).
+	 * Cheap and idempotent: call it on every check. True if the chamber was new or moved.
+	 */
+	public static boolean chamberBuilt(MinecraftServer server, ResourceKey<Level> dimension, BoundingBox chamber) {
+		return TeamChamber.record(LoreData.get(server), dimension, chamber);
 	}
 
 	/**
@@ -67,24 +88,17 @@ public final class LoreApi {
 	}
 
 	/**
-	 * Ending B: F10 gains its last line, "* removed [PLAYER NAME]" (from F10's data), wherever it is, naming
-	 * {@code player}: the player the ending finished (D-063; a known player, else as without one). Copies in reach
-	 * change now; any other copy shows it the next time it is opened. Always true.
+	 * Ending B's record: F10 gains one more "* removed [PLAYER NAME]" line (F10's own last line), wherever it is,
+	 * naming {@code player}, a player whose line the ending finished (D-063). Call it once for each finished player, in
+	 * the order they were finished; one already named keeps their place. F10 never names anyone else: not a living
+	 * friend, not someone who never took part. Copies in reach change now; any other copy shows the lines the next
+	 * time it is opened. False (nothing changed) for someone who never took part.
 	 */
 	public static boolean finishF10(MinecraftServer server, UUID player) {
+		if (HerobrineState.get(server).player(player).isEmpty()) {
+			return false;
+		}
 		LiveBooks.finishF10(server, player);
-		return true;
-	}
-
-	/**
-	 * {@link #finishF10(MinecraftServer, UUID)} before the ending says whom: names the player whose marked death came
-	 * last (Ending B ends on one), else the first known player; a player already named stays.
-	 *
-	 * @deprecated kept until the ending passes the player it finished; use {@link #finishF10(MinecraftServer, UUID)}.
-	 */
-	@Deprecated
-	public static boolean finishF10(MinecraftServer server) {
-		LiveBooks.finishF10(server);
 		return true;
 	}
 
@@ -124,7 +138,7 @@ public final class LoreApi {
 			return false;
 		}
 		// F20 names nobody; should its words ever say "you", they would be the player Ending B finished.
-		String name = LiveBooks.removedName(state, TellingData.get(server)).orElse("");
+		String name = LiveBooks.removedNames(state, TellingData.get(server)).stream().findFirst().orElse("");
 		if (!Build.left(traces, level, "F20").chest(at, Direction.NORTH, List.of(FragmentItems.book(f20.get(), name))).commit()) {
 			return false;
 		}

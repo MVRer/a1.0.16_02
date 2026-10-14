@@ -36,7 +36,7 @@ import net.minecraft.world.phys.Vec3;
  * Game tests of Ending D (registered through {@code ending.EndingGameTests}): each step's detection, the team's
  * stair. The dangers, the undo and the sting are in the superclasses.
  */
-public class EndingDGameTests extends EndingDGroupTests {
+public class EndingDGameTests extends EndingDClueTests {
 	private static final Set<String> NONE_READ = Set.of();
 
 	private static void write(GameTestHelper helper, BlockPos rel, String... lines) {
@@ -139,7 +139,8 @@ public class EndingDGameTests extends EndingDGroupTests {
 			helper.assertFalse(data.has(EndingDState.FIRST_TAKEN), "it counted with an offering left");
 			Cairn.setOffering(false);
 			helper.assertTrue(Cairn.take(level, data, cairn, Blocks.CRAFTING_TABLE.defaultBlockState()), "the cairn's center was not seen");
-			helper.assertTrue(data.has(EndingDState.FIRST_TAKEN), "taking it back cleanly did not count");
+			// M4: whether it got out cleanly is decided when it leaves the cairn, on that visit.
+			helper.assertTrue(data.has(EndingDState.FIRST_NEAR) && !data.has(EndingDState.FIRST_TAKEN), "the block is not at the cairn after the take");
 			ItemStack first = new ItemStack(Items.CRAFTING_TABLE);
 			Marks.set(first, Marks.FIRST_BLOCK);
 			player.getInventory().add(first);

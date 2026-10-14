@@ -11,6 +11,7 @@ import java.util.Optional;
 import java.util.Set;
 
 import com.forzacode.a1016_02.core.HerobrineState;
+import com.forzacode.a1016_02.core.PlacedBlock;
 import com.forzacode.a1016_02.core.Stage;
 import com.forzacode.a1016_02.core.WorldProfile;
 
@@ -60,12 +61,22 @@ public class LoreTextTests {
 			Map.entry("F27", List.of("he isnt sad. we wanted him to be sad. he is angry we made anything at all. if youre reading this he let you")),
 			Map.entry("F28", List.of("where he didnt")),
 			Map.entry("F29", List.of("we never gave him one", "everybody else got one", "we couldnt. you have to say it to make one")),
-			Map.entry("F30", List.of("i did, but")));
+			Map.entry("F30", List.of("i did, but")),
+			// The story clues (D-066): the chamber's plates (one name each; the seventh is blank) and the team's note...
+			Map.entry("F35", List.of("pk_alpha", "t0rch", "dyl4n_m", "oreo_tm", "stoneslab", "kirbyfan_92")),
+			Map.entry("F36", List.of("nothing he took can go in his cross. it has to stand on something you got back from him. wood from where he didnt at the top. we got this far. none of us could say it")),
+			// ...and the late clues (F38 is a light: no text).
+			Map.entry("F39", List.of("cut one down.", "this wood is", "the only thing", "he never took")),
+			Map.entry("F40", List.of("nearest one has", "your first", "thing in it.", "take it home")),
+			Map.entry("F41", List.of("under the sign", "inside. all", "the way down")),
+			Map.entry("F42", List.of("six of them. one light each. nothing extra.")),
+			Map.entry("F43", List.of("asked if there was a brother. one line came back. i did, but he is no longer with us. my thread was gone in five minutes")),
+			Map.entry("F44", List.of("his cross goes here, on the bedrock. the first thing you ever put in at the bottom. poplar from where he didnt at the top. arms on both sides. like everybody else got")));
 
 	/** Book titles from the Form column ("" for a book with no title). */
 	static final Map<String, String> TITLES = Map.ofEntries(Map.entry("F01", "new world"), Map.entry("F02", "new world (2)"),
 			Map.entry("F05", "for you"), Map.entry("F06", "names"), Map.entry("F09", ""), Map.entry("F10", "changes"),
-			Map.entry("F15", "rules"), Map.entry("F16", "notes"), Map.entry("F17", ""), Map.entry("F19", "sent"));
+			Map.entry("F15", "rules"), Map.entry("F16", "notes"), Map.entry("F17", ""), Map.entry("F19", "sent"), Map.entry("F36", ""));
 
 	static Fragment fragment(String id) {
 		return FragmentData.get(id).orElseThrow(() -> new AssertionError("fragment " + id + " did not load"));
@@ -93,8 +104,16 @@ public class LoreTextTests {
 	}
 
 	@GameTest
-	public void allThirtyFragmentsLoad(GameTestHelper helper) {
+	public void everyFragmentLoads(GameTestHelper helper) {
+		// The 30 story fragments and the clue fragments past them (D-066, M0): every id in the profile's list has data.
 		helper.assertTrue(FragmentData.ids().equals(WorldProfile.allFragmentIds()), "loaded " + FragmentData.ids());
+		helper.assertTrue(WorldProfile.allFragmentIds().containsAll(WorldProfile.CLUE_FRAGMENTS)
+				&& WorldProfile.allFragmentIds().subList(0, 30).equals(WorldProfile.storyFragmentIds()), "the ids are not the story's then the clues'");
+		for (String id : WorldProfile.CLUE_FRAGMENTS) {
+			helper.assertTrue(DESIGN_TEXT.containsKey(id) || id.equals("F38"), "the clue " + id + " has no DESIGN.md text check");
+		}
+		Fragment f38 = fragment("F38");
+		helper.assertTrue(f38.lines().isEmpty() && f38.pages().isEmpty() && f38.plates().isEmpty(), "F38 is a light, with no words");
 		for (Fragment fragment : FragmentData.all()) {
 			helper.assertTrue(Placers.RULES.contains(fragment.placement().rule()), fragment.id() + " has unknown rule " + fragment.placement().rule());
 			helper.assertTrue(fragment.form() != Fragment.Form.BOOK || !fragment.pages().isEmpty(), fragment.id() + " has no pages");
@@ -118,7 +137,7 @@ public class LoreTextTests {
 			List<String> actual = switch (fragment.form()) {
 				case BOOK -> fragment.pages();
 				case ITEM -> fragment.itemName().map(List::of).orElse(List.of());
-				default -> fragment.lines();
+				default -> fragment.plates().isEmpty() ? fragment.lines() : fragment.plates();
 			};
 			helper.assertTrue(words(actual).equals(words(expected)), id + " differs from DESIGN.md:\n" + actual + "\nexpected\n" + expected);
 			if (fragment.hasSign() && !id.equals("F03")) {
@@ -201,8 +220,13 @@ public class LoreTextTests {
 			everything.read.add(id);
 		}
 		for (Fragment fragment : FragmentData.all()) {
+			Fragment.Requires requires = fragment.requires();
+			// With everything read: F13 no longer waits for its stage once F28 is read (M3); a late clue waits for its
+			// group to be stuck, and F38 for a map nobody has read.
+			boolean held = requires.stuck().isPresent() || requires.notRead().stream().anyMatch(everything.read::contains);
+			boolean early = !requires.stageOrRead().isEmpty() && everything.read.containsAll(requires.stageOrRead());
 			for (Stage stage : Stage.values()) {
-				boolean expected = Placers.isPlacedRule(fragment.placement().rule()) && stage.atLeast(fragment.stage());
+				boolean expected = Placers.isPlacedRule(fragment.placement().rule()) && (early || stage.atLeast(fragment.stage())) && !held;
 				helper.assertTrue(FragmentEngine.eligible(fragment, stage, everything) == expected,
 						fragment.id() + " at " + stage + " should be " + (expected ? "eligible" : "held back"));
 			}
@@ -244,6 +268,14 @@ public class LoreTextTests {
 		BlockPos spawn;
 		GlobalPos grove;
 		boolean stillBurning;
+		/** Every known player's base (late clues keep away from them). */
+		final List<GlobalPos> bases = new ArrayList<>();
+		/** Ending D's step as its shared flags would say (0: none), and the days the chain has been on it. */
+		int dStep;
+		long dDays = -1;
+		/** The story owner's logged placements, oldest first (M11), and the cairn's stored fallback. */
+		final List<PlacedBlock> ownerPlacements = new ArrayList<>();
+		PlacedBlock cairnFallback;
 
 		TestFacts(GameTestHelper helper) {
 			base = helper.absolutePos(new BlockPos(4, 1, 4));
@@ -303,6 +335,38 @@ public class LoreTextTests {
 		@Override
 		public boolean stillBurning() {
 			return stillBurning;
+		}
+
+		@Override
+		public List<GlobalPos> bases() {
+			return bases;
+		}
+
+		@Override
+		public long daysStuck(int step) {
+			return step == dStep ? dDays : -1;
+		}
+
+		@Override
+		public List<PlacedBlock> ownerPlacements() {
+			return ownerPlacements;
+		}
+
+		@Override
+		public Optional<PlacedBlock> cairnFallback() {
+			return Optional.ofNullable(cairnFallback);
+		}
+
+		@Override
+		public void rememberCairnFallback(PlacedBlock block) {
+			cairnFallback = block;
+		}
+
+		/** The group has been stuck on Ending D's step {@code step} for {@code days} in-game days. */
+		TestFacts stuck(int step, long days) {
+			dStep = step;
+			dDays = days;
+			return this;
 		}
 	}
 }

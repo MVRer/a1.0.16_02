@@ -2,7 +2,9 @@ package com.forzacode.a1016_02.ending;
 
 import java.util.ArrayList;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
@@ -44,9 +46,8 @@ final class EndingTestSupport {
 		/** Trap ids that arm when asked. */
 		final Set<String> armable = new HashSet<>();
 		final List<String> armed = new ArrayList<>();
-		boolean trapArmed;
-		/** The armed trap as the planner would report it. */
-		EndingState.@Nullable Trap armedRef;
+		/** Every armed trap by its player, in the order armed, as accident's planner keeps them (one per player). */
+		final Map<UUID, EndingState.Trap> traps = new LinkedHashMap<>();
 		/** armTrapInside: true if every spot the planner could pick is inside the bounds asked for. */
 		boolean spotsInside = true;
 		int disarms;
@@ -65,7 +66,9 @@ final class EndingTestSupport {
 		boolean signMoves = true;
 		final List<GlobalPos> signMovedTo = new ArrayList<>();
 		@Nullable GlobalPos cross;
+		/** finishF10 calls: one per finished player named on F10, in order. */
 		int f10Finished;
+		final List<UUID> f10Named = new ArrayList<>();
 		boolean f20Ready;
 		int f20Calls;
 		final List<Float> duskFog = new ArrayList<>();
@@ -83,29 +86,37 @@ final class EndingTestSupport {
 
 		@Override
 		public boolean armTrap(ServerPlayer player, String trapId) {
-			if (trapArmed || !armable.contains(trapId)) {
+			if (traps.containsKey(player.getUUID()) || !armable.contains(trapId)) {
 				return false;
 			}
 			armed.add(trapId);
-			trapArmed = true;
-			armedRef = new EndingState.Trap(trapId, GlobalPos.of(player.level().dimension(), player.blockPosition()));
+			traps.put(player.getUUID(), new EndingState.Trap(trapId, GlobalPos.of(player.level().dimension(), player.blockPosition())));
 			return true;
 		}
 
 		@Override
 		public boolean armTrapInside(ServerPlayer player, String trapId, Bounds bounds) {
-			if (trapArmed || !armable.contains(trapId) || !spotsInside) {
+			if (traps.containsKey(player.getUUID()) || !armable.contains(trapId) || !spotsInside) {
 				return false;
 			}
 			armed.add(trapId);
-			trapArmed = true;
-			armedRef = new EndingState.Trap(trapId, GlobalPos.of(bounds.dimension(), bounds.box().getCenter()));
+			traps.put(player.getUUID(), new EndingState.Trap(trapId, GlobalPos.of(bounds.dimension(), bounds.box().getCenter())));
 			return true;
 		}
 
 		@Override
-		public Optional<EndingState.Trap> armedTrap(MinecraftServer server) {
-			return trapArmed ? Optional.ofNullable(armedRef) : Optional.empty();
+		public boolean trapArmed(MinecraftServer server, UUID player) {
+			return traps.containsKey(player);
+		}
+
+		@Override
+		public List<EndingState.Trap> armedTraps(MinecraftServer server) {
+			return List.copyOf(traps.values());
+		}
+
+		@Override
+		public Optional<EndingState.Trap> armedTrap(MinecraftServer server, UUID player) {
+			return Optional.ofNullable(traps.get(player));
 		}
 
 		@Override
@@ -125,14 +136,13 @@ final class EndingTestSupport {
 
 		@Override
 		public boolean trapArmed() {
-			return trapArmed;
+			return !traps.isEmpty();
 		}
 
 		@Override
 		public void disarmTraps() {
 			disarms++;
-			trapArmed = false;
-			armedRef = null;
+			traps.clear();
 		}
 
 		@Override
@@ -190,8 +200,9 @@ final class EndingTestSupport {
 		}
 
 		@Override
-		public boolean finishF10(MinecraftServer server) {
+		public boolean finishF10(MinecraftServer server, UUID player) {
 			f10Finished++;
+			f10Named.add(player);
 			return true;
 		}
 

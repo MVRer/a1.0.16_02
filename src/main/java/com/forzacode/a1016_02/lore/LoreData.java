@@ -11,6 +11,7 @@ import java.util.TreeSet;
 import java.util.UUID;
 
 import com.forzacode.a1016_02.A1016_02;
+import com.forzacode.a1016_02.core.PlacedBlock;
 import com.mojang.serialization.Codec;
 import com.mojang.serialization.codecs.RecordCodecBuilder;
 
@@ -19,6 +20,8 @@ import net.minecraft.core.UUIDUtil;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.world.level.saveddata.SavedData;
 import net.minecraft.world.level.saveddata.SavedDataType;
+
+import org.jspecify.annotations.Nullable;
 
 /**
  * Lore's private, per-world facts ({@code data/a1016_02/lore.dat}). Shared facts (placed, read) live in
@@ -31,6 +34,10 @@ import net.minecraft.world.level.saveddata.SavedDataType;
  * <li>eligible since: play ticks when each fragment could first be placed (own builds wait a while after it)</li>
  * <li>own sites: registry sites lore built itself, which are never his traces (D-041)</li>
  * <li>bases: the last base lore saw for each player, by UUID, for when they are away ({@link Homes}, D-061)</li>
+ * <li>placements: each player's oldest placed blocks, by UUID, oldest first (at most {@link LoreConfig#placementLogMax}):
+ * F13's cairn falls back on the story owner's oldest one still standing at their base when the first table, chest
+ * and block are all gone (D-066, M11)</li>
+ * <li>cairn fallback: the block that fallback chose, stored so it never flips</li>
  * </ul>
  * No player is stored here as "the" player: a v1.0 {@code lore.dat} had none, so it loads as it was.
  */
@@ -43,7 +50,9 @@ public final class LoreData extends SavedData {
 			Codec.unboundedMap(Codec.STRING, Codec.INT).optionalFieldOf("siteClaims", Map.of()).forGetter(d -> d.siteClaims),
 			Codec.unboundedMap(Codec.STRING, Codec.LONG).optionalFieldOf("eligibleSince", Map.of()).forGetter(d -> d.eligibleSince),
 			Codec.INT.listOf().optionalFieldOf("ownSites", List.of()).forGetter(d -> List.copyOf(d.ownSites)),
-			Codec.unboundedMap(UUIDUtil.STRING_CODEC, GlobalPos.CODEC).optionalFieldOf("bases", Map.of()).forGetter(d -> d.bases)
+			Codec.unboundedMap(UUIDUtil.STRING_CODEC, GlobalPos.CODEC).optionalFieldOf("bases", Map.of()).forGetter(d -> d.bases),
+			Codec.unboundedMap(UUIDUtil.STRING_CODEC, PlacedBlock.CODEC.listOf()).optionalFieldOf("placements", Map.of()).forGetter(d -> d.placements),
+			PlacedBlock.CODEC.optionalFieldOf("cairnFallback").forGetter(d -> Optional.ofNullable(d.cairnFallback))
 	).apply(i, LoreData::new));
 
 	public static final SavedDataType<LoreData> TYPE = new SavedDataType<>(A1016_02.id("lore"), LoreData::new, CODEC, null);
@@ -56,18 +65,24 @@ public final class LoreData extends SavedData {
 	private final Set<Integer> ownSites = new TreeSet<>();
 	/** The last base lore saw for each player (D-062.2: by UUID). */
 	private final Map<UUID, GlobalPos> bases = new TreeMap<>();
+	/** Each player's oldest placed blocks, oldest first (D-062.2: by UUID). */
+	private final Map<UUID, List<PlacedBlock>> placements = new TreeMap<>();
+	private @Nullable PlacedBlock cairnFallback;
 
 	public LoreData() {
 	}
 
 	private LoreData(Map<String, GlobalPos> anchors, Map<String, List<GlobalPos>> readTargets, Map<String, Integer> siteClaims,
-			Map<String, Long> eligibleSince, List<Integer> ownSites, Map<UUID, GlobalPos> bases) {
+			Map<String, Long> eligibleSince, List<Integer> ownSites, Map<UUID, GlobalPos> bases, Map<UUID, List<PlacedBlock>> placements,
+			Optional<PlacedBlock> cairnFallback) {
 		this.anchors.putAll(anchors);
 		readTargets.forEach((id, list) -> this.readTargets.put(id, new ArrayList<>(list)));
 		this.siteClaims.putAll(siteClaims);
 		this.eligibleSince.putAll(eligibleSince);
 		this.ownSites.addAll(ownSites);
 		this.bases.putAll(bases);
+		placements.forEach((player, list) -> this.placements.put(player, new ArrayList<>(list)));
+		this.cairnFallback = cairnFallback.orElse(null);
 	}
 
 	public static LoreData get(MinecraftServer server) {
@@ -147,5 +162,45 @@ public final class LoreData extends SavedData {
 		if (!base.equals(bases.put(player, base))) {
 			setDirty();
 		}
+	}
+
+	/** This player's oldest placed blocks, oldest first (some may be gone since). */
+	public List<PlacedBlock> placements(UUID player) {
+		return Collections.unmodifiableList(placements.getOrDefault(player, List.of()));
+	}
+
+	/**
+	 * Logs a block this player placed, while their log has room ({@code max}): only the oldest are kept. A block placed
+	 * again where one of theirs is logged keeps the older entry. True if it was logged.
+	 */
+	public boolean logPlacement(UUID player, PlacedBlock placed, int max) {
+		List<PlacedBlock> list = placements.computeIfAbsent(player, k -> new ArrayList<>());
+		if (list.size() >= max || list.stream().anyMatch(p -> p.pos().equals(placed.pos()))) {
+			return false;
+		}
+		list.add(placed);
+		setDirty();
+		return true;
+	}
+
+	/** Forgets a logged block that was broken, whoever's log it is in, so that log has room for a newer one. */
+	public void forgetPlacement(GlobalPos pos) {
+		boolean changed = false;
+		for (List<PlacedBlock> list : placements.values()) {
+			changed |= list.removeIf(p -> p.pos().equals(pos));
+		}
+		if (changed) {
+			setDirty();
+		}
+	}
+
+	/** The block F13's fallback chose (M11), once it chose one. */
+	public Optional<PlacedBlock> cairnFallback() {
+		return Optional.ofNullable(cairnFallback);
+	}
+
+	public void setCairnFallback(@Nullable PlacedBlock block) {
+		cairnFallback = block;
+		setDirty();
 	}
 }

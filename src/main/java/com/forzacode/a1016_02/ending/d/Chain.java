@@ -13,6 +13,7 @@ import com.forzacode.a1016_02.core.GameClock;
 import com.forzacode.a1016_02.core.HerobrineState;
 import com.forzacode.a1016_02.core.Services;
 import com.forzacode.a1016_02.ending.EndingApi;
+import com.forzacode.a1016_02.lore.LoreApi;
 
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.GlobalPos;
@@ -44,6 +45,32 @@ public final class Chain {
 		HerobrineState state = HerobrineState.get(server);
 		background(server, data, cfg, state, server.getTickCount());
 		check(server, data, cfg, players, state.fragmentsRead()::contains, View.TRACES, deadFriends(server, state));
+		publish(state, data, GameClock.day(server));
+	}
+
+	/**
+	 * The shared flags lore's late clues read (D-066 M7): {@code ending:d_step=<n>} and {@code ending:d_step_day=<day>}
+	 * (the world clock's in-game day the chain got to step n), updated the check it advances. Step 1's clock starts on
+	 * the day F23 is first read: nothing is published before that. An old save in the middle of the chain starts its
+	 * step's clock on the first check. True if the flags changed.
+	 */
+	public static boolean publish(HerobrineState state, EndingDState data, long today) {
+		Step step = data.step();
+		if (step == Step.MAP && !state.fragmentsRead().contains("F23")) {
+			return false;
+		}
+		String stepFlag = EndingApi.D_STEP_FLAG + step.number();
+		if (state.hasFlag(stepFlag) && state.flags().stream().anyMatch(f -> f.startsWith(EndingApi.D_STEP_DAY_FLAG))) {
+			return false;
+		}
+		for (String flag : List.copyOf(state.flags())) {
+			if (flag.startsWith(EndingApi.D_STEP_FLAG) || flag.startsWith(EndingApi.D_STEP_DAY_FLAG)) {
+				state.setFlag(flag, false);
+			}
+		}
+		state.setFlag(stepFlag, true);
+		state.setFlag(EndingApi.D_STEP_DAY_FLAG + today, true);
+		return true;
 	}
 
 	/**
@@ -77,7 +104,7 @@ public final class Chain {
 			return;
 		}
 		long now = server.getTickCount();
-		Cairn.watch(players, cfg);
+		Cairn.watch(players, data, cfg);
 		Step step = data.step();
 		switch (step) {
 			case MAP -> {
@@ -97,7 +124,7 @@ public final class Chain {
 					// Accident's own planner, with its own view rules (not in tests with fixed viewpoints).
 					Cairn.danger(players, data, cfg);
 				}
-				if (players.stream().anyMatch(p -> Cairn.carriedAway(p, data, cfg))) {
+				if (Cairn.away(server, players, data, cfg)) {
 					advance(server, data, step);
 				}
 			}
@@ -137,6 +164,11 @@ public final class Chain {
 		if (complete && now >= nextF25 && !state.fragmentsPlaced().containsKey("F25")) {
 			nextF25 = now + EndingDConfig.ticks(cfg.stairRetrySeconds);
 			data.stair().ifPresent(plan -> Stair.offerF25(server, plan));
+		}
+		if (complete) {
+			// The stair is finished: lore learns the chamber (F35's plates and F36's note go in it, out of view, once each;
+			// a sign written there is not near his traces). Cheap and idempotent, so an old save's finished stair counts too.
+			data.stair().ifPresent(plan -> LoreApi.chamberBuilt(server, plan.dimension(), plan.chamberBox()));
 		}
 	}
 
@@ -185,8 +217,8 @@ public final class Chain {
 				}
 			}
 			case SENTENCE -> {
-				Optional<String> sentence = Chamber.sentence();
-				if (sentence.isPresent() && Chamber.finished(signs, plan, cfg, sentence.get()).isPresent()) {
+				List<String> sentences = Chamber.sentences();
+				if (Chamber.finished(signs, plan, cfg, sentences).isPresent()) {
 					advance(server, data, step);
 				}
 			}
@@ -258,9 +290,11 @@ public final class Chain {
 						carrying.add(p.getName().getString() + dist);
 					}
 				}
+				long placed = data.tracked().stream().filter(t -> t.mark().equals(Marks.FIRST_BLOCK)).count();
 				lines.add("cairn: " + cairn.map(c -> c.pos().toShortString()).orElse("F13 not placed") + "; first block out cleanly: "
-						+ data.has(EndingDState.FIRST_TAKEN) + " (offering this visit: " + Cairn.offering() + "); carried by "
-						+ (carrying.isEmpty() ? "nobody" : String.join(", ", carrying)) + "; lure armed: " + data.has(EndingDState.CAIRN_ARMED));
+						+ data.has(EndingDState.FIRST_TAKEN) + " (at the cairn: " + data.has(EndingDState.FIRST_NEAR) + ", offering this visit: "
+						+ Cairn.offering() + "); carried by " + (carrying.isEmpty() ? "nobody" : String.join(", ", carrying)) + "; placed " + placed
+						+ "x; lure armed: " + data.has(EndingDState.CAIRN_ARMED));
 			}
 			case UNDER_SEED -> lines.add("missing: dig through the seed pyramid's floor and go down to the chamber; flooded: " + data.has(EndingDState.FLOODED));
 			case TORCHES, SENTENCE, CROSS -> {
@@ -273,14 +307,13 @@ public final class Chain {
 					lines.add("torches in the chamber: " + Chamber.torches(level, plan) + "/" + cfg.torchesRequired
 							+ (dead > 0 ? " or " + (cfg.torchesRequired + dead) : "") + "; stair blocks left above: "
 							+ Stair.standing(level, plan) + "/" + plan.stairs().stream().filter(s -> s.getY() >= plan.chamberCeil()).count());
-					Optional<String> sentence = Chamber.sentence();
-					lines.add("sentence under the twin: " + (sentence.isPresent()
-							&& Chamber.finished(Chamber.signs(level, plan), plan, cfg, sentence.get()).isPresent() ? "written" : "missing")
-							+ "; named him there: " + data.has(EndingDState.NAMED));
+					List<String> sentences = Chamber.sentences();
+					lines.add("sentence under the twin: " + (Chamber.finished(Chamber.signs(level, plan), plan, cfg, sentences).isPresent() ? "written"
+							: "missing") + "; named him there: " + data.has(EndingDState.NAMED));
 					long firsts = data.tracked().stream().filter(t -> t.mark().equals(Marks.FIRST_BLOCK)).count();
-					long planks = data.tracked().stream().filter(t -> t.mark().equals(Marks.GROVE_WOOD)).count();
+					long wood = data.tracked().stream().filter(t -> t.mark().equals(Marks.GROVE_WOOD)).count();
 					lines.add("cross: " + (Chamber.cross(level, plan, data).isPresent() ? "standing" : "missing") + " (first block placed "
-							+ firsts + "x, grove planks placed " + planks + "x)");
+							+ firsts + "x, grove wood placed " + wood + "x)");
 				});
 			}
 			case LAST_MINUTE -> lines.add("last minute: " + LastMinute.describe());

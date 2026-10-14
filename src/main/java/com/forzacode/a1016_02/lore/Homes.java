@@ -64,11 +64,17 @@ final class Homes {
 	}
 
 	/**
-	 * The story's owner: the stored choice, or one chosen now among the participants and stored for good (core's
-	 * rule: most play ticks, ties to the earliest join). Empty only while none is stored and nobody takes part.
+	 * The story's owner: the stored choice, or one chosen now among the participants who have placed a block (so F13
+	 * never waits on someone with no first block) and stored for good (core's rule: most play ticks, ties to the
+	 * earliest join). Empty while none is stored and no participant has placed a block yet.
 	 */
 	Optional<UUID> owner() {
-		return watch.ownerFor(server, FIRST_BLOCKS);
+		return watch.ownerFor(server, FIRST_BLOCKS, LoreApi.hasPlacedBlock(state));
+	}
+
+	/** The owner's oldest placed blocks, oldest first, as lore logged them (D-066 M11); empty with no owner. */
+	List<PlacedBlock> ownerPlacements() {
+		return owner().map(data::placements).orElse(List.of());
 	}
 
 	/** The stored owner, without choosing one. */

@@ -10,6 +10,7 @@ import com.forzacode.a1016_02.A1016_02;
 import com.forzacode.a1016_02.core.GameClock;
 import com.forzacode.a1016_02.core.HerobrineState;
 import com.forzacode.a1016_02.core.ModConfig;
+import com.forzacode.a1016_02.core.PlacedBlock;
 import com.forzacode.a1016_02.core.Services;
 import com.forzacode.a1016_02.core.Stage;
 import com.forzacode.a1016_02.core.TraceService;
@@ -102,13 +103,27 @@ public final class FragmentEngine {
 		}
 	}
 
-	/** True if the fragment may be placed now: a placed rule, its stage reached, its requirements met (anyone's reads count). */
+	/**
+	 * True if the fragment may be placed now: a placed rule, its stage reached (or, for F13, the map read: its
+	 * {@code stage_or_read}), its requirements met (anyone's reads count), nothing read that must not be yet, and for a
+	 * late clue the group stuck on its step for its days ({@link LateClues}).
+	 */
 	public static boolean eligible(Fragment fragment, Stage stage, Facts facts) {
-		if (!Placers.isPlacedRule(fragment.placement().rule()) || !stage.atLeast(fragment.stage())) {
+		if (!Placers.isPlacedRule(fragment.placement().rule())) {
 			return false;
 		}
 		Fragment.Requires requires = fragment.requires();
 		Set<String> read = facts.read();
+		boolean staged = stage.atLeast(fragment.stage()) || !requires.stageOrRead().isEmpty() && read.containsAll(requires.stageOrRead());
+		if (!staged || requires.notRead().stream().anyMatch(read::contains)) {
+			return false;
+		}
+		if (requires.stuck().isPresent()) {
+			Fragment.Stuck stuck = requires.stuck().get();
+			if (facts.daysStuck(stuck.step()) < LateClues.days(fragment, stuck, LoreConfig.get())) {
+				return false;
+			}
+		}
 		return requires.placed().stream().allMatch(id -> facts.placed(id).isPresent())
 				&& read.containsAll(requires.read())
 				&& read.size() >= requires.readCount();
@@ -246,7 +261,7 @@ public final class FragmentEngine {
 
 		@Override
 		public boolean enabled(String id) {
-			return homes.state().profile().fragments().contains(id);
+			return homes.state().profile().isEnabled(id);
 		}
 
 		@Override
@@ -257,6 +272,31 @@ public final class FragmentEngine {
 		@Override
 		public boolean stillBurning() {
 			return homes.state().hasFlag(Placers.STILL_BURNING);
+		}
+
+		@Override
+		public List<GlobalPos> bases() {
+			return homes.all();
+		}
+
+		@Override
+		public long daysStuck(int step) {
+			return LateClues.daysStuck(homes.state(), step, GameClock.day(homes.server()));
+		}
+
+		@Override
+		public List<PlacedBlock> ownerPlacements() {
+			return homes.ownerPlacements();
+		}
+
+		@Override
+		public Optional<PlacedBlock> cairnFallback() {
+			return homes.data().cairnFallback();
+		}
+
+		@Override
+		public void rememberCairnFallback(PlacedBlock block) {
+			homes.data().setCairnFallback(block);
 		}
 	}
 }

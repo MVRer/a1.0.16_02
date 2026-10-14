@@ -118,6 +118,15 @@ public final class LastMinute {
 
 		Optional<HimEntity> spawn(ServerLevel level, Vec3 feet, float yaw);
 
+		/**
+		 * Every figure still out from an earlier sighting turns and walks away ({@code FigureApi.walkAway(server)}), so he
+		 * is gone before the far shore needs him (one figure at a time: his spawn there is refused while one is out).
+		 * Returns how many.
+		 */
+		default int walkAway(MinecraftServer server) {
+			return 0;
+		}
+
 		/** The bare groves the world recorded, nearest {@code near} first. */
 		List<SiteRegistry.Site> groves(ServerLevel level, BlockPos near);
 
@@ -167,6 +176,11 @@ public final class LastMinute {
 			@Override
 			public Optional<HimEntity> spawn(ServerLevel level, Vec3 feet, float yaw) {
 				return FigureApi.spawnAt(level, Variant.ACROSS_WATER, feet, yaw);
+			}
+
+			@Override
+			public int walkAway(MinecraftServer server) {
+				return FigureApi.walkAway(server);
 			}
 
 			@Override
@@ -409,6 +423,14 @@ public final class LastMinute {
 					// Once for the world, guarded in the same tick (D-062.3): the day is saved first.
 					data.setCompleteDay(GameClock.day(server));
 					ports.complete(server, cfg);
+				}
+				if (!previewing) {
+					// A figure still out from an earlier sighting walks away now, so he is gone by the time the far shore
+					// needs him (one figure at a time; never in a preview, which has no figure).
+					int walking = ports.walkAway(server);
+					if (walking > 0) {
+						A1016_02.LOGGER.info("[a1016] ending d: the last minute starts; the figure that was out walks away ({})", walking);
+					}
 				}
 				// The preview gives nothing back: its footsteps are sounds only.
 				footsteps = previewing ? new ArrayList<>() : footstepEntries(server, data);

@@ -16,6 +16,7 @@ import net.fabricmc.fabric.api.gametest.v1.GameTest;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.GlobalPos;
 import net.minecraft.gametest.framework.GameTestHelper;
+import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.level.levelgen.structure.BoundingBox;
 import net.minecraft.world.phys.Vec3;
 
@@ -233,30 +234,33 @@ public class EndingBeatTests extends EndingRuleTests {
 		GlobalPos inside = r.at(2, 151, 41);
 
 		// Another trap's death inside the copy: not the final one.
-		r.ports.trapArmed = true;
-		r.ports.armedRef = new EndingState.Trap("lava_floor", inside);
+		java.util.UUID stranger = java.util.UUID.randomUUID();
+		r.ports.traps.put(stranger, new EndingState.Trap("lava_floor", inside));
 		r.die(inside);
 		helper.assertTrue(r.beat(B.class, EndingPath.B) == B.FINAL && r.ports.f10Finished == 0, "another trap's death was the final one");
-		r.ports.trapArmed = false;
-		r.ports.armedRef = null;
+		r.ports.traps.clear();
 
 		r.ports.armable.add("dark_corner");
 		r.player.snapTo(Vec3.atBottomCenterOf(inside.pos()), 0, 0);
 		r.engine.bFinal(r.ctx());
 		helper.assertTrue(r.data.finalTrap().isPresent(), "the final trap was not armed");
-		EndingState.Trap finalTrap = r.ports.armedRef;
+		EndingState.Trap finalTrap = r.ports.traps.get(r.player.getUUID());
 
 		// The final trap armed, but the death outside the copy: not the final one.
 		r.die(r.at(0, 150, 100));
 		helper.assertTrue(r.beat(B.class, EndingPath.B) == B.FINAL && r.ports.f10Finished == 0, "a death outside the copy was the final one");
-		// Inside, but the planner holds another trap now: not the final one.
-		r.ports.armedRef = new EndingState.Trap("gravel_ceiling", inside);
+		// Inside, but the planner holds another trap for that player now (the final one is gone): not the final one.
+		r.ports.traps.put(r.player.getUUID(), new EndingState.Trap("gravel_ceiling", inside));
 		r.die(inside);
 		helper.assertTrue(r.beat(B.class, EndingPath.B) == B.FINAL && r.ports.f10Finished == 0, "a death by another trap was the final one");
-		// Inside, by the final trap: a friend's death counts as much as anyone's (one ending per world).
-		r.ports.armedRef = finalTrap;
-		r.die(r.friend(), inside);
-		helper.assertTrue(r.beat(B.class, EndingPath.B) == B.RECORD && r.ports.f10Finished == 1, "the final trap's death inside the copy was not final");
+		// Inside, by the final trap: a friend's death counts as much as anyone's (one ending per world), and only the
+		// friend who died is named on F10, never the living player.
+		r.ports.traps.put(r.player.getUUID(), finalTrap);
+		ServerPlayer friend = r.friend();
+		r.die(friend, inside);
+		helper.assertTrue(r.beat(B.class, EndingPath.B) == B.RECORD && r.ports.f10Named.equals(List.of(friend.getUUID())),
+				"the final trap's death inside the copy was not final, or F10 named " + r.ports.f10Named);
+		helper.assertTrue(r.data.lineFinished(friend.getUUID()) && !r.data.lineFinished(r.player.getUUID()), "the final death did not finish its own line only");
 		helper.succeed();
 	}
 
@@ -291,7 +295,7 @@ public class EndingBeatTests extends EndingRuleTests {
 		r.tick();
 		helper.assertTrue(r.ports.armed.equals(List.of("house_fire")) && r.data.lastArmPlay() == r.play, "nothing armed at home: " + r.ports.armed);
 
-		r.ports.trapArmed = false;
+		r.ports.traps.clear();
 		r.minutes(60);
 		r.tick();
 		helper.assertTrue(r.ports.armed.size() == 1, "a second home accident within bHomeArmMinutes");
@@ -309,7 +313,7 @@ public class EndingBeatTests extends EndingRuleTests {
 	@GameTest
 	public void endingCGoesSilentAndHisNameUndoesIt(GameTestHelper helper) {
 		Run r = new Run(helper);
-		r.ports.trapArmed = true;
+		r.ports.traps.put(r.player.getUUID(), new EndingState.Trap("lava_floor", r.at(0, 1, 0)));
 		r.data.addBurned("F02");
 		r.data.addHeld("F05");
 		r.data.setHousePeak(40);
@@ -318,7 +322,7 @@ public class EndingBeatTests extends EndingRuleTests {
 		helper.assertTrue(r.state.stage() == Stage.REMOVAL && r.state.hasFlag("ending:path=C"), "C did not enter Stage 4");
 		helper.assertTrue(DirectorHooks.silence(r.state).orElse(0L) == DirectorHooks.FOREVER, "director:silence_until_day=-1 not set");
 		helper.assertTrue(r.ports.duskFog.equals(List.of(0.0F)), "the dusk fog did not go to 0: " + r.ports.duskFog);
-		helper.assertFalse(r.ports.trapArmed, "a trap stayed armed in the silence");
+		helper.assertTrue(r.ports.traps.isEmpty(), "a trap stayed armed in the silence");
 		r.days(30);
 		r.tick();
 		helper.assertTrue(r.data.path() == EndingPath.C && !r.data.ended(), "C did not hold");

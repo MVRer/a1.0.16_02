@@ -1,0 +1,20 @@
+{
+	"id": "F43",
+	"name": "one line came back",
+	"form": "book",
+	"where": "The chamber chest. Step 6, 2 days",
+	"title": "",
+	"pages": [
+		"asked if there was a brother. one line came back. i did, but he is no longer with us. my thread was gone in five minutes"
+	],
+	"stage": "proximity",
+	"placement": {
+		"rule": "chamber_chest"
+	},
+	"requires": {
+		"stuck": {
+			"step": 6,
+			"days": 2
+		}
+	}
+}
