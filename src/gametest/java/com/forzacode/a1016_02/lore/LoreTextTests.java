@@ -238,6 +238,8 @@ public class LoreTextTests {
 		final Set<String> read = new HashSet<>();
 		final Set<String> enabled = new HashSet<>();
 		HerobrineState.FirstBlocks firstBlocks = new HerobrineState.FirstBlocks(null, null, null);
+		/** The list's lines: one known player, "Tester" (the placement tests' name), no death yet. */
+		List<LiveBooks.Line> list = List.of(new LiveBooks.Line("Tester", Optional.empty()));
 		BlockPos base;
 		BlockPos spawn;
 		GlobalPos grove;
@@ -276,6 +278,11 @@ public class LoreTextTests {
 		@Override
 		public BlockPos base() {
 			return base;
+		}
+
+		@Override
+		public List<LiveBooks.Line> list() {
+			return list;
 		}
 
 		@Override

@@ -28,7 +28,7 @@ public final class LoreConfig {
 	public int chunkLoadsPerTick = 2;
 	/** A fragment waiting for its chunks (or for the camp search) is tried again after this long. */
 	public double loadWaitSeconds = 2;
-	/** F28: how far (in chunks, from the base) the background search looks for an abandoned camp. */
+	/** F28: how far (in chunks, from the story's home) the background search looks for an abandoned camp. */
 	public int campSearchRadiusChunks = 48;
 	/** F28: after a search found no camp, wait this long before searching again. */
 	public double campRetryMinutes = 20;
@@ -40,11 +40,11 @@ public final class LoreConfig {
 	/** ...for this long. */
 	public double readDwellSeconds = 1.0;
 
-	/** CARRYING_LIST: how often the subject's inventory is checked for the list (F06). */
+	/** CARRYING_LIST: how often every participant's inventory is checked for the list (F06). */
 	public double carryingListCheckSeconds = 30;
-	/** CARRYING_LIST: at most one trigger per this many minutes while it is carried. */
+	/** CARRYING_LIST: at most one trigger per this many minutes while anyone carries it (however many copies). */
 	public double carryingListIntervalMinutes = 20;
-	/** RULES_BOOK_NEAR_BASE: how often containers near the base are checked for the rules book (F15). */
+	/** RULES_BOOK_NEAR_BASE: how often containers near each participant's base are checked for the rules book (F15). */
 	public double rulesBookCheckSeconds = 120;
 	/** RULES_BOOK_NEAR_BASE: at most one trigger per this many minutes while it is stored there. */
 	public double rulesBookIntervalMinutes = 30;
@@ -60,7 +60,7 @@ public final class LoreConfig {
 	 * F04, F10, F20, F27). Only sites with a built structure on the surface qualify anyway (huts, houses, crosses).
 	 */
 	public List<String> notFoundExclude = new ArrayList<>();
-	/** Place not found: sites this close to the player's base (blocks, horizontal) are left alone. */
+	/** Place not found: sites this close to any known player's base (blocks, horizontal) are left alone. */
 	public int notFoundMinFromBase = 48;
 	/** Place not found: at most this many built blocks make up one site (a bigger find is someone's base, not a site). */
 	public int notFoundMaxBlocks = 600;

@@ -1,10 +1,12 @@
 package com.forzacode.a1016_02.lore;
 
-import java.util.Optional;
+import java.util.ArrayList;
+import java.util.List;
 
 import com.forzacode.a1016_02.core.Attention;
 import com.forzacode.a1016_02.core.AttentionTrigger;
 import com.forzacode.a1016_02.core.ModConfig;
+import com.forzacode.a1016_02.core.PlayerWatch;
 import com.forzacode.a1016_02.core.Services;
 
 import net.minecraft.core.BlockPos;
@@ -20,9 +22,11 @@ import net.minecraft.world.level.block.entity.LecternBlockEntity;
 import net.minecraft.world.level.chunk.LevelChunk;
 
 /**
- * The attention triggers lore owns now (D-017): {@code CARRYING_LIST} while the subject carries the list (F06),
- * {@code RULES_BOOK_NEAR_BASE} while the rules book (F15) is stored near their base. Both are rate-limited by
- * {@link LoreConfig}.
+ * The attention triggers lore owns now (D-017): {@code CARRYING_LIST} while any participant carries the list (F06),
+ * {@code RULES_BOOK_NEAR_BASE} while the rules book (F15) is stored near any participant's base. Attention is one
+ * value for the world (D-058), so each fires once per occasion, never once per witness: once per interval while
+ * the list is carried, however many players carry a copy; once per interval while the book is stored near a home,
+ * however many players live there. Both are rate-limited by {@link LoreConfig}.
  */
 final class LoreTriggers {
 	private long nextListCheck;
@@ -42,25 +46,22 @@ final class LoreTriggers {
 		if (now < nextListCheck && now < nextRulesCheck) {
 			return;
 		}
-		Optional<ServerPlayer> subject = Services.watch().subject(server);
+		PlayerWatch watch = Services.watch();
 		LoreConfig config = LoreConfig.get();
 		if (now >= nextListCheck) {
 			nextListCheck = now + ModConfig.realTicks(config.carryingListCheckSeconds);
-			if (subject.isPresent() && carries(subject.get(), "F06")
-					&& elapsed(now, lastListTrigger, ModConfig.realTicks(config.carryingListIntervalMinutes * 60))) {
+			if (elapsed(now, lastListTrigger, ModConfig.realTicks(config.carryingListIntervalMinutes * 60))
+					&& anyCarries(watch.participants(server), "F06")) {
 				lastListTrigger = now;
 				Attention.trigger(server, AttentionTrigger.CARRYING_LIST);
 			}
 		}
 		if (now >= nextRulesCheck) {
 			nextRulesCheck = now + ModConfig.realTicks(config.rulesBookCheckSeconds);
-			Optional<GlobalPos> base = subject.flatMap(Services.watch()::base);
-			if (base.isPresent() && elapsed(now, lastRulesTrigger, ModConfig.realTicks(config.rulesBookIntervalMinutes * 60))) {
-				ServerLevel level = server.getLevel(base.get().dimension());
-				if (level != null && storedNear(level, base.get().pos(), config.rulesBookBaseRadius, "F15")) {
-					lastRulesTrigger = now;
-					Attention.trigger(server, AttentionTrigger.RULES_BOOK_NEAR_BASE);
-				}
+			if (elapsed(now, lastRulesTrigger, ModConfig.realTicks(config.rulesBookIntervalMinutes * 60))
+					&& storedNearAny(server, bases(watch, watch.participants(server)), config.rulesBookBaseRadius, "F15")) {
+				lastRulesTrigger = now;
+				Attention.trigger(server, AttentionTrigger.RULES_BOOK_NEAR_BASE);
 			}
 		}
 	}
@@ -69,11 +70,36 @@ final class LoreTriggers {
 		return last == Long.MIN_VALUE || now - last >= interval;
 	}
 
+	/** True if any of these players has the fragment's item anywhere in their inventory. */
+	static boolean anyCarries(List<ServerPlayer> players, String id) {
+		return players.stream().anyMatch(player -> carries(player, id));
+	}
+
 	/** True if the player has the fragment's item anywhere in their inventory. */
 	static boolean carries(ServerPlayer player, String id) {
 		Inventory inventory = player.getInventory();
 		for (int slot = 0; slot < inventory.getContainerSize(); slot++) {
 			if (FragmentItems.is(inventory.getItem(slot), id)) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	/** These players' bases, each once (friends who share a home share one), in their own dimensions. */
+	static List<GlobalPos> bases(PlayerWatch watch, List<ServerPlayer> players) {
+		List<GlobalPos> bases = new ArrayList<>();
+		for (ServerPlayer player : players) {
+			watch.base(player).filter(base -> !bases.contains(base)).ifPresent(bases::add);
+		}
+		return bases;
+	}
+
+	/** True if the fragment's item is stored near any of these bases (the first one found is enough: one occasion). */
+	static boolean storedNearAny(MinecraftServer server, List<GlobalPos> bases, int radius, String id) {
+		for (GlobalPos base : bases) {
+			ServerLevel level = server.getLevel(base.dimension());
+			if (level != null && storedNear(level, base.pos(), radius, id)) {
 				return true;
 			}
 		}

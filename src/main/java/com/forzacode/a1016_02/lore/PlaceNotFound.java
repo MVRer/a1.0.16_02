@@ -42,11 +42,11 @@ import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.state.properties.RotationSegment;
 
 /**
- * F04, "not found" (the 404): after "Stop.", a fragment site the player visited is gone. The structure there (a
- * hut, a house, a cross: the built blocks connected to the site, never the player's own) is removed down to its
+ * F04, "not found" (the 404): after "Stop.", a fragment site a participant visited is gone. The structure there (a
+ * hut, a house, a cross: the built blocks connected to the site, never a player's own) is removed down to its
  * floor, the floor becomes flat dirt, and one of the site's own signs, if it had one, is moved to the middle and
- * blanked. Nothing is created. Never a site of the Ending D chain, F03, F10, F20 or F27; never near the base.
- * The first visited site that has such a structure is taken; one per world.
+ * blanked. Nothing is created. Never a site of the Ending D chain, F03, F10, F20 or F27; never near any known
+ * player's base. The first visited site (anyone's visit) that has such a structure is taken; one per world.
  */
 final class PlaceNotFound {
 	/** Fragments whose place must stay: the Ending D chain, the player's own sign, F04 itself, Ending B's places. */
@@ -84,11 +84,13 @@ final class PlaceNotFound {
 	}
 
 	/**
-	 * Fires F04 for the first visited site that can go now. {@code SKIPPED} before "Stop.", once done, or when no
-	 * visited site has a structure; {@code NO_SPOT} while one is in view or its chunks load.
+	 * Fires F04 for the first site any participant visited that can go now, never within
+	 * {@link LoreConfig#notFoundMinFromBase} of any of {@code bases} (every known player's home). {@code SKIPPED}
+	 * before "Stop.", once done, or when no visited site has a structure; {@code NO_SPOT} while one is in view or its
+	 * chunks load. Once per world: the flag is set in the same tick it happens (D-062.3).
 	 */
 	static FireResult fire(MinecraftServer server, HerobrineState state, TellingData data, TraceService traces, SignEdits.Editor editor,
-			Optional<BlockPos> base, RandomSource random, LoreConfig config) {
+			List<GlobalPos> bases, RandomSource random, LoreConfig config) {
 		if (!state.stopFired() || state.hasFlag(DONE_FLAG) || data.notFound().isPresent()) {
 			return FireResult.SKIPPED;
 		}
@@ -104,7 +106,8 @@ final class PlaceNotFound {
 			}
 			SiteRegistry.Site site = siteOf(server, id).orElse(null);
 			BlockPos center = site != null && site.dimension().equals(placed.dimension()) ? site.pos() : placed.pos();
-			if (base.isPresent() && Builders.horizontalDistSqr(center, base.get()) < (double) config.notFoundMinFromBase * config.notFoundMinFromBase
+			double minSqr = (double) config.notFoundMinFromBase * config.notFoundMinFromBase;
+			if (bases.stream().anyMatch(base -> base.dimension().equals(placed.dimension()) && Builders.horizontalDistSqr(center, base.pos()) < minSqr)
 					|| UntouchedGrove.contains(server, GlobalPos.of(placed.dimension(), center))) {
 				continue;
 			}

@@ -15,7 +15,7 @@ import net.minecraft.resources.Identifier;
 
 /**
  * One fragment, loaded from {@code data/a1016_02/lore/fragments/<id>.json} (reloads with {@code /reload}).
- * The text is DESIGN.md's, word for word; {@code [PLAYER NAME]} is replaced when the fragment is placed.
+ * The text is DESIGN.md's, word for word; {@code [PLAYER NAME]} is filled in for the reader ({@link LiveBooks}).
  *
  * @param id         "F01".."F30"
  * @param name       DESIGN.md's short name (not shown in game)
@@ -43,7 +43,7 @@ public record Fragment(String id, String name, Form form, String where, String t
 		static final Codec<Form> CODEC = lowerEnum(Form.class);
 	}
 
-	/** The text placeholder replaced with the subject's name at placement time. */
+	/** The text placeholder for a player's name: on the list one line per known player, F10's last line the player Ending B finished, anywhere else the reader ({@link LiveBooks}). */
 	public static final String PLAYER_NAME = "[PLAYER NAME]";
 
 	/**

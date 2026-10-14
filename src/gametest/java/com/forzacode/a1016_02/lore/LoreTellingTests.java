@@ -465,13 +465,18 @@ public class LoreTellingTests extends LorePlacementTests {
 				RandomSource.create(3)).isEmpty(), "a place the Ending D chain needs is right beside it, yet it would go");
 		helper.assertTrue(PlaceNotFound.plan(level, anchor, anchor, config, p -> true, List.of(), RandomSource.create(3)).isEmpty(),
 				"the player's own blocks counted as the site");
-		helper.assertTrue(PlaceNotFound.fire(server, state, data, Services.traces().forced(), editor, Optional.empty(), RandomSource.create(3),
+		helper.assertTrue(PlaceNotFound.fire(server, state, data, Services.traces().forced(), editor, List.of(), RandomSource.create(3),
 				config) == FireResult.SKIPPED, "place not found before Stop.");
 		helper.assertTrue(helper.getLevel().getBlockState(helper.absolutePos(new BlockPos(1, 1, 1))).is(Blocks.COBBLESTONE), "the hut changed early");
 		state.setStopFired(true);
+		// Never near anyone's home (a friend's included); a home in another dimension is not near.
+		helper.assertTrue(PlaceNotFound.fire(server, state, data, Services.traces().forced(), editor,
+				List.of(GlobalPos.of(net.minecraft.world.level.Level.NETHER, anchor), GlobalPos.of(level.dimension(), helper.absolutePos(new BlockPos(3, 1, 7)))),
+				RandomSource.create(3), config) == FireResult.SKIPPED && data.notFound().isEmpty(), "F04 took a site by a player's base");
+		helper.assertTrue(helper.getLevel().getBlockState(helper.absolutePos(new BlockPos(1, 1, 1))).is(Blocks.COBBLESTONE), "the hut by a base changed");
 		helper.succeedWhen(() -> {
 			if (data.notFound().isEmpty()) {
-				FireResult result = PlaceNotFound.fire(server, state, data, Services.traces().forced(), editor, Optional.empty(),
+				FireResult result = PlaceNotFound.fire(server, state, data, Services.traces().forced(), editor, List.of(),
 						RandomSource.create(3), config);
 				helper.assertTrue(result != FireResult.SKIPPED, "place not found skipped after Stop.");
 				helper.assertTrue(result == FireResult.FIRED, "waiting: " + result);
@@ -492,7 +497,7 @@ public class LoreTellingTests extends LorePlacementTests {
 			helper.assertTrue(frontOf(helper, helper.absolutePos(new BlockPos(3, 1, 3))).stream().allMatch(String::isEmpty), "the sign has text");
 			helper.assertBlockPresent(Blocks.COBBLESTONE, new BlockPos(7, 1, 7));
 			helper.assertBlockPresent(Blocks.CHEST, new BlockPos(7, 2, 7));
-			helper.assertTrue(PlaceNotFound.fire(server, state, data, Services.traces().forced(), editor, Optional.empty(),
+			helper.assertTrue(PlaceNotFound.fire(server, state, data, Services.traces().forced(), editor, List.of(),
 					RandomSource.create(3), config) == FireResult.SKIPPED, "place not found fired twice");
 		});
 	}
@@ -510,18 +515,26 @@ public class LoreTellingTests extends LorePlacementTests {
 		ServerPlayer player = mock(helper);
 		TellingData data = new TellingData();
 		LiveBooks.onMarkedDeath(player, "fell", data);
-		helper.assertTrue(data.listCause().equals(Optional.of("fell")), "the cause was not kept");
+		helper.assertTrue(data.listCause(player.getUUID()).equals(Optional.of("fell")) && data.lastMarked().equals(Optional.of(player.getUUID())),
+				"the cause was not kept as that player's");
 
-		// Live: MARKED_DEATH, then the book is opened.
+		// Live: MARKED_DEATH for someone who never took part (a mock player), then the book is opened. The list names
+		// only the world's known players (nobody, unless a test joined someone), never the mock and never "Steve" (D-061).
 		MinecraftServer server = helper.getLevel().getServer();
 		HerobrineEvents.MARKED_DEATH.invoker().onMarkedDeath(player, "drowned", player.blockPosition());
+		List<String> known = LiveBooks.lines(HerobrineState.get(server), TellingData.get(server)).stream().map(LiveBooks.Line::text).toList();
 		ItemStack list = FragmentItems.book(f23, NAME);
 		helper.assertTrue(LiveBooks.refreshForReading(list, player), "opening F23 did not update it");
-		String name = LiveBooks.name(server, player);
-		helper.assertTrue(lines(pages(list)).getLast().equals(name + " . drowned"), "F23 reads " + pages(list));
+		List<String> f23Lines = new ArrayList<>(DESIGN_TEXT.get("F23").subList(0, 6));
+		f23Lines.addAll(known);
+		helper.assertTrue(lines(pages(list)).equals(f23Lines) && !String.join("\n", pages(list)).contains(player.getName().getString()),
+				"F23 reads " + pages(list));
 		helper.assertFalse(LiveBooks.refreshForReading(list, player), "an up-to-date F23 changed again");
+		// F06 is the same shared list now (D-063): it follows the known players too.
 		ItemStack first = FragmentItems.book(fragment("F06"), NAME);
-		helper.assertFalse(LiveBooks.refreshForReading(first, player), "F06 changed");
+		List<String> f06Lines = new ArrayList<>(DESIGN_TEXT.get("F06").subList(0, 6));
+		f06Lines.addAll(known);
+		helper.assertTrue(LiveBooks.refreshForReading(first, player) && lines(pages(first)).equals(f06Lines), "F06 reads " + pages(first));
 		helper.succeed();
 	}
 
@@ -636,12 +649,28 @@ public class LoreTellingTests extends LorePlacementTests {
 		GlowItemFrame frame = new GlowItemFrame(level, helper.absolutePos(new BlockPos(1, 1, 2)), Direction.SOUTH);
 		frame.setItem(FragmentItems.book(fragment("F10"), "Steve"), false);
 		level.addFreshEntity(frame);
-		HerobrineState state = new HerobrineState();
+		LoreRoster.Known alex = new LoreRoster.Known("Alex", 50);
+		LoreRoster.Known sam = new LoreRoster.Known("Sam", 10);
+		HerobrineState state = LoreRoster.state(helper, alex, sam);
+		TellingData data = new TellingData();
 		state.setFragmentPlaced("F10", GlobalPos.of(level.dimension(), chest));
-		helper.assertTrue(LiveBooks.finishF10(server, state) >= 2 && state.hasFlag(LiveBooks.F10_FINISHED), "F10 was not finished");
+		// The ending says whom it finished: Sam, though Alex joined first (and was the old "subject").
+		helper.assertTrue(LiveBooks.finishF10(server, state, data, sam.uuid()) >= 2 && state.hasFlag(LiveBooks.F10_FINISHED), "F10 was not finished");
 		List<String> f10 = lines(pages(((Container) level.getBlockEntity(chest)).getItem(0)));
-		helper.assertTrue(f10.getLast().equals("* removed Steve"), "F10 reads " + f10);
-		helper.assertTrue(lines(pages(frame.getItem())).getLast().equals("* removed Steve"), "the framed F10 reads " + pages(frame.getItem()));
+		helper.assertTrue(f10.getLast().equals("* removed Sam"), "F10 reads " + f10);
+		helper.assertTrue(lines(pages(frame.getItem())).getLast().equals("* removed Sam"), "the framed F10 reads " + pages(frame.getItem()));
+		// The old call (the ending before it migrates) keeps whoever is named; with nobody named it takes the latest marked death's player.
+		LiveBooks.finishF10(server, state, data, null);
+		helper.assertTrue(LiveBooks.removedName(state, data).equals(Optional.of("Sam")), "the old call renamed F10's player");
+		TellingData fresh = new TellingData();
+		fresh.setListCause(alex.uuid(), "fell");
+		HerobrineState again = LoreRoster.state(helper, alex, sam);
+		LiveBooks.finishF10(server, again, fresh, null);
+		helper.assertTrue(LiveBooks.removedName(again, fresh).equals(Optional.of("Alex")), "without a player, F10 does not name the latest marked death's");
+		// Someone who never took part is never named: the call falls back as without a player.
+		TellingData stranger = new TellingData();
+		LiveBooks.finishF10(server, LoreRoster.state(helper, alex), stranger, java.util.UUID.randomUUID());
+		helper.assertTrue(stranger.f10Removed().equals(Optional.of(alex.uuid())), "a stranger was named on F10");
 		frame.discard();
 
 		int ledgered = TraceLedger.get(server).entries().size();

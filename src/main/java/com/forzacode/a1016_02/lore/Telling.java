@@ -19,9 +19,11 @@ import com.forzacode.a1016_02.core.Stage;
 import com.forzacode.a1016_02.core.TraceLedger;
 import com.forzacode.a1016_02.lore.TellingData.WrittenBook;
 import com.forzacode.a1016_02.lore.TellingData.WrittenSign;
+import com.mojang.serialization.Codec;
 
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.GlobalPos;
+import net.minecraft.core.UUIDUtil;
 import net.minecraft.core.component.DataComponents;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
@@ -35,6 +37,7 @@ import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.component.CustomData;
 import net.minecraft.world.item.component.WritableBookContent;
 import net.minecraft.world.item.component.WrittenBookContent;
+import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.entity.SignBlockEntity;
 
 /**
@@ -43,12 +46,20 @@ import net.minecraft.world.level.block.entity.SignBlockEntity;
  * him, are "telling". Each telling counts, raises attention ({@code NAMED_HIM}, {@code WROTE_NEAR_TRACES}) and
  * fires {@link HerobrineEvents#TELLING} with {@code namesHim}; only naming him sets {@code tellingStarted} and
  * starts Stage 3. Signs and books about him are remembered in {@link TellingData}; so is every sign written after
- * the first time he was named, for blank sign (both lists capped, oldest dropped). Destroying them lowers attention ({@code DESTROYED_OWN_WRITING}); the list (F06) burnt
- * in lava or fire lowers it sharply ({@code LIST_IN_LAVA}) and he raises a new pyramid ({@link ListPyramid}).
+ * the first time he was named, for blank sign (both lists capped, oldest dropped). Destroying them lowers attention
+ * ({@code DESTROYED_OWN_WRITING}); the list (F06) burnt in lava or fire lowers it sharply ({@code LIST_IN_LAVA}) and he
+ * raises a new pyramid ({@link ListPyramid}).
+ * <p>
+ * One story (D-058): any participant's sign, book or chat tells, the count is shared, and "Stop." takes the first sign
+ * anyone writes about him in Stage 3. Each trigger fires once per occasion: once per telling, per destroyed writing
+ * (by one of its writers), per burnt copy; never once per witness.
  */
 public final class Telling {
 	/** Custom data key stamped into a book written about him, holding its id in {@link TellingData}. */
 	public static final String BOOK_MARKER = "a1016_02:telling";
+	/** Custom data key beside {@link #BOOK_MARKER}: everyone who wrote in the book, first writer first (UUID strings). */
+	public static final String BOOK_WRITERS = "a1016_02:telling_by";
+	private static final Codec<List<UUID>> WRITERS_CODEC = UUIDUtil.STRING_CODEC.listOf();
 	/** The telling count's mirror flag in {@code HerobrineState}, {@code lore:telling_count=<n>} (kept for compatibility). */
 	public static final String COUNT_FLAG = HerobrineState.TELLING_COUNT_FLAG;
 	/** Set once a copy of the list (F06) burnt in lava or fire. */
@@ -99,7 +110,7 @@ public final class Telling {
 		ListPyramid.tick(server, data);
 	}
 
-	/** Placed fragments the player has now been near (PlayerWatch's visit sampling), in the order first noticed. */
+	/** Placed fragments any participant has now been near (PlayerWatch's visit sampling, D-058), in the order first noticed. */
 	static void recordVisits(MinecraftServer server, HerobrineState state, TellingData data) {
 		List<String> ids = new ArrayList<>(state.fragmentsPlaced().keySet());
 		ids.sort(null);
@@ -129,9 +140,17 @@ public final class Telling {
 
 	// --- live entry points (mixins and events) ---
 
+	/**
+	 * Whether this player's writing and chat can tell: anyone who takes part (D-058), never a spectator (someone
+	 * watching, or a hardcore friend whose story ended, D-063). The player object is the one the event just gave.
+	 */
+	static boolean mayTell(ServerPlayer player) {
+		return !player.isSpectator();
+	}
+
 	/** A player finished editing a sign (lore's sign mixin, server side). */
 	public static void onSignWritten(ServerPlayer player, SignBlockEntity sign) {
-		if (!(sign.getLevel() instanceof ServerLevel level)) {
+		if (!(sign.getLevel() instanceof ServerLevel level) || !mayTell(player)) {
 			return;
 		}
 		MinecraftServer server = level.getServer();
@@ -140,6 +159,9 @@ public final class Telling {
 
 	/** A player saved or signed a book in this inventory slot (lore's book mixin, after vanilla changed it). */
 	public static void onBookWritten(ServerPlayer player, int slot, boolean signed) {
+		if (!mayTell(player)) {
+			return;
+		}
 		MinecraftServer server = player.level().getServer();
 		ItemStack stack = player.getInventory().getItem(slot);
 		writeBook(player, stack, signed, HerobrineState.get(server), TellingData.get(server), live(server));
@@ -147,6 +169,9 @@ public final class Telling {
 
 	/** A chat line (or /me, /say) from a player. Only naming him counts. */
 	static void onChat(ServerPlayer player, String text) {
+		if (!mayTell(player)) {
+			return;
+		}
 		MinecraftServer server = player.level().getServer();
 		chat(player, text, HerobrineState.get(server), TellingData.get(server));
 	}
@@ -168,7 +193,7 @@ public final class Telling {
 		if (FragmentItems.is(stack, "F06") && source.is(DamageTypeTags.IS_FIRE)) {
 			listBurned(thrower, GlobalPos.of(level.dimension(), entity.blockPosition()), data);
 		}
-		bookId(stack).ifPresent(id -> bookDestroyed(thrower, id, data));
+		bookId(stack).ifPresent(id -> bookDestroyed(thrower, id, bookWriters(stack), data));
 	}
 
 	// --- the rules (tests call these with their own state and data) ---
@@ -201,7 +226,12 @@ public final class Telling {
 		if (about) {
 			tell(player, text, pos, names, near, seq, day, state, data);
 		}
-		data.putSign(new WrittenSign(at, player.getUUID(), text, about, names, seq, day, after, false));
+		// Whoever wrote on it before keeps it as theirs too (a friend's line on your sign is still your sign).
+		List<UUID> coWriters = new ArrayList<>(old.map(WrittenSign::coWriters).orElse(List.of()));
+		coWriters.add(player.getUUID());
+		data.putSign(new WrittenSign(at, old.map(WrittenSign::writer).orElse(player.getUUID()), coWriters, text, about, names, seq, day, after, false));
+		// "Stop." goes on the first sign anyone writes about him in Stage 3: once a candidate is set (this tick or
+		// earlier), a second writer's sign never replaces it (D-062.3).
 		if (names && data.stopCandidate().isEmpty() && !state.stopFired() && state.stage().atLeast(Stage.TELLING)) {
 			data.setStopCandidate(at);
 			A1016_02.LOGGER.info("[a1016] lore: the sign at {} is the one that will say \"Stop.\"", pos.toShortString());
@@ -211,7 +241,8 @@ public final class Telling {
 
 	/**
 	 * A book in a player's hand was saved ({@code signed} false) or signed. A book about him is told (when its text
-	 * or signing changed) and stamped with an id, so destroying it later is known.
+	 * or signing changed) and stamped with an id and everyone who wrote in it (D-047's marker says whose it is, so a
+	 * book handed from one player to another stays its writers'), so destroying it later is known.
 	 */
 	static Told writeBook(ServerPlayer player, ItemStack stack, boolean signed, HerobrineState state, TellingData data, Traces traces) {
 		String text = bookText(stack);
@@ -231,11 +262,19 @@ public final class Telling {
 			return Told.NOTHING;
 		}
 		String bookId = id.orElseGet(() -> UUID.randomUUID().toString());
-		CustomData.update(DataComponents.CUSTOM_DATA, stack, tag -> tag.putString(BOOK_MARKER, bookId));
-		long seq = data.nextSeq();
-		long day = GameClock.day(player.level().getServer());
-		tell(player, text, player.blockPosition(), names, near, seq, day, state, data);
-		data.putBook(new WrittenBook(bookId, player.getUUID(), names || old.map(WrittenBook::namesHim).orElse(false), signed, seq, day, hash));
+		List<UUID> marked = bookWriters(stack);
+		UUID writer = old.map(WrittenBook::writer).or(() -> marked.stream().findFirst()).orElse(player.getUUID());
+		List<UUID> coWriters = new ArrayList<>(old.map(WrittenBook::coWriters).orElse(List.of()));
+		coWriters.addAll(marked);
+		coWriters.add(player.getUUID());
+		WrittenBook book = new WrittenBook(bookId, writer, coWriters, names || old.map(WrittenBook::namesHim).orElse(false), signed, data.nextSeq(),
+				GameClock.day(player.level().getServer()), hash);
+		CustomData.update(DataComponents.CUSTOM_DATA, stack, tag -> {
+			tag.putString(BOOK_MARKER, bookId);
+			tag.store(BOOK_WRITERS, WRITERS_CODEC, book.writers());
+		});
+		tell(player, text, player.blockPosition(), names, near, book.seq(), book.day(), state, data);
+		data.putBook(book);
 		return new Told(true, names, near, true);
 	}
 
@@ -287,12 +326,12 @@ public final class Telling {
 	}
 
 	/**
-	 * A player broke a sign. It is forgotten; if it was theirs and about him, they destroyed their own writing.
-	 * True if that lowered attention.
+	 * A player broke a sign. It is forgotten; if they wrote on it and it was about him, they destroyed their own
+	 * writing (someone else's sign does not count). True if that lowered attention: once per sign.
 	 */
 	static boolean signBroken(ServerPlayer player, GlobalPos at, TellingData data) {
 		Optional<WrittenSign> sign = forgetSign(at, data);
-		if (sign.isEmpty() || !sign.get().aboutHim() || !sign.get().writer().equals(player.getUUID())) {
+		if (sign.isEmpty() || !sign.get().aboutHim() || !sign.get().writtenBy(player.getUUID())) {
 			return false;
 		}
 		Attention.trigger(player.level().getServer(), AttentionTrigger.DESTROYED_OWN_WRITING);
@@ -311,10 +350,18 @@ public final class Telling {
 		return sign;
 	}
 
-	/** A book about him was destroyed; if its writer threw it, they destroyed their own writing. */
+	/** {@link #bookDestroyed(ServerPlayer, String, List, TellingData)} with no writers read from the item. */
 	static boolean bookDestroyed(ServerPlayer thrower, String id, TellingData data) {
+		return bookDestroyed(thrower, id, List.of(), data);
+	}
+
+	/**
+	 * A book about him was destroyed; if one of its writers threw it ({@link TellingData}'s record, or the item's
+	 * own {@link #BOOK_WRITERS}), they destroyed their own writing. Once per book: the record goes with the first copy.
+	 */
+	static boolean bookDestroyed(ServerPlayer thrower, String id, List<UUID> markedWriters, TellingData data) {
 		Optional<WrittenBook> book = data.removeBook(id);
-		if (book.isEmpty() || !book.get().writer().equals(thrower.getUUID())) {
+		if (book.isEmpty() || !book.get().writtenBy(thrower.getUUID()) && !markedWriters.contains(thrower.getUUID())) {
 			return false;
 		}
 		Attention.trigger(thrower.level().getServer(), AttentionTrigger.DESTROYED_OWN_WRITING);
@@ -322,16 +369,23 @@ public final class Telling {
 		return true;
 	}
 
-	/** The list burnt: attention drops sharply, and he owes the world a pyramid (at most {@link LoreConfig#listPyramidMax}). */
+	/**
+	 * The list burnt (each copy is its own burn, whoever threw it): attention drops sharply, and he owes the world a
+	 * pyramid (at most {@link LoreConfig#listPyramidMax}). Its ocean is searched from where it burnt, or from the
+	 * thrower's own base when it burnt outside the overworld.
+	 */
 	static void listBurned(ServerPlayer thrower, GlobalPos where, TellingData data) {
 		Attention.trigger(thrower.level().getServer(), AttentionTrigger.LIST_IN_LAVA);
 		HerobrineState.get(thrower.level().getServer()).setFlag(LIST_BURNED_FLAG, true);
+		Optional<GlobalPos> from = Optional.of(where).filter(p -> p.dimension().equals(Level.OVERWORLD))
+				.or(() -> Services.watch().base(thrower).filter(p -> p.dimension().equals(Level.OVERWORLD)));
 		TellingData.Burned burned = data.burned();
 		boolean owed = burned.owed() < LoreConfig.get().listPyramidMax;
 		// A new burn far from the last one looks for its own ocean.
-		Optional<GlobalPos> ocean = burned.near().filter(last -> last.dimension().equals(where.dimension())
-				&& last.pos().distSqr(where.pos()) < 256.0 * 256.0).flatMap(last -> burned.ocean());
-		data.setBurned(new TellingData.Burned(burned.lists() + 1, burned.owed() + (owed ? 1 : 0), burned.raised(), Optional.of(where), ocean));
+		Optional<GlobalPos> ocean = burned.from().or(burned::near).flatMap(last -> from.filter(next -> last.dimension().equals(next.dimension())
+				&& last.pos().distSqr(next.pos()) < 256.0 * 256.0)).flatMap(last -> burned.ocean());
+		data.setBurned(new TellingData.Burned(burned.lists() + 1, burned.owed() + (owed ? 1 : 0), burned.raised(), Optional.of(where), ocean,
+				from));
 		A1016_02.LOGGER.info("[a1016] lore: {} burnt the list at {}{}", thrower.getName().getString(), where.pos().toShortString(),
 				owed ? "; a new pyramid will rise" : "");
 	}
@@ -345,6 +399,15 @@ public final class Telling {
 			return Optional.empty();
 		}
 		return data.copyTag().getString(BOOK_MARKER);
+	}
+
+	/** Everyone who wrote in a book about him, as its own marker says (empty for any other item). */
+	static List<UUID> bookWriters(ItemStack stack) {
+		CustomData data = stack.get(DataComponents.CUSTOM_DATA);
+		if (data == null || data.isEmpty()) {
+			return List.of();
+		}
+		return data.copyTag().read(BOOK_WRITERS, WRITERS_CODEC).orElse(List.of());
 	}
 
 	/** Title and pages of a book and quill or a written book, as plain text. */

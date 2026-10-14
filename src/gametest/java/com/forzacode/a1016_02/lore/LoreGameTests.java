@@ -13,10 +13,10 @@ import net.minecraft.world.phys.Vec3;
 
 /**
  * Game tests of the lore workstream, already registered in the gametest fabric.mod.json. Text and stages are in
- * {@link LoreTextTests}, placement in {@link LorePlacementTests}, the telling in {@link LoreTellingTests}; reading and
- * triggers here.
+ * {@link LoreTextTests}, placement in {@link LorePlacementTests}, the telling in {@link LoreTellingTests}, two players in
+ * {@link LoreMultiplayerTests}; reading and triggers here.
  */
-public class LoreGameTests extends LoreTellingTests {
+public class LoreGameTests extends LoreMultiplayerTests {
 	@GameTest
 	public void readingASignNeedsToBeCloseAndFacingIt(GameTestHelper helper) {
 		helper.setBlock(new BlockPos(3, 1, 4), Placers.standingSign(Direction.NORTH));

@@ -35,10 +35,20 @@ final class Placing {
 		/** The untouched grove's center, chosen once per world. */
 		Optional<GlobalPos> grove();
 
+		/**
+		 * The story's first blocks: the first crafting table, chest and block of the one player stored under
+		 * {@link Homes#FIRST_BLOCKS} (D-061; F13's cairn, F10). Never flips once chosen, even while they are away.
+		 */
 		HerobrineState.FirstBlocks firstBlocks();
 
-		/** The subject's base, or world spawn when there is none. */
+		/**
+		 * The story's home, which every "near your base" placement measures from: the {@link Homes#FIRST_BLOCKS}
+		 * owner's base (their last one while they are away, else their first block), or world spawn when there is none.
+		 */
 		BlockPos base();
+
+		/** The list's player lines now (F06, F23): one per known player, with their own causes ({@link LiveBooks#lines}). */
+		List<LiveBooks.Line> list();
 
 		/** World spawn. */
 		BlockPos spawn();
@@ -54,12 +64,13 @@ final class Placing {
 	/**
 	 * One attempt to place one fragment.
 	 *
-	 * @param origin      what distances are measured from (spawn, base, or the player for debug)
+	 * @param origin      what distances are measured from (spawn, the story's home, or the player for debug)
 	 * @param minDistance own builds and sites at least this far (horizontal)
 	 * @param maxDistance and at most this far
 	 * @param tries       how many candidate spots an own build may try (each may load a chunk)
 	 * @param traces      the trace service (forced in tests)
-	 * @param playerName  replaces {@code [PLAYER NAME]}
+	 * @param playerName  replaces {@code [PLAYER NAME]} outside the list until a reader opens it: the story owner's
+	 *                    name, or the player a debug placement is for (books name their reader once opened)
 	 * @param ownBuilds   may build its own site when world or dig recorded none ({@link LoreConfig#ownBuildDelayMinutes})
 	 * @param loads       set when the attempt stopped to wait for chunks ({@link ChunkGate})
 	 */

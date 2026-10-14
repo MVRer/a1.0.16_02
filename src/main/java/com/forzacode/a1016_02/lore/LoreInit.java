@@ -26,6 +26,17 @@ public final class LoreInit {
 		TellingCards.register();
 
 		HerobrineEvents.STAGE_CHANGED.register((server, oldStage, newStage) -> engine.onStageChanged());
+		// Sessions (D-062.4): each player's own. Their base is remembered as they start and stop (the story's home while
+		// they are away), and their look time goes when they stop.
+		HerobrineEvents.PARTICIPATION.register((server, player, participating) -> {
+			ServerPlayer online = server.getPlayerList().getPlayer(player);
+			if (online != null) {
+				Homes.live(server).remember(online);
+			}
+			if (!participating) {
+				reads.forget(player);
+			}
+		});
 		HerobrineEvents.MARKED_DEATH.register((player, cause, pos) -> LiveBooks.onMarkedDeath(player, cause,
 				TellingData.get(player.level().getServer())));
 		ServerTickEvents.END_SERVER_TICK.register(server -> {
