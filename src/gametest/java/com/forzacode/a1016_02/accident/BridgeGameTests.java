@@ -209,7 +209,9 @@ public class BridgeGameTests extends SwordGameTests {
 		helper.succeed();
 	}
 
-	@GameTest(maxTicks = 200)
+	// The patch's 65 forced End chunks reach entity ticking in a few ticks locally, but CI's two-core runner has been
+	// seen at 58 of 65 on tick 202 while the rest of the batch runs. The wait ends as soon as they are ready.
+	@GameTest(maxTicks = 1200)
 	public void endermanIsMovedOntoYourBridgeAhead(GameTestHelper helper) {
 		Away a = new Away(helper, Level.END, 40);
 		ServerLevel level = a.level;
