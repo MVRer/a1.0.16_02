@@ -38,7 +38,7 @@ Status values: queued, running, review, fix, merged, blocked. Only the orchestra
 | P2-3 | Playtest tooling: dev overlay and a 20 h scripted timewarp log | debug | feat/debug-playtest | v1.0 | merged | Narrow exception: one public read-only DirectorApi |
 | MP-0 | Multiplayer core: participants, per-player records and play clock, per-player tension, stored owners (D-061), shared sounds and effects helpers, old-save migration, deprecated `subject()` | core | feat/mp-core | v1.1-multiplayer | merged | 340 tests green. Mock players are not participants on the test server; two-player tests use `new PlayerWatch(source)` (public seam). PARTICIPATION event replaces raw JOIN/DISCONNECT for sessions |
 | MP-1 | Director: pacing memory per player (D-059), shared moments count for everyone near (D-060), per-player triggers; debug commands and overlay per player | director + debug | feat/mp-director | v1.1-multiplayer | running | After MP-0 |
-| MP-2 | Lore: fragments and telling from any player, "you" names the reader, the list has a line per player, once-per-world guards | lore | feat/mp-lore | v1.1-multiplayer | running | After MP-0 |
+| MP-2 | Lore: fragments and telling from any player, "you" names the reader, the list has a line per player, once-per-world guards | lore | feat/mp-lore | v1.1-multiplayer | review | After MP-0 |
 | MP-3 | Endings with friends (D-063, D-064): shared progress, group rules, join/leave mid-ending, hardcore spectators | ending | feat/mp-ending | v1.1-multiplayer | running | After MP-0 |
 | MP-4 | Accidents: one trap per player's pace, any victim, death marker per player | accident | feat/mp-accident | v1.1-multiplayer | running | After MP-0 |
 | MP-5 | The figure and the dread layer with several players: sightings out of everyone's view, shared sounds, fog and silence (D-060) | entity + atmosphere | feat/mp-entity-atmosphere | v1.1-multiplayer | running | After MP-0 |
@@ -52,6 +52,9 @@ Status values: queued, running, review, fix, merged, blocked. Only the orchestra
 | FIX-2 | Flaky `enderman_is_moved_onto_your_bridge_ahead` (End chunks not ticking by tick 200 on CI) | accident | main | - | merged | maxTicks 1200; CI now names failed tests and uploads the report |
 
 **Paused 2026-10-14 (Mariano):** MP-1 to MP-5 finish on their branches and stop there, unmerged until reviewed. Nothing new is started: MP-6, FIX-3, MP-7, STORY-1 and MP-8 wait for the next session. `main` stays playable (v1.0 plus the MP-0 core and the two flaky-test fixes, 340 tests green).
+
+## Parked branch notes (for the next session's review)
+- **MP-2 `feat/mp-lore` `a62849e`** (348 tests green 4 of 5; the 5th was the old sting flake, since fixed on main). The story's home for "your base" placements is the `story:first_blocks` owner's base (`LoreApi.FIRST_BLOCKS_OWNER`). F06 and F23 are one live list: the six names, then a line per known player with their own cause. Writings keep every writer (`coWriters`, marker `a1016_02:telling_by`). To check in review: (1) **needs Mariano**: F06 now also shows causes and refreshes on open (widens D-047 to F06; a one-line change back); (2) **core ask**: `ownerFor` with a predicate ("has a first block"), else F13 waits forever if the chosen owner never placed a block; (3) ending must call `LoreApi.finishF10(server, UUID)`, and `MissingFirstBlockCard` still uses the deprecated `firstBlocks()`; (4) accident's `DeathMarkerImpl` must pass the victim (MP-4); (5) director's TELLING listener isn't gated in tests; (6) docs: D-047 to cover F06, ARCHITECTURE gets `finishF10(server, UUID)` and `FIRST_BLOCKS_OWNER`.
 
 ## Milestones
 | Tag | Closes when | Status |
