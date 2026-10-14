@@ -7,6 +7,7 @@ import java.util.Optional;
 
 import com.forzacode.a1016_02.core.FireResult;
 import com.forzacode.a1016_02.core.GameClock;
+import com.forzacode.a1016_02.core.MobTamper;
 import com.forzacode.a1016_02.core.ModConfig;
 import com.forzacode.a1016_02.core.Services;
 
@@ -20,8 +21,8 @@ import net.minecraft.world.entity.Mob;
 
 /**
  * False positives: a cow at the fog edge that is only a cow, or a zombie standing still at dusk. They use mobs that
- * already exist, held still and facing the player through {@code MobTamper}, and only while they are out of view.
- * Never spawns anything.
+ * already exist, held still and facing the player through {@code MobTamper} (bound to that player), and only while
+ * they are out of view. Never spawns anything.
  */
 final class Fakes {
 	private Fakes() {
@@ -36,14 +37,27 @@ final class Fakes {
 			return FireResult.NO_SPOT;
 		}
 		int ticks = (int) ModConfig.realTicks(EntityConfig.get().fakeHoldSeconds);
-		if (!Services.mobs().freeze(mob.get(), ticks)) {
+		if (!hold(Services.mobs(), mob.get(), player, ticks)) {
 			// The MobTamper stub (until atmosphere installs the real one) does nothing.
 			return FireResult.SKIPPED;
 		}
-		Services.mobs().face(mob.get(), player.getEyePosition(), ticks);
 		ServerLevel level = player.level();
 		EntityData.get(level.getServer()).recordFake(GlobalPos.of(level.dimension(), mob.get().blockPosition()), GameClock.day(level.getServer()));
 		return FireResult.FIRED;
+	}
+
+	/**
+	 * Holds the mob still, facing {@code player}, for {@code ticks}, bound to that player (D-062.5): it is let go as
+	 * soon as they leave, die, turn spectator or change dimension, never left standing for someone who is gone.
+	 * False if the freeze was refused (nothing is held).
+	 */
+	static boolean hold(MobTamper mobs, Mob mob, ServerPlayer player, int ticks) {
+		if (!mobs.freeze(mob, ticks)) {
+			return false;
+		}
+		mobs.face(mob, player.getEyePosition(), ticks);
+		mobs.bind(mob, player.getUUID());
+		return true;
 	}
 
 	/** The existing mob of that kind nearest the fog edge, between the minimum distance and the edge, out of view. */

@@ -1,16 +1,20 @@
 package com.forzacode.a1016_02.entity;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CopyOnWriteArrayList;
 
+import com.forzacode.a1016_02.atmosphere.mob.MobTamperImpl;
 import com.forzacode.a1016_02.core.CardRegistry;
 import com.forzacode.a1016_02.core.EventCard;
 import com.forzacode.a1016_02.core.FireContext;
 import com.forzacode.a1016_02.core.FireResult;
 import com.forzacode.a1016_02.core.HerobrineState;
+import com.forzacode.a1016_02.core.MobTamper;
+import com.forzacode.a1016_02.core.PlayerWatch;
 import com.forzacode.a1016_02.core.Services;
 import com.mojang.authlib.GameProfile;
 import com.mojang.brigadier.ParseResults;
@@ -18,6 +22,7 @@ import com.mojang.brigadier.ParseResults;
 import net.fabricmc.fabric.api.gametest.v1.GameTest;
 
 import net.minecraft.commands.CommandSourceStack;
+import net.minecraft.core.BlockPos;
 import net.minecraft.gametest.framework.GameTestHelper;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ClientInformation;
@@ -25,6 +30,8 @@ import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.util.Mth;
 import net.minecraft.util.RandomSource;
+import net.minecraft.world.entity.EntityTypes;
+import net.minecraft.world.entity.animal.cow.Cow;
 import net.minecraft.world.level.GameType;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.Blocks;
@@ -500,6 +507,54 @@ public class TwoPlayerFigureGameTests {
 		helper.assertTrue(forB.result() != FireResult.SKIPPED, "the Nether sighting was refused for B, who is there");
 		helper.assertTrue(FigureApi.spawnAtFogEdge(a, Variant.AMONG_PIGLINS, RandomSource.create(5), false).result() == FireResult.SKIPPED,
 				"the Nether sighting ran for A in the overworld");
+		helper.succeed();
+	}
+
+	// --- false positives (D-062.5) ---
+
+	/**
+	 * The cow at the fog edge, held for A, is bound to A through core's {@code MobTamper.bind}: it stays held while A
+	 * (or B, who it was not for) is around, and is let go the moment A is gone, not only when its time runs out.
+	 */
+	@GameTest(structure = YARD)
+	public void aFakeCowIsLetGoWhenItsPlayerGoes(GameTestHelper helper) {
+		yard(helper, 0, 23);
+		MinecraftServer server = helper.getLevel().getServer();
+		ServerPlayer a = player(helper, GameType.SURVIVAL, helper.absoluteVec(new Vec3(1.5, 1.0, 1.5)), 0.0F);
+		ServerPlayer b = player(helper, GameType.SURVIVAL, helper.absoluteVec(new Vec3(3.5, 1.0, 1.5)), 0.0F);
+		List<ServerPlayer> online = new ArrayList<>(List.of(a, b));
+		HerobrineState state = new HerobrineState();
+		PlayerWatch watch = new PlayerWatch(new PlayerWatch.Source() {
+			@Override
+			public List<ServerPlayer> online(MinecraftServer forServer) {
+				return online;
+			}
+
+			@Override
+			public HerobrineState state(MinecraftServer forServer) {
+				return state;
+			}
+
+			@Override
+			public void participation(MinecraftServer forServer, UUID player, boolean participating) {
+			}
+		});
+		helper.assertTrue(Services.mobs() instanceof MobTamperImpl, "the real MobTamper is not installed");
+		MobTamperImpl tamper = MobTamperImpl.INSTANCE;
+		Cow cow = helper.spawn(EntityTypes.COW, new BlockPos(20, 1, 20));
+		try {
+			helper.assertTrue(Fakes.hold(Services.mobs(), cow, a, 1200), "the cow was not held");
+			helper.assertTrue(tamper.isFrozen(cow) && tamper.isFacing(cow) && a.getUUID().equals(tamper.ownerOf(cow)), "the cow is not held for A");
+			helper.assertTrue(tamper.releaseOrphans(server, watch) == 0 && tamper.isFrozen(cow), "let go while A is here");
+			online.remove(b);
+			helper.assertTrue(tamper.releaseOrphans(server, watch) == 0 && tamper.isFrozen(cow), "B leaving let go of A's cow");
+			online.remove(a);
+			helper.assertTrue(tamper.releaseOrphans(server, watch) == 1 && !tamper.isTampered(cow), "A is gone, yet the cow is still held");
+			helper.assertFalse(Fakes.hold(new MobTamper.Stub(), cow, a, 1200) || tamper.isTampered(cow), "the stub held a mob");
+		} finally {
+			tamper.release(cow);
+			cow.discard();
+		}
 		helper.succeed();
 	}
 

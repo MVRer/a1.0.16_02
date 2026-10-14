@@ -411,6 +411,29 @@ public class MultiplayerCoreTests {
 		helper.succeed();
 	}
 
+	/**
+	 * The test and debug hook: any test can make known players in a private state, in first-join order, with their own
+	 * first blocks and nothing else; adding one again keeps their place and records and only renames them.
+	 */
+	@GameTest
+	public void testsCanAddKnownPlayersToAPrivateState(GameTestHelper helper) {
+		HerobrineState state = new HerobrineState();
+		UUID ann = UUID.randomUUID();
+		UUID ben = UUID.randomUUID();
+		PlacedBlock table = new PlacedBlock(GlobalPos.of(Level.OVERWORLD, new BlockPos(4, 64, 4)), Blocks.CRAFTING_TABLE.defaultBlockState());
+		PlacedBlock other = new PlacedBlock(GlobalPos.of(Level.OVERWORLD, new BlockPos(9, 64, 9)), Blocks.CRAFTING_TABLE.defaultBlockState());
+		helper.assertTrue(state.addKnownPlayer(ann, "Ann", new HerobrineState.FirstBlocks(table, table, null)) && state.addKnownPlayer(ben, "Ben"),
+				"a new player was not added");
+		helper.assertTrue(known(state).equals(List.of("Ann", "Ben")), "join order " + known(state));
+		helper.assertTrue(state.firstBlocks(ann).equals(new HerobrineState.FirstBlocks(table, table, null))
+				&& state.firstBlocks(ben).equals(HerobrineState.FirstBlocks.NONE), "first blocks " + state.firstBlocks(ann) + " / " + state.firstBlocks(ben));
+		helper.assertTrue(state.playTicks(ann) == 0 && state.tension(ann) == 0.0 && state.markedDeaths(ann).isEmpty(), "Ann came with records of her own");
+		helper.assertFalse(state.addKnownPlayer(ann, "Annie", new HerobrineState.FirstBlocks(other, other, other)), "Ann was added twice");
+		helper.assertTrue(known(state).equals(List.of("Annie", "Ben")) && state.firstBlocks(ann).equals(new HerobrineState.FirstBlocks(table, table, other)),
+				"adding Ann again moved her or replaced a first block: " + known(state) + " " + state.firstBlocks(ann));
+		helper.succeed();
+	}
+
 	// --- saves ---
 
 	@GameTest

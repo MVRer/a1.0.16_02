@@ -42,7 +42,8 @@ import org.jspecify.annotations.Nullable;
  * Everything happens to the mob on the server, so every player sees the same trick (D-060). Atmosphere's cards
  * {@link #bind} what they do to the player it is for: when that player leaves, dies, turns spectator or changes
  * dimension, the mob is released at once ({@link #releaseFor} on the participation event, and {@link #releaseOrphans}
- * every second), never left frozen for someone who is gone. Unbound effects (other workstreams) only expire.
+ * every second), never left frozen for someone who is gone. Other workstreams bind through {@code MobTamper.bind}
+ * (entity's false positives do); an effect nobody binds only expires.
  * Server thread only.
  */
 public final class MobTamperImpl implements MobTamper {
@@ -130,6 +131,7 @@ public final class MobTamperImpl implements MobTamper {
 	 * as that player is no longer a living participant in the mob's level. Does nothing if the mob is not tampered.
 	 * The latest bind wins.
 	 */
+	@Override
 	public void bind(Mob mob, UUID player) {
 		TamperState state = ((TamperedMob) mob).a1016_02$tamper();
 		if (state != null) {
