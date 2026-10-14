@@ -26,21 +26,28 @@ import com.forzacode.a1016_02.world.sig.StillBurning;
 import com.mojang.brigadier.arguments.IntegerArgumentType;
 import com.mojang.brigadier.arguments.StringArgumentType;
 import com.mojang.brigadier.context.CommandContext;
+import com.mojang.brigadier.exceptions.CommandSyntaxException;
 
 import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.commands.Commands;
 import net.minecraft.commands.SharedSuggestionProvider;
+import net.minecraft.commands.arguments.EntityArgument;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
+import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.phys.Vec3;
+
+import org.jspecify.annotations.Nullable;
 
 /**
  * Debug commands for the world workstream (op level 2):
- * {@code /a1016 world sites [type] | locate <scar> | place <scar> | newscar now | signature <name> now | signature status |
- * housecopy status | housecopy step <n>}. {@code locate glass_cross} and {@code place glass_cross} find and build the
- * glass memorial cross (D-051), a rare kind of hilltop cross.
+ * {@code /a1016 world sites [type] | locate <scar> | place <scar> | newscar now [player] | signature <name> now [player] |
+ * signature status | housecopy status | housecopy step <n>}. {@code locate glass_cross} and {@code place glass_cross}
+ * find and build the glass memorial cross (D-051), a rare kind of hilltop cross. Commands about a player act on the
+ * named player, else the player running them, else (the console) the first participant (D-062.9); the house copy is
+ * always its owner's house, whoever runs it.
  */
 final class WorldCommands {
 	private static final int SITE_LINES = 12;
@@ -66,12 +73,14 @@ final class WorldCommands {
 								.suggests((ctx, b) -> SharedSuggestionProvider.suggest(LivePlacer.names(), b))
 								.executes(WorldCommands::place)))
 				.then(Commands.literal("newscar")
-						.then(Commands.literal("now").executes(WorldCommands::newScarNow)))
+						.then(Commands.literal("now").executes(ctx -> newScarNow(ctx, false))
+								.then(Commands.argument(PLAYER, EntityArgument.player()).executes(ctx -> newScarNow(ctx, true)))))
 				.then(Commands.literal("signature")
 						.then(Commands.literal("status").executes(WorldCommands::signatureStatus))
 						.then(Commands.argument("name", StringArgumentType.word())
 								.suggests((ctx, b) -> SharedSuggestionProvider.suggest(SIGNATURES, b))
-								.then(Commands.literal("now").executes(WorldCommands::signatureNow))))
+								.then(Commands.literal("now").executes(ctx -> signatureNow(ctx, false))
+										.then(Commands.argument(PLAYER, EntityArgument.player()).executes(ctx -> signatureNow(ctx, true))))))
 				.then(Commands.literal("housecopy")
 						.then(Commands.literal("status").executes(WorldCommands::houseCopyStatus))
 						.then(Commands.literal("step")
@@ -79,16 +88,41 @@ final class WorldCommands {
 	}
 
 	private static final List<String> SIGNATURES = List.of("still_burning", "house_elsewhere", "cross_row");
+	private static final String PLAYER = "player";
 
-	/** Forces a signature now: gates skipped, but still once per world and only out of view. */
-	private static int signatureNow(CommandContext<CommandSourceStack> ctx) {
+	/**
+	 * D-062.9: the named player, else the player running the command, else (the console) the first participant in
+	 * join order; null (with a message) when there is nobody.
+	 */
+	static @Nullable ServerPlayer target(CommandContext<CommandSourceStack> ctx, boolean named) throws CommandSyntaxException {
+		if (named) {
+			return EntityArgument.getPlayer(ctx, PLAYER);
+		}
+		ServerPlayer self = ctx.getSource().getPlayer();
+		if (self != null) {
+			return self;
+		}
+		ServerPlayer first = Services.watch().participants(ctx.getSource().getServer()).stream().findFirst().orElse(null);
+		if (first == null) {
+			ctx.getSource().sendFailure(Component.literal("[a1016] nobody takes part right now"));
+		}
+		return first;
+	}
+
+	/** Forces a signature now, for that player: gates skipped, but still once per world and only out of view. */
+	private static int signatureNow(CommandContext<CommandSourceStack> ctx, boolean named) throws CommandSyntaxException {
 		CommandSourceStack source = ctx.getSource();
 		String name = StringArgumentType.getString(ctx, "name");
 		MinecraftServer server = source.getServer();
+		ServerPlayer player = target(ctx, named);
+		if (player == null && !name.equals("house_elsewhere")) {
+			return 0;
+		}
 		Outcome outcome = switch (name) {
-			case "still_burning" -> StillBurning.start(server, true, message -> source.sendSuccess(() -> Component.literal("[a1016] " + message), false));
+			case "still_burning" -> StillBurning.start(server, player.getUUID(), true,
+					message -> source.sendSuccess(() -> Component.literal("[a1016] " + message), false));
 			case "house_elsewhere" -> HouseCopier.start(server, true);
-			case "cross_row" -> CrossRow.start(server, true);
+			case "cross_row" -> CrossRow.start(server, player, true);
 			default -> null;
 		};
 		if (outcome == null) {
@@ -198,10 +232,13 @@ final class WorldCommands {
 		return 0;
 	}
 
-	private static int newScarNow(CommandContext<CommandSourceStack> ctx) {
+	private static int newScarNow(CommandContext<CommandSourceStack> ctx, boolean named) throws CommandSyntaxException {
 		CommandSourceStack source = ctx.getSource();
-		NewScarPlacer.Outcome outcome = NewScarPlacer.forceNow(source.getServer(),
-				message -> source.sendSuccess(() -> Component.literal("[a1016] " + message), false));
+		ServerPlayer player = target(ctx, named);
+		if (player == null) {
+			return 0;
+		}
+		NewScarPlacer.Outcome outcome = NewScarPlacer.forceNow(player, message -> source.sendSuccess(() -> Component.literal("[a1016] " + message), false));
 		if (outcome.placed() || outcome.scheduled()) {
 			say(ctx, "[a1016] " + outcome.message());
 			return 1;

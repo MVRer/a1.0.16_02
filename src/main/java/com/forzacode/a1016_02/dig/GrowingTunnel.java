@@ -27,7 +27,8 @@ import org.jspecify.annotations.Nullable;
 
 /**
  * "The tunnel that grows": a 2x2 tunnel that starts in a cave wall or hillside 40 to 72 blocks out and points at the
- * base. Each visit it is about {@code Pacing.tunnelGrowthPerVisit} blocks longer (grown while the player is away). It
+ * base of the player its card first fired for (one per world). Each visit (anyone's) it is about
+ * {@code Pacing.tunnelGrowthPerVisit} blocks longer (grown while every participant is away, out of everyone's view). It
  * stops just short of the base and never breaks in: it ends as soon as the next step would come within the card
  * clearance of anything the player dug or placed, or within {@link DigConfig#growingStopShortOfBase} of the base.
  * Its TUNNEL_END site is recorded on the player's first visit and then follows the end and the length as it grows.

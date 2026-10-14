@@ -7,6 +7,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.CompletableFuture;
 
 import com.forzacode.a1016_02.core.Services;
 import com.forzacode.a1016_02.core.SiteRegistry;
@@ -80,7 +81,7 @@ public class WorldSignatureTests extends WorldCrossTests {
 		data.setStillBurning(new SignatureData.Burning(here, here, Optional.empty(), 3));
 		data.setCrossRow(new SignatureData.CrossRow(List.of(here), 4));
 		data.setHouseCopy(new HouseCopyState(level.dimension(), here.pos(), List.of(), List.of(), Optional.empty(), -1, List.of(), 0,
-				HouseCopyState.Phase.SITE, 21));
+				HouseCopyState.Phase.SITE, 21, Optional.empty()));
 		helper.assertTrue(StillBurning.refusal(data, false) != null, "still burning can happen twice");
 		helper.assertTrue(CrossRow.refusal(data) != null, "the row of crosses can happen twice");
 		helper.assertTrue(HouseCopier.refusal(data) != null, "the house copy can be started twice");
@@ -461,7 +462,8 @@ public class WorldSignatureTests extends WorldCrossTests {
 
 	// --- the lone redstone torch (D-033) ---
 
-	@GameTest
+	// The light wait ends as soon as the light engine has caught up; CI's two-core runner can take far longer than 5 ticks.
+	@GameTest(maxTicks = 1200)
 	public void loneRedstoneTorchKeepsItsCaps(GameTestHelper helper) {
 		ServerLevel level = helper.getLevel();
 		WorldConfig config = new WorldConfig();
@@ -485,15 +487,15 @@ public class WorldSignatureTests extends WorldCrossTests {
 		List<SignatureData.Spot> caves = List.of(new SignatureData.Spot(GlobalPos.of(level.dimension(), farCave), 40),
 				new SignatureData.Spot(GlobalPos.of(level.dimension(), freshCave), 50), new SignatureData.Spot(GlobalPos.of(level.dimension(), homeCave), 10));
 		List<SiteRegistry.Site> ends = List.of(new SiteRegistry.Site(1, SiteType.TUNNEL_END, level.dimension(), tunnel, 8, Optional.empty()));
-		List<LoneTorch.Candidate> found = LoneTorch.candidates(level, caves, ends, base, today, config, (l, chunk) -> -1, RandomSource.create(1));
+		List<LoneTorch.Candidate> found = LoneTorch.candidates(level, caves, ends, List.of(base), today, config, (l, chunk) -> -1, RandomSource.create(1));
 		helper.assertTrue(found.size() == 2 && found.stream().anyMatch(c -> c.pos().equals(farCave)) && found.stream().anyMatch(c -> c.pos().equals(tunnel)),
 				"candidates " + found);
 		ChunkPos farChunk = ChunkPos.containing(farCave);
-		List<LoneTorch.Candidate> visited = LoneTorch.candidates(level, caves, List.of(), base, today, config,
+		List<LoneTorch.Candidate> visited = LoneTorch.candidates(level, caves, List.of(), List.of(base), today, config,
 				(l, chunk) -> chunk.equals(farChunk) ? today : -1, RandomSource.create(1));
 		helper.assertTrue(visited.isEmpty(), "a cave visited today is a candidate");
 
-		// The spots the subject stood in merge when close and stay capped.
+		// The spots the participants stood in merge when close and stay capped.
 		SignatureData data = new SignatureData();
 		data.visitCave(GlobalPos.of(level.dimension(), farCave), 3, 12, 2);
 		data.visitCave(GlobalPos.of(level.dimension(), farCave.offset(4, 0, 0)), 5, 12, 2);
@@ -509,14 +511,30 @@ public class WorldSignatureTests extends WorldCrossTests {
 		WorldConfig shallow = new WorldConfig();
 		shallow.loneTorchMinDepth = 0;
 		BlockPos pocket = helper.absolutePos(new BlockPos(3, 1, 3));
-		helper.runAfterDelay(5, () -> {
-			helper.assertTrue(LoneTorch.placeNear(level, pocket, 1, pocket.offset(10, 0, 0), shallow, Services.traces()) == null,
-					"a torch within the base radius");
-			BlockPos placed = LoneTorch.placeNear(level, pocket, 1, pocket.offset(500, 0, 0), shallow, Services.traces());
-			helper.assertTrue(pocket.equals(placed), "no torch on the dark floor: " + placed);
+		// The pocket's light is worked out in the background: wait until the light engine has done this setup (the
+		// first ticks can still read the old daylight, chunk by chunk), then place once.
+		CompletableFuture<?> lit = lightSettled(level, pocket);
+		boolean[] placedOnce = {false};
+		helper.succeedWhen(() -> {
+			if (!placedOnce[0]) {
+				helper.assertTrue(lit.isDone() && LoneTorch.darkFloor(level, pocket, shallow), "the pocket's light is not settled yet");
+				placedOnce[0] = true;
+				helper.assertTrue(LoneTorch.placeNear(level, pocket, 1, List.of(pocket.offset(10, 0, 0)), shallow, Services.traces()) == null,
+						"a torch within the base radius");
+				BlockPos placed = LoneTorch.placeNear(level, pocket, 1, List.of(pocket.offset(500, 0, 0)), shallow, Services.traces());
+				helper.assertTrue(pocket.equals(placed), "no torch on the dark floor: " + placed);
+			}
 			helper.assertBlockPresent(Blocks.REDSTONE_TORCH, new BlockPos(3, 1, 3));
 			helper.assertTrue(ledger(helper, LoneTorch.CAUSE).isEmpty(), "the torch was ledgered (it is left by others)");
-			helper.succeed();
 		});
+	}
+
+	/**
+	 * Done once the light engine has worked through every light update queued so far (this test's setup included):
+	 * from then on the sky and block light read settled. Until then each chunk reads whatever it had.
+	 */
+	static CompletableFuture<?> lightSettled(ServerLevel level, BlockPos pos) {
+		ChunkPos chunk = ChunkPos.containing(pos);
+		return level.getChunkSource().getLightEngine().waitForPendingTasks(chunk.x(), chunk.z());
 	}
 }

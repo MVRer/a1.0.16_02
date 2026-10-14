@@ -35,7 +35,7 @@ import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.state.properties.BedPart;
 
 /** "Under you" network game tests. {@link DigGameTests} extends this so they run under dig's registered entrypoint. */
-public class NetworkGameTests {
+public class NetworkGameTests extends DigMultiplayerTests {
 	/**
 	 * Tests run side by side and share the site registry and the loaded chunks, so by default a test network takes
 	 * no chest from anywhere (no site lookup, and the nearby-chunk scan starts beyond any view distance): it could
@@ -97,7 +97,7 @@ public class NetworkGameTests {
 	}
 
 	static NetworkGrower.Ctx ctx(DigGround g, Network net, PosSet explored, DigConfig config, RandomSource random, long night) {
-		return new NetworkGrower.Ctx(g.level, net, explored, config, ModConfig.pacing().digBelow, random, Services.traces(), night, null);
+		return new NetworkGrower.Ctx(g.level, net, explored, config, ModConfig.pacing().digBelow, random, Services.traces(), night, List.of());
 	}
 
 	/** One night: credit it, refresh the targets, grow until the budget is spent or nothing fits. Returns new anchors. */

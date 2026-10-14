@@ -6,15 +6,18 @@ import java.util.Locale;
 import java.util.Optional;
 
 import com.forzacode.a1016_02.core.CommandHooks;
+import com.forzacode.a1016_02.core.HerobrineState;
 import com.forzacode.a1016_02.core.ModConfig;
 import com.forzacode.a1016_02.core.Services;
 import com.mojang.brigadier.arguments.IntegerArgumentType;
 import com.mojang.brigadier.arguments.StringArgumentType;
 import com.mojang.brigadier.context.CommandContext;
+import com.mojang.brigadier.exceptions.CommandSyntaxException;
 
 import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.commands.Commands;
 import net.minecraft.commands.SharedSuggestionProvider;
+import net.minecraft.commands.arguments.EntityArgument;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.GlobalPos;
 import net.minecraft.core.registries.BuiltInRegistries;
@@ -29,11 +32,14 @@ import net.minecraft.world.item.ItemStack;
 import org.jspecify.annotations.Nullable;
 
 /**
- * {@code /a1016 dig network grow <nights> | network info | network reveal | network chest | tunnel <card>}. Debug
+ * {@code /a1016 dig network grow <nights> [player] | network info [player] | network reveal [player] | network chest [player]
+ * | tunnel <card> [player]}. The network is the one under that player's base: the named player, else the player
+ * running the command, else (the console) the first participant (D-062.9); {@code info} lists every network. Debug
  * only: the growth and the tunnels still respect the out-of-view rule. Numbers use {@link Locale#ROOT} (D-031).
  */
 final class DigCommands {
 	static final List<String> TUNNELS = List.of("plain", ScarCards.TunnelThatGrows.ID, ScarCards.TunnelIntoMine.ID);
+	private static final String PLAYER = "player";
 
 	private DigCommands() {
 	}
@@ -42,19 +48,38 @@ final class DigCommands {
 		CommandHooks.register((root, context) -> root.then(Commands.literal("dig")
 				.then(Commands.literal("network")
 						.then(Commands.literal("grow")
-								.then(Commands.argument("nights", IntegerArgumentType.integer(1, 100)).executes(DigCommands::grow)))
-						.then(Commands.literal("info").executes(DigCommands::info))
-						.then(Commands.literal("reveal").executes(DigCommands::reveal))
-						.then(Commands.literal("chest").executes(DigCommands::chest)))
+								.then(Commands.argument("nights", IntegerArgumentType.integer(1, 100)).executes(ctx -> grow(ctx, false))
+										.then(named().executes(ctx -> grow(ctx, true)))))
+						.then(Commands.literal("info").executes(ctx -> info(ctx, false)).then(named().executes(ctx -> info(ctx, true))))
+						.then(Commands.literal("reveal").executes(ctx -> reveal(ctx, false)).then(named().executes(ctx -> reveal(ctx, true))))
+						.then(Commands.literal("chest").executes(ctx -> chest(ctx, false)).then(named().executes(ctx -> chest(ctx, true)))))
 				.then(Commands.literal("tunnel")
 						.then(Commands.argument("card", StringArgumentType.word())
 								.suggests((ctx, builder) -> SharedSuggestionProvider.suggest(TUNNELS, builder))
-								.executes(DigCommands::tunnel)))));
+								.executes(ctx -> tunnel(ctx, false))
+								.then(named().executes(ctx -> tunnel(ctx, true)))))));
 	}
 
-	private static @Nullable ServerPlayer player(CommandContext<CommandSourceStack> ctx) {
-		Optional<ServerPlayer> subject = Services.watch().subject(ctx.getSource().getServer());
-		return subject.orElse(ctx.getSource().getPlayer());
+	private static com.mojang.brigadier.builder.RequiredArgumentBuilder<CommandSourceStack, ?> named() {
+		return Commands.argument(PLAYER, EntityArgument.player());
+	}
+
+	/** D-062.9: the named player, else the player running the command, else (the console) the first participant; or null. */
+	private static @Nullable ServerPlayer player(CommandContext<CommandSourceStack> ctx, boolean named) throws CommandSyntaxException {
+		if (named) {
+			return EntityArgument.getPlayer(ctx, PLAYER);
+		}
+		ServerPlayer self = ctx.getSource().getPlayer();
+		return self != null ? self : Services.watch().participants(ctx.getSource().getServer()).stream().findFirst().orElse(null);
+	}
+
+	/** The network under this player's base (shared with friends nearby), or null. */
+	private static @Nullable Network networkOf(MinecraftServer server, @Nullable ServerPlayer player) {
+		if (player == null) {
+			return null;
+		}
+		Optional<GlobalPos> base = Services.watch().base(player);
+		return base.map(b -> DigData.get(server).networkFor(b.dimension(), b.pos(), DigConfig.get().networkShareDistance)).orElse(null);
 	}
 
 	private static void say(CommandContext<CommandSourceStack> ctx, String line) {
@@ -66,9 +91,9 @@ final class DigCommands {
 		return 0;
 	}
 
-	private static int grow(CommandContext<CommandSourceStack> ctx) {
+	private static int grow(CommandContext<CommandSourceStack> ctx, boolean named) throws CommandSyntaxException {
 		MinecraftServer server = ctx.getSource().getServer();
-		ServerPlayer player = player(ctx);
+		ServerPlayer player = player(ctx, named);
 		if (player == null) {
 			return fail(ctx, "[a1016] dig: no player");
 		}
@@ -83,21 +108,23 @@ final class DigCommands {
 		DigData data = DigData.get(server);
 		DigConfig config = DigConfig.get();
 		long night = UnderYou.nightIndex(server);
-		Network net = UnderYou.active(data, base.get(), night, config, true);
-		NetworkGrower.refreshBed(level, net, base.get().pos());
+		Network net = UnderYou.active(data, player.getUUID(), base.get(), night, config, true);
+		if (net.founder().map(player.getUUID()::equals).orElse(false)) {
+			NetworkGrower.refreshBed(level, net, base.get().pos());
+		}
 		if (net.lastNight == Long.MIN_VALUE) {
 			net.lastNight = night;
 		}
 		int nights = IntegerArgumentType.getInteger(ctx, "nights");
 		RandomSource random = RandomSource.create();
-		BlockPos playerPos = player.level() == level ? player.blockPosition() : null;
+		List<BlockPos> players = UnderYou.positions(Bases.live(server), level, player);
 		int carved = 0;
 		for (int i = 0; i < nights; i++) {
 			net.nights++;
 			net.budget += config.networkBlocksPerNight;
 			net.shaftStuckNight = Long.MIN_VALUE;
 			net.restoredNight = Long.MIN_VALUE;
-			NetworkGrower.Ctx c = UnderYou.ctx(level, net, data, playerPos, night, random);
+			NetworkGrower.Ctx c = UnderYou.ctx(level, net, data, players, night, random);
 			if (!net.anchors.isEmpty()) {
 				NetworkGrower.refreshTargets(c);
 			}
@@ -111,20 +138,33 @@ final class DigCommands {
 		return 1;
 	}
 
-	private static int info(CommandContext<CommandSourceStack> ctx) {
+	private static int info(CommandContext<CommandSourceStack> ctx, boolean named) throws CommandSyntaxException {
 		MinecraftServer server = ctx.getSource().getServer();
 		DigData data = DigData.get(server);
 		DigConfig config = DigConfig.get();
+		HerobrineState state = HerobrineState.get(server);
+		ServerPlayer player = player(ctx, named);
 		List<String> lines = new ArrayList<>();
-		Optional<Network> current = data.network();
-		if (current.isEmpty()) {
-			lines.add("[a1016] dig: no network yet" + (data.baseSeen != null ? " (base " + data.baseSeen.pos().toShortString() + " seen on night "
-					+ data.baseSeenNight + ", starts after " + config.networkStartAfterNights + " nights in Traces)" : ""));
+		lines.add(String.format(Locale.ROOT, "[a1016] dig: %d network(s) of at most %d; bases within %d share one", data.networks.size(),
+				config.networkMaxPerWorld, config.networkShareDistance));
+		for (int n = 0; n < data.networks.size(); n++) {
+			Network each = data.networks.get(n);
+			lines.add(String.format(Locale.ROOT, "  #%d under %s (%s), %s: %d anchors, nights=%d", n + 1, each.base.toShortString(), each.dimension.identifier(),
+					each.owners.isEmpty() ? "no owner yet (a save from before multiplayer)" : "owners " + each.owners.stream()
+							.map(uuid -> state.player(uuid).map(HerobrineState.Subject::name).orElse(uuid.toString())).toList(), each.anchors.size(), each.nights));
+		}
+		Network mine = networkOf(server, player);
+		if (mine == null) {
+			Optional<DigData.BaseSeen> seen = player == null ? Optional.empty() : data.baseSeen(player.getUUID());
+			lines.add("[a1016] dig: no network under " + (player == null ? "anyone's base" : player.getName().getString() + "'s base") + " yet"
+					+ seen.map(s -> " (base " + s.base().pos().toShortString() + " seen on night " + s.night() + (s.playedThere() ? "" : ", not at home there yet")
+							+ ", starts after " + config.networkStartAfterNights + " nights in Traces)").orElse(""));
 		} else {
-			Network net = current.get();
+			Network net = mine;
 			ServerLevel level = server.getLevel(net.dimension);
-			lines.add(String.format(Locale.ROOT, "[a1016] dig: network %d/%d under base %s (%s): %d anchors, %d cells, nights=%d budget=%d", data.networks.size(),
-					data.networks.size(), net.base.toShortString(), net.dimension.identifier(), net.anchors.size(), net.cells.size(), net.nights, net.budget));
+			lines.add(String.format(Locale.ROOT, "[a1016] dig: %s's network %d/%d under base %s (%s): %d anchors, %d cells, nights=%d budget=%d",
+					player.getName().getString(), data.networks.indexOf(net) + 1, data.networks.size(), net.base.toShortString(), net.dimension.identifier(),
+					net.anchors.size(), net.cells.size(), net.nights, net.budget));
 			net.bounds().ifPresent(b -> lines.add(String.format(Locale.ROOT, "depth: corridors at y=%d (%d below the base); extent x %d..%d, y %d..%d, z %d..%d",
 					net.depth, net.base.getY() - net.depth, b[0].getX(), b[1].getX(), b[0].getY(), b[1].getY(), b[0].getZ(), b[1].getZ())));
 			lines.add("shaft: " + shaftLine(net, config));
@@ -153,9 +193,9 @@ final class DigCommands {
 				config.networkStacksRestoredPerNight);
 	}
 
-	private static int chest(CommandContext<CommandSourceStack> ctx) {
+	private static int chest(CommandContext<CommandSourceStack> ctx, boolean named) throws CommandSyntaxException {
 		MinecraftServer server = ctx.getSource().getServer();
-		chestLines(server, DigData.get(server).network().orElse(null)).forEach(line -> say(ctx, line));
+		chestLines(server, networkOf(server, player(ctx, named))).forEach(line -> say(ctx, line));
 		return 1;
 	}
 
@@ -228,14 +268,13 @@ final class DigCommands {
 				Math.max(0, best - 1), bestDig.toShortString(), ModConfig.pacing().digBelow, ModConfig.pacing().breachWithin);
 	}
 
-	private static int reveal(CommandContext<CommandSourceStack> ctx) {
+	private static int reveal(CommandContext<CommandSourceStack> ctx, boolean named) throws CommandSyntaxException {
 		MinecraftServer server = ctx.getSource().getServer();
-		ServerPlayer player = player(ctx);
-		Optional<Network> current = DigData.get(server).network();
-		if (current.isEmpty() || current.get().cells.isEmpty()) {
-			return fail(ctx, "[a1016] dig: no network yet");
+		ServerPlayer player = player(ctx, named);
+		Network net = networkOf(server, player);
+		if (net == null || net.cells.isEmpty()) {
+			return fail(ctx, "[a1016] dig: no network under that base yet");
 		}
-		Network net = current.get();
 		List<String> lines = new ArrayList<>();
 		if (player != null && player.level().dimension().equals(net.dimension)) {
 			BlockPos feet = player.blockPosition();
@@ -265,8 +304,8 @@ final class DigCommands {
 		return 1;
 	}
 
-	private static int tunnel(CommandContext<CommandSourceStack> ctx) {
-		ServerPlayer player = player(ctx);
+	private static int tunnel(CommandContext<CommandSourceStack> ctx, boolean named) throws CommandSyntaxException {
+		ServerPlayer player = player(ctx, named);
 		if (player == null) {
 			return fail(ctx, "[a1016] dig: no player");
 		}

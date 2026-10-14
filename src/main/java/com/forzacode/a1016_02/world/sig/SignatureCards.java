@@ -9,12 +9,12 @@ import com.forzacode.a1016_02.core.FireResult;
 import com.forzacode.a1016_02.core.GameClock;
 import com.forzacode.a1016_02.core.Habit;
 import com.forzacode.a1016_02.core.HerobrineState;
-import com.forzacode.a1016_02.core.ModConfig;
 import com.forzacode.a1016_02.core.Services;
 import com.forzacode.a1016_02.core.Signature;
 import com.forzacode.a1016_02.core.SiteType;
 import com.forzacode.a1016_02.core.Stage;
 import com.forzacode.a1016_02.core.Tier;
+import com.forzacode.a1016_02.world.Bases;
 import com.forzacode.a1016_02.world.SignatureData;
 import com.forzacode.a1016_02.world.WorldConfig;
 import com.forzacode.a1016_02.world.WorldData;
@@ -27,8 +27,9 @@ import net.minecraft.world.level.Level;
 
 /**
  * The world's signature cards (the director maps the profile's signature to these ids, and fires each at most
- * once) and the lone redstone torch. Each card only starts its moment; the world side keeps the once-per-world
- * rule whatever fires it (the debug command included).
+ * once) and the lone redstone torch. Each card only starts its moment, for the player the director fired it for; the
+ * world side keeps the once-per-world rule whatever fires it and whoever it is for (two players' cards in one tick,
+ * the debug command), with state stored in the same tick the moment starts (D-062.3).
  */
 public final class SignatureCards {
 	private SignatureCards() {
@@ -77,7 +78,7 @@ public final class SignatureCards {
 
 		@Override
 		public FireResult fire(FireContext ctx) {
-			return StillBurning.start(ctx.level().getServer(), ctx.forced(), null).result();
+			return StillBurning.start(ctx.level().getServer(), ctx.player().getUUID(), ctx.forced(), null).result();
 		}
 	}
 
@@ -115,9 +116,8 @@ public final class SignatureCards {
 
 		@Override
 		public boolean contextFits(ServerPlayer player, ServerLevel world) {
-			MinecraftServer server = world.getServer();
-			return HerobrineState.get(server).profile().hasHouseCopy() && GameClock.day(server) >= ModConfig.pacing().houseCopyMinDay
-					&& WorldData.get(server).signatures().houseCopy().isEmpty() && !HouseCopier.anchors(server, server.overworld()).isEmpty();
+			// Whoever the card is for, the house is the world:house_copy owner's (chosen here once, when it first fits).
+			return HouseCopier.ready(Bases.live(world.getServer()));
 		}
 
 		@Override
@@ -167,7 +167,7 @@ public final class SignatureCards {
 
 		@Override
 		public FireResult fire(FireContext ctx) {
-			return CrossRow.start(ctx.level().getServer(), ctx.forced()).result();
+			return CrossRow.start(ctx.level().getServer(), ctx.player(), ctx.forced()).result();
 		}
 	}
 

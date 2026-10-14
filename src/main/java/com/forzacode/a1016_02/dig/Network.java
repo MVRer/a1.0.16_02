@@ -1,8 +1,11 @@
 package com.forzacode.a1016_02.dig;
 
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
+import java.util.UUID;
 
 import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 
@@ -11,6 +14,7 @@ import net.minecraft.core.Direction;
 import net.minecraft.core.registries.Registries;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.nbt.ListTag;
+import net.minecraft.nbt.StringTag;
 import net.minecraft.resources.Identifier;
 import net.minecraft.resources.ResourceKey;
 import net.minecraft.world.level.Level;
@@ -19,7 +23,10 @@ import org.jspecify.annotations.Nullable;
 
 /**
  * One "Under you" network: the 2x2 corridors under a base, the shaft under the bed and the dead end with the chest.
- * Pure state (plus NBT); {@link NetworkGrower} does the growing.
+ * Bases within {@code networkShareDistance} of each other share one network; {@link #owners} are the players whose
+ * base it has been under, by UUID (D-062.2), the first one its founder (whose bed the shaft stops under). Pure state
+ * (plus NBT); {@link NetworkGrower} does the growing. A network saved before multiplayer has no owners: it was the
+ * first known player's ({@link DigData#adoptLegacy}).
  */
 public final class Network {
 	/** A corridor end that keeps digging. */
@@ -41,6 +48,8 @@ public final class Network {
 
 	final ResourceKey<Level> dimension;
 	final BlockPos base;
+	/** The players whose base it has been under, in the order they came; the first founded it. */
+	final Set<UUID> owners = new LinkedHashSet<>();
 	/** Corridor anchor height (cells are this and the block above). */
 	int depth;
 	final List<BlockPos> anchors = new ArrayList<>();
@@ -93,6 +102,16 @@ public final class Network {
 
 	public BlockPos base() {
 		return base;
+	}
+
+	/** The players whose base it has been under, the founder first. */
+	public List<UUID> owners() {
+		return List.copyOf(owners);
+	}
+
+	/** The player who founded it (whose bed the shaft stops under), if known. */
+	public Optional<UUID> founder() {
+		return owners.stream().findFirst();
 	}
 
 	public int depth() {
@@ -216,6 +235,9 @@ public final class Network {
 		CompoundTag tag = new CompoundTag();
 		tag.putString("dimension", dimension.identifier().toString());
 		tag.putLong("base", base.asLong());
+		ListTag ownerList = new ListTag();
+		owners.forEach(owner -> ownerList.add(StringTag.valueOf(owner.toString())));
+		tag.put("owners", ownerList);
 		tag.putInt("depth", depth);
 		tag.putLongArray("anchors", anchors.stream().mapToLong(BlockPos::asLong).toArray());
 		tag.putLongArray("shaft", shaftAnchors.toLongArray());
@@ -257,6 +279,10 @@ public final class Network {
 	static Network load(CompoundTag tag) {
 		ResourceKey<Level> dimension = ResourceKey.create(Registries.DIMENSION, Identifier.parse(tag.getStringOr("dimension", "minecraft:overworld")));
 		Network net = new Network(dimension, BlockPos.of(tag.getLongOr("base", 0L)));
+		ListTag ownerList = tag.getListOrEmpty("owners");
+		for (int i = 0; i < ownerList.size(); i++) {
+			ownerList.getString(i).flatMap(Network::uuid).ifPresent(net.owners::add);
+		}
 		net.depth = tag.getIntOr("depth", 0);
 		LongOpenHashSet shaft = new LongOpenHashSet(tag.getLongArray("shaft").orElse(new long[0]));
 		for (long packed : tag.getLongArray("anchors").orElse(new long[0])) {
@@ -292,6 +318,14 @@ public final class Network {
 		net.restoredNight = tag.getLongOr("restoredNight", Long.MIN_VALUE);
 		net.restoredTonight = tag.getIntOr("restoredTonight", 0);
 		return net;
+	}
+
+	static Optional<UUID> uuid(String text) {
+		try {
+			return Optional.of(UUID.fromString(text));
+		} catch (IllegalArgumentException e) {
+			return Optional.empty();
+		}
 	}
 
 	static void putPos(CompoundTag tag, String key, @Nullable BlockPos pos) {

@@ -43,8 +43,14 @@ public final class WorldConfig {
 	public double glassCrossChanceOther = 1.0 / 15;
 
 	// --- live cards ---
-	/** How far from the subject the new-scar placer looks for stale areas, in chunks. */
+	/** How far from the player the card fired for the new-scar placer looks for stale areas, in chunks. */
 	public int newScarSearchChunks = 24;
+	/**
+	 * A real new scar (a dead hill or a bare grove; not the fake bare tree) happens at most once per this many in-game
+	 * days in the whole world, however many players' pacing asks for one: each player's own pacing still decides when
+	 * theirs fires, but three players never triple the world's new scars.
+	 */
+	public int newScarWorldGapDays = 1;
 	/** Radius of a new dead hill or bare grove, in blocks. */
 	public int newScarRadius = 20;
 	/** A new scar never changes more blocks than this (it keeps the ledger small). */
@@ -52,9 +58,9 @@ public final class WorldConfig {
 	/** The lone light near base is placed this far from the base (blocks). */
 	public int baseLightMinDistance = 16;
 	public int baseLightMaxDistance = 56;
-	/** The emptied house only happens while the subject is at least this far from the build (blocks). */
+	/** The emptied house only happens while every participant is at least this far from the build (blocks). */
 	public int emptiedHouseAwayBlocks = 64;
-	/** Abandoned builds farther than this from the subject are not considered (blocks). */
+	/** Abandoned builds farther than this from the player the card fired for are not considered (blocks). */
 	public int emptiedHouseSearchBlocks = 2000;
 	/** Days after a first visit to a bare grove without replanting before LEFT_GROVES_ALONE applies. */
 	public int leftGrovesDays = 3;
@@ -62,13 +68,17 @@ public final class WorldConfig {
 	public double watchSeconds = 5;
 
 	// --- signatures: still burning (D-004) ---
-	/** The camp stands about 2000 blocks from the subject: this band, in unvisited, unloaded chunks. */
+	/**
+	 * The camp stands about 2000 blocks from the player the card fired for: this band, in unvisited, unloaded chunks,
+	 * and at least the band's near edge from every participant ("nobody for 2000 blocks").
+	 */
 	public int stillBurningMinBlocks = 1800;
 	public int stillBurningMaxBlocks = 2200;
 	/**
 	 * With F21 rolled the camp also gets F21's emptied house. Lore puts F21 there at any distance, so the camp sits
-	 * about 2000 blocks out as well ("nobody for 2000 blocks"): within this distance of the base, at least
-	 * {@link #stillBurningF21MinBlocks} from the subject, farthest first.
+	 * about 2000 blocks out as well ("nobody for 2000 blocks"): within this distance of the story's home (the
+	 * {@code story:first_blocks} owner's base), at least {@link #stillBurningF21MinBlocks} from the player the card
+	 * fired for and from every participant, farthest first.
 	 */
 	public int stillBurningF21MaxFromBase = 2200;
 	public int stillBurningF21MinBlocks = 1800;
@@ -82,7 +92,7 @@ public final class WorldConfig {
 	public double stillBurningRetryMinutes = 5;
 
 	// --- signatures: your house, elsewhere (D-005) ---
-	/** The copy stands this far from the base (blocks). Lore puts F27 in it, within 1500 of the base. */
+	/** The copy stands this far from the copied house (blocks). Lore puts F27 in it, within 1500 of the base. */
 	public int houseCopyMinDistance = 220;
 	public int houseCopyMaxDistance = 480;
 	/** Player-placed blocks this far (cube) around the first block and the base make up the first shelter. */
@@ -105,12 +115,15 @@ public final class WorldConfig {
 	public double houseCopyRetrySeconds = 30;
 
 	// --- signatures: the row of crosses ---
-	/** The hilltop is this far from the subject (blocks), inside loaded land and out of view. */
+	/**
+	 * The hilltop is this far from the player the card fired for (blocks), inside loaded land and out of view, and at
+	 * least the minimum from every other participant.
+	 */
 	public int crossRowMinDistance = 48;
 	public int crossRowMaxDistance = 200;
 	/** Blocks between two crosses of the row. */
 	public int crossRowSpacing = 4;
-	/** The row keeps this far from the base (blocks). */
+	/** The row keeps this far from every known player's base (blocks). */
 	public int crossRowBaseClearance = 48;
 	/** Buried blocks for the old crosses are taken at most this far around each cross (blocks). */
 	public int crossRowMaterialRadius = 6;
@@ -123,7 +136,7 @@ public final class WorldConfig {
 	public int loneTorchMinDays = 7;
 	/** A cave counts once the player has been away from it this many in-game days. */
 	public int loneTorchAwayDays = 1;
-	/** Never within this distance of the base (blocks). */
+	/** Never within this distance of any known player's base (blocks). */
 	public int loneTorchBaseRadius = 64;
 	/** "Deep": at least this many blocks under the surface. */
 	public int loneTorchMinDepth = 8;

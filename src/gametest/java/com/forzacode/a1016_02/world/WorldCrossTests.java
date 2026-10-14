@@ -43,7 +43,7 @@ import net.minecraft.world.level.block.state.BlockState;
  * Game tests of the crosses: the Latin shape (D-050) and the glass memorials left by others (D-051). The row of
  * crosses (moved material, never glass) is tested in {@link WorldSignatureTests#crossRowIsMovedMaterial}.
  */
-public class WorldCrossTests {
+public class WorldCrossTests extends WorldMultiplayerTests {
 	/** Terrain for planning tests: ground from a function, stone up to it, plains everywhere. */
 	static Terrain terrain(ServerLevel level, IntBinaryOperator ground) {
 		Holder<Biome> plains = level.registryAccess().lookupOrThrow(Registries.BIOME).getOrThrow(Biomes.PLAINS);

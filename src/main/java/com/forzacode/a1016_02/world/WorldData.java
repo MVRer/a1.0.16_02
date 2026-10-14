@@ -7,6 +7,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.UUID;
 import java.util.concurrent.ThreadLocalRandom;
 
 import com.forzacode.a1016_02.A1016_02;
@@ -14,6 +15,7 @@ import com.mojang.serialization.Codec;
 import com.mojang.serialization.codecs.RecordCodecBuilder;
 
 import net.minecraft.core.GlobalPos;
+import net.minecraft.core.UUIDUtil;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.world.level.levelgen.structure.BoundingBox;
 import net.minecraft.world.level.saveddata.SavedData;
@@ -23,9 +25,11 @@ import org.jspecify.annotations.Nullable;
 
 /**
  * The world workstream's private state ({@code data/a1016_02/world.dat}): the scar salt, the inside of every
- * build (for the emptied house), the light on the mountain while it burns, what the player did at pyramids and
- * bare groves, where the one-per-world sites (the hut, the core pyramid) were recorded, and the signature moments
- * ({@link SignatureData}). Server thread only.
+ * build (for the emptied house), the light on the mountain while it burns, what the players did at pyramids and
+ * bare groves, where the one-per-world sites (the hut, the core pyramid) were recorded, the signature moments
+ * ({@link SignatureData}), the last base world saw for each player (by UUID, D-061) and the day of the last real new
+ * scar (the world-wide rate). A save from before multiplayer has no bases and no new-scar day: both start empty, and
+ * every other field was already about the world, not one player. Server thread only.
  */
 public final class WorldData extends SavedData {
 	/** The inside of a build, keyed by its site position. */
@@ -45,10 +49,10 @@ public final class WorldData extends SavedData {
 	}
 
 	/**
-	 * What the player did at one bare grove.
+	 * What the players did at one bare grove (one record per grove, whoever did it).
 	 *
-	 * @param firstVisitDay the in-game day they first stood in it
-	 * @param replanted     leaves and saplings they placed in it so far
+	 * @param firstVisitDay the in-game day someone first stood in it
+	 * @param replanted     leaves and saplings players placed in it so far
 	 * @param leftAlone     LEFT_GROVES_ALONE already applied for it
 	 */
 	public record Grove(GlobalPos site, long firstVisitDay, int replanted, long lastReplantDay, boolean leftAlone) {
@@ -61,6 +65,14 @@ public final class WorldData extends SavedData {
 		).apply(i, Grove::new));
 	}
 
+	/** The last base world saw for one player while they took part. */
+	record PlayerBase(UUID player, GlobalPos base) {
+		static final Codec<PlayerBase> CODEC = RecordCodecBuilder.create(i -> i.group(
+				UUIDUtil.CODEC.fieldOf("player").forGetter(PlayerBase::player),
+				GlobalPos.CODEC.fieldOf("base").forGetter(PlayerBase::base)
+		).apply(i, PlayerBase::new));
+	}
+
 	static final Codec<WorldData> CODEC = RecordCodecBuilder.create(i -> i.group(
 			Codec.LONG.fieldOf("salt").forGetter(d -> d.salt),
 			Build.CODEC.listOf().optionalFieldOf("builds", List.of()).forGetter(d -> List.copyOf(d.builds.values())),
@@ -69,7 +81,10 @@ public final class WorldData extends SavedData {
 			GlobalPos.CODEC.listOf().optionalFieldOf("pyramidsDug", List.of()).forGetter(d -> List.copyOf(d.pyramidsDug)),
 			Grove.CODEC.listOf().optionalFieldOf("groves", List.of()).forGetter(d -> List.copyOf(d.groves.values())),
 			Codec.unboundedMap(Codec.STRING, GlobalPos.CODEC).optionalFieldOf("singles", Map.of()).forGetter(d -> Map.copyOf(d.singles)),
-			SignatureData.CODEC.optionalFieldOf("signatures").forGetter(d -> Optional.of(d.signatures))
+			SignatureData.CODEC.optionalFieldOf("signatures").forGetter(d -> Optional.of(d.signatures)),
+			PlayerBase.CODEC.listOf().optionalFieldOf("bases", List.of()).forGetter(d -> d.bases.entrySet().stream()
+					.map(e -> new PlayerBase(e.getKey(), e.getValue())).toList()),
+			Codec.LONG.optionalFieldOf("lastNewScarDay", Long.MIN_VALUE).forGetter(d -> d.lastNewScarDay)
 	).apply(i, WorldData::new));
 
 	static final SavedDataType<WorldData> TYPE = new SavedDataType<>(A1016_02.id("world"), WorldData::new, CODEC, null);
@@ -82,6 +97,8 @@ public final class WorldData extends SavedData {
 	private final Map<GlobalPos, Grove> groves = new HashMap<>();
 	private final Map<String, GlobalPos> singles = new HashMap<>();
 	private final SignatureData signatures;
+	private final Map<UUID, GlobalPos> bases = new HashMap<>();
+	private long lastNewScarDay = Long.MIN_VALUE;
 
 	/** A fresh world's data (tests make their own to keep the shared one untouched). */
 	public WorldData() {
@@ -92,7 +109,7 @@ public final class WorldData extends SavedData {
 	}
 
 	private WorldData(long salt, List<Build> builds, List<GlobalPos> emptied, Optional<Light> light, List<GlobalPos> pyramidsDug, List<Grove> groves,
-			Map<String, GlobalPos> singles, Optional<SignatureData> signatures) {
+			Map<String, GlobalPos> singles, Optional<SignatureData> signatures, List<PlayerBase> bases, long lastNewScarDay) {
 		this.salt = salt;
 		this.signatures = signatures.orElseGet(SignatureData::new);
 		this.signatures.onChange(this::setDirty);
@@ -102,6 +119,8 @@ public final class WorldData extends SavedData {
 		this.pyramidsDug.addAll(pyramidsDug);
 		groves.forEach(g -> this.groves.put(g.site(), g));
 		this.singles.putAll(singles);
+		bases.forEach(b -> this.bases.put(b.player(), b.base()));
+		this.lastNewScarDay = lastNewScarDay;
 	}
 
 	public static WorldData get(MinecraftServer server) {
@@ -116,6 +135,32 @@ public final class WorldData extends SavedData {
 	/** Random per world, made on the first load: where old scars are depends on it (with the seed and profile). */
 	public long salt() {
 		return salt;
+	}
+
+	// --- players' bases (D-061) ---
+
+	/** The last base world saw for this player while they took part, if any. */
+	public Optional<GlobalPos> base(UUID player) {
+		return Optional.ofNullable(bases.get(player));
+	}
+
+	/** Remembers a player's live base. */
+	public void setBase(UUID player, GlobalPos base) {
+		if (!base.equals(bases.put(player, base))) {
+			setDirty();
+		}
+	}
+
+	// --- new scars, world-wide ---
+
+	/** The in-game day of the last real new scar (a dead hill or a bare grove) anywhere, or {@link Long#MIN_VALUE}. */
+	public long lastNewScarDay() {
+		return lastNewScarDay;
+	}
+
+	public void setLastNewScarDay(long day) {
+		lastNewScarDay = day;
+		setDirty();
 	}
 
 	// --- one-per-world sites ---

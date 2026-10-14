@@ -7,7 +7,6 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
-import java.util.Optional;
 import java.util.Set;
 
 import com.forzacode.a1016_02.A1016_02;
@@ -20,6 +19,7 @@ import com.forzacode.a1016_02.core.SiteRegistry;
 import com.forzacode.a1016_02.core.SiteType;
 import com.forzacode.a1016_02.core.TraceBatch;
 import com.forzacode.a1016_02.core.TraceService;
+import com.forzacode.a1016_02.world.Bases;
 import com.forzacode.a1016_02.world.SignatureData;
 import com.forzacode.a1016_02.world.WorldConfig;
 import com.forzacode.a1016_02.world.WorldData;
@@ -53,7 +53,9 @@ import org.jspecify.annotations.Nullable;
  * and a fresh one at the end. Every cross is moved material ({@code TraceService.move}, one out-of-view batch):
  * the old ones from blocks buried under the hill (the holes stay sealed underground, so their ground is
  * undisturbed), the fresh one from the top blocks of the ground right around it, which is the clue: the ground
- * around it was freshly dug. Nothing is written on them. At most once per world. Server thread only.
+ * around it was freshly dug. Nothing is written on them. Near the player the card fired for, away from every known
+ * player's base and from every participant. At most once per world: the row is planned, committed and recorded in
+ * one tick, so a second player's card in the same tick is refused. Server thread only.
  */
 public final class CrossRow {
 	public static final String ID = "signature_cross_row";
@@ -293,28 +295,43 @@ public final class CrossRow {
 
 	// --- live ---
 
-	/** Builds the row now on a hilltop out of view, or fails (the director keeps the card for later). */
+	/** {@link #start(MinecraftServer, ServerPlayer, boolean)} for the first participant in the overworld (debug). */
 	public static Outcome start(MinecraftServer server, boolean forced) {
-		SignatureData data = WorldData.get(server).signatures();
+		return start(server, null, forced);
+	}
+
+	/**
+	 * Builds the row now on a hilltop near {@code player} (the player the card fired for; null or elsewhere: the first
+	 * participant in the overworld), out of view of everyone, or fails (the director keeps the card for later).
+	 */
+	public static Outcome start(MinecraftServer server, @Nullable ServerPlayer player, boolean forced) {
+		return start(Bases.live(server), player, forced, Services.traces(), SiteSink.LIVE);
+	}
+
+	/** {@link #start(MinecraftServer, ServerPlayer, boolean)} over these bases (their state, watch and data). */
+	public static Outcome start(Bases bases, @Nullable ServerPlayer target, boolean forced, TraceService traces, SiteSink sink) {
+		MinecraftServer server = bases.server();
+		SignatureData data = bases.data().signatures();
 		String no = refusal(data);
 		if (no != null) {
 			return Outcome.failed(no);
 		}
-		HerobrineState state = HerobrineState.get(server);
+		HerobrineState state = bases.state();
 		if (!forced && state.profile().signature() != Signature.CROSS_ROW) {
 			return Outcome.failed("the row of crosses is not this world's signature (" + state.profile().signature() + ")");
 		}
-		Optional<ServerPlayer> subject = Services.watch().subject(server);
-		if (subject.isEmpty() || subject.get().level().dimension() != Level.OVERWORLD) {
-			return Outcome.later("the subject is not in the overworld");
+		ServerPlayer player = target != null && target.level().dimension() == Level.OVERWORLD && bases.watch().isParticipant(target) ? target
+				: bases.participantsIn(server.overworld()).stream().findFirst().orElse(null);
+		if (player == null) {
+			return Outcome.later("nobody takes part in the overworld");
 		}
-		ServerPlayer player = subject.get();
 		ServerLevel level = player.level();
 		WorldConfig config = WorldConfig.get();
 		RandomSource random = RandomSource.create();
-		Optional<BlockPos> base = Services.watch().base(player).filter(b -> b.dimension().equals(level.dimension())).map(GlobalPos::pos);
+		List<BlockPos> homes = bases.all(level.dimension());
+		List<BlockPos> everyone = bases.positionsIn(level);
 		int tried = 0;
-		for (BlockPos top : hilltops(level, player, base.orElse(null), config, random)) {
+		for (BlockPos top : hilltops(level, player, homes, everyone, config, random)) {
 			Direction along = Direction.from2DDataValue(random.nextInt(4));
 			BlockPos first = top.relative(along.getOpposite(), GONE.size() / 2 * Math.max(3, config.crossRowSpacing));
 			Plan plan = plan(level, first, along, random.nextLong(), config);
@@ -326,12 +343,12 @@ public final class CrossRow {
 				continue;
 			}
 			tried++;
-			if (!commit(level, plan, Services.traces(), SiteSink.LIVE)) {
+			if (!commit(level, plan, traces, sink)) {
 				continue; // in view
 			}
-			List<GlobalPos> bases = plan.crosses().stream().map(c -> GlobalPos.of(level.dimension(), c.base())).toList();
-			data.setCrossRow(new SignatureData.CrossRow(bases, GameClock.day(server)));
-			String where = String.format(Locale.ROOT, "row of %d crosses on the hilltop at %s, the fresh one at %s", bases.size(),
+			List<GlobalPos> crosses = plan.crosses().stream().map(c -> GlobalPos.of(level.dimension(), c.base())).toList();
+			data.setCrossRow(new SignatureData.CrossRow(crosses, GameClock.day(server))); // this tick: a second start is refused
+			String where = String.format(Locale.ROOT, "row of %d crosses on the hilltop at %s, the fresh one at %s", crosses.size(),
 					top.toShortString(), plan.crosses().getLast().base().toShortString());
 			A1016_02.LOGGER.info("[a1016] world: {}", where);
 			return Outcome.done(where);
@@ -351,9 +368,12 @@ public final class CrossRow {
 
 	/**
 	 * Hilltops in loaded land {@code crossRowMin..MaxDistance} from the player, behind them first (outside the view
-	 * cone), away from the base: the air above ground whose ring {@value #HILL_RING} blocks out lies lower all round.
+	 * cone), at least {@code crossRowBaseClearance} from every one of {@code homes} and {@code crossRowMinDistance}
+	 * from every one of {@code everyone}: the air above ground whose ring {@value #HILL_RING} blocks out lies lower all
+	 * round.
 	 */
-	static List<BlockPos> hilltops(ServerLevel level, ServerPlayer player, @Nullable BlockPos base, WorldConfig config, RandomSource random) {
+	static List<BlockPos> hilltops(ServerLevel level, ServerPlayer player, List<BlockPos> homes, List<BlockPos> everyone, WorldConfig config,
+			RandomSource random) {
 		LiveTerrain terrain = new LiveTerrain(level);
 		int max = Math.min(config.crossRowMaxDistance, level.getServer().getPlayerList().getViewDistance() * 16 - 16);
 		int min = config.crossRowMinDistance;
@@ -373,8 +393,9 @@ public final class CrossRow {
 				continue;
 			}
 			int y = terrain.ground(x, z);
-			if (base != null && base.distSqr(new BlockPos(x, base.getY(), z)) < (double) config.crossRowBaseClearance * config.crossRowBaseClearance) {
-				continue;
+			BlockPos column = new BlockPos(x, y, z);
+			if (Bases.near(homes, column, config.crossRowBaseClearance) || Bases.near(everyone, column, min)) {
+				continue; // never at anyone's base, never on top of a friend
 			}
 			boolean hill = true;
 			for (int i = 0; i < 8 && hill; i++) {

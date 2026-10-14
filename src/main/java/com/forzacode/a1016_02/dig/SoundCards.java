@@ -25,7 +25,11 @@ import net.minecraft.world.level.block.SoundType;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.Vec3;
 
-/** Sound-only dig cards: "Mining that moves" and the "Under you" home cues. Nothing in the world changes. */
+/**
+ * Sound-only dig cards: "Mining that moves" and the "Under you" home cues. Nothing in the world changes. Every sound
+ * plays at its position to everyone in hearing range there (D-060, {@link DigTicker#schedule}), so friends standing
+ * together hear the same knock. "Mining that moves" happens at most once per world per stage, stored the tick it fires.
+ */
 final class SoundCards {
 	private SoundCards() {
 	}
@@ -112,16 +116,17 @@ final class SoundCards {
 
 		@Override
 		public FireResult fire(FireContext ctx) {
-			Optional<BlockPos> cell = networkCellBelow(ctx.player());
-			if (cell.isEmpty()) {
+			Optional<Below> below = networkCellBelow(ctx.player());
+			if (below.isEmpty()) {
 				return FireResult.NO_SPOT;
 			}
-			Vec3 pos = Vec3.atCenterOf(cell.get());
+			BlockPos cell = below.get().cell();
+			Vec3 pos = Vec3.atCenterOf(cell);
 			float pitch = 0.8F + ctx.random().nextFloat() * 0.15F;
 			if (ctx.fake()) {
 				DigTicker.INSTANCE.schedule(ctx.player(), 0, SoundEvents.AMBIENT_CAVE, SoundSource.AMBIENT, pos, 0.7F, pitch);
 			} else {
-				mineOnce(ctx.player(), 0, pos, soundAt(ctx.level(), cell.get().below()), DigConfig.get().underYouSoundVolume, pitch);
+				mineOnce(ctx.player(), 0, pos, soundAt(ctx.level(), cell.below()), DigConfig.get().underYouSoundVolume, pitch);
 			}
 			return FireResult.FIRED;
 		}
@@ -153,19 +158,19 @@ final class SoundCards {
 						volume, 1.0F);
 				return FireResult.FIRED;
 			}
-			Optional<BlockPos> cell = networkCellBelow(player);
-			Optional<Network> net = data(level).network();
-			if (cell.isEmpty() || net.isEmpty()) {
+			Optional<Below> below = networkCellBelow(player);
+			if (below.isEmpty()) {
 				return FireResult.NO_SPOT;
 			}
-			// Walk along the corridor floor from the nearest cell.
-			BlockPos floor = cell.get();
-			while (net.get().cells.contains(floor.below().asLong())) {
+			Network net = below.get().net();
+			// Walk along the corridor floor from the nearest cell, in the network that cell belongs to.
+			BlockPos floor = below.get().cell();
+			while (net.cells.contains(floor.below().asLong())) {
 				floor = floor.below();
 			}
 			Direction dir = Direction.Plane.HORIZONTAL.getRandomDirection(ctx.random());
 			for (Direction d : Direction.Plane.HORIZONTAL) {
-				if (net.get().cells.contains(floor.relative(d).asLong())) {
+				if (net.cells.contains(floor.relative(d).asLong())) {
 					dir = d;
 					break;
 				}
@@ -174,7 +179,7 @@ final class SoundCards {
 			for (int i = 0; i < 3; i++) {
 				DigTicker.INSTANCE.schedule(player, i * 9L, soundAt(level, step.below()).getStepSound(), SoundSource.BLOCKS, Vec3.atBottomCenterOf(step),
 						volume, 0.9F + ctx.random().nextFloat() * 0.1F);
-				if (net.get().cells.contains(step.relative(dir).asLong())) {
+				if (net.cells.contains(step.relative(dir).asLong())) {
 					step = step.relative(dir);
 				}
 			}

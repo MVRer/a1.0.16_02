@@ -16,6 +16,7 @@ import com.forzacode.a1016_02.core.Stage;
 import com.forzacode.a1016_02.core.Tier;
 import com.forzacode.a1016_02.core.TraceLedger;
 import com.forzacode.a1016_02.core.TraceService;
+import com.forzacode.a1016_02.world.Bases;
 import com.forzacode.a1016_02.world.WorldData;
 import com.forzacode.a1016_02.world.gen.Vegetation;
 
@@ -38,9 +39,11 @@ import org.jspecify.annotations.Nullable;
 
 /**
  * "Light on the mountain" (MINOR, Traces): at night, one torch on a far hilltop that wasn't there, at least
- * {@code Pacing.mountainLightMinDistance} away. It is placed while the player looks the other way, somewhere they
- * will see when they turn. Next day, or once they come closer than that distance, it is gone without a trace
- * (taken out of view, and its ledger entry dropped: it undoes our own torch).
+ * {@code Pacing.mountainLightMinDistance} away from every participant in that dimension ("only visible from 100+
+ * blocks", so a friend nearer the hill never gets it next to them). It is placed while the player the card fired
+ * for looks the other way, somewhere they will see when they turn, and out of everyone's view. One light in the world
+ * at a time, recorded the tick it is left. Next day, or once anyone comes closer than that distance, it is gone
+ * without a trace (taken out of view, and its ledger entry dropped: it undoes our own torch).
  */
 public final class LightOnMountainCard implements EventCard {
 	public static final String ID = "light_on_mountain";
@@ -89,7 +92,7 @@ public final class LightOnMountainCard implements EventCard {
 		if (level.dimension() != Level.OVERWORLD || data.light().isPresent()) {
 			return FireResult.SKIPPED;
 		}
-		BlockPos spot = findHilltop(level, ctx.player(), ctx.random());
+		BlockPos spot = findHilltop(level, ctx.player(), Bases.live(level.getServer()).positionsIn(level), ctx.random());
 		if (spot == null || !Services.traces().leave(level, spot, Blocks.TORCH.defaultBlockState(), CAUSE)) {
 			return FireResult.NO_SPOT;
 		}
@@ -100,9 +103,10 @@ public final class LightOnMountainCard implements EventCard {
 
 	/**
 	 * A hilltop behind the player (outside the view cone), between the minimum distance and the edge of view, with a
-	 * clear line from the player's eyes, so it is there when they turn around.
+	 * clear line from the player's eyes, so it is there when they turn around; at least the minimum distance from
+	 * every one of {@code everyone} as well.
 	 */
-	static @Nullable BlockPos findHilltop(ServerLevel level, ServerPlayer player, RandomSource random) {
+	static @Nullable BlockPos findHilltop(ServerLevel level, ServerPlayer player, List<BlockPos> everyone, RandomSource random) {
 		int min = ModConfig.pacing().mountainLightMinDistance + 8;
 		int max = Math.min(level.getServer().getPlayerList().getViewDistance() * 16 - 16, 240);
 		if (max <= min) {
@@ -121,7 +125,8 @@ public final class LightOnMountainCard implements EventCard {
 			}
 			int y = level.getHeight(Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, x, z);
 			BlockPos spot = new BlockPos(x, y, z);
-			if (y < eye.y - 6 || !standsOn(level, spot) || !isHilltop(level, x, y - 1, z) || !visibleFrom(level, eye, spot)) {
+			if (y < eye.y - 6 || Bases.near(everyone, spot, min) || !standsOn(level, spot) || !isHilltop(level, x, y - 1, z)
+					|| !visibleFrom(level, eye, spot)) {
 				continue;
 			}
 			return spot;
@@ -157,7 +162,7 @@ public final class LightOnMountainCard implements EventCard {
 		return !TraceService.isOutOfView(level, new AABB(spot), List.of(viewer), 0, 10);
 	}
 
-	/** Takes the light away next day, or once the subject is closer than the minimum distance. Server thread. */
+	/** Takes the light away next day, or once any participant is closer than the minimum distance. Server thread. */
 	public static void tick(MinecraftServer server) {
 		WorldData data = WorldData.get(server);
 		WorldData.Light light = data.light().orElse(null);
@@ -171,8 +176,10 @@ public final class LightOnMountainCard implements EventCard {
 		}
 		BlockPos pos = light.pos().pos();
 		boolean nextDay = GameClock.day(server) > light.day() || !level.isDarkOutside();
-		boolean close = Services.watch().subject(server).filter(p -> p.level() == level)
-				.map(p -> horizontal(p.position(), pos) < ModConfig.pacing().mountainLightMinDistance).orElse(false);
+		boolean close = false;
+		for (ServerPlayer player : Services.watch().participants(server)) {
+			close |= player.level() == level && horizontal(player.position(), pos) < ModConfig.pacing().mountainLightMinDistance;
+		}
 		if (!nextDay && !close) {
 			return;
 		}

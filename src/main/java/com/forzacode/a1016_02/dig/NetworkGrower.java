@@ -38,10 +38,15 @@ public final class NetworkGrower {
 	 * @param explored  caves the player explored in this dimension, or null
 	 * @param digBelow  blocks kept from player digs ({@code Pacing.digBelow})
 	 * @param night     the current night index (for once-per-night retries)
-	 * @param playerPos where the subject is, or null (chest sources keep away from it)
+	 * @param players   where every player in this level is, the one whose turn it is first (chest sources keep away
+	 *                  from all of them; the loaded-chunk scan starts at the first); empty for none
 	 */
 	public record Ctx(ServerLevel level, Network net, @Nullable PosSet explored, DigConfig config, int digBelow, RandomSource random,
-			TraceService traces, long night, @Nullable BlockPos playerPos) {
+			TraceService traces, long night, List<BlockPos> players) {
+		public Ctx {
+			players = List.copyOf(players);
+		}
+
 		Tunnels.Rules corridorRules() {
 			return Tunnels.Rules.network(digBelow, config.networkExploredClearance, explored);
 		}

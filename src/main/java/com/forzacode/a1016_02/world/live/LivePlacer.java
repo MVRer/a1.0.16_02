@@ -65,9 +65,11 @@ public final class LivePlacer {
 	}
 
 	public static Result place(CommandSourceStack source, String name) {
-		ServerPlayer player = source.getPlayer();
+		// D-062.9: the player running it, else (the console) the first participant.
+		ServerPlayer player = source.getPlayer() != null ? source.getPlayer()
+				: Services.watch().participants(source.getServer()).stream().findFirst().orElse(null);
 		if (player == null) {
-			return new Result(false, "place needs a player");
+			return new Result(false, "place needs a player (nobody takes part)");
 		}
 		if (!names().contains(name)) {
 			return new Result(false, "unknown scar " + name + "; one of " + String.join(", ", NAMES));

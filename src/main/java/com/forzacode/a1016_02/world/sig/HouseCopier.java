@@ -10,6 +10,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.UUID;
 
 import com.forzacode.a1016_02.A1016_02;
 import com.forzacode.a1016_02.core.GameClock;
@@ -21,6 +22,7 @@ import com.forzacode.a1016_02.core.SiteRegistry;
 import com.forzacode.a1016_02.core.SiteType;
 import com.forzacode.a1016_02.core.TraceService;
 import com.forzacode.a1016_02.core.WorldProfile;
+import com.forzacode.a1016_02.world.Bases;
 import com.forzacode.a1016_02.world.SignatureData;
 import com.forzacode.a1016_02.world.WorldConfig;
 import com.forzacode.a1016_02.world.WorldData;
@@ -37,6 +39,7 @@ import net.minecraft.core.GlobalPos;
 import net.minecraft.core.Holder;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
+import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.tags.BlockTags;
 import net.minecraft.util.Mth;
 import net.minecraft.util.RandomSource;
@@ -51,16 +54,26 @@ import net.minecraft.world.level.levelgen.structure.BoundingBox;
 import org.jspecify.annotations.Nullable;
 
 /**
- * "Your house, elsewhere" (SIGNATURE, D-005): the subject's first shelter is captured, a copy site is picked far
- * from the base (HOUSE_COPY), and over several in-game days blocks move out of the real house a few at a time
+ * "Your house, elsewhere" (SIGNATURE, D-005): one player's first shelter is captured, a copy site is picked far
+ * from it (HOUSE_COPY), and over several in-game days blocks move out of the real house a few at a time
  * ({@code TraceService.move}, out of view) to rebuild its shell there, each at its mirrored spot when it can. The
  * real roof is never taken and the real house is never opened ({@link HouseShell.Analysis#canTake}). The copy is
  * emptied inside. Ending B's {@link #requestFinish} completes it: whatever the house can still give, then buried
  * blocks moved from the ground near the copy. Every block is a ledgered move (Ending D can put it back); the state
- * keeps the list too. Built at most once per world. Server thread only.
+ * keeps the list too. Built at most once per world: the copy is stored in the same tick it is captured, so a second
+ * start (another player's card in the same tick) is refused. Server thread only.
+ * <p>
+ * Whose house (D-061): the {@value #OWNER_KEY} owner, chosen once with {@code PlayerWatch.ownerFor} when the copy
+ * first becomes due (the online participant with the most play ticks) and never again; it does not flip when the
+ * owner leaves or a friend plays longer. The capture uses only that player's base and first blocks (their live base
+ * while they take part, else the last one world saw, else their first block): never another player's house. Once
+ * captured the copy keeps growing on the stored house whether or not its owner is online, always out of view of
+ * every player, so an absent owner never blocks Ending B.
  */
 public final class HouseCopier {
 	public static final String ID = "signature_house_elsewhere";
+	/** D-061, shared with the ending (Ending B's final death and F27 follow it): whose house the copy copies. */
+	public static final String OWNER_KEY = "world:house_copy";
 	/** Blocks moved out of the real house. */
 	public static final String CAUSE = "world:house_copy";
 	/** Buried blocks moved from the ground near the copy (Ending B's finish). */
@@ -354,12 +367,8 @@ public final class HouseCopier {
 	/** Picks the site: records HOUSE_COPY at the copy's inside (its lowest middle) and starts the steps. */
 	public static HouseCopyState placeSite(ServerLevel level, HouseCopyState state, BlockPos origin, SiteSink sites, long nextStep) {
 		BoundingBox rel = relBox(state);
-		BlockPos middle = rel.getCenter();
-		Comparator<BlockPos> lowestMiddle = Comparator.comparingInt(BlockPos::getY);
-		lowestMiddle = lowestMiddle.thenComparingDouble(p -> p.distSqr(new BlockPos(middle.getX(), p.getY(), middle.getZ())));
-		BlockPos inside = state.interior().stream().min(lowestMiddle).orElse(middle);
 		int size = Math.max(2, Math.max(rel.getXSpan(), rel.getZSpan()) / 2);
-		SiteRegistry.Site site = sites.record(SiteType.HOUSE_COPY, level.dimension(), origin.offset(inside), size);
+		SiteRegistry.Site site = sites.record(SiteType.HOUSE_COPY, level.dimension(), origin.offset(state.insideRel()), size);
 		return state.withSite(origin, site == null ? -1 : site.id(), nextStep);
 	}
 
@@ -371,18 +380,25 @@ public final class HouseCopier {
 
 	// --- live ---
 
+	/** {@link #start(Bases, boolean)} on the live world. */
+	public static Outcome start(MinecraftServer server, boolean forced) {
+		return start(Bases.live(server), forced);
+	}
+
 	/**
 	 * Starts the copy: once per world; unless {@code forced}, only when the profile has it (D-005) and from day
-	 * {@code houseCopyMinDay}. Captures the first shelter now (its chunks must be loaded, otherwise they are asked
-	 * for and it fails this time) and looks for the copy site in the background.
+	 * {@code houseCopyMinDay}. Chooses whose house ({@link #chooseOwner}), captures that player's first shelter now
+	 * (its chunks must be loaded, otherwise they are asked for and it fails this time), stores the copy in this same
+	 * tick, and looks for the copy site in the background. Whoever's card started it, the house is the owner's.
 	 */
-	public static Outcome start(MinecraftServer server, boolean forced) {
-		SignatureData data = WorldData.get(server).signatures();
+	public static Outcome start(Bases bases, boolean forced) {
+		MinecraftServer server = bases.server();
+		SignatureData data = bases.data().signatures();
 		String no = refusal(data);
 		if (no != null) {
 			return Outcome.failed(no);
 		}
-		HerobrineState state = HerobrineState.get(server);
+		HerobrineState state = bases.state();
 		WorldProfile profile = state.profile();
 		long day = GameClock.day(server);
 		int minDay = ModConfig.pacing().houseCopyMinDay;
@@ -390,10 +406,14 @@ public final class HouseCopier {
 			return Outcome.failed(!profile.hasHouseCopy() ? "the house copy is not this world's (signature " + profile.signature() + ", no F27)"
 					: "the house copy waits for day " + minDay + " (today " + day + ")");
 		}
+		Optional<UUID> owner = chooseOwner(bases);
+		if (owner.isEmpty()) {
+			return Outcome.later("nobody takes part to choose whose house is copied");
+		}
 		ServerLevel level = server.overworld();
-		List<BlockPos> anchors = anchors(server, level);
+		List<BlockPos> anchors = anchors(bases, level, owner.get());
 		if (anchors.isEmpty()) {
-			return Outcome.later("the subject has no first block or base in the overworld yet");
+			return Outcome.later(name(state, owner.get()) + " has no first block or base in the overworld yet");
 		}
 		WorldConfig config = WorldConfig.get();
 		List<ChunkPos> chunks = new ArrayList<>();
@@ -408,15 +428,17 @@ public final class HouseCopier {
 			return Outcome.later("no first shelter around " + anchors.getFirst().toShortString() + " (need " + config.houseCopyMinShellBlocks
 					+ "+ player-placed shell blocks around an inside)");
 		}
-		HouseCopyState copy = HouseCopyState.captured(level.dimension(), capture, day, GameClock.dayTicks(server));
+		// Stored in this tick: a second start (another player's card, the debug command) now sees it and is refused.
+		HouseCopyState copy = HouseCopyState.captured(level.dimension(), capture, day, GameClock.dayTicks(server), owner.get());
 		data.setHouseCopy(copy);
 		siteSearch = null;
 		retryAt = 0;
-		A1016_02.LOGGER.info("[a1016] world: captured the first shelter at {} ({} shell blocks, {})", capture.origin().toShortString(),
-				capture.targets().size(), capture.closed() ? "closed" : "open");
-		return Outcome.scheduled(String.format(Locale.ROOT, "captured the first shelter at %s: %d shell blocks (%d roof), %s; looking for the copy site %d to %d blocks from it",
-				capture.origin().toShortString(), capture.targets().size(), capture.targets().stream().filter(HouseCopyState.Target::roof).count(),
-				capture.closed() ? "closed" : "open", config.houseCopyMinDistance, config.houseCopyMaxDistance));
+		A1016_02.LOGGER.info("[a1016] world: captured {}'s first shelter at {} ({} shell blocks, {})", name(state, owner.get()),
+				capture.origin().toShortString(), capture.targets().size(), capture.closed() ? "closed" : "open");
+		return Outcome.scheduled(String.format(Locale.ROOT, "captured %s's first shelter at %s: %d shell blocks (%d roof), %s; looking for the copy site %d to %d blocks from it",
+				name(state, owner.get()), capture.origin().toShortString(), capture.targets().size(),
+				capture.targets().stream().filter(HouseCopyState.Target::roof).count(), capture.closed() ? "closed" : "open", config.houseCopyMinDistance,
+				config.houseCopyMaxDistance));
 	}
 
 	/** Why no copy may be started, or null: there is one already (it is built at most once per world). */
@@ -424,18 +446,89 @@ public final class HouseCopier {
 		return data.houseCopy().map(s -> "the house copy already exists (" + s.phase().name().toLowerCase(Locale.ROOT) + ")").orElse(null);
 	}
 
-	/** The subject's first block, crafting table, chest and base in this level, base first. */
-	static List<BlockPos> anchors(MinecraftServer server, ServerLevel level) {
+	/**
+	 * Whose house is copied (D-061): the stored {@value #OWNER_KEY} owner; for a copy saved before multiplayer that
+	 * recorded nobody, the copy's own record, else the first known player; with no copy and nothing stored, chosen now
+	 * among the participants by core's fixed rule and stored for good. Empty only while nothing is stored and nobody
+	 * takes part.
+	 */
+	public static Optional<UUID> chooseOwner(Bases bases) {
+		Optional<UUID> stored = bases.watch().owner(bases.server(), OWNER_KEY);
+		if (stored.isPresent()) {
+			return stored;
+		}
+		Optional<HouseCopyState> copy = bases.data().signatures().houseCopy();
+		if (copy.isPresent()) {
+			return owner(bases.state(), copy.get());
+		}
+		return bases.watch().ownerFor(bases.server(), OWNER_KEY);
+	}
+
+	/** Whose house an existing copy is: its recorded owner, else (a copy from before multiplayer) the first known player. */
+	public static Optional<UUID> owner(HerobrineState state, HouseCopyState copy) {
+		return copy.owner().or(() -> state.players().stream().findFirst().map(HerobrineState.Subject::uuid));
+	}
+
+	/**
+	 * Whose house the copy copies, without choosing: the stored {@value #OWNER_KEY} owner, else the copy's record (or,
+	 * for a copy from before multiplayer, the first known player). Empty before anything was chosen.
+	 */
+	public static Optional<UUID> owner(MinecraftServer server) {
+		Optional<UUID> stored = HerobrineState.get(server).owner(OWNER_KEY);
+		return stored.isPresent() ? stored : WorldData.get(server).signatures().houseCopy().flatMap(c -> owner(HerobrineState.get(server), c));
+	}
+
+	/**
+	 * A copy from before multiplayer stored no {@value #OWNER_KEY} choice (the ending reads it). Core stores a choice
+	 * only through {@code ownerFor} (the most play ticks among the participants), so it is stored the first time the
+	 * copy's owner is the only participant online: then core's rule cannot pick anyone else. Never changes a stored
+	 * choice. True if it stored one now.
+	 */
+	public static boolean adoptOwner(Bases bases) {
+		Optional<HouseCopyState> copy = bases.data().signatures().houseCopy();
+		if (copy.isEmpty() || bases.watch().owner(bases.server(), OWNER_KEY).isPresent()) {
+			return false;
+		}
+		Optional<UUID> owner = owner(bases.state(), copy.get());
+		List<ServerPlayer> online = bases.participants();
+		if (owner.isEmpty() || online.size() != 1 || !online.getFirst().getUUID().equals(owner.get())) {
+			return false;
+		}
+		return bases.watch().ownerFor(bases.server(), OWNER_KEY).equals(owner);
+	}
+
+	/**
+	 * Where to look for {@code owner}'s first shelter in this level: their base (live while they take part, else the
+	 * last one world saw, else their first block), then their own first block, crafting table and chest. Only theirs.
+	 */
+	static List<BlockPos> anchors(Bases bases, ServerLevel level, UUID owner) {
 		List<BlockPos> anchors = new ArrayList<>();
-		Services.watch().subject(server).flatMap(p -> Services.watch().base(p)).filter(b -> b.dimension().equals(level.dimension()))
-				.ifPresent(b -> anchors.add(b.pos()));
-		HerobrineState.FirstBlocks first = HerobrineState.get(server).firstBlocks();
+		bases.base(owner).filter(b -> b.dimension().equals(level.dimension())).ifPresent(b -> anchors.add(b.pos()));
+		HerobrineState.FirstBlocks first = bases.state().firstBlocks(owner);
 		for (PlacedBlock placed : new PlacedBlock[] {first.block(), first.craftingTable(), first.chest()}) {
 			if (placed != null && placed.pos().dimension().equals(level.dimension()) && !anchors.contains(placed.pos().pos())) {
 				anchors.add(placed.pos().pos());
 			}
 		}
 		return anchors;
+	}
+
+	/**
+	 * True if the copy could start now (the card's context): the profile has it, it is late enough, there is no copy
+	 * yet, and the owner (chosen now, for good, if nobody was) has a first block or base in the overworld.
+	 */
+	public static boolean ready(Bases bases) {
+		MinecraftServer server = bases.server();
+		if (!bases.state().profile().hasHouseCopy() || GameClock.day(server) < ModConfig.pacing().houseCopyMinDay
+				|| bases.data().signatures().houseCopy().isPresent()) {
+			return false;
+		}
+		Optional<UUID> owner = chooseOwner(bases);
+		return owner.isPresent() && !anchors(bases, server.overworld(), owner.get()).isEmpty();
+	}
+
+	private static String name(HerobrineState state, UUID player) {
+		return state.player(player).map(HerobrineState.Subject::name).orElse("the owner");
 	}
 
 	/**
@@ -490,6 +583,9 @@ public final class HouseCopier {
 	public static void tick(MinecraftServer server) {
 		SignatureData data = WorldData.get(server).signatures();
 		HouseCopyState s = data.houseCopy().orElse(null);
+		if (s != null && s.owner().isEmpty()) {
+			adoptOwner(Bases.live(server)); // a copy from before multiplayer: store whose it is once that can be done exactly
+		}
 		if (s == null || s.phase() == HouseCopyState.Phase.FINISHED) {
 			siteSearch = null;
 			return;
@@ -666,8 +762,11 @@ public final class HouseCopier {
 			return lines;
 		}
 		HouseCopyState s = copy.get();
-		lines.add(String.format(Locale.ROOT, "house copy: %s, started day %d, real house at %s", s.phase().name().toLowerCase(Locale.ROOT), s.startedDay(),
-				s.realBox().getCenter().toShortString()));
+		HerobrineState state = HerobrineState.get(server);
+		String whose = owner(server).map(uuid -> name(state, uuid)).orElse("nobody yet") + (state.owner(OWNER_KEY).isPresent() ? ""
+				: " (not stored yet: a copy from before multiplayer)");
+		lines.add(String.format(Locale.ROOT, "house copy: %s, started day %d, %s's real house at %s", s.phase().name().toLowerCase(Locale.ROOT),
+				s.startedDay(), whose, s.realInside().toShortString()));
 		long roof = s.targets().stream().filter(HouseCopyState.Target::roof).count();
 		lines.add(String.format(Locale.ROOT, "shell: %d blocks (%d roof), inside %d cells; moved %d from the house, %d from the ground", s.targets().size(),
 				roof, s.interior().size(), s.movedFromHouse(), s.moved().size() - s.movedFromHouse()));
@@ -709,5 +808,10 @@ public final class HouseCopier {
 	public static Optional<GlobalPos> site(MinecraftServer server) {
 		return WorldData.get(server).signatures().houseCopy().filter(s -> s.copyOrigin().isPresent())
 				.map(s -> GlobalPos.of(s.dimension(), s.copyBox().getCenter()));
+	}
+
+	/** The house the copy copies (a cell inside it, {@link HouseCopyState#realInside}), from the moment it is captured. */
+	public static Optional<GlobalPos> realHouse(MinecraftServer server) {
+		return WorldData.get(server).signatures().houseCopy().map(s -> GlobalPos.of(s.dimension(), s.realInside()));
 	}
 }

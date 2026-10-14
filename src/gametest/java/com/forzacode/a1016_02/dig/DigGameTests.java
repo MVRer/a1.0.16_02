@@ -2,6 +2,9 @@ package com.forzacode.a1016_02.dig;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
+import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
 
 import com.forzacode.a1016_02.core.CardRegistry;
 import com.forzacode.a1016_02.core.EventCard;
@@ -28,6 +31,7 @@ import net.minecraft.nbt.Tag;
 import net.minecraft.resources.RegistryOps;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.util.RandomSource;
+import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.LeavesBlock;
 import net.minecraft.world.level.block.SaplingBlock;
@@ -119,6 +123,7 @@ public class DigGameTests extends TunnelGameTests {
 		helper.succeed();
 	}
 
+	// FIX-3: generous ticks for CI's two-core runner; the test ends as soon as the cave's light has settled.
 	@GameTest(maxTicks = 12_000)
 	public void torchesGoneFromACaveThePlayerLeft(GameTestHelper helper) {
 		DigGround g = DigGround.of(helper, 10, 24, 8, 96, Blocks.STONE);
@@ -136,16 +141,29 @@ public class DigGameTests extends TunnelGameTests {
 		BlockPos houseTorch = builtWall.above();
 		g.place(houseTorch, Blocks.TORCH.defaultBlockState());
 		g.stand(g.at(11, 8, 4));
-		// Sky light in the new cave settles in the background, and the test server ticks back to back: poll (with a
-		// generous timeout) until it reads as underground, then run the card once.
+		// FIX-3: sky light in the new cave is worked out by the light engine in the background, and until it has
+		// caught up each chunk reads whatever it had: in the setup tick one chunk can already read dark while the next
+		// still reads its old daylight. The two torches straddle a chunk border on some test origins (the origin is
+		// random), so waiting for the floor torch alone could fire the card with the wall torch still "lit": the card
+		// found one cave torch, needs two, took none, and as it fires only once the test timed out. So wait for the
+		// light engine to finish this setup, and for both torches to read as cave torches, then fire once.
+		ChunkPos cave = ChunkPos.containing(floorTorch);
+		CompletableFuture<?> lit = g.level.getChunkSource().getLightEngine().waitForPendingTasks(cave.x(), cave.z());
 		boolean[] fired = {false};
 		int[] removed = {0};
 		helper.succeedWhen(() -> {
 			if (!fired[0]) {
-				helper.assertTrue(DigTicker.underground(g.level, floorTorch), "the cave is not dark yet");
+				helper.assertTrue(lit.isDone(), "the light engine has not caught up with the new cave yet");
+				helper.assertTrue(DigTicker.underground(g.level, floorTorch) && DigTicker.underground(g.level, wallTorch), "the cave is not dark yet");
+				helper.assertTrue(TorchCards.caveTorch(g.level, wallTorch, null), "the wall torch does not count");
 				helper.assertTrue(TorchCards.caveTorch(g.level, floorTorch, null), "a cave torch does not count");
 				helper.assertFalse(TorchCards.caveTorch(g.level, floorTorch, floorTorch.east(10)), "a torch within the base radius counts");
 				helper.assertFalse(TorchCards.caveTorch(g.level, houseTorch, null), "a torch on a built block counts");
+				// With friends (D-062): one still in the cave keeps its torches lit, and a friend's base nearby makes them base lights.
+				helper.assertTrue(TorchCards.removeFromLeftCave(g.level, g.mock, List.of(g.at(11, 2, 78)), List.of(), RandomSource.create(6L)) == 0,
+						"a torch went with a friend still in the cave");
+				helper.assertTrue(TorchCards.removeFromLeftCave(g.level, g.mock, List.of(), List.of(g.at(11, 2, 90)), RandomSource.create(6L)) == 0,
+						"a torch went next to a friend's base");
 				removed[0] = TorchCards.removeFromLeftCave(g.level, g.mock, RandomSource.create(6L));
 				fired[0] = true;
 			}
@@ -176,14 +194,23 @@ public class DigGameTests extends TunnelGameTests {
 	public void networkWaitsForTheFirstNightsInABase(GameTestHelper helper) {
 		DigConfig config = new DigConfig();
 		DigData data = new DigData();
+		UUID alex = UUID.randomUUID();
 		GlobalPos base = GlobalPos.of(helper.getLevel().dimension(), new BlockPos(100, 70, 100));
-		helper.assertTrue(UnderYou.active(data, base, 3, config, false) == null, "started on the night the base was first seen");
-		Network net = UnderYou.active(data, base, 3 + config.networkStartAfterNights, config, false);
-		helper.assertTrue(net != null && net.base.equals(base.pos()), "did not start after " + config.networkStartAfterNights + " nights");
-		helper.assertTrue(UnderYou.active(data, GlobalPos.of(base.dimension(), base.pos().east(10)), 9, config, false) == net, "a nearby base got a new network");
+		UnderYou.see(data, alex, base, 3, false, config);
+		helper.assertTrue(UnderYou.active(data, alex, base, 3 + config.networkStartAfterNights, config, false) == null,
+				"started under a base its player never came home to");
+		UnderYou.see(data, alex, base, 3, true, config);
+		helper.assertTrue(UnderYou.active(data, alex, base, 3, config, false) == null, "started on the night the base was first seen");
+		Network net = UnderYou.active(data, alex, base, 3 + config.networkStartAfterNights, config, false);
+		helper.assertTrue(net != null && net.base.equals(base.pos()) && net.founder().equals(Optional.of(alex)),
+				"did not start after " + config.networkStartAfterNights + " nights");
+		GlobalPos nearby = GlobalPos.of(base.dimension(), base.pos().east(10));
+		UnderYou.see(data, alex, nearby, 9, true, config);
+		helper.assertTrue(UnderYou.active(data, alex, nearby, 9, config, false) == net, "a nearby base got a new network");
 		GlobalPos moved = GlobalPos.of(base.dimension(), base.pos().east(config.networkBaseMoveDistance + 50));
-		helper.assertTrue(UnderYou.active(data, moved, 9, config, false) == null && data.networks.size() == 1, "a moved base started at once");
-		helper.assertTrue(UnderYou.active(data, moved, 9 + config.networkStartAfterNights, config, false) != null && data.networks.size() == 2,
+		UnderYou.see(data, alex, moved, 9, true, config);
+		helper.assertTrue(UnderYou.active(data, alex, moved, 9, config, false) == null && data.networks.size() == 1, "a moved base started at once");
+		helper.assertTrue(UnderYou.active(data, alex, moved, 9 + config.networkStartAfterNights, config, false) != null && data.networks.size() == 2,
 				"a moved base never got its own network");
 		net.creditNights(4, config);
 		int budget = net.budget;
