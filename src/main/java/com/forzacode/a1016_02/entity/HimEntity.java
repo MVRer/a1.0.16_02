@@ -1,9 +1,12 @@
 package com.forzacode.a1016_02.entity;
 
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 
 import com.forzacode.a1016_02.A1016_02;
@@ -68,6 +71,14 @@ import org.jspecify.annotations.Nullable;
  * rush (D-037, {@link Rush}): a chaser he cannot outrun who closes in fast makes him turn and run straight past them,
  * never touching, and he is gone the instant they cannot see him; once per sighting.
  *
+ * <p>Multiplayer (D-060.4, D-062): he is one being that everyone in his level can see. Every player in the level,
+ * spectators and the dead included, counts for the view rules ({@link Watchers}); every living non-spectator counts
+ * for what ends a sighting: anyone's stare (each player's own, counted once per player per sighting), anyone's
+ * approach, anyone coming within the flee distance. He outruns the fastest chaser and leaves away from all of them.
+ * The rush goes at the one who chased and never passes within the offset of anyone else. If the player he appeared
+ * for leaves, dies, turns spectator or changes dimension before anything ended the sighting, he walks away and is
+ * gone once nobody can see him (D-062.5). He keeps players by UUID only, looked up again every tick.
+ *
  * <p>All behaviour runs in {@link #customServerAiStep} from plain look and move controls; spawn him through
  * {@link FigureApi}.
  */
@@ -120,14 +131,18 @@ public class HimEntity extends PathfinderMob {
 	private boolean repathFailed;
 	private int seenTicks;
 	private int unseenTicks;
-	private int stareTicks;
+	/** How long each player has been looking straight at him (in total: looking away takes it down twice as fast). */
+	private final Map<UUID, Integer> stares = new HashMap<>();
+	/** Everyone whose stare counted this sighting (STARED_AT_HIM fires once per player). Never pruned. */
+	private final Set<UUID> staredBy = new HashSet<>();
 	private boolean everSeen;
 	/** {@link #age} when he was first seen, or -1. */
 	private int firstSeenAge = -1;
 	private boolean triggered;
-	private boolean stared;
 	private boolean fled;
 	private @Nullable UUID triggeredBy;
+	/** The player the sighting was set up for ({@link FigureApi#spawnAtFogEdge}), or null (Ending D, /summon). */
+	private @Nullable UUID appearedFor;
 	/** Distance each player has closed on him since he was first seen. */
 	private final Map<UUID, Approach> approaches = new HashMap<>();
 	/** Each player's recent speed and closing speed. */
@@ -205,6 +220,19 @@ public class HimEntity extends PathfinderMob {
 	/** The horizontal distance to the player he appeared for; it scales his flee and approach distances. */
 	void setSpawnDistance(double distance) {
 		spawnDistance = distance;
+	}
+
+	/**
+	 * The player this sighting was set up for. If they stop being here (left, died, turned spectator, changed
+	 * dimension) before anything ended the sighting, he walks away (D-062.5).
+	 */
+	void appearFor(@Nullable UUID player) {
+		appearedFor = player;
+	}
+
+	/** The player the sighting was set up for, or null. */
+	public @Nullable UUID appearedFor() {
+		return appearedFor;
 	}
 
 	/** The box every view check uses: the rendered model in any pose and yaw, plus a margin. */
@@ -288,12 +316,16 @@ public class HimEntity extends PathfinderMob {
 			return;
 		}
 
+		forgetAbsent(players);
 		watch(level, players, config);
+		if (!triggered && appearedFor != null && !present(players, appearedFor)) {
+			// D-062.5: the one he appeared for left, died, turned spectator or changed dimension. He leaves, walking
+			// (nobody chased him), and is gone once nobody can see him.
+			walkAway(walkGait());
+		}
 
 		ServerPlayer nearest = nearest(players);
 		double nearestDistance = nearest == null ? Double.MAX_VALUE : SpotFinder.horizontal(nearest.position(), position());
-		Chase nearestChase = nearest == null ? null : chases.get(nearest.getUUID());
-		double closing = nearestChase == null ? 0.0 : nearestChase.closingSpeed();
 		if (phase == Phase.RUSH) {
 			if (!seen) {
 				gone(level, "rushed past, out of view"); // the instant nobody can see him
@@ -302,10 +334,8 @@ public class HimEntity extends PathfinderMob {
 			rushStep(level, players, config);
 			return;
 		}
-		if (!rushed && !noRun && variant.mayRush() && nearest != null && nearestChase != null
-				&& SightingRules.rushes(nearest.position().distanceTo(position()), config.rushTriggerDistance, nearestChase.speed(), closing,
-						config.outrunFactor, config.maxRunSpeed, config.closeInFastSpeed)
-				&& startRush(level, nearest, nearestChase, config)) {
+		ServerPlayer chaser = rushChaser(players, config);
+		if (chaser != null && startRush(level, chaser, chases.get(chaser.getUUID()), players, config)) {
 			rushStep(level, players, config);
 			return;
 		}
@@ -341,40 +371,127 @@ public class HimEntity extends PathfinderMob {
 				}
 			}
 			case STARE_BACK -> {
-				ServerPlayer target = triggeredBy != null && level.getPlayerByUUID(triggeredBy) instanceof ServerPlayer p ? p : nearest;
+				// The one who ended the sighting, looked up again by UUID; anyone nearest if they are gone.
+				ServerPlayer target = triggeredBy == null ? nearest : players.stream().filter(p -> p.getUUID().equals(triggeredBy)).findFirst().orElse(nearest);
 				stareBack(target);
 				long stareBackTicks = ModConfig.realTicks(config.stareBackSeconds);
-				if (SightingRules.wouldBeReached(nearestDistance, closing, Math.max(0, stareBackTicks - phaseTicks) / 20.0)) {
+				if (anyoneWouldReach(players, Math.max(0, stareBackTicks - phaseTicks) / 20.0)) {
 					breakIntoRun(); // the stare back never lets anyone reach him
 				} else if (phaseTicks >= stareBackTicks) {
-					leaveOrGoUnder(level, nearestDistance, closing, config);
+					leaveOrGoUnder(level, players, config);
 				}
 			}
 			case HIDING -> {
-				if (SightingRules.wouldBeReached(nearestDistance, closing, HIDE_REACH_SECONDS)) {
+				if (anyoneWouldReach(players, HIDE_REACH_SECONDS)) {
 					breakIntoRun();
 				} else {
 					hide(nearest, config);
 				}
 			}
 			case LEAVING -> {
-				if (gait != Variant.Gait.RUN && SightingRules.breaksIntoRun(closing, config.closeInFastSpeed, nearestDistance < fleeDistance(config))) {
+				if (gait != Variant.Gait.RUN && SightingRules.breaksIntoRun(fastestClosing(players), config.closeInFastSpeed, nearestDistance < fleeDistance(config))) {
 					breakIntoRun();
 				}
-				double blocksPerSecond = gait == Variant.Gait.RUN ? runSpeed(nearest, config) : SightingRules.groundSpeed(speed(gait, config), BASE_SPEED);
+				double blocksPerSecond = gait == Variant.Gait.RUN ? runSpeed(players, nearest, config) : SightingRules.groundSpeed(speed(gait, config), BASE_SPEED);
 				double modifier = gait == Variant.Gait.RUN ? SightingRules.speedModifier(blocksPerSecond, BASE_SPEED) : speed(gait, config);
 				moveSpeed = blocksPerSecond;
 				holdSpeedInAir(gait == Variant.Gait.RUN ? blocksPerSecond : 0.0);
-				steerAway(level, nearest, modifier, blocksPerSecond);
+				steerAway(level, players, nearest, modifier, blocksPerSecond);
 			}
 			default -> {
 			}
 		}
 	}
 
-	/** The players his rules watch: everyone alive and not spectating in his level. Game tests override it. */
+	/**
+	 * The players his rules watch (what ends a sighting, whom he leaves from): everyone alive and not spectating in
+	 * his level, fresh every tick. Spectators and the dead still count as viewers ({@link #watchers}). Game tests
+	 * override it.
+	 */
 	protected List<ServerPlayer> observers(ServerLevel level) {
 		return level.players().stream().filter(p -> p.isAlive() && !p.isSpectator()).toList();
+	}
+
+	private static boolean present(List<ServerPlayer> players, UUID uuid) {
+		for (ServerPlayer player : players) {
+			if (player.getUUID().equals(uuid)) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	/**
+	 * Forgets the running stare, approach and chase of anyone who is no longer here (left, died, spectating, another
+	 * dimension), so someone who comes back starts fresh. Who already stared him down stays counted.
+	 */
+	private void forgetAbsent(List<ServerPlayer> players) {
+		if (chases.isEmpty() && approaches.isEmpty() && stares.isEmpty()) {
+			return;
+		}
+		Set<UUID> here = new HashSet<>();
+		players.forEach(p -> here.add(p.getUUID()));
+		chases.keySet().retainAll(here);
+		approaches.keySet().retainAll(here);
+		stares.keySet().retainAll(here);
+	}
+
+	/** Would anyone reach him within {@code seconds} ({@link SightingRules#wouldBeReached}, each player on their own)? */
+	private boolean anyoneWouldReach(List<ServerPlayer> players, double seconds) {
+		for (ServerPlayer player : players) {
+			Chase chase = chases.get(player.getUUID());
+			if (SightingRules.wouldBeReached(SpotFinder.horizontal(player.position(), position()), chase == null ? 0.0 : chase.closingSpeed(), seconds)) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	/** The fastest anyone closes on him, in blocks per second (0 if nobody does). */
+	private double fastestClosing(List<ServerPlayer> players) {
+		double fastest = 0.0;
+		for (ServerPlayer player : players) {
+			Chase chase = chases.get(player.getUUID());
+			if (chase != null) {
+				fastest = Math.max(fastest, chase.closingSpeed());
+			}
+		}
+		return fastest;
+	}
+
+	/**
+	 * The chaser for the rush (D-037): the nearest player he cannot outrun who closes in fast within
+	 * {@code rushTriggerDistance} ({@link SightingRules#rushes}). Null once this sighting had its rush, with
+	 * {@link #noRun}, or for a variant that never rushes.
+	 */
+	private @Nullable ServerPlayer rushChaser(List<ServerPlayer> players, EntityConfig config) {
+		if (rushed || noRun || !variant.mayRush()) {
+			return null;
+		}
+		ServerPlayer best = null;
+		double bestDistance = Double.MAX_VALUE;
+		for (ServerPlayer player : players) {
+			Chase chase = chases.get(player.getUUID());
+			double d = player.position().distanceTo(position());
+			if (chase != null && d < bestDistance && SightingRules.rushes(d, config.rushTriggerDistance, chase.speed(), chase.closingSpeed(),
+					config.outrunFactor, config.maxRunSpeed, config.closeInFastSpeed)) {
+				best = player;
+				bestDistance = d;
+			}
+		}
+		return best;
+	}
+
+	/** Everyone but {@code target}, as a {@link Rush.Bystander} at their position and recent velocity. */
+	private List<Rush.Bystander> bystanders(List<ServerPlayer> players, UUID target) {
+		List<Rush.Bystander> others = new ArrayList<>();
+		for (ServerPlayer player : players) {
+			if (!player.getUUID().equals(target)) {
+				Chase chase = chases.get(player.getUUID());
+				others.add(new Rush.Bystander(player.position(), chase == null ? Vec3.ZERO : chase.velocity()));
+			}
+		}
+		return others;
 	}
 
 	/** Everyone who could see him, for the one despawn rule ({@link Watchers}). Game tests override it. */
@@ -394,16 +511,16 @@ public class HimEntity extends PathfinderMob {
 
 	/**
 	 * The stare back is over and he would walk or run off. Once per sighting, with {@code goUnderChance}, he goes
-	 * under instead where he may: a variant that ends this way, not fled or run down, nobody near enough to reach him
-	 * before he is covered, and diggable ground under him ({@link GoUnder#plan}).
+	 * under instead where he may: a variant that ends this way, not fled or run down, nobody (of anyone there) near
+	 * enough to reach him before he is covered, and diggable ground under him ({@link GoUnder#plan}).
 	 */
-	private void leaveOrGoUnder(ServerLevel level, double nearestDistance, double closing, EntityConfig config) {
+	private void leaveOrGoUnder(ServerLevel level, List<ServerPlayer> players, EntityConfig config) {
 		if (!goUnderRolled) {
 			goUnderRolled = true;
 			if (!noRun && variant.mayGoUnder() && !fled && !outrunning && onGround() && getRandom().nextDouble() < config.goUnderChance()) {
 				int[] depths = config.goUnderDepths();
 				double seconds = (depths[1] + GoUnder.COVER + 1) * Math.max(0.05, config.goUnderDigSeconds);
-				Optional<GoUnder.Plan> plan = SightingRules.wouldBeReached(nearestDistance, closing, seconds) ? Optional.empty()
+				Optional<GoUnder.Plan> plan = anyoneWouldReach(players, seconds) ? Optional.empty()
 						: GoUnder.plan(level, groundUnder(), depths, getRandom());
 				if (plan.isPresent()) {
 					startGoUnder(level, plan.get());
@@ -526,12 +643,16 @@ public class HimEntity extends PathfinderMob {
 
 	/**
 	 * A chaser he cannot outrun came within {@code rushTriggerDistance}: plans a pass beside them. Once per sighting.
-	 * If no side gives a safe, walkable pass, he just runs off. True if the rush started.
+	 * If no side gives a safe, walkable pass that also keeps the offset from everyone else there (he has no
+	 * collision, so nobody may stand in his line, {@link Rush#passesClear}), he just runs off. True if the rush started.
 	 */
-	private boolean startRush(ServerLevel level, ServerPlayer chaser, Chase chase, EntityConfig config) {
+	private boolean startRush(ServerLevel level, ServerPlayer chaser, Chase chase, List<ServerPlayer> players, EntityConfig config) {
 		rushed = true;
 		double step = config.maxRunSpeed / 20.0;
-		Optional<Rush> plan = Rush.plan(position(), chaser.position(), chase.velocity(), config.rushPassOffset(), step, path -> clearPass(level, path));
+		double offset = config.rushPassOffset();
+		List<Rush.Bystander> others = bystanders(players, chaser.getUUID());
+		Optional<Rush> plan = Rush.plan(position(), chaser.position(), chase.velocity(), offset, step,
+				path -> clearPass(level, path) && Rush.passesClear(path, others, offset));
 		if (plan.isEmpty()) {
 			A1016_02.LOGGER.debug("[a1016] figure ({}): no safe pass by the chaser, he runs", variant.shortName());
 			if (phase != Phase.LEAVING || gait != Variant.Gait.RUN) {
@@ -596,11 +717,12 @@ public class HimEntity extends PathfinderMob {
 
 	/**
 	 * One tick of the rush: straight at the player, past them on the planned side, never within the pass offset of
-	 * them ({@link Rush#step}). He is moved directly (no navigation), so the pass is exactly what was planned. Out of
-	 * time, out of ground, or the player gone: he runs off the ordinary way.
+	 * them ({@link Rush#step}) or of anyone else there. He is moved directly (no navigation), so the pass is exactly
+	 * what was planned. Out of time, out of ground, the player gone, or someone else stepping into his line: he runs
+	 * off the ordinary way.
 	 */
 	private void rushStep(ServerLevel level, List<ServerPlayer> players, EntityConfig config) {
-		ServerPlayer target = players.stream().filter(p -> p.getUUID().equals(rushTarget)).findFirst().orElse(null);
+		ServerPlayer target = rushTarget == null ? null : players.stream().filter(p -> p.getUUID().equals(rushTarget)).findFirst().orElse(null);
 		Chase chase = target == null ? null : chases.get(target.getUUID());
 		if (rush == null || target == null || chase == null || phaseTicks > ModConfig.realTicks(config.rushMaxSeconds)) {
 			endRush();
@@ -608,6 +730,12 @@ public class HimEntity extends PathfinderMob {
 		}
 		double step = config.maxRunSpeed / 20.0;
 		Vec3 next = rush.step(position(), target.position(), chase.velocity(), step);
+		if (!Rush.clearOf(next, bystanders(players, target.getUUID()), rush.offset())) {
+			// Someone else is in his line: he never passes within the offset of anyone. He runs off instead.
+			setDeltaMovement(0.0, getDeltaMovement().y, 0.0);
+			endRush();
+			return;
+		}
 		if (clearMove(level, position(), next, getY()) == null) {
 			// A wall, water or a drop in the way: the move could end short, inside the offset. He does not take it,
 			// and runs away instead.
@@ -682,10 +810,20 @@ public class HimEntity extends PathfinderMob {
 		return gait;
 	}
 
-	/** His run speed this tick in blocks per second (D-036), from the chasing player's recent speed. */
-	private double runSpeed(@Nullable ServerPlayer chaser, EntityConfig config) {
-		Chase chase = chaser == null ? null : chases.get(chaser.getUUID());
-		double chaserSpeed = chase == null ? 0.0 : chase.speed();
+	/**
+	 * His run speed this tick in blocks per second (D-036): {@code outrunFactor} times the fastest chaser's recent
+	 * speed ({@link SightingRules#chaserSpeed}: the nearest player, and anyone closing on him), so he pulls away from
+	 * all of them.
+	 */
+	private double runSpeed(List<ServerPlayer> players, @Nullable ServerPlayer nearest, EntityConfig config) {
+		List<Chase> chasers = new ArrayList<>();
+		for (ServerPlayer player : players) {
+			Chase chase = chases.get(player.getUUID());
+			if (chase != null) {
+				chasers.add(chase);
+			}
+		}
+		double chaserSpeed = SightingRules.chaserSpeed(chasers, nearest == null ? null : chases.get(nearest.getUUID()));
 		if (chaserSpeed * config.outrunFactor > config.baseRunSpeed) {
 			outrunning = true;
 		}
@@ -693,57 +831,77 @@ public class HimEntity extends PathfinderMob {
 	}
 
 	/**
-	 * The three ways a sighting ends ({@link SightingRules#endCause}): coming within the flee distance (any time), and
-	 * once he has been seen for {@code minSeenSeconds}, staring at him for {@code stareSeconds} or closing
-	 * {@code approachBlocks} on him since he was first seen. A single step, strafing or turning never counts. The flee
-	 * and approach distances shrink for a figure that appeared close ({@link #fleeDistance}). Also feeds each player's
-	 * {@link Chase}.
+	 * The three ways a sighting ends ({@link SightingRules#endCause}), for anyone there: someone coming within the
+	 * flee distance (any time), and once he has been seen for {@code minSeenSeconds}, someone staring at him for
+	 * {@code stareSeconds} (each player's own stare, never two players' added up) or closing {@code approachBlocks} on
+	 * him since he was first seen. A single step, strafing or turning never counts. The flee and approach distances
+	 * shrink for a figure that appeared close ({@link #fleeDistance}). Each player's finished stare counts once per
+	 * sighting (STARED_AT_HIM, {@link FigureApi#STARED}), also one that finishes after something else ended the
+	 * sighting, while he is still there. Also feeds each player's {@link Chase}.
 	 */
 	private void watch(ServerLevel level, List<ServerPlayer> players, EntityConfig config) {
-		ServerPlayer looker = null;
 		ServerPlayer approacher = null;
 		ServerPlayer near = null;
+		List<ServerPlayer> stareDone = new ArrayList<>();
 		double cosCone = Math.cos(Math.toRadians(config.stareConeDegrees));
 		double flee = fleeDistance(config);
 		double approach = approachBlocks(config);
+		long stareNeeded = ModConfig.realTicks(config.stareSeconds);
 		for (ServerPlayer player : players) {
+			UUID uuid = player.getUUID();
 			double d = SpotFinder.horizontal(player.position(), position());
-			chases.computeIfAbsent(player.getUUID(), k -> new Chase()).update(player.getX(), player.getZ(), d);
-			if (d < flee) {
+			chases.computeIfAbsent(uuid, k -> new Chase()).update(player.getX(), player.getZ(), d);
+			if (d < flee && near == null) {
 				near = player;
 			}
-			if (everSeen && approaches.computeIfAbsent(player.getUUID(), k -> new Approach()).update(d, config.approachStepBlocks) >= approach) {
+			if (everSeen && approaches.computeIfAbsent(uuid, k -> new Approach()).update(d, config.approachStepBlocks) >= approach && approacher == null) {
 				approacher = player;
 			}
-			if (looker == null && isLookedAtBy(level, player, cosCone)) {
-				looker = player;
+			boolean looking = isLookedAtBy(level, player, cosCone);
+			int stare = looking ? stares.getOrDefault(uuid, 0) + 1 : Math.max(0, stares.getOrDefault(uuid, 0) - 2);
+			if (stare > 0) {
+				stares.put(uuid, stare);
+			} else {
+				stares.remove(uuid);
+			}
+			if (looking && stare >= stareNeeded && !staredBy.contains(uuid)) {
+				stareDone.add(player);
 			}
 		}
-		stareTicks = looker != null ? stareTicks + 1 : Math.max(0, stareTicks - 2);
+		long minSeen = ModConfig.realTicks(config.minSeenSeconds);
 		if (triggered) {
+			if (!stareDone.isEmpty() && SightingRules.endCause(false, true, false, seenFor(), minSeen) == SightingRules.EndCause.STARE) {
+				stareDone.forEach(looker -> countStare(level, looker)); // stared down while he goes: still counts, once
+			}
 			return;
 		}
-		boolean stareDone = !stared && looker != null && stareTicks >= ModConfig.realTicks(config.stareSeconds);
-		switch (SightingRules.endCause(near != null, stareDone, approacher != null, seenFor(), ModConfig.realTicks(config.minSeenSeconds))) {
+		switch (SightingRules.endCause(near != null, !stareDone.isEmpty(), approacher != null, seenFor(), minSeen)) {
 			case FLEE -> {
 				fled = true;
 				trigger(near);
 			}
 			case STARE -> {
-				stared = true;
-				Attention.trigger(level.getServer(), AttentionTrigger.STARED_AT_HIM);
-				EntityData.get(level.getServer()).recordStared();
-				HerobrineState shared = HerobrineState.get(level.getServer());
-				if (!shared.hasFlag(FigureApi.STARED_FLAG)) {
-					shared.setFlag(FigureApi.STARED_FLAG, true);
-				}
-				FigureApi.STARED.invoker().onStared(looker, this);
-				trigger(looker);
+				stareDone.forEach(looker -> countStare(level, looker));
+				trigger(stareDone.getFirst());
 			}
 			case APPROACH -> trigger(approacher);
 			case NONE -> {
 			}
 		}
+	}
+
+	/** STARED_AT_HIM for this player: attention, the record, {@code entity:stared}, {@link FigureApi#STARED}. Once per player. */
+	private void countStare(ServerLevel level, ServerPlayer looker) {
+		if (!staredBy.add(looker.getUUID())) {
+			return;
+		}
+		Attention.trigger(level.getServer(), AttentionTrigger.STARED_AT_HIM);
+		EntityData.get(level.getServer()).recordStared();
+		HerobrineState shared = HerobrineState.get(level.getServer());
+		if (!shared.hasFlag(FigureApi.STARED_FLAG)) {
+			shared.setFlag(FigureApi.STARED_FLAG, true);
+		}
+		FigureApi.STARED.invoker().onStared(looker, this);
 	}
 
 	/** Ticks since he was first seen, or -1. */
@@ -900,12 +1058,13 @@ public class HimEntity extends PathfinderMob {
 	}
 
 	/**
-	 * Walks (or runs) away from the player toward a point that is inside the entity-ticking range and no farther than
-	 * just past the fog edge (where he is gone). Tries straight away first, then turns up to 90 degrees. The path
-	 * reaches {@link #LEAVE_AHEAD_SECONDS} of travel ahead and is renewed before he gets to its end, so he never slows
-	 * down at a path's last node; the speed follows {@code modifier} every tick without a new path.
+	 * Walks (or runs) away from the players (the nearest weighs most, {@link #awayFrom}) toward a point that is inside
+	 * the entity-ticking range and no farther than just past the nearest player's fog edge (where he is gone). Tries
+	 * straight away first, then turns up to 90 degrees. The path reaches {@link #LEAVE_AHEAD_SECONDS} of travel ahead
+	 * and is renewed before he gets to its end, so he never slows down at a path's last node; the speed follows
+	 * {@code modifier} every tick without a new path.
 	 */
-	private void steerAway(ServerLevel level, @Nullable ServerPlayer from, double modifier, double blocksPerSecond) {
+	private void steerAway(ServerLevel level, List<ServerPlayer> players, @Nullable ServerPlayer from, double modifier, double blocksPerSecond) {
 		PathNavigation navigation = getNavigation();
 		navigation.setSpeedModifier(modifier);
 		ticksSinceRepath++;
@@ -917,7 +1076,7 @@ public class HimEntity extends PathfinderMob {
 			return;
 		}
 		ticksSinceRepath = 0;
-		repathFailed = !repath(level, from, modifier, Math.max(12.0, blocksPerSecond * LEAVE_AHEAD_SECONDS));
+		repathFailed = !repath(level, players, from, modifier, Math.max(12.0, blocksPerSecond * LEAVE_AHEAD_SECONDS));
 		if (repathFailed && !moving) {
 			// Nowhere to go inside both limits: he stands, and is gone as soon as he is out of view.
 			navigation.stop();
@@ -925,16 +1084,18 @@ public class HimEntity extends PathfinderMob {
 	}
 
 	/**
-	 * Paths {@code ahead} blocks away from the player, straight away first. False if no direction works. A direction
+	 * Paths {@code ahead} blocks away from the players, straight away first. False if no direction works. A direction
 	 * that fails leaves the current path alone, so he never stops while looking for the next one.
 	 */
-	private boolean repath(ServerLevel level, @Nullable ServerPlayer from, double modifier, double ahead) {
+	private boolean repath(ServerLevel level, List<ServerPlayer> players, @Nullable ServerPlayer from, double modifier, double ahead) {
 		Vec3 origin = from != null ? from.position() : position().subtract(Entity.calculateViewVector(0.0F, holdYaw));
 		Vec3 away = position().subtract(origin).horizontal();
 		if (away.lengthSqr() < 1.0) {
 			// The player is (nearly) on top of him: keep running the way he is going rather than turning on the spot.
 			away = Entity.calculateViewVector(0.0F, phase == Phase.LEAVING && getDeltaMovement().horizontalDistanceSqr() > 1.0E-4 ? getYRot() : holdYaw)
 					.horizontal();
+		} else if (players.size() > 1) {
+			away = awayFrom(position(), players.stream().map(ServerPlayer::position).toList(), away);
 		}
 		away = away.normalize();
 		double reach = from != null ? FogEdge.of(from, false).renderLimit() + 2.0 : Double.MAX_VALUE;
@@ -997,6 +1158,23 @@ public class HimEntity extends PathfinderMob {
 		discard();
 	}
 
+	/**
+	 * The horizontal direction away from everyone at {@code players}: each one's push away from him, weighted by one
+	 * over their distance, so the nearest decides most and he never leaves toward someone else. {@code fallback} if
+	 * the pushes cancel out (he stands between them).
+	 */
+	static Vec3 awayFrom(Vec3 him, List<Vec3> players, Vec3 fallback) {
+		Vec3 sum = Vec3.ZERO;
+		for (Vec3 player : players) {
+			Vec3 push = him.subtract(player).horizontal();
+			double d = push.length();
+			if (d > 1.0E-4) {
+				sum = sum.add(push.scale(1.0 / (d * Math.max(1.0, d))));
+			}
+		}
+		return sum.lengthSqr() > 1.0E-8 ? sum.normalize() : fallback;
+	}
+
 	private @Nullable ServerPlayer nearest(List<ServerPlayer> players) {
 		ServerPlayer best = null;
 		double bestDist = Double.MAX_VALUE;
@@ -1051,8 +1229,14 @@ public class HimEntity extends PathfinderMob {
 		return triggered;
 	}
 
+	/** True once anyone stared him down this sighting. */
 	public boolean stared() {
-		return stared;
+		return !staredBy.isEmpty();
+	}
+
+	/** Everyone whose stare counted this sighting (a copy). */
+	public Set<UUID> staredBy() {
+		return Set.copyOf(staredBy);
 	}
 
 	public boolean fled() {
@@ -1080,8 +1264,14 @@ public class HimEntity extends PathfinderMob {
 		return approach == null ? 0.0 : approach.closed();
 	}
 
+	/** The longest running stare of anyone there, in ticks. */
 	public int stareTicks() {
-		return stareTicks;
+		return stares.values().stream().mapToInt(Integer::intValue).max().orElse(0);
+	}
+
+	/** This player's running stare, in ticks (0 if none). */
+	public int stareTicks(UUID player) {
+		return stares.getOrDefault(player, 0);
 	}
 
 	public int seenTicks() {

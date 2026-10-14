@@ -1,5 +1,7 @@
 package com.forzacode.a1016_02.entity;
 
+import java.util.List;
+
 import net.minecraft.core.GlobalPos;
 
 import org.jspecify.annotations.Nullable;
@@ -108,6 +110,23 @@ public final class SightingRules {
 	public static double runSpeed(double base, double chaserSpeed, double outrunFactor, double max) {
 		double chase = Double.isNaN(chaserSpeed) ? 0.0 : Math.max(0.0, chaserSpeed) * Math.max(1.0, outrunFactor);
 		return Math.min(max, Math.max(base, chase));
+	}
+
+	/**
+	 * The speed he has to beat (D-036), in blocks per second: the fastest of the nearest player and everyone closing
+	 * on him, so with several players he outruns the fastest chaser, not just the nearest one. 0 if nobody is there.
+	 *
+	 * @param chases  every player's {@link Chase}
+	 * @param nearest the nearest player's, or null
+	 */
+	public static double chaserSpeed(List<Chase> chases, @Nullable Chase nearest) {
+		double fastest = nearest == null ? 0.0 : nearest.speed();
+		for (Chase chase : chases) {
+			if (chase.closingSpeed() > 0.0) {
+				fastest = Math.max(fastest, chase.speed());
+			}
+		}
+		return fastest;
 	}
 
 	/** Ground friction times air drag on ordinary blocks: horizontal speed kept from one tick to the next. */

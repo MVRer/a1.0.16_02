@@ -11,11 +11,13 @@ import java.util.function.Predicate;
 import com.forzacode.a1016_02.A1016_02;
 import com.forzacode.a1016_02.core.FireResult;
 import com.forzacode.a1016_02.core.GameClock;
+import com.forzacode.a1016_02.core.HerobrineState;
 import com.forzacode.a1016_02.core.ModConfig;
 import com.forzacode.a1016_02.core.Pacing;
 import com.forzacode.a1016_02.core.PlayerWatch;
 import com.forzacode.a1016_02.core.Services;
 import com.forzacode.a1016_02.core.SiteType;
+import com.forzacode.a1016_02.core.TraceService;
 
 import net.fabricmc.fabric.api.event.Event;
 import net.fabricmc.fabric.api.event.EventFactory;
@@ -35,14 +37,17 @@ import org.jspecify.annotations.Nullable;
 
 /**
  * The figure, for other workstreams (the endings): spawn a variant at a position or at a player's fog edge, make
- * him walk away, see whether he is out. He only ever spawns out of view of every player. Server thread only.
+ * him walk away, see whether he is out. He is one being (D-060.4): at most one figure is out at a time, across every
+ * player and dimension, and he only ever spawns out of view of every player in his level, spectators included.
+ * Server thread only.
  */
 public final class FigureApi {
 	/**
 	 * Outcome of a fog-edge spawn.
 	 *
-	 * @param result {@link FireResult#FIRED} with the figure, {@link FireResult#NO_SPOT} when no out-of-view place
-	 *               exists right now, {@link FireResult#SKIPPED} when one is already out
+	 * @param result {@link FireResult#FIRED} with the figure; {@link FireResult#NO_SPOT} when no out-of-view place
+	 *               exists right now, or he is already out for someone (one him: the director keeps the card for
+	 *               later); {@link FireResult#SKIPPED} when the variant does not run in the player's dimension
 	 */
 	public record Spawned(FireResult result, @Nullable HimEntity figure) {
 	}
@@ -60,9 +65,10 @@ public final class FigureApi {
 	 * The last fog-edge spawn, for {@code /a1016 entity info}.
 	 *
 	 * @param distance horizontal distance from the player he appeared for
-	 * @param edge     the band and fog end used
+	 * @param edge     the band and fog end used (that player's own fog)
+	 * @param forName  the name of the player he appeared for
 	 */
-	public record LastSpawn(Variant variant, double distance, FogEdge edge) {
+	public record LastSpawn(Variant variant, double distance, FogEdge edge, String forName) {
 	}
 
 	/** Someone stared him down (STARED_AT_HIM): they looked straight at him for {@code stareSeconds}. */
@@ -72,8 +78,9 @@ public final class FigureApi {
 	}
 
 	/**
-	 * Fired on the server thread when STARED_AT_HIM fires, right after its attention. The endings read it as "staring
-	 * into the fog". Also sets the flag {@link #STARED_FLAG}.
+	 * Fired on the server thread when STARED_AT_HIM fires, right after its attention: once for each player who stares
+	 * him down during a sighting (anyone's stare counts, D-060.4; never twice for the same player in one sighting,
+	 * never once per tick). The endings read it as "staring into the fog". Also sets the flag {@link #STARED_FLAG}.
 	 */
 	public static final Event<Stared> STARED = EventFactory.createArrayBacked(Stared.class, listeners -> (player, him) -> {
 		for (Stared listener : listeners) {
@@ -90,25 +97,51 @@ public final class FigureApi {
 	private static final int SWEEP_INTERVAL = 5;
 	private static final int PENDING_DIG_INTERVAL = 20;
 	private static final int FULL_SWEEP_INTERVAL = 100;
-	/** Every figure seen alive (spawned here or by /summon), for the cheap gate and the sweep. Pruned on read. */
+	/**
+	 * Every figure seen alive (spawned here, or by /summon once he ticks or the full sweep finds him), for the one-him
+	 * rule and the sweep. Pruned on read. A spawn adds him before it returns, so a second sighting asked for in the
+	 * same tick (another player's card) already finds him out.
+	 */
 	private static final Set<HimEntity> LIVE = Collections.newSetFromMap(new WeakHashMap<>());
 
 	private FigureApi() {
 	}
 
 	/**
-	 * Spawns him with his feet at {@code feet}, facing {@code yaw}. Refused (empty) if any part of his rendered model
-	 * would be in view of a player or closer than {@code EntityConfig.minDistance} (12, never under 8) to any player's
-	 * eyes, or if the spot is not entity-ticking. He never pops in on screen and never appears close. His spawn
-	 * distance (which scales his flee and approach distances) is the horizontal distance to the nearest player.
+	 * Spawns him with his feet at {@code feet}, facing {@code yaw}. Refused (empty) while he is already out anywhere
+	 * (one him), if any part of his rendered model would be in view of a player in the level (spectators included) or
+	 * closer than {@code EntityConfig.minDistance} (12, never under 8) to any player's eyes, or if the spot is not
+	 * entity-ticking. He never pops in on screen and never appears close. His spawn distance (which scales his flee
+	 * and approach distances) is the horizontal distance to the nearest player.
+	 *
+	 * <p>During Ending D's last minute ({@code ending:last_minute}) a figure still out from an earlier sighting is told
+	 * to walk away, so a later try finds him gone.
 	 *
 	 * @param anchor the trunk or light he relates to, or null
 	 */
 	public static Optional<HimEntity> spawnAt(ServerLevel level, Variant variant, Vec3 feet, float yaw, @Nullable BlockPos anchor) {
+		MinecraftServer server = level.getServer();
+		if (anyOut(server)) {
+			if (HerobrineState.get(server).hasFlag(TraceService.LAST_MINUTE_FLAG)) {
+				walkAway(server);
+			}
+			return Optional.empty();
+		}
+		return spawn(level, variant, feet, yaw, anchor, Watchers.of(level));
+	}
+
+	public static Optional<HimEntity> spawnAt(ServerLevel level, Variant variant, Vec3 feet, float yaw) {
+		return spawnAt(level, variant, feet, yaw, null);
+	}
+
+	/**
+	 * The spawn itself, without the one-him check (callers make it; game tests, which spawn many figures at once in
+	 * their own areas, call this directly): refused if any of {@code watchers} could see any part of him or is closer
+	 * than the minimum distance ({@link Watchers#hides}), or the spot is not entity-ticking.
+	 */
+	static Optional<HimEntity> spawn(ServerLevel level, Variant variant, Vec3 feet, float yaw, @Nullable BlockPos anchor, Watchers watchers) {
 		AABB view = HimEntity.viewBox(feet);
-		List<Vec3> eyes = level.players().stream().map(p -> p.getEyePosition()).toList();
-		if (tooClose(eyes, view, EntityConfig.get().minDistance()) || !level.isPositionEntityTicking(BlockPos.containing(feet))
-				|| !Services.traces().isOutOfView(level, view)) {
+		if (!level.isPositionEntityTicking(BlockPos.containing(feet)) || !watchers.hides(level, view, EntityConfig.get().minDistance())) {
 			return Optional.empty();
 		}
 		HimEntity him = ModEntities.HIM.create(level, EntitySpawnReason.EVENT);
@@ -117,17 +150,13 @@ public final class FigureApi {
 		}
 		him.snapTo(feet.x, feet.y, feet.z, yaw, 0.0F);
 		him.setup(variant, yaw, anchor);
-		him.setSpawnDistance(level.players().stream().mapToDouble(p -> SpotFinder.horizontal(p.position(), feet)).min().orElse(Double.NaN));
+		him.setSpawnDistance(watchers.eyes().stream().mapToDouble(eye -> SpotFinder.horizontal(eye, feet)).min().orElse(Double.NaN));
 		if (!level.addFreshEntity(him)) {
 			return Optional.empty();
 		}
 		LIVE.add(him);
 		A1016_02.LOGGER.debug("[a1016] figure ({}) at {}", variant.shortName(), BlockPos.containing(feet).toShortString());
 		return Optional.of(him);
-	}
-
-	public static Optional<HimEntity> spawnAt(ServerLevel level, Variant variant, Vec3 feet, float yaw) {
-		return spawnAt(level, variant, feet, yaw, null);
 	}
 
 	/** True if any of the eyes is closer than {@code min} to the box. */
@@ -141,51 +170,63 @@ public final class FigureApi {
 	}
 
 	/**
-	 * Finds a place for the variant at this player's fog edge and spawns him there. With {@code forced} (debug),
-	 * the gates and the 300-block rule are skipped and a figure already out walks away first; the fog edge and
-	 * the out-of-view rule always apply. Records the sighting.
+	 * Finds a place for the variant at this player's fog edge (their own fog, D-035) and spawns him there for them.
+	 * The place is out of view of every player in that level and at least the minimum distance from each of them.
+	 * {@link FireResult#NO_SPOT} while he is already out for anyone (one him; the director keeps the card). With
+	 * {@code forced} (debug), the gates and the 300-block rule are skipped, and a figure already out is told to walk
+	 * away so a later try can spawn; the fog edge, one him and the out-of-view rule always apply. Records the sighting.
 	 */
 	public static Spawned spawnAtFogEdge(ServerPlayer player, Variant variant, RandomSource random, boolean forced) {
+		return spawnAtFogEdge(player, variant, random, forced, Watchers.of(player.level()));
+	}
+
+	/** {@link #spawnAtFogEdge(ServerPlayer, Variant, RandomSource, boolean)} as seen by these watchers (game tests). */
+	static Spawned spawnAtFogEdge(ServerPlayer player, Variant variant, RandomSource random, boolean forced, Watchers watchers) {
 		ServerLevel level = player.level();
 		MinecraftServer server = level.getServer();
 		if (level.dimension() != variant.dimension()) {
 			return new Spawned(FireResult.SKIPPED, null); // each variant only in its own dimension (D-034), even forced
 		}
-		List<HimEntity> out = active(server);
-		if (!out.isEmpty()) {
-			if (!forced) {
-				return new Spawned(FireResult.SKIPPED, null);
+		if (anyOut(server)) {
+			if (forced) {
+				walkAway(server); // debug: he leaves where he is first; he is one, so this try finds no place for him
 			}
-			out.forEach(him -> him.walkAway(Variant.Gait.WALK));
+			return new Spawned(FireResult.NO_SPOT, null);
 		}
 		FogEdge edge = FogEdge.of(player, variant == Variant.CLOSE);
-		Optional<SpotFinder.Spot> spot = findSpot(player, variant, edge, random, forced);
+		Optional<SpotFinder.Spot> spot = findSpot(player, variant, edge, random, forced, watchers);
 		if (spot.isEmpty()) {
 			return new Spawned(FireResult.NO_SPOT, null);
 		}
 		SpotFinder.Spot s = spot.get();
-		Optional<HimEntity> him = spawnAt(level, variant, s.pos(), facing(variant, s, player.position()), s.anchor());
+		Optional<HimEntity> him = spawn(level, variant, s.pos(), facing(variant, s, player.position()), s.anchor(), watchers);
 		if (him.isEmpty()) {
 			return new Spawned(FireResult.NO_SPOT, null);
 		}
 		him.get().setSpawnDistance(s.distance());
-		lastSpawn = new LastSpawn(variant, s.distance(), edge);
+		him.get().appearFor(player.getUUID());
+		lastSpawn = new LastSpawn(variant, s.distance(), edge, player.getName().getString());
 		EntityData.get(server).recordSighting(variant.shortName(), GlobalPos.of(level.dimension(), BlockPos.containing(s.pos())), GameClock.day(server));
-		A1016_02.LOGGER.debug("[a1016] sighting {} at {}, {} blocks out (fog end {}, {})", variant.cardId(), BlockPos.containing(s.pos()).toShortString(),
-				Math.round(s.distance()), Math.round(edge.limit()), edge.fromClient() ? "client" : "estimate");
+		A1016_02.LOGGER.debug("[a1016] sighting {} for {} at {}, {} blocks out (fog end {}, {})", variant.cardId(), player.getName().getString(),
+				BlockPos.containing(s.pos()).toShortString(), Math.round(s.distance()), Math.round(edge.limit()), edge.fromClient() ? "client" : "estimate");
 		return new Spawned(FireResult.FIRED, him.get());
 	}
 
-	/** The last fog-edge spawn since the game started, or null. */
+	/** The last fog-edge spawn since the server started, or null. */
 	public static @Nullable LastSpawn lastSpawn() {
 		return lastSpawn;
+	}
+
+	/** Server stop: forgets the last spawn, so a singleplayer world reload never shows the previous world's. */
+	static void clearLastSpawn() {
+		lastSpawn = null;
 	}
 
 	static void track(HimEntity him) {
 		LIVE.add(him);
 	}
 
-	/** True if a figure is out. Cheap; used by the gates. */
+	/** True if a figure is out anywhere on this server, in any dimension (the one-him rule). Cheap; used by the gates. */
 	public static boolean anyOut(MinecraftServer server) {
 		LIVE.removeIf(him -> him.isRemoved() || him.level().getServer() != server);
 		return !LIVE.isEmpty();
@@ -237,10 +278,11 @@ public final class FigureApi {
 	}
 
 	/**
-	 * Where he would stand right now in this band, without spawning him. Nowhere if the fog is too thick to see him
-	 * past the minimum distance ({@link FogEdge#seeable}).
+	 * Where he would stand right now in this player's band, without spawning him: hidden from every one of
+	 * {@code watchers} and at least the minimum distance from each, never near any participant's base. Nowhere if
+	 * the fog is too thick to see him past the minimum distance ({@link FogEdge#seeable}).
 	 */
-	static Optional<SpotFinder.Spot> findSpot(ServerPlayer player, Variant variant, FogEdge edge, RandomSource random, boolean forced) {
+	static Optional<SpotFinder.Spot> findSpot(ServerPlayer player, Variant variant, FogEdge edge, RandomSource random, boolean forced, Watchers watchers) {
 		if (!edge.seeable()) {
 			return Optional.empty();
 		}
@@ -251,12 +293,16 @@ public final class FigureApi {
 		Band band = new Band(edge.inner(), edge.outer());
 		EntityData data = EntityData.get(server);
 		boolean spacing = !forced && variant != Variant.LAST_ONE;
+		// Never at anyone's base: the player's own, or any other participant's in this dimension.
+		List<BlockPos> bases = SightingGates.basesIn(level, player);
 		Predicate<BlockPos> allowed = pos -> HimEntity.tickingAround(level, Vec3.atBottomCenterOf(pos), HimEntity.SPAWN_TICK_MARGIN)
-				&& !SightingGates.nearBase(player, pos, config.baseRadius)
+				&& !SightingGates.near(bases, pos, config.baseRadius)
 				&& (!spacing || data.farEnough(GlobalPos.of(level.dimension(), pos), pacing.sightingMinSpacing));
-		Predicate<AABB> hidden = box -> Services.traces().isOutOfView(level, box);
+		// Out of view of every player in the level and never close to any of them, not only the one he is for.
+		double minDistance = config.minDistance();
+		Predicate<AABB> hidden = box -> watchers.hides(level, box, minDistance);
 		SpotFinder.Query q = new SpotFinder.Query(level, player.position(), player.getEyePosition(), band.inner(), band.outer(),
-				config.minDistance(), ModEntities.HIM.getDimensions(), hidden, allowed, random, config.spotSamples);
+				minDistance, ModEntities.HIM.getDimensions(), hidden, allowed, random, config.spotSamples);
 		return switch (variant.spot()) {
 			case OPEN -> SpotFinder.open(q);
 			case RIDGE -> SpotFinder.ridge(q, config.ridgeMinRise);
@@ -286,8 +332,8 @@ public final class FigureApi {
 	}
 
 	/**
-	 * How well the player knows this place: 3 near blocks they placed or dug, 2 in a chunk they visited on an earlier
-	 * day, 1 in a chunk visited today, 0 never there.
+	 * How well the players know this place (the footprint is everyone's, D-058): 3 near blocks a player placed or dug,
+	 * 2 in a chunk a participant visited on an earlier day, 1 in a chunk visited today, 0 never there.
 	 */
 	static double knownPlace(ServerPlayer player, ServerLevel level, BlockPos pos, EntityConfig config) {
 		PlayerWatch watch = Services.watch();
@@ -313,8 +359,8 @@ public final class FigureApi {
 
 	/**
 	 * A figure whose chunk stopped ticking cannot run his own rules: he stands frozen, which reads as staring. Once
-	 * he is out of view (or past everyone's full render distance) he is removed. Called every server tick by
-	 * {@link EntityInit}.
+	 * he is out of view of everyone in his level (or past everyone's full render distance) he is removed. Called every
+	 * server tick by {@link EntityInit}.
 	 */
 	static void sweep(MinecraftServer server) {
 		int tick = server.getTickCount();

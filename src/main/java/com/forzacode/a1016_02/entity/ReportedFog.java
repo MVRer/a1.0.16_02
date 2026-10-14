@@ -10,8 +10,10 @@ import net.fabricmc.fabric.api.networking.v1.ServerPlayConnectionEvents;
 import net.minecraft.server.level.ServerPlayer;
 
 /**
- * The latest fog end each player's client reported ({@link FogEndPayload}, D-035), with the server tick it arrived.
- * Forgotten when the player leaves or the server stops. Written and read on the server thread.
+ * The latest fog end each player's client reported ({@link FogEndPayload}, D-035), with the server tick it arrived,
+ * kept per player by UUID: each player's sightings use their own fog, and one client's report never changes
+ * another's. Forgotten when that player's connection closes (the report belongs to the client, spectators included)
+ * or the server stops. Written and read on the server thread.
  */
 public final class ReportedFog {
 	/** A report, NaN blocks if none. */
@@ -24,8 +26,13 @@ public final class ReportedFog {
 	}
 
 	static void register() {
-		ServerPlayConnectionEvents.DISCONNECT.register((handler, server) -> LATEST.remove(handler.player.getUUID()));
+		ServerPlayConnectionEvents.DISCONNECT.register((handler, server) -> forget(handler.player.getUUID()));
 		ServerLifecycleEvents.SERVER_STOPPED.register(server -> LATEST.clear());
+	}
+
+	/** That player's client is gone: forgets their report only. */
+	static void forget(UUID player) {
+		LATEST.remove(player);
 	}
 
 	/** Keeps the report if it is a fog end ({@link FogReport#accept}). */

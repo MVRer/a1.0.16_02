@@ -2,18 +2,23 @@ package com.forzacode.a1016_02.atmosphere.card;
 
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.IdentityHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.util.WeakHashMap;
 
 import com.forzacode.a1016_02.atmosphere.AtmosphereConfig;
 import com.forzacode.a1016_02.atmosphere.Tasks;
 import com.forzacode.a1016_02.atmosphere.WorldScan;
+import com.forzacode.a1016_02.atmosphere.mob.MobTamperImpl;
 import com.forzacode.a1016_02.core.CardTag;
 import com.forzacode.a1016_02.core.FireContext;
 import com.forzacode.a1016_02.core.FireResult;
 import com.forzacode.a1016_02.core.Habit;
+import com.forzacode.a1016_02.core.Services;
 import com.forzacode.a1016_02.core.Stage;
 import com.forzacode.a1016_02.core.Tier;
 
@@ -29,12 +34,18 @@ import net.minecraft.world.phys.Vec3;
 
 /**
  * Animals facing the fog: every cow, sheep and pig nearby stops and turns to the same point in the fog. Nothing is
- * there. They stay like that until the player walks toward the point (or a few minutes pass). The false positive is a
+ * there. They stay like that until the player, or anyone who shared the moment, walks toward the point (or a few
+ * minutes pass, or the player is gone). The false positive is a
  * single animal looking off into the distance for a moment.
  */
 public final class AnimalsFaceFogCard extends AtmosphereCard {
 	public static final String ID = "animals_face_fog";
 	private static final Set<EntityType<?>> FARM_ANIMALS = Set.of(EntityTypes.COW, EntityTypes.SHEEP, EntityTypes.PIG, EntityTypes.MOOSHROOM);
+	/**
+	 * Animals a running episode holds or is about to (each starts on its own tick), so a second one, fired for
+	 * another player in the same tick or while the first is starting, never takes them too. Server thread only.
+	 */
+	private static final Set<Animal> CLAIMED = Collections.newSetFromMap(new WeakHashMap<>());
 
 	public AnimalsFaceFogCard() {
 		super(ID, Tier.AMBIENT, Stage.ALONE, Set.of(Habit.WATCHER), Set.of(CardTag.MOB, CardTag.FOG), true);
@@ -47,7 +58,7 @@ public final class AnimalsFaceFogCard extends AtmosphereCard {
 	}
 
 	static List<Animal> animals(ServerLevel level, ServerPlayer player, int radius) {
-		return untampered(level, Animal.class, player.position(), radius, a -> FARM_ANIMALS.contains(a.getType()) && !a.isPassenger());
+		return untampered(level, Animal.class, player.position(), radius, a -> FARM_ANIMALS.contains(a.getType()) && !a.isPassenger() && !CLAIMED.contains(a));
 	}
 
 	@Override
@@ -65,9 +76,15 @@ public final class AnimalsFaceFogCard extends AtmosphereCard {
 			Animal one = animals.get(random.nextInt(animals.size()));
 			int min = AtmosphereConfig.ticks(cfg.animalsFakeMinSeconds);
 			mobs().face(one, point, min + random.nextInt(Math.max(1, AtmosphereConfig.ticks(cfg.animalsFakeMaxSeconds) - min)));
+			forTarget(one, player);
 			return FireResult.FIRED;
 		}
-		Tasks.start(new Facing(player.getUUID(), level, point, horizontalDistance(player.position(), point), animals, random, cfg));
+		// Everyone sharing the moment sees the animals turn (D-060); any of them walking toward the point ends it.
+		Map<UUID, Double> startDistances = new HashMap<>();
+		for (ServerPlayer sharer : Services.watch().sharingWith(player)) {
+			startDistances.put(sharer.getUUID(), horizontalDistance(sharer.position(), point));
+		}
+		Tasks.start(new Facing(player.getUUID(), startDistances, level, point, animals, random, cfg));
 		return FireResult.FIRED;
 	}
 
@@ -93,17 +110,19 @@ public final class AnimalsFaceFogCard extends AtmosphereCard {
 
 	/**
 	 * The whole effect, from the staggered start to the staggered release. Each animal starts turning on its own
-	 * tick; when the player walks toward the point (or time runs out, or they leave) the episode stops starting
-	 * animals and releases every one it started, so a late starter can never be left frozen.
+	 * tick; when the player or anyone who shared the moment walks toward the point (or time runs out, or the player
+	 * leaves, dies, turns spectator or changes dimension) the episode stops starting animals and releases every one it
+	 * started, so a late starter can never be left frozen. Players are kept by UUID and looked up again every tick.
 	 */
 	private static final class Facing implements Tasks.Episode {
 		private record Member(Animal animal, int startAge, int releaseOffset) {
 		}
 
 		private final UUID player;
+		/** Each sharer's horizontal distance to the point when it began (the player's own included). */
+		private final Map<UUID, Double> startDistances;
 		private final ServerLevel level;
 		private final Vec3 point;
-		private final double startDistance;
 		private final List<Member> members = new ArrayList<>();
 		private final Set<Animal> started = Collections.newSetFromMap(new IdentityHashMap<>());
 		private final double releaseBlocks;
@@ -112,11 +131,12 @@ public final class AnimalsFaceFogCard extends AtmosphereCard {
 		private int age;
 		private int endAge = -1;
 
-		Facing(UUID player, ServerLevel level, Vec3 point, double startDistance, List<Animal> animals, RandomSource random, AtmosphereConfig cfg) {
+		Facing(UUID player, Map<UUID, Double> startDistances, ServerLevel level, Vec3 point, List<Animal> animals, RandomSource random,
+				AtmosphereConfig cfg) {
 			this.player = player;
+			this.startDistances = Map.copyOf(startDistances);
 			this.level = level;
 			this.point = point;
-			this.startDistance = startDistance;
 			this.releaseBlocks = cfg.animalsReleaseBlocks;
 			this.maxTicks = AtmosphereConfig.ticks(cfg.animalsMaxSeconds);
 			int stagger = Math.max(1, cfg.animalsStaggerTicks);
@@ -125,16 +145,15 @@ public final class AnimalsFaceFogCard extends AtmosphereCard {
 			for (Animal animal : animals) {
 				members.add(new Member(animal, 1 + random.nextInt(stagger), random.nextInt(Math.max(1, stagger / 2))));
 			}
+			CLAIMED.addAll(animals);
 		}
 
 		@Override
 		public boolean tick(MinecraftServer server) {
 			age++;
 			if (endAge < 0) {
-				ServerPlayer subject = server.getPlayerList().getPlayer(player);
-				boolean walkedToward = subject != null && subject.level() == level
-						&& startDistance - horizontalDistance(subject.position(), point) >= releaseBlocks;
-				if (age > maxTicks || subject == null || subject.level() != level || walkedToward) {
+				boolean here = target(server, player, level).isPresent();
+				if (age > maxTicks || !here || anyoneWalkedToward(server)) {
 					endAge = age;
 				} else {
 					for (Member member : members) {
@@ -142,6 +161,7 @@ public final class AnimalsFaceFogCard extends AtmosphereCard {
 						if (member.startAge() == age && animal.isAlive() && mobs().freeze(animal, holdTicks)) {
 							mobs().face(animal, point, holdTicks);
 							mobs().silence(animal, holdTicks);
+							MobTamperImpl.INSTANCE.bind(animal, player);
 							started.add(animal);
 						}
 					}
@@ -154,13 +174,33 @@ public final class AnimalsFaceFogCard extends AtmosphereCard {
 					started.remove(member.animal());
 				}
 			}
-			return !started.isEmpty();
+			if (started.isEmpty()) {
+				unclaim();
+				return false;
+			}
+			return true;
+		}
+
+		private void unclaim() {
+			members.forEach(member -> CLAIMED.remove(member.animal()));
+		}
+
+		/** True once the player or anyone who shared the moment (still here, in this level) has walked toward the point. */
+		private boolean anyoneWalkedToward(MinecraftServer server) {
+			for (Map.Entry<UUID, Double> start : startDistances.entrySet()) {
+				ServerPlayer sharer = target(server, start.getKey(), level).orElse(null);
+				if (sharer != null && start.getValue() - horizontalDistance(sharer.position(), point) >= releaseBlocks) {
+					return true;
+				}
+			}
+			return false;
 		}
 
 		@Override
 		public void stop(MinecraftServer server) {
 			started.forEach(mobs()::release);
 			started.clear();
+			unclaim();
 		}
 	}
 }

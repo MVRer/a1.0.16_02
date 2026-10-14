@@ -23,6 +23,7 @@ import net.fabricmc.fabric.api.gametest.v1.GameTest;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.GlobalPos;
 import net.minecraft.gametest.framework.GameTestHelper;
+import net.minecraft.nbt.CompoundTag;
 import net.minecraft.nbt.NbtOps;
 import net.minecraft.nbt.Tag;
 import net.minecraft.resources.RegistryOps;
@@ -81,7 +82,7 @@ public class AtmosphereGameTests extends TamperGameTests {
 				helper.assertFalse(fogDrift.contextFits(player, level) || compass.contextFits(player, level), "a drift card fits with " + flag);
 				helper.assertTrue(fogDrift.fire(new FireContext(player, level, false, true, RandomSource.create(1L))) == FireResult.SKIPPED,
 						"a forced fog drift fired with " + flag);
-				helper.assertFalse(ActiveEffects.fogSurge(player, 0.6F, 10, 40, 10), "a fog surge was sent with " + flag);
+				helper.assertTrue(ActiveEffects.fogSurge(player, 0.6F, 10, 40, 10).isEmpty(), "a fog surge was sent with " + flag);
 				helper.assertFalse(ActiveEffects.compassDrift(player, 0, 0, 100, 4), "a compass drift was sent with " + flag);
 			}
 		} finally {
@@ -141,16 +142,50 @@ public class AtmosphereGameTests extends TamperGameTests {
 		helper.succeed();
 	}
 
+	/** Once per night for each player (D-059): A's mining is A's (and that of whoever heard it), never B's. */
 	@GameTest
-	public void miningCountsOncePerNight(GameTestHelper helper) {
-		AtmosphereData data = AtmosphereData.get(helper.getLevel().getServer());
+	public void miningCountsOncePerNightPerPlayer(GameTestHelper helper) {
+		AtmosphereData data = new AtmosphereData();
+		UUID a = UUID.randomUUID();
+		UUID b = UUID.randomUUID();
 		long night = 7_000_000L + RandomSource.create().nextInt(1_000_000);
 		int perNight = ModConfig.pacing().miningDarkPerNight;
-		helper.assertTrue(data.miningOn(night) == 0, "a fresh night has plays");
-		data.recordMining(night);
-		helper.assertTrue(data.miningOn(night) == 1 && data.miningOn(night + 1) == 0, "per-night count");
-		helper.assertFalse(Gates.miningInTheDark(true, true, 0, 0, Long.MAX_VALUE, 0, data.miningOn(night), Math.min(perNight, 1)),
+		helper.assertTrue(data.miningOn(a, night) == 0, "a fresh night has plays");
+		data.recordMining(a, night);
+		helper.assertTrue(data.miningOn(a, night) == 1 && data.miningOn(a, night + 1) == 0, "per-night count");
+		helper.assertTrue(data.miningOn(b, night) == 0, "A's mining counted for B, who never heard it");
+		helper.assertFalse(Gates.miningInTheDark(true, true, 0, 0, Long.MAX_VALUE, 0, data.miningOn(a, night), Math.min(perNight, 1)),
 				"mining allowed again the same night");
+		helper.assertTrue(Gates.miningInTheDark(true, true, 0, 0, Long.MAX_VALUE, 0, data.miningOn(b, night), Math.max(perNight, 1)),
+				"B's own night was used up by A's");
+		data.recordMining(b, night + 1);
+		helper.assertTrue(data.miningOn(b, night + 1) == 1 && data.miningOn(a, night + 1) == 0, "the next night is everyone's own again");
+		helper.succeed();
+	}
+
+	/**
+	 * Old saves (D-062.8): a v1.0 atmosphere.dat with one world-level mining count loads as everyone's count for that
+	 * night; recording another night drops it, and it is never written again.
+	 */
+	@GameTest
+	public void oldAtmosphereSaveLoads(GameTestHelper helper) {
+		RegistryOps<Tag> ops = helper.getLevel().registryAccess().createSerializationContext(NbtOps.INSTANCE);
+		UUID player = UUID.randomUUID();
+		CompoundTag old = new CompoundTag();
+		old.putBoolean("musicOffDone", true);
+		old.putInt("duskStage", 2);
+		old.putLong("miningNight", 41L);
+		old.putInt("miningCount", 1);
+		AtmosphereData loaded = AtmosphereData.CODEC.parse(ops, old).getOrThrow();
+		helper.assertTrue(loaded.musicOffDone() && loaded.duskStage() == 2, "v1.0 fields lost");
+		helper.assertTrue(loaded.miningOn(player, 41) == 1 && loaded.miningOn(UUID.randomUUID(), 41) == 1 && loaded.miningOn(player, 42) == 0,
+				"the old world-level count is not everyone's for its night");
+		loaded.recordMining(player, 42);
+		CompoundTag saved = (CompoundTag) AtmosphereData.CODEC.encodeStart(ops, loaded).getOrThrow();
+		helper.assertFalse(saved.contains("miningNight") || saved.contains("miningCount"), "the old fields are still written: " + saved);
+		AtmosphereData again = AtmosphereData.CODEC.parse(ops, saved).getOrThrow();
+		helper.assertTrue(again.miningOn(player, 42) == 1 && again.miningOn(UUID.randomUUID(), 42) == 0 && again.miningOn(player, 41) == 0,
+				"per-player mining lost on save: " + saved);
 		helper.succeed();
 	}
 
@@ -162,13 +197,13 @@ public class AtmosphereGameTests extends TamperGameTests {
 		data.setSilence(player, 1000, 1200, 400);
 		data.setCompass(player, 1100, 1200, -300, 450, 48);
 		data.setDuskStage(2);
-		data.recordMining(5);
+		data.recordMining(player, 5);
 		Tag encoded = AtmosphereData.CODEC.encodeStart(ops, data).getOrThrow();
 		AtmosphereData decoded = AtmosphereData.CODEC.parse(ops, encoded).getOrThrow();
 		AtmosphereData.Transient t = decoded.transientOf(player).orElseThrow();
 		helper.assertTrue(t.silenceLeft(1600) == 600 && t.silenceLeft(2200) == 0, "silence left after reload");
 		helper.assertTrue(t.compassLeft(1600) == 700 && t.compassX() == -300 && t.compassZ() == 450 && t.compassSettle() == 48, "compass after reload");
-		helper.assertTrue(decoded.duskStage() == 2 && decoded.miningOn(5) == 1, "dusk stage / mining count after reload");
+		helper.assertTrue(decoded.duskStage() == 2 && decoded.miningOn(player, 5) == 1, "dusk stage / mining count after reload");
 		data.setSilence(player, 5000, 0, 0);
 		data.setCompass(player, 5000, 0, 0, 0, 0);
 		helper.assertTrue(data.transientOf(player).isEmpty(), "ended effects are not dropped");

@@ -20,6 +20,9 @@ public final class EntityInit {
 		FogEndPayload.register(); // the client's real fog end (D-035)
 		ReportedFog.register();
 		ServerTickEvents.END_SERVER_TICK.register(FigureApi::sweep);
-		ServerLifecycleEvents.SERVER_STOPPED.register(server -> GoUnder.clearLive());
+		ServerLifecycleEvents.SERVER_STOPPED.register(server -> {
+			GoUnder.clearLive();
+			FigureApi.clearLastSpawn();
+		});
 	}
 }

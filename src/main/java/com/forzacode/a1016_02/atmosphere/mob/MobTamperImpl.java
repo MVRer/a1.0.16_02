@@ -5,14 +5,17 @@ import java.util.Collections;
 import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Set;
+import java.util.UUID;
 
 import com.forzacode.a1016_02.atmosphere.AtmosphereConfig;
 import com.forzacode.a1016_02.core.MobTamper;
 import com.forzacode.a1016_02.core.ModConfig;
+import com.forzacode.a1016_02.core.PlayerWatch;
 import com.forzacode.a1016_02.core.Services;
 import com.forzacode.a1016_02.core.TraceService;
 
 import net.minecraft.core.BlockPos;
+import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.util.Mth;
 import net.minecraft.world.entity.Entity;
@@ -36,10 +39,16 @@ import org.jspecify.annotations.Nullable;
  * <li>silence: the ambient sound timer still runs but the sound is skipped.</li>
  * <li>moveOutOfView: teleports only when both the mob's box and its box at the destination are out of view.</li>
  * </ul>
+ * Everything happens to the mob on the server, so every player sees the same trick (D-060). Atmosphere's cards
+ * {@link #bind} what they do to the player it is for: when that player leaves, dies, turns spectator or changes
+ * dimension, the mob is released at once ({@link #releaseFor} on the participation event, and {@link #releaseOrphans}
+ * every second), never left frozen for someone who is gone. Unbound effects (other workstreams) only expire.
  * Server thread only.
  */
 public final class MobTamperImpl implements MobTamper {
 	public static final MobTamperImpl INSTANCE = new MobTamperImpl();
+	/** How often bound mobs are checked against their player (also released at once on the participation event). */
+	private static final int OWNER_CHECK_TICKS = 20;
 
 	private final Set<Mob> tracked = Collections.newSetFromMap(new IdentityHashMap<>());
 
@@ -114,6 +123,54 @@ public final class MobTamperImpl implements MobTamper {
 		tracked.remove(mob);
 	}
 
+	// --- the player an effect is for ---
+
+	/**
+	 * Ties what is being done to {@code mob} right now to {@code player} (the card's target): it is released as soon
+	 * as that player is no longer a living participant in the mob's level. Does nothing if the mob is not tampered.
+	 * The latest bind wins.
+	 */
+	public void bind(Mob mob, UUID player) {
+		TamperState state = ((TamperedMob) mob).a1016_02$tamper();
+		if (state != null) {
+			state.owner = player;
+		}
+	}
+
+	/** The player the mob's effect is for, or null (unbound or not tampered). */
+	public @Nullable UUID ownerOf(Mob mob) {
+		TamperState state = ((TamperedMob) mob).a1016_02$tamper();
+		return state == null ? null : state.owner;
+	}
+
+	/** That player left or turned spectator: releases every mob bound to them. Returns how many. */
+	public int releaseFor(UUID player) {
+		int released = 0;
+		for (Mob mob : new ArrayList<>(tracked)) {
+			if (player.equals(ownerOf(mob))) {
+				release(mob);
+				released++;
+			}
+		}
+		return released;
+	}
+
+	/**
+	 * Releases every bound mob whose player is gone by {@code watch}'s look-up (D-062.1): offline, a spectator, dead,
+	 * or in another dimension than the mob. Returns how many.
+	 */
+	public int releaseOrphans(MinecraftServer server, PlayerWatch watch) {
+		int released = 0;
+		for (Mob mob : new ArrayList<>(tracked)) {
+			UUID owner = ownerOf(mob);
+			if (owner != null && !watch.participant(server, owner).filter(p -> watch.isTargetable(p) && p.level() == mob.level()).isPresent()) {
+				release(mob);
+				released++;
+			}
+		}
+		return released;
+	}
+
 	// --- queries ---
 
 	public boolean isFrozen(Mob mob) {
@@ -153,8 +210,8 @@ public final class MobTamperImpl implements MobTamper {
 
 	// --- lifecycle, called by AtmosphereServer ---
 
-	/** Ends expired effects and forgets removed mobs. Every server tick. */
-	public void tick() {
+	/** Ends expired effects, forgets removed mobs, and every second releases mobs whose player is gone. Every server tick. */
+	public void tick(MinecraftServer server) {
 		if (tracked.isEmpty()) {
 			return;
 		}
@@ -163,6 +220,9 @@ public final class MobTamperImpl implements MobTamper {
 			if (mob.isRemoved() || state == null || state.idle(now(mob))) {
 				release(mob);
 			}
+		}
+		if (server.getTickCount() % OWNER_CHECK_TICKS == 0) {
+			releaseOrphans(server, Services.watch());
 		}
 	}
 

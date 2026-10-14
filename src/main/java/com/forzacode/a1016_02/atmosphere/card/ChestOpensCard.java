@@ -3,7 +3,6 @@ package com.forzacode.a1016_02.atmosphere.card;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
-import java.util.UUID;
 
 import com.forzacode.a1016_02.atmosphere.AtmosphereConfig;
 import com.forzacode.a1016_02.atmosphere.Tasks;
@@ -14,13 +13,11 @@ import com.forzacode.a1016_02.core.FireResult;
 import com.forzacode.a1016_02.core.Habit;
 import com.forzacode.a1016_02.core.ModConfig;
 import com.forzacode.a1016_02.core.Services;
-import com.forzacode.a1016_02.core.SoundCues;
 import com.forzacode.a1016_02.core.Stage;
 import com.forzacode.a1016_02.core.Tier;
 
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.registries.BuiltInRegistries;
-import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.sounds.SoundEvents;
@@ -30,8 +27,9 @@ import net.minecraft.world.Container;
 import net.minecraft.world.phys.Vec3;
 
 /**
- * Chest opens: the open and close sound of a chest within {@code Pacing.chestRadius}, out of sight. The contents are
- * unchanged, or (real version only, sometimes) one stack is gone through {@code TraceService.removeStack}.
+ * Chest opens: the open and close sound of a chest within {@code Pacing.chestRadius} of the player, out of
+ * everyone's sight. Everyone in hearing range hears it. The contents are unchanged, or (real version only,
+ * sometimes) one stack is gone through {@code TraceService.removeStack}.
  */
 public final class ChestOpensCard extends AtmosphereCard {
 	public static final String ID = "chest_opens";
@@ -65,18 +63,12 @@ public final class ChestOpensCard extends AtmosphereCard {
 		AtmosphereConfig cfg = cfg();
 		RandomSource random = ctx.random();
 		Vec3 at = Vec3.atCenterOf(chest);
-		SoundCues.playTo(player, BuiltInRegistries.SOUND_EVENT.wrapAsHolder(SoundEvents.CHEST_OPEN), SoundSource.BLOCKS, at, 0.5F,
-				random.nextFloat() * 0.1F + 0.9F);
+		// The chest is in the world: everyone in hearing range hears it open and close (D-060), whoever it fired for.
+		SoundOut out = sounds;
+		out.play(level, BuiltInRegistries.SOUND_EVENT.wrapAsHolder(SoundEvents.CHEST_OPEN), SoundSource.BLOCKS, at, 0.5F, random.nextFloat() * 0.1F + 0.9F);
 		int closeDelay = cfg.chestCloseMinTicks + random.nextInt(Math.max(1, cfg.chestCloseMaxTicks - cfg.chestCloseMinTicks + 1));
 		float closePitch = random.nextFloat() * 0.1F + 0.9F;
-		UUID uuid = player.getUUID();
-		MinecraftServer server = level.getServer();
-		Tasks.later(closeDelay, () -> {
-			ServerPlayer online = server.getPlayerList().getPlayer(uuid);
-			if (online != null && online.level() == level) {
-				SoundCues.playTo(online, BuiltInRegistries.SOUND_EVENT.wrapAsHolder(SoundEvents.CHEST_CLOSE), SoundSource.BLOCKS, at, 0.5F, closePitch);
-			}
-		});
+		Tasks.later(closeDelay, () -> out.play(level, BuiltInRegistries.SOUND_EVENT.wrapAsHolder(SoundEvents.CHEST_CLOSE), SoundSource.BLOCKS, at, 0.5F, closePitch));
 		if (!ctx.fake() && random.nextDouble() < cfg.chestStackChance) {
 			takeOneStack(level, chest, random);
 		}

@@ -37,6 +37,14 @@ public final class Gates {
 		return a <= b ? t >= a && t < b : t >= a || t < b;
 	}
 
+	/**
+	 * Music off from the first night: not done yet in this world, any participant online (the first night is the
+	 * world's, whoever is there), and night by the overworld clock.
+	 */
+	public static boolean musicOffNow(boolean alreadyDone, boolean anyParticipant, boolean night) {
+		return !alreadyDone && anyParticipant && night;
+	}
+
 	/** Fog drift: never during combat. */
 	public static boolean fogDrift(long ticksSinceCombat, long noCombatTicks) {
 		return ticksSinceCombat >= noCombatTicks;

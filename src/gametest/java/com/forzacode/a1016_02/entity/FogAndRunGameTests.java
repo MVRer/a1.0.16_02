@@ -21,7 +21,7 @@ import net.minecraft.world.phys.Vec3;
  * (D-036). {@link EntityGameTests} extends this (through {@link SightingRuleGameTests}) so they run under its
  * registered entrypoint.
  */
-public class FogAndRunGameTests {
+public class FogAndRunGameTests extends TwoPlayerFigureGameTests {
 	private static boolean close(double a, double b, double tolerance) {
 		return Math.abs(a - b) <= tolerance;
 	}
@@ -97,7 +97,8 @@ public class FogAndRunGameTests {
 		}
 		// The figure uses his own spawn distance.
 		ServerLevel level = helper.getLevel();
-		HimEntity him = FigureApi.spawnAt(level, Variant.CLOSE, helper.absoluteVec(new Vec3(4.5, 1.0, 4.5)), 0.0F)
+		// The raw spawn: other tests have figures out at the same time, which the one-him rule of spawnAt would refuse.
+		HimEntity him = FigureApi.spawn(level, Variant.CLOSE, helper.absoluteVec(new Vec3(4.5, 1.0, 4.5)), 0.0F, null, Watchers.of(level))
 				.orElseThrow(() -> helper.assertionException("the figure did not spawn"));
 		try {
 			helper.assertTrue(Double.isNaN(him.spawnDistance()) && him.fleeDistance(config) == 18, "no player, yet a spawn distance");

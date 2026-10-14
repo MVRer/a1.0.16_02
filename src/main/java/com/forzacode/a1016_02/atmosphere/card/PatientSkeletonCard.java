@@ -22,6 +22,7 @@ import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.entity.monster.skeleton.Skeleton;
+import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.phys.Vec3;
 
 /**
@@ -65,6 +66,7 @@ public final class PatientSkeletonCard extends AtmosphereCard {
 		if (!hold(skeleton, player)) {
 			return FireResult.SKIPPED;
 		}
+		forTarget(skeleton, player);
 		AtmosphereConfig cfg = cfg();
 		Tasks.start(new Follow(player.getUUID(), skeleton, keep, AtmosphereConfig.ticks(cfg.skeletonFollowSeconds),
 				AtmosphereConfig.ticks(cfg.skeletonGoneTriesSeconds)));
@@ -95,24 +97,24 @@ public final class PatientSkeletonCard extends AtmosphereCard {
 		@Override
 		public boolean tick(MinecraftServer server) {
 			age++;
-			ServerPlayer subject = server.getPlayerList().getPlayer(player);
-			if (subject == null || !skeleton.isAlive() || subject.level() != skeleton.level() || skeleton.hurtTime > 0
-					|| skeleton.distanceToSqr(subject) < CLOSE * CLOSE) {
+			// The one it watches, looked up again (D-062.1): gone, dead, spectating or elsewhere, and it is just a skeleton.
+			ServerPlayer watched = target(server, player, skeleton.level()).orElse(null);
+			if (watched == null || !skeleton.isAlive() || skeleton.hurtTime > 0 || anyoneClose(skeleton)) {
 				mobs().release(skeleton);
 				return false;
 			}
 			ServerLevel level = (ServerLevel) skeleton.level();
 			if (age % RENEW_TICKS == 0) {
-				hold(skeleton, subject);
+				hold(skeleton, watched);
 			}
 			if (age <= length) {
-				if (age % 10 == 5 && Math.abs(Math.sqrt(skeleton.distanceToSqr(subject)) - keep) > SLACK) {
-					moveTo(level, subject, keep);
+				if (age % 10 == 5 && Math.abs(Math.sqrt(skeleton.distanceToSqr(watched)) - keep) > SLACK) {
+					moveTo(level, watched, keep);
 				}
 				return true;
 			}
 			// Done: gone, out of view, far away.
-			if (age % 10 == 5 && moveTo(level, subject, GONE_DISTANCE)) {
+			if (age % 10 == 5 && moveTo(level, watched, GONE_DISTANCE)) {
 				mobs().release(skeleton);
 				return false;
 			}
@@ -123,12 +125,22 @@ public final class PatientSkeletonCard extends AtmosphereCard {
 			return true;
 		}
 
+		/** Anyone (not spectating) walked up to it: the trick is over for everyone, as it is when its player does. */
+		private static boolean anyoneClose(Skeleton skeleton) {
+			for (Player other : skeleton.level().players()) {
+				if (!other.isSpectator() && skeleton.distanceToSqr(other) < CLOSE * CLOSE) {
+					return true;
+				}
+			}
+			return false;
+		}
+
 		/** Moves the skeleton to {@code distance} from the player, on its current bearing. Only when out of view. */
-		private boolean moveTo(ServerLevel level, ServerPlayer subject, double distance) {
+		private boolean moveTo(ServerLevel level, ServerPlayer watched, double distance) {
 			if (!Services.traces().isOutOfView(level, skeleton.getBoundingBox())) {
 				return false;
 			}
-			Vec3 from = subject.position();
+			Vec3 from = watched.position();
 			double angle = Math.atan2(skeleton.getZ() - from.z, skeleton.getX() - from.x);
 			BlockPos spot = WorldScan.surfaceSpotToward(level, from, angle, distance, 2);
 			return spot != null && mobs().moveOutOfView(skeleton, spot);

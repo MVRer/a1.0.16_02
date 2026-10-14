@@ -3,6 +3,7 @@ package com.forzacode.a1016_02.atmosphere.card;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
@@ -13,7 +14,7 @@ import com.forzacode.a1016_02.core.CardTag;
 import com.forzacode.a1016_02.core.FireContext;
 import com.forzacode.a1016_02.core.FireResult;
 import com.forzacode.a1016_02.core.Habit;
-import com.forzacode.a1016_02.core.SoundCues;
+import com.forzacode.a1016_02.core.Services;
 import com.forzacode.a1016_02.core.Stage;
 import com.forzacode.a1016_02.core.Tier;
 
@@ -29,7 +30,9 @@ import net.minecraft.world.phys.Vec3;
 /**
  * Footstep that stops late: the next time the player walks and stops, their own step sound plays once more a moment
  * after. Firing arms a watcher (the director's cadence can't hit the moment itself); it expires unheard after
- * {@code footstepArmSeconds}. At most once per session.
+ * {@code footstepArmSeconds}. At most once per session of that player (by UUID; a session ends when they stop taking
+ * part, {@link #onLeave}). The step is at the player's feet, so everyone in hearing range hears it too, as they would
+ * hear a real one.
  */
 public final class FootstepLateCard extends AtmosphereCard {
 	public static final String ID = "footstep_late";
@@ -90,7 +93,8 @@ public final class FootstepLateCard extends AtmosphereCard {
 		long now = server.getTickCount();
 		for (Iterator<Map.Entry<UUID, Watch>> it = ARMED.entrySet().iterator(); it.hasNext(); ) {
 			Map.Entry<UUID, Watch> entry = it.next();
-			ServerPlayer player = server.getPlayerList().getPlayer(entry.getKey());
+			// Looked up again every tick (D-062.1): gone, a spectator or dead, and the watcher is dropped unheard.
+			ServerPlayer player = Services.watch().participant(server, entry.getKey()).filter(Services.watch()::isTargetable).orElse(null);
 			Watch watch = entry.getValue();
 			if (player == null || now > watch.deadline) {
 				it.remove();
@@ -115,27 +119,28 @@ public final class FootstepLateCard extends AtmosphereCard {
 			}
 			if (++watch.stoppedTicks >= watch.delay) {
 				it.remove();
-				if (playStep(player)) {
+				if (!playStep(player, SoundOut.EVERYONE_IN_RANGE).isEmpty()) {
 					USED_THIS_SESSION.add(player.getUUID());
 				}
 			}
 		}
 	}
 
-	private static boolean playStep(ServerPlayer player) {
+	/** One step on the block under the player, at their feet, for everyone in hearing range. Returns who heard it (none if on air). */
+	static List<ServerPlayer> playStep(ServerPlayer player, SoundOut out) {
 		BlockState state = player.level().getBlockState(player.getOnPosLegacy());
 		if (state.isAir()) {
-			return false;
+			return List.of();
 		}
 		SoundType sound = state.getSoundType();
-		SoundCues.playTo(player, BuiltInRegistries.SOUND_EVENT.wrapAsHolder(sound.getStepSound()), SoundSource.PLAYERS, player.position(),
+		return out.play(player.level(), BuiltInRegistries.SOUND_EVENT.wrapAsHolder(sound.getStepSound()), SoundSource.PLAYERS, player.position(),
 				sound.getVolume() * 0.15F, sound.getPitch());
-		return true;
 	}
 
-	public static void onLeave(ServerPlayer player) {
-		USED_THIS_SESSION.remove(player.getUUID());
-		ARMED.remove(player.getUUID());
+	/** That player stopped taking part (left, or turned spectator): their session is over, nobody else's. */
+	public static void onLeave(UUID player) {
+		USED_THIS_SESSION.remove(player);
+		ARMED.remove(player);
 	}
 
 	public static void clear() {

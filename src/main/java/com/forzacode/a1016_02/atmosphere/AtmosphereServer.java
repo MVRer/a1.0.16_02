@@ -16,9 +16,15 @@ import net.fabricmc.fabric.api.networking.v1.ServerPlayConnectionEvents;
 import net.minecraft.server.MinecraftServer;
 
 /**
- * Server side of the atmosphere layer: ticks MobTamper, the timeline and the footstep watcher; turns music off from
- * the subject's first night; sets the dusk fog level for the stage; re-sends running effects on join; keeps the dead
- * mountains' areas and sends each client the ones near it.
+ * Server side of the atmosphere layer: ticks MobTamper, the timeline and the footstep watcher; turns music off the
+ * first night any participant is online (once per world); sets the dusk fog level for the stage (the world's); keeps
+ * the dead mountains' areas and sends each client the ones near it.
+ *
+ * <p>Sessions (D-062.4): {@code HerobrineEvents.PARTICIPATION} drives per-player session work. Starting to take part
+ * re-sends that player's running effects (once per connection, {@link ActiveEffects}); stopping (leaving, or turning
+ * spectator) ends that player's footstep session and releases the mobs tampered for them, and nobody else's. Fabric's
+ * JOIN and DISCONNECT are only used for what belongs to the client connection itself, spectators included: whether a
+ * fresh client still needs its re-sync, and which dead mountains a client was told about.
  */
 public final class AtmosphereServer {
 	private static final int CHECK_TICKS = 20;
@@ -29,10 +35,18 @@ public final class AtmosphereServer {
 	static void init() {
 		ServerTickEvents.END_SERVER_TICK.register(AtmosphereServer::tick);
 		ServerEntityEvents.ENTITY_UNLOAD.register((entity, level) -> MobTamperImpl.INSTANCE.onUnload(entity));
-		ServerPlayConnectionEvents.JOIN.register((handler, sender, server) -> ActiveEffects.onJoin(handler.player));
+		ServerPlayConnectionEvents.JOIN.register((handler, sender, server) -> ActiveEffects.onConnect(handler.player.getUUID()));
 		ServerPlayConnectionEvents.DISCONNECT.register((handler, server) -> {
-			FootstepLateCard.onLeave(handler.player);
+			ActiveEffects.onDisconnect(handler.player.getUUID());
 			DeadMountains.onLeave(handler.player);
+		});
+		HerobrineEvents.PARTICIPATION.register((server, player, participating) -> {
+			if (participating) {
+				ActiveEffects.onParticipating(server, player);
+			} else {
+				FootstepLateCard.onLeave(player);
+				MobTamperImpl.INSTANCE.releaseFor(player);
+			}
 		});
 		ServerLifecycleEvents.SERVER_STOPPED.register(server -> {
 			Tasks.clear(server);
@@ -45,7 +59,7 @@ public final class AtmosphereServer {
 	}
 
 	private static void tick(MinecraftServer server) {
-		MobTamperImpl.INSTANCE.tick();
+		MobTamperImpl.INSTANCE.tick(server);
 		Tasks.tick(server);
 		FootstepLateCard.tick(server);
 		DeadMountains.tick(server);
@@ -55,14 +69,16 @@ public final class AtmosphereServer {
 		}
 	}
 
-	/** Music goes off the first time it is night (by the clock) while the subject is online, and is never turned off again by us. */
+	/**
+	 * Music goes off the first time it is night (by the overworld clock) while any participant is online, wherever
+	 * they are, and is never turned off again by us. Once per world: the flag is saved in the same tick.
+	 */
 	private static void checkFirstNight(MinecraftServer server) {
 		AtmosphereData data = AtmosphereData.get(server);
-		if (data.musicOffDone() || Services.watch().subject(server).isEmpty() || !Gates.isNight(server.overworld())) {
-			return;
+		if (Gates.musicOffNow(data.musicOffDone(), !Services.watch().participants(server).isEmpty(), Gates.isNight(server.overworld()))) {
+			data.setMusicOffDone();
+			ClientEffects.setMusicOff(server, true);
 		}
-		data.setMusicOffDone();
-		ClientEffects.setMusicOff(server, true);
 	}
 
 	/** Sets the dusk fog for the current stage once per stage, so a later override (an ending) stays. */

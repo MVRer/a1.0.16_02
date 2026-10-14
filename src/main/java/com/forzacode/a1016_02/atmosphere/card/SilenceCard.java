@@ -30,6 +30,7 @@ public final class SilenceCard extends AtmosphereCard {
 	@Override
 	public FireResult fire(FireContext ctx) {
 		int ticks = (int) ModConfig.pacing().silenceTicks();
+		// A shared moment (D-060): everyone near the player loses the sound together, and gets it back together.
 		ActiveEffects.silence(ctx.player(), ticks, AtmosphereConfig.ticks(cfg().silenceFadeSeconds));
 		return FireResult.FIRED;
 	}

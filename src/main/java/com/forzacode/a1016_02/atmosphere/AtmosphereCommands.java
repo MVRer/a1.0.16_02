@@ -8,6 +8,7 @@ import java.util.Optional;
 import com.forzacode.a1016_02.atmosphere.mob.MobTamperImpl;
 import com.forzacode.a1016_02.core.ClientEffects;
 import com.forzacode.a1016_02.core.CommandHooks;
+import com.forzacode.a1016_02.core.GameClock;
 import com.forzacode.a1016_02.core.HerobrineState;
 import com.forzacode.a1016_02.core.Services;
 import com.mojang.brigadier.arguments.FloatArgumentType;
@@ -17,6 +18,7 @@ import com.mojang.brigadier.exceptions.CommandSyntaxException;
 
 import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.commands.Commands;
+import net.minecraft.commands.arguments.EntityArgument;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
@@ -27,8 +29,10 @@ import net.minecraft.world.phys.Vec3;
 
 /**
  * {@code /a1016 atmosphere ...}: fog surge|dusk, silence, music on|off, tamper freeze|face|silence|release on the
- * nearest mob, and status (including whether the player stands on a dead mountain). Effects go to the player running
- * the command, else the subject.
+ * nearest mob, and status (including whether the player stands on a dead mountain). Fog surges and silences are
+ * the shared ones a card sends (D-060: the player and everyone sharing the moment). They and status act on the named
+ * player ({@code ... surge <strength> <seconds> <player>}, {@code silence <seconds> <player>}, {@code status <player>}),
+ * else the player running the command, else (from the console) the first participant (D-062.9).
  */
 final class AtmosphereCommands {
 	private static final double TAMPER_RANGE = 32.0;
@@ -41,15 +45,22 @@ final class AtmosphereCommands {
 		CommandHooks.register((root, context) -> root.then(Commands.literal("atmosphere")
 				.then(Commands.literal("fog")
 						.then(Commands.literal("surge")
-								.executes(ctx -> surge(ctx, 0.75F, 5))
+								.executes(ctx -> surge(ctx, target(ctx), 0.75F, 5))
 								.then(Commands.argument("strength", FloatArgumentType.floatArg(0.0F, 1.0F))
-										.executes(ctx -> surge(ctx, FloatArgumentType.getFloat(ctx, "strength"), 5))
+										.executes(ctx -> surge(ctx, target(ctx), FloatArgumentType.getFloat(ctx, "strength"), 5))
 										.then(Commands.argument("seconds", IntegerArgumentType.integer(1, 600))
-												.executes(ctx -> surge(ctx, FloatArgumentType.getFloat(ctx, "strength"), IntegerArgumentType.getInteger(ctx, "seconds"))))))
+												.executes(ctx -> surge(ctx, target(ctx), FloatArgumentType.getFloat(ctx, "strength"),
+														IntegerArgumentType.getInteger(ctx, "seconds")))
+												.then(Commands.argument("player", EntityArgument.player())
+														.executes(ctx -> surge(ctx, Optional.of(EntityArgument.getPlayer(ctx, "player")),
+																FloatArgumentType.getFloat(ctx, "strength"), IntegerArgumentType.getInteger(ctx, "seconds")))))))
 						.then(Commands.literal("dusk")
 								.then(Commands.argument("level", FloatArgumentType.floatArg(0.0F, 1.0F)).executes(AtmosphereCommands::dusk))))
 				.then(Commands.literal("silence")
-						.then(Commands.argument("seconds", IntegerArgumentType.integer(1, 3600)).executes(AtmosphereCommands::silence)))
+						.then(Commands.argument("seconds", IntegerArgumentType.integer(1, 3600))
+								.executes(ctx -> silence(ctx, target(ctx)))
+								.then(Commands.argument("player", EntityArgument.player())
+										.executes(ctx -> silence(ctx, Optional.of(EntityArgument.getPlayer(ctx, "player")))))))
 				.then(Commands.literal("music")
 						.then(Commands.literal("on").executes(ctx -> music(ctx, false)))
 						.then(Commands.literal("off").executes(ctx -> music(ctx, true))))
@@ -58,7 +69,9 @@ final class AtmosphereCommands {
 						.then(tamper("face"))
 						.then(tamper("silence"))
 						.then(Commands.literal("release").executes(ctx -> tamperOp(ctx, "release", 0))))
-				.then(Commands.literal("status").executes(AtmosphereCommands::status))));
+				.then(Commands.literal("status").executes(ctx -> status(ctx, target(ctx)))
+						.then(Commands.argument("player", EntityArgument.player())
+								.executes(ctx -> status(ctx, Optional.of(EntityArgument.getPlayer(ctx, "player"))))))));
 	}
 
 	private static com.mojang.brigadier.builder.LiteralArgumentBuilder<CommandSourceStack> tamper(String op) {
@@ -68,21 +81,26 @@ final class AtmosphereCommands {
 						.executes(ctx -> tamperOp(ctx, op, IntegerArgumentType.getInteger(ctx, "ticks"))));
 	}
 
-	private static Optional<ServerPlayer> target(CommandContext<CommandSourceStack> ctx) {
+	/** The player running the command, otherwise (the console) the first participant in join order (D-062.9). */
+	static Optional<ServerPlayer> target(CommandContext<CommandSourceStack> ctx) {
 		ServerPlayer self = ctx.getSource().getPlayer();
-		return self != null ? Optional.of(self) : Services.watch().subject(ctx.getSource().getServer());
+		return self != null ? Optional.of(self) : Services.watch().participants(ctx.getSource().getServer()).stream().findFirst();
 	}
 
-	private static int surge(CommandContext<CommandSourceStack> ctx, float strength, int seconds) {
-		Optional<ServerPlayer> player = target(ctx);
+	private static String names(List<ServerPlayer> players) {
+		return String.join(", ", players.stream().map(p -> p.getName().getString()).toList());
+	}
+
+	private static int surge(CommandContext<CommandSourceStack> ctx, Optional<ServerPlayer> player, float strength, int seconds) {
 		if (player.isEmpty()) {
 			return fail(ctx, "no player");
 		}
 		AtmosphereConfig cfg = AtmosphereConfig.get();
-		if (!ActiveEffects.fogSurge(player.get(), strength, cfg.fogDriftRampTicks, seconds * 20, cfg.fogDriftFadeTicks)) {
-			return fail(ctx, "no fog surge: the world is quiet for good (" + Gates.SILENCE_FOREVER_FLAG + ")");
+		List<ServerPlayer> got = ActiveEffects.fogSurge(player.get(), strength, cfg.fogDriftRampTicks, seconds * 20, cfg.fogDriftFadeTicks);
+		if (got.isEmpty()) {
+			return fail(ctx, "no fog surge: the world is quiet for good (" + Gates.SILENCE_FOREVER_FLAG + " or " + Gates.PATH_C_FLAG + ")");
 		}
-		return ok(ctx,String.format(Locale.ROOT, "fog surge %.2f for %ds -> %s", strength, seconds, player.get().getName().getString()));
+		return ok(ctx, String.format(Locale.ROOT, "fog surge %.2f for %ds -> %s", strength, seconds, names(got)));
 	}
 
 	private static int dusk(CommandContext<CommandSourceStack> ctx) {
@@ -91,14 +109,13 @@ final class AtmosphereCommands {
 		return ok(ctx, String.format(Locale.ROOT, "dusk fog %.2f (stored; the next stage change sets the stage's level again)", level));
 	}
 
-	private static int silence(CommandContext<CommandSourceStack> ctx) {
-		Optional<ServerPlayer> player = target(ctx);
+	private static int silence(CommandContext<CommandSourceStack> ctx, Optional<ServerPlayer> player) {
 		if (player.isEmpty()) {
 			return fail(ctx, "no player");
 		}
 		int seconds = IntegerArgumentType.getInteger(ctx, "seconds");
-		ActiveEffects.silence(player.get(), seconds * 20, AtmosphereConfig.ticks(AtmosphereConfig.get().silenceFadeSeconds));
-		return ok(ctx, "silence " + seconds + "s -> " + player.get().getName().getString());
+		List<ServerPlayer> got = ActiveEffects.silence(player.get(), seconds * 20, AtmosphereConfig.ticks(AtmosphereConfig.get().silenceFadeSeconds));
+		return ok(ctx, "silence " + seconds + "s -> " + names(got));
 	}
 
 	private static int music(CommandContext<CommandSourceStack> ctx, boolean off) {
@@ -130,7 +147,7 @@ final class AtmosphereCommands {
 		return done ? ok(ctx, "tamper " + op + (ticks > 0 ? " " + ticks + "t " : " ") + what) : fail(ctx, "tamper " + op + " refused for " + what);
 	}
 
-	private static int status(CommandContext<CommandSourceStack> ctx) {
+	private static int status(CommandContext<CommandSourceStack> ctx, Optional<ServerPlayer> player) {
 		MinecraftServer server = ctx.getSource().getServer();
 		HerobrineState.Effects effects = HerobrineState.get(server).effects();
 		AtmosphereData data = AtmosphereData.get(server);
@@ -144,7 +161,14 @@ final class AtmosphereCommands {
 					t.isSilenced(mob) ? "S" : ""));
 		}
 		ok(ctx, line + " episodes=" + Tasks.episodeCount());
-		target(ctx).ifPresent(player -> ok(ctx, deadMountainLine(player)));
+		player.ifPresent(p -> {
+			Optional<AtmosphereData.Transient> t = data.transientOf(p.getUUID());
+			long now = GameClock.playTicks(server);
+			ok(ctx, String.format(Locale.ROOT, "%s: surge %dt, silence %dt, compass %dt, mining tonight %d", p.getName().getString(),
+					ActiveEffects.surgeLeft(server, p.getUUID()), t.map(x -> x.silenceLeft(now)).orElse(0L), t.map(x -> x.compassLeft(now)).orElse(0L),
+					data.miningOn(p.getUUID(), GameClock.day(server))));
+			ok(ctx, deadMountainLine(p));
+		});
 		return 1;
 	}
 

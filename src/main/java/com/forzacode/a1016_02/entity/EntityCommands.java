@@ -17,15 +17,20 @@ import com.mojang.brigadier.context.CommandContext;
 import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.commands.Commands;
 import net.minecraft.commands.SharedSuggestionProvider;
+import net.minecraft.commands.arguments.EntityArgument;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.util.RandomSource;
 
+import org.jspecify.annotations.Nullable;
+
 /**
- * {@code /a1016 entity spawn <variant> | clear | info | goesunder | eyes [<flat|bright|glow> [fogResistance]] | tune [<key> <value>]}.
- * {@code goesunder} makes the figure that is out end the sighting by going under (D-030) now, if the ground lets him.
- * Debug only (op level 2, like the whole /a1016 tree). {@code eyes} and {@code tune} save to the config file.
+ * {@code /a1016 entity spawn <variant> [player] | clear | info [player] | goesunder | eyes [<flat|bright|glow> [fogResistance]] | tune [<key> <value>]}.
+ * {@code spawn} and {@code info} act on the named player, else the player running the command, else (from the
+ * console) the first participant (D-062.9). {@code goesunder} makes the figure that is out end the sighting by going
+ * under (D-030) now, if the ground lets him. Debug only (op level 2, like the whole /a1016 tree). {@code eyes} and
+ * {@code tune} save to the config file.
  */
 final class EntityCommands {
 	private EntityCommands() {
@@ -36,10 +41,14 @@ final class EntityCommands {
 				.then(Commands.literal("spawn")
 						.then(Commands.argument("variant", StringArgumentType.word())
 								.suggests((ctx, builder) -> SharedSuggestionProvider.suggest(Arrays.stream(Variant.values()).map(Variant::shortName), builder))
-								.executes(EntityCommands::spawn)))
+								.executes(ctx -> spawn(ctx, target(ctx.getSource())))
+								.then(Commands.argument("player", EntityArgument.player())
+										.executes(ctx -> spawn(ctx, EntityArgument.getPlayer(ctx, "player"))))))
 				.then(Commands.literal("clear").executes(EntityCommands::clear))
 				.then(Commands.literal("goesunder").executes(EntityCommands::goesUnder))
-				.then(Commands.literal("info").executes(EntityCommands::info))
+				.then(Commands.literal("info").executes(ctx -> info(ctx, target(ctx.getSource())))
+						.then(Commands.argument("player", EntityArgument.player())
+								.executes(ctx -> info(ctx, EntityArgument.getPlayer(ctx, "player")))))
 				.then(Commands.literal("eyes").executes(EntityCommands::eyes)
 						.then(Commands.argument("style", StringArgumentType.word())
 								.suggests((ctx, builder) -> SharedSuggestionProvider.suggest(Arrays.stream(EyeStyle.values()).map(EyeStyle::shortName), builder))
@@ -116,26 +125,30 @@ final class EntityCommands {
 		return String.format(Locale.ROOT, "%s, fog resistance %.2f", config.eyeStyle().shortName(), config.eyeFogResistance());
 	}
 
-	/** Skips the gates, never the fog edge or the out-of-view rule. */
-	private static int spawn(CommandContext<CommandSourceStack> ctx) {
+	/**
+	 * Skips the gates, never the fog edge, one him or the out-of-view rule. If he is already out, he is told to walk
+	 * away and the spawn is refused; run it again once he is gone.
+	 */
+	private static int spawn(CommandContext<CommandSourceStack> ctx, @Nullable ServerPlayer player) {
 		String name = StringArgumentType.getString(ctx, "variant");
 		Optional<Variant> variant = Variant.byName(name);
 		if (variant.isEmpty()) {
 			ctx.getSource().sendFailure(Component.literal("[a1016] unknown variant " + name));
 			return 0;
 		}
-		ServerPlayer player = target(ctx);
 		if (player == null) {
 			ctx.getSource().sendFailure(Component.literal("[a1016] no player to spawn him for"));
 			return 0;
 		}
+		boolean wasOut = FigureApi.anyOut(ctx.getSource().getServer());
 		FogEdge edge = FogEdge.of(player, variant.get() == Variant.CLOSE);
 		FigureApi.Spawned spawned = FigureApi.spawnAtFogEdge(player, variant.get(), RandomSource.create(), true);
-		String where = spawned.figure() == null ? ""
+		String where = spawned.figure() == null ? (wasOut ? ", he was out: told him to walk away, try again once he is gone" : "")
 				: String.format(Locale.ROOT, " at %s, %d blocks out", spawned.figure().blockPosition().toShortString(),
 						Math.round(SpotFinder.horizontal(player.position(), spawned.figure().position())));
-		String line = String.format(Locale.ROOT, "[a1016] entity spawn %s -> %s%s (band %.1f..%.1f of fog end %.1f, %s%s)", variant.get().shortName(),
-				spawned.result(), where, edge.inner(), edge.outer(), edge.limit(), source(edge), edge.seeable() ? "" : ", fog too thick to see him");
+		String line = String.format(Locale.ROOT, "[a1016] entity spawn %s for %s -> %s%s (band %.1f..%.1f of fog end %.1f, %s%s)", variant.get().shortName(),
+				player.getName().getString(), spawned.result(), where, edge.inner(), edge.outer(), edge.limit(), source(edge),
+				edge.seeable() ? "" : ", fog too thick to see him");
 		ctx.getSource().sendSuccess(() -> Component.literal(line), true);
 		return spawned.figure() != null ? 1 : 0;
 	}
@@ -171,21 +184,24 @@ final class EntityCommands {
 		return removed;
 	}
 
-	private static int info(CommandContext<CommandSourceStack> ctx) {
+	private static int info(CommandContext<CommandSourceStack> ctx, @Nullable ServerPlayer player) {
 		MinecraftServer server = ctx.getSource().getServer();
 		List<String> lines = new ArrayList<>();
-		ServerPlayer player = target(ctx);
 		List<HimEntity> out = FigureApi.active(server);
-		lines.add("[a1016] entity: " + out.size() + " out");
+		lines.add("[a1016] entity: " + out.size() + " out" + (player == null ? "" : " (for " + player.getName().getString() + ")"));
 		EntityConfig config = EntityConfig.get();
 		for (HimEntity him : out) {
 			String dist = player == null ? "?" : String.format(Locale.ROOT, "%.1f", SpotFinder.horizontal(player.position(), him.position()));
 			String closed = player == null ? "?" : String.format(Locale.ROOT, "%.1f", him.closedBy(player.getUUID()));
-			lines.add(String.format(Locale.ROOT, " %s %s at %s (%s blocks) spawnedAt=%.1f flee=%.1f approach=%.1f age=%ds seenFor=%ds unseen=%d stare=%d"
-					+ " closed=%s triggered=%s fled=%s low=%s speed=%.1f b/s outrun=%s",
-					him.variant().shortName(), him.phase(), him.blockPosition().toShortString(), dist, him.spawnDistance(), him.fleeDistance(config),
-					him.approachBlocks(config), him.age() / 20, him.seenFor() < 0 ? -1 : him.seenFor() / 20, him.unseenTicks(), him.stareTicks(), closed,
-					him.triggered(), him.fled(), him.isLow(), him.moveSpeed(), him.outrunning()));
+			String stare = player == null ? String.valueOf(him.stareTicks()) : String.valueOf(him.stareTicks(player.getUUID()));
+			String appearedFor = him.appearedFor() == null ? "-"
+					: server.getPlayerList().getPlayer(him.appearedFor()) instanceof ServerPlayer p ? p.getName().getString() : "(gone)";
+			lines.add(String.format(Locale.ROOT, " %s %s in %s at %s (%s blocks) for=%s spawnedAt=%.1f flee=%.1f approach=%.1f age=%ds seenFor=%ds"
+					+ " unseen=%d stare=%s stared=%d closed=%s triggered=%s fled=%s low=%s speed=%.1f b/s outrun=%s",
+					him.variant().shortName(), him.phase(), him.level().dimension().identifier().getPath(), him.blockPosition().toShortString(), dist,
+					appearedFor, him.spawnDistance(), him.fleeDistance(config), him.approachBlocks(config), him.age() / 20,
+					him.seenFor() < 0 ? -1 : him.seenFor() / 20, him.unseenTicks(), stare, him.staredBy().size(), closed, him.triggered(), him.fled(),
+					him.isLow(), him.moveSpeed(), him.outrunning()));
 			GoUnder dig = him.goUnder();
 			if (dig != null) {
 				lines.add(String.format(Locale.ROOT, "  under: %s at %s, %d deep, dug %d, covered %d of %d", dig.status(), dig.plan().top().toShortString(),
@@ -197,8 +213,9 @@ final class EntityCommands {
 		}
 		FigureApi.LastSpawn lastSpawn = FigureApi.lastSpawn();
 		if (lastSpawn != null) {
-			lines.add(String.format(Locale.ROOT, "last spawn: %s at %.1f blocks (band %.1f..%.1f of fog end %.1f, %s)", lastSpawn.variant().shortName(),
-					lastSpawn.distance(), lastSpawn.edge().inner(), lastSpawn.edge().outer(), lastSpawn.edge().limit(), source(lastSpawn.edge())));
+			lines.add(String.format(Locale.ROOT, "last spawn: %s for %s at %.1f blocks (band %.1f..%.1f of their fog end %.1f, %s)",
+					lastSpawn.variant().shortName(), lastSpawn.forName(), lastSpawn.distance(), lastSpawn.edge().inner(), lastSpawn.edge().outer(),
+					lastSpawn.edge().limit(), source(lastSpawn.edge())));
 		}
 		EntityData data = EntityData.get(server);
 		String last = data.lastPos() == null ? "-" : data.lastPos().pos().toShortString();
@@ -235,9 +252,9 @@ final class EntityCommands {
 		return edge.fromClient() ? "client" : "server estimate";
 	}
 
-	/** The command's player, otherwise the subject. */
-	private static ServerPlayer target(CommandContext<CommandSourceStack> ctx) {
-		ServerPlayer player = ctx.getSource().getPlayer();
-		return player != null ? player : Services.watch().subject(ctx.getSource().getServer()).orElse(null);
+	/** The player running the command, otherwise (the console, a command block) the first participant in join order (D-062.9). */
+	static @Nullable ServerPlayer target(CommandSourceStack source) {
+		ServerPlayer player = source.getPlayer();
+		return player != null ? player : Services.watch().participants(source.getServer()).stream().findFirst().orElse(null);
 	}
 }

@@ -39,7 +39,14 @@ public final class DistantCaveSoundCard extends AtmosphereCard {
 		return FireResult.FIRED;
 	}
 
-	/** The vanilla cave sound somewhere around the player, a little below. Also the mining card's false positive. */
+	/**
+	 * The vanilla cave sound somewhere around the player, a little below. Also the mining card's false positive.
+	 *
+	 * <p>This one stays {@code playTo}, the player alone: it is not a sound he makes but the game's own cave mood
+	 * ambience, which vanilla plays on each client by itself (never to the players around). Played to everyone in
+	 * range it would be the one cave sound two players ever heard together, a tell that it is not the game. The card
+	 * also needs the player alone ({@code caveSoundAloneRadius}, 48 blocks, past its 21-block hearing range).
+	 */
 	static void play(ServerPlayer player, RandomSource random) {
 		double angle = random.nextDouble() * Math.PI * 2.0;
 		double dist = 9.0 + random.nextDouble() * 6.0;

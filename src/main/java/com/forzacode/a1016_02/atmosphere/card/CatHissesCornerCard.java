@@ -8,11 +8,11 @@ import java.util.UUID;
 import com.forzacode.a1016_02.atmosphere.AtmosphereConfig;
 import com.forzacode.a1016_02.atmosphere.Tasks;
 import com.forzacode.a1016_02.atmosphere.WorldScan;
+import com.forzacode.a1016_02.atmosphere.mob.MobTamperImpl;
 import com.forzacode.a1016_02.core.CardTag;
 import com.forzacode.a1016_02.core.FireContext;
 import com.forzacode.a1016_02.core.FireResult;
 import com.forzacode.a1016_02.core.Habit;
-import com.forzacode.a1016_02.core.SoundCues;
 import com.forzacode.a1016_02.core.Stage;
 import com.forzacode.a1016_02.core.Tier;
 
@@ -65,11 +65,13 @@ public final class CatHissesCornerCard extends AtmosphereCard {
 				mobs().release(cat);
 				continue;
 			}
+			forTarget(cat, player);
 			UUID uuid = player.getUUID();
 			MinecraftServer server = level.getServer();
+			SoundOut out = sounds;
 			for (int delay : new int[] {12, 12 + Math.max(20, ticks / 3)}) {
 				if (delay < ticks) {
-					Tasks.later(delay, () -> hiss(server, uuid, cat));
+					Tasks.later(delay, () -> hiss(server, uuid, cat, out));
 				}
 			}
 			return FireResult.FIRED;
@@ -77,13 +79,17 @@ public final class CatHissesCornerCard extends AtmosphereCard {
 		return FireResult.NO_SPOT;
 	}
 
-	private static void hiss(MinecraftServer server, UUID player, Cat cat) {
-		ServerPlayer online = server.getPlayerList().getPlayer(player);
+	/**
+	 * The hiss, for everyone in hearing range of the cat. Only while the cat is still held for its owner: once they are
+	 * gone the cat was released ({@code MobTamperImpl.bind}) and there is no hiss.
+	 */
+	private static void hiss(MinecraftServer server, UUID player, Cat cat, SoundOut out) {
 		Holder<CatSoundVariant> variant = cat.get(DataComponents.CAT_SOUND_VARIANT);
-		if (online == null || variant == null || !cat.isAlive() || online.level() != cat.level()) {
+		if (variant == null || !cat.isAlive() || !MobTamperImpl.INSTANCE.isFrozen(cat) || !(cat.level() instanceof ServerLevel level)
+				|| target(server, player, level).isEmpty()) {
 			return;
 		}
 		Holder<SoundEvent> hiss = cat.isBaby() ? variant.value().babySounds().hissSound() : variant.value().adultSounds().hissSound();
-		SoundCues.playTo(online, hiss, SoundSource.NEUTRAL, cat.position(), 1.0F, 0.9F + cat.getRandom().nextFloat() * 0.2F);
+		out.play(level, hiss, SoundSource.NEUTRAL, cat.position(), 1.0F, 0.9F + cat.getRandom().nextFloat() * 0.2F);
 	}
 }
