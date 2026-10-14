@@ -2,6 +2,7 @@ package com.forzacode.a1016_02.lore;
 
 import java.util.List;
 import java.util.Optional;
+import java.util.UUID;
 
 import com.forzacode.a1016_02.A1016_02;
 import com.forzacode.a1016_02.core.HerobrineState;
@@ -28,11 +29,18 @@ import net.minecraft.world.level.block.state.properties.RotationSegment;
  * through {@code TraceService}, out of view; a call that returns false changed nothing and can be retried later.
  */
 public final class LoreApi {
+	/**
+	 * The stored-owner key (D-061) of the story's first blocks: whose first crafting table, chest or block F13's
+	 * cairn takes and F10 marks, and whose base the story's fragments are measured from. Read it with
+	 * {@code PlayerWatch.ownerFor} or {@code owner} (the ending reads it for the cairn's first block).
+	 */
+	public static final String FIRST_BLOCKS_OWNER = Homes.FIRST_BLOCKS;
+
 	private LoreApi() {
 	}
 
 	/**
-	 * How many times the player told about him: signs and books that name him or were written within
+	 * How many times anyone told about him (one count for the world, D-058): signs and books that name him or were written within
 	 * {@code pacing.tellingRadius} of his traces, and chat that names him. "The more you tell, the faster things
 	 * go." The count is {@code HerobrineState.tellingCount()}; also mirrored in its flags as {@code lore:telling_count=<n>}.
 	 */
@@ -59,9 +67,22 @@ public final class LoreApi {
 	}
 
 	/**
-	 * Ending B: F10 gains its last line, "* removed [PLAYER NAME]" (from F10's data), wherever it is. Copies in
-	 * reach change now; any other copy shows it the next time it is opened. Always true.
+	 * Ending B: F10 gains its last line, "* removed [PLAYER NAME]" (from F10's data), wherever it is, naming
+	 * {@code player}: the player the ending finished (D-063; a known player, else as without one). Copies in reach
+	 * change now; any other copy shows it the next time it is opened. Always true.
 	 */
+	public static boolean finishF10(MinecraftServer server, UUID player) {
+		LiveBooks.finishF10(server, player);
+		return true;
+	}
+
+	/**
+	 * {@link #finishF10(MinecraftServer, UUID)} before the ending says whom: names the player whose marked death came
+	 * last (Ending B ends on one), else the first known player; a player already named stays.
+	 *
+	 * @deprecated kept until the ending passes the player it finished; use {@link #finishF10(MinecraftServer, UUID)}.
+	 */
+	@Deprecated
 	public static boolean finishF10(MinecraftServer server) {
 		LiveBooks.finishF10(server);
 		return true;
@@ -102,7 +123,8 @@ public final class LoreApi {
 		if (!Terrain.isAirOrReplaceable(level.getBlockState(at)) && !Build.his(traces, level, "F20").remove(at).commit()) {
 			return false;
 		}
-		String name = state.subject().map(HerobrineState.Subject::name).orElse("Steve");
+		// F20 names nobody; should its words ever say "you", they would be the player Ending B finished.
+		String name = LiveBooks.removedName(state, TellingData.get(server)).orElse("");
 		if (!Build.left(traces, level, "F20").chest(at, Direction.NORTH, List.of(FragmentItems.book(f20.get(), name))).commit()) {
 			return false;
 		}
@@ -196,9 +218,9 @@ public final class LoreApi {
 		LoreData lore = LoreData.get(server);
 		lore.clearReadTargets("F03");
 		lore.addReadTarget("F03", at);
-		// If the player rewrote it, it says "Stop." again: F03's own words, never his.
+		// If a player rewrote it, it says "Stop." again: F03's own words, never his, aimed at whoever first wrote it.
 		Optional<Fragment> f03 = FragmentData.get("F03");
-		String name = state.subject().map(HerobrineState.Subject::name).orElse("Steve");
+		String name = TellingCards.writerName(state, data, Optional.of(at)).orElse("");
 		if (f03.isPresent() && level.getBlockEntity(to) instanceof SignBlockEntity be && !SignEdits.front(be).equals(f03.get().linesFor(name))) {
 			editor.edit(level, to, f03.get().linesFor(name), List.of(), "lore:his/F03");
 		}

@@ -24,8 +24,10 @@ import net.minecraft.world.phys.HitResult;
 import net.minecraft.world.phys.Vec3;
 
 /**
- * {@code /a1016 lore telling | tell <text> | listcause <cause> | ending finishf10|placef20|stoptocross}: debug for
- * the telling. The cards fire with core's {@code /a1016 fire stop_sign | blank_sign | place_not_found}.
+ * {@code /a1016 lore telling | tell <text> | tellas <player> <text> | listcause <cause> | ending finishf10 [player] |
+ * placef20 | stoptocross [player]}: debug for the telling. A command that acts on a player acts on the named one,
+ * else on whoever runs it, else (the console) on the first participant (D-062.9). The cards fire with core's
+ * {@code /a1016 fire stop_sign | blank_sign | place_not_found}.
  */
 final class TellingCommands {
 	private static final int SHOWN = 12;
@@ -65,18 +67,27 @@ final class TellingCommands {
 					book.namesHim() ? ", names him" : "", book.day()));
 		}
 		TellingData.Burned burned = data.burned();
-		say(ctx, String.format(Locale.ROOT, "[a1016] visited %s | not found %s | list burnt %d (pyramids owed %d, raised %d%s) | list cause %s | blanks waiting %d",
+		say(ctx, String.format(Locale.ROOT, "[a1016] visited %s | not found %s | list burnt %d (pyramids owed %d, raised %d%s) | blanks waiting %d",
 				data.visited(), data.notFound().orElse("not yet"), burned.lists(), burned.owed(), burned.raised(),
-				burned.ocean().map(o -> ", ocean " + at(o)).orElse(""), LiveBooks.cause(server).orElse("none"), data.pendingBlanks().size()));
+				burned.ocean().map(o -> ", ocean " + at(o)).orElse(""), data.pendingBlanks().size()));
+		List<LiveBooks.Line> lines = LiveBooks.lines(state, data);
+		say(ctx, "[a1016] the list's lines (" + lines.size() + "): " + (lines.isEmpty() ? "nobody known yet"
+				: String.join(" | ", lines.stream().map(LiveBooks.Line::text).toList()))
+				+ LiveBooks.removedName(state, data).map(name -> " | F10 removes " + name).orElse(""));
 		return state.tellingCount();
 	}
 
 	/**
-	 * {@code /a1016 lore tell <text>}: as if the player had just written {@code text} on a sign at their position
-	 * (or on the sign they look at). Nothing is placed or written; detection, TELLING, the count and the records run.
+	 * {@code /a1016 lore tell <text>} (or {@code tellas <player> <text>}): as if that player (whoever runs it, or the
+	 * first participant from the console) had just written {@code text} on a sign at their position (or on the sign
+	 * they look at). Nothing is placed or written; detection, TELLING, the count and the records run.
 	 */
-	static int tell(CommandContext<CommandSourceStack> ctx) throws CommandSyntaxException {
-		ServerPlayer player = ctx.getSource().getPlayerOrException();
+	static int tell(CommandContext<CommandSourceStack> ctx, boolean named) throws CommandSyntaxException {
+		Optional<ServerPlayer> target = LoreCommands.target(ctx, named);
+		if (target.isEmpty()) {
+			return 0;
+		}
+		ServerPlayer player = target.get();
 		MinecraftServer server = ctx.getSource().getServer();
 		String text = StringArgumentType.getString(ctx, "text");
 		BlockPos pos = lookedAt(player, 6).filter(p -> player.level().getBlockEntity(p) instanceof SignBlockEntity).orElse(player.blockPosition());
@@ -91,8 +102,11 @@ final class TellingCommands {
 		return told.told() ? 1 : 0;
 	}
 
-	/** {@code /a1016 lore listcause <cause>}: what F23 would read with this cause. Records nothing. */
-	static int listCause(CommandContext<CommandSourceStack> ctx) {
+	/**
+	 * {@code /a1016 lore listcause <cause>}: what F23 would read if the player running it (from the console, the
+	 * first participant) died now of this cause; everyone else's line as it is. Records nothing.
+	 */
+	static int listCause(CommandContext<CommandSourceStack> ctx) throws CommandSyntaxException {
 		MinecraftServer server = ctx.getSource().getServer();
 		String cause = StringArgumentType.getString(ctx, "cause");
 		Optional<Fragment> f23 = FragmentData.get("F23");
@@ -100,9 +114,16 @@ final class TellingCommands {
 			ctx.getSource().sendFailure(Component.literal("[a1016] F23 did not load"));
 			return 0;
 		}
-		String name = LiveBooks.name(server, ctx.getSource().getPlayer());
+		Optional<ServerPlayer> target = LoreCommands.find(ctx, false);
+		String name = target.map(p -> p.getName().getString()).orElse("");
+		HerobrineState state = HerobrineState.get(server);
+		List<LiveBooks.Line> lines = new java.util.ArrayList<>();
+		for (HerobrineState.Subject known : state.players()) {
+			boolean them = target.map(p -> p.getUUID().equals(known.uuid())).orElse(false);
+			lines.add(new LiveBooks.Line(known.name(), them ? Optional.of(cause) : LiveBooks.cause(server, known.uuid())));
+		}
 		say(ctx, "[a1016] F23 would read (preview, nothing recorded):");
-		for (String page : LiveBooks.pages(f23.get(), name, Optional.of(cause), false)) {
+		for (String page : LiveBooks.pages(f23.get(), name, lines, Optional.empty())) {
 			for (String line : page.split("\n", -1)) {
 				say(ctx, "  " + line);
 			}
@@ -110,10 +131,17 @@ final class TellingCommands {
 		return 1;
 	}
 
-	/** {@code /a1016 lore ending finishf10}: Ending B's last F10 line, now (sets lore:f10_finished for good). */
-	static int finishF10(CommandContext<CommandSourceStack> ctx) {
-		int updated = LiveBooks.finishF10(ctx.getSource().getServer());
-		say(ctx, "[a1016] F10 now ends with its last line (" + updated + " copies updated now; others when opened). Flag "
+	/**
+	 * {@code /a1016 lore ending finishf10 [player]}: Ending B's last F10 line now, naming that player (whoever runs
+	 * it; from the console, the first participant; with nobody at all, as the ending's old call would). Sets
+	 * lore:f10_finished for good.
+	 */
+	static int finishF10(CommandContext<CommandSourceStack> ctx, boolean named) throws CommandSyntaxException {
+		Optional<ServerPlayer> target = LoreCommands.find(ctx, named);
+		MinecraftServer server = ctx.getSource().getServer();
+		int updated = target.isPresent() ? LiveBooks.finishF10(server, target.get().getUUID()) : LiveBooks.finishF10(server);
+		say(ctx, "[a1016] F10 now ends with its last line for " + LiveBooks.removedName(HerobrineState.get(server), TellingData.get(server))
+				.orElse("nobody known (they never took part)") + " (" + updated + " copies updated now; others when opened). Flag "
 				+ LiveBooks.F10_FINISHED + " is set.");
 		return 1;
 	}
@@ -127,9 +155,16 @@ final class TellingCommands {
 		return placed ? 1 : 0;
 	}
 
-	/** {@code /a1016 lore ending stoptocross}: the "Stop." sign moves in front of the block you look at (the cross's bottom). */
-	static int stopToCross(CommandContext<CommandSourceStack> ctx) throws CommandSyntaxException {
-		ServerPlayer player = ctx.getSource().getPlayerOrException();
+	/**
+	 * {@code /a1016 lore ending stoptocross [player]}: the "Stop." sign moves in front of the block that player looks
+	 * at (the cross's bottom).
+	 */
+	static int stopToCross(CommandContext<CommandSourceStack> ctx, boolean named) throws CommandSyntaxException {
+		Optional<ServerPlayer> target = LoreCommands.target(ctx, named);
+		if (target.isEmpty()) {
+			return 0;
+		}
+		ServerPlayer player = target.get();
 		Optional<BlockPos> cross = lookedAt(player, 8);
 		if (cross.isEmpty()) {
 			ctx.getSource().sendFailure(Component.literal("[a1016] look at the cross's bottom block"));

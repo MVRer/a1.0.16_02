@@ -5,6 +5,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.util.function.BiConsumer;
 
 import com.forzacode.a1016_02.core.HerobrineState;
 import com.forzacode.a1016_02.core.ModConfig;
@@ -31,8 +32,11 @@ import net.minecraft.world.phys.Vec3;
 
 /**
  * Detects reads: opening a fragment book (or one on a lectern), looking at a fragment sign (or F13's cairn) up
- * close for a moment, holding F28's map, and having F12's disc. Each calls {@link
- * com.forzacode.a1016_02.core.FragmentService#markRead}, which fires {@code FRAGMENT_READ} the first time.
+ * close for a moment, holding F28's map, and having F12's disc. Any participant's read counts (D-058), never a
+ * spectator's. Each calls {@link com.forzacode.a1016_02.core.FragmentService#markRead}, which records the fragment
+ * once and fires {@code FRAGMENT_READ} for the reader who read it first: two players reading it in one tick read it
+ * once ("8+ fragments read" counts fragments, not readers). Look time is kept per player by UUID and forgotten when
+ * they stop taking part.
  */
 final class ReadWatcher {
 	private static final int LOOK_CHECK_TICKS = 5;
@@ -46,9 +50,9 @@ final class ReadWatcher {
 			if (!level.isClientSide() && player instanceof ServerPlayer serverPlayer) {
 				ItemStack stack = player.getItemInHand(hand);
 				if (stack.is(Items.WRITTEN_BOOK) || stack.is(Items.FILLED_MAP)) {
-					// Opened books show their current text (F23's cause, F10's last line) before vanilla opens them.
+					// Opened books show their current text (the list's lines, F10's last line) before vanilla opens them.
 					LiveBooks.refreshForReading(stack, serverPlayer);
-					FragmentItems.fragmentId(stack).ifPresent(id -> Services.fragments().markRead(serverPlayer, id));
+					markRead(serverPlayer, FragmentItems.fragmentId(stack));
 				}
 			}
 			return InteractionResult.PASS;
@@ -59,14 +63,26 @@ final class ReadWatcher {
 				if (LiveBooks.refreshForReading(lectern.getBook(), serverPlayer)) {
 					lectern.setChanged();
 				}
-				FragmentItems.fragmentId(lectern.getBook()).ifPresent(id -> Services.fragments().markRead(serverPlayer, id));
+				markRead(serverPlayer, FragmentItems.fragmentId(lectern.getBook()));
 			}
 			return InteractionResult.PASS;
 		});
 	}
 
+	/** A read by a participant (never a spectator); the fragment service records it once. */
+	private static void markRead(ServerPlayer player, java.util.Optional<String> id) {
+		if (id.isPresent() && Services.watch().isParticipant(player)) {
+			Services.fragments().markRead(player, id.get());
+		}
+	}
+
 	void clear() {
 		dwell.clear();
+	}
+
+	/** A player stopped taking part (PARTICIPATION): their look time goes. */
+	void forget(UUID player) {
+		dwell.remove(player);
 	}
 
 	void tick(MinecraftServer server) {
@@ -74,18 +90,29 @@ final class ReadWatcher {
 		if (now % LOOK_CHECK_TICKS != 0) {
 			return;
 		}
-		HerobrineState state = HerobrineState.get(server);
+		// A participant on the death screen still takes part, but reads nothing until they are back.
+		List<ServerPlayer> readers = Services.watch().participants(server).stream().filter(ServerPlayer::isAlive).toList();
+		look(readers, HerobrineState.get(server), LoreData.get(server), now % INVENTORY_CHECK_TICKS == 0, LoreConfig.get(),
+				Services.fragments()::markRead);
+	}
+
+	/**
+	 * One look check for these participants (live, or a test's own): each one's look time at each unread target
+	 * grows, and whoever has looked long enough reads it through {@code reader}. Two players finishing the same
+	 * target in one check both call {@code reader}, which records the fragment once ({@link FragmentServiceImpl#markRead}).
+	 */
+	void look(List<ServerPlayer> players, HerobrineState state, LoreData data, boolean inventories, LoreConfig config,
+			BiConsumer<ServerPlayer, String> reader) {
 		Map<GlobalPos, String> targets = new HashMap<>();
-		LoreData.get(server).readTargets().forEach((id, list) -> {
+		data.readTargets().forEach((id, list) -> {
 			if (!state.fragmentsRead().contains(id)) {
 				list.forEach(pos -> targets.put(pos, id));
 			}
 		});
-		LoreConfig config = LoreConfig.get();
 		long dwellTicks = Math.max(LOOK_CHECK_TICKS, ModConfig.realTicks(config.readDwellSeconds));
-		for (ServerPlayer player : server.getPlayerList().getPlayers()) {
-			if (now % INVENTORY_CHECK_TICKS == 0) {
-				checkInventory(player, state.fragmentsRead());
+		for (ServerPlayer player : players) {
+			if (inventories) {
+				checkInventory(player, state.fragmentsRead(), reader);
 			}
 			Map<GlobalPos, Integer> mine = dwell.computeIfAbsent(player.getUUID(), k -> new HashMap<>());
 			mine.keySet().retainAll(targets.keySet());
@@ -98,14 +125,14 @@ final class ReadWatcher {
 				int looked = mine.merge(pos, LOOK_CHECK_TICKS, Integer::sum);
 				if (looked >= dwellTicks) {
 					mine.remove(pos);
-					Services.fragments().markRead(player, target.getValue());
+					reader.accept(player, target.getValue());
 				}
 			}
 		}
 	}
 
 	/** F12's disc counts as read once carried; F28's map once held in a hand. */
-	private static void checkInventory(ServerPlayer player, Set<String> read) {
+	private static void checkInventory(ServerPlayer player, Set<String> read, BiConsumer<ServerPlayer, String> reader) {
 		Inventory inventory = player.getInventory();
 		for (int slot = 0; slot < inventory.getContainerSize(); slot++) {
 			ItemStack stack = inventory.getItem(slot);
@@ -113,11 +140,11 @@ final class ReadWatcher {
 				continue;
 			}
 			FragmentItems.fragmentId(stack).filter(id -> !read.contains(id)).filter(id -> !id.equals("F11"))
-					.ifPresent(id -> Services.fragments().markRead(player, id));
+					.ifPresent(id -> reader.accept(player, id));
 		}
 		for (ItemStack held : List.of(player.getMainHandItem(), player.getOffhandItem())) {
 			if (held.is(Items.FILLED_MAP)) {
-				FragmentItems.fragmentId(held).filter(id -> !read.contains(id)).ifPresent(id -> Services.fragments().markRead(player, id));
+				FragmentItems.fragmentId(held).filter(id -> !read.contains(id)).ifPresent(id -> reader.accept(player, id));
 			}
 		}
 	}

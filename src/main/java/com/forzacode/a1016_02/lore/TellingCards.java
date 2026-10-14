@@ -65,7 +65,10 @@ final class TellingCards {
 
 	// --- "Stop." ---
 
-	/** F03: the first sign the player wrote about him in Stage 3 now shows only "Stop." on line 2. Once per world. */
+	/**
+	 * F03: the first sign anyone wrote about him in Stage 3 now shows only "Stop." on line 2. Once per world, whoever
+	 * the card fires for (D-059): {@code stopFired} is set in the same tick (D-062.3).
+	 */
 	static final class StopSign extends TellingCard {
 		@Override
 		public String id() {
@@ -91,9 +94,16 @@ final class TellingCards {
 		@Override
 		public FireResult fire(FireContext ctx) {
 			MinecraftServer server = ctx.level().getServer();
-			return fireStop(server, HerobrineState.get(server), TellingData.get(server), SignEdits.editor(Services.traces()),
-					LiveBooks.name(server, ctx.player()));
+			HerobrineState state = HerobrineState.get(server);
+			TellingData data = TellingData.get(server);
+			return fireStop(server, state, data, SignEdits.editor(Services.traces()), writerName(state, data, data.stopCandidate())
+					.orElse(ctx.player().getName().getString()));
 		}
+	}
+
+	/** The known name of whoever first wrote the sign at {@code at} ("Stop." is aimed at them). */
+	static Optional<String> writerName(HerobrineState state, TellingData data, Optional<GlobalPos> at) {
+		return at.flatMap(data::sign).flatMap(sign -> state.player(sign.writer())).map(HerobrineState.Subject::name);
 	}
 
 	/**
@@ -138,7 +148,7 @@ final class TellingCards {
 
 	// --- blank sign ---
 
-	/** A sign the player wrote after they first wrote about him comes back empty. */
+	/** A sign the targeted participant wrote after the first telling comes back empty (theirs: whoever the card is for). */
 	static final class BlankSign extends TellingCard {
 		@Override
 		public String id() {
@@ -169,13 +179,14 @@ final class TellingCards {
 	}
 
 	/**
-	 * The signs blank sign may take: this player's, written after their first telling, not blanked yet, and never
-	 * the "Stop." sign (or the one that will be). Signs about him first, then oldest first.
+	 * The signs blank sign may take: ones this player wrote on (alone or with others), written after the world's
+	 * first telling, not blanked yet, and never the "Stop." sign (or the one that will be). Signs about him first,
+	 * then oldest first.
 	 */
 	static List<WrittenSign> blankPool(ServerPlayer player, TellingData data) {
 		List<WrittenSign> pool = new ArrayList<>();
 		for (WrittenSign sign : data.signs()) {
-			if (sign.afterTelling() && !sign.blanked() && sign.writer().equals(player.getUUID()) && !data.stopCandidate().map(sign.pos()::equals).orElse(false)
+			if (sign.afterTelling() && !sign.blanked() && sign.writtenBy(player.getUUID()) && !data.stopCandidate().map(sign.pos()::equals).orElse(false)
 					&& !data.stopSign().map(sign.pos()::equals).orElse(false)) {
 				pool.add(sign);
 			}
@@ -231,7 +242,10 @@ final class TellingCards {
 
 	// --- place not found ---
 
-	/** F04: after "Stop.", a fragment site the player visited is gone: flat dirt, one blank sign. */
+	/**
+	 * F04: after "Stop.", a fragment site any participant visited is gone: flat dirt, one blank sign. Once per world
+	 * (its flag is set in the same tick), never near any known player's base.
+	 */
 	static final class NotFound extends TellingCard {
 		@Override
 		public String id() {
@@ -260,10 +274,10 @@ final class TellingCards {
 		@Override
 		public FireResult fire(FireContext ctx) {
 			MinecraftServer server = ctx.level().getServer();
-			// A debug fire may take a site near the base (it never skips the out-of-view rule).
-			Optional<net.minecraft.core.BlockPos> base = ctx.forced() ? Optional.empty() : Services.watch().base(ctx.player()).map(GlobalPos::pos);
+			// Never near anyone's home, offline friends' too; a debug fire may take a site near one (it never skips the out-of-view rule).
+			List<GlobalPos> bases = ctx.forced() ? List.of() : Homes.live(server).all();
 			return PlaceNotFound.fire(server, HerobrineState.get(server), TellingData.get(server), Services.traces(),
-					SignEdits.editor(Services.traces()), base, ctx.random(), LoreConfig.get());
+					SignEdits.editor(Services.traces()), bases, ctx.random(), LoreConfig.get());
 		}
 	}
 }

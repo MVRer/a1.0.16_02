@@ -3,6 +3,7 @@ package com.forzacode.a1016_02.lore;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.Supplier;
 
 import com.forzacode.a1016_02.A1016_02;
 import com.forzacode.a1016_02.core.ModConfig;
@@ -26,7 +27,7 @@ import net.minecraft.world.level.biome.Biome;
  * The list in lava: "you erased something, and he keeps count". For each burnt list (up to
  * {@link LoreConfig#listPyramidMax}) he raises one more small sand pyramid in the ocean nearest to where it burnt,
  * out of view, from sea-floor sand moved there (nothing created), and records it as an {@code OCEAN_PYRAMID}
- * site. A burn outside the overworld counts from the player's base. The ocean is found once by a biome search on
+ * site. A burn outside the overworld counts from the burner's own base. The ocean is found once by a biome search on
  * a background thread; the pyramid waits until its chunks are loaded and nobody sees it.
  */
 final class ListPyramid {
@@ -50,16 +51,21 @@ final class ListPyramid {
 		ServerLevel overworld = server.overworld();
 		TellingData.Burned burned = data.burned();
 		if (burned.ocean().isEmpty()) {
-			BlockPos from = burned.near().filter(p -> p.dimension().equals(Level.OVERWORLD)).map(GlobalPos::pos)
-					.orElseGet(() -> Services.watch().subject(server).flatMap(Services.watch()::base)
-							.filter(p -> p.dimension().equals(Level.OVERWORLD)).map(GlobalPos::pos)
-							.orElse(overworld.getRespawnData().pos()));
-			searchOcean(overworld, from);
+			searchOcean(overworld, searchFrom(burned, () -> Homes.live(server).ownerBase(Level.OVERWORLD), overworld.getRespawnData().pos()));
 			return;
 		}
 		Optional<BlockPos> core = raise(overworld, burned.ocean().get().pos(), overworld.getRandom(), Services.traces(),
 				LoreConfig.get().candidatesPerAttempt);
 		core.ifPresent(pos -> recordRaised(overworld, pos, data));
+	}
+
+	/**
+	 * Where the ocean is searched from: where the list burnt, or the burner's base when it burnt outside the
+	 * overworld ({@link TellingData.Burned#from}); an older save's overworld burn spot; else the story's home; else spawn.
+	 */
+	static BlockPos searchFrom(TellingData.Burned burned, Supplier<Optional<BlockPos>> home, BlockPos spawn) {
+		return burned.from().or(burned::near).filter(p -> p.dimension().equals(Level.OVERWORLD)).map(GlobalPos::pos)
+				.or(home).orElse(spawn);
 	}
 
 	/** Records a raised pyramid: one fewer owed, a new {@code OCEAN_PYRAMID} site. */

@@ -57,8 +57,20 @@ public final class FragmentItems {
 
 	/** A written book with the fragment's title and pages, {@code [PLAYER NAME]} replaced, no author. */
 	public static ItemStack book(Fragment fragment, String playerName) {
+		return book(fragment, fragment.pagesFor(playerName));
+	}
+
+	/**
+	 * A written book as {@link LiveBooks} shows it now: the list's line one line per known player ({@code list}),
+	 * any other {@code [PLAYER NAME]} {@code reader}. Opening it later brings it up to date again.
+	 */
+	public static ItemStack book(Fragment fragment, String reader, List<LiveBooks.Line> list) {
+		return book(fragment, LiveBooks.pages(fragment, reader, list, Optional.empty()));
+	}
+
+	private static ItemStack book(Fragment fragment, List<String> text) {
 		List<Filterable<Component>> pages = new ArrayList<>();
-		for (String page : fragment.pagesFor(playerName)) {
+		for (String page : text) {
 			pages.add(Filterable.passThrough(Component.literal(page)));
 		}
 		ItemStack stack = new ItemStack(Items.WRITTEN_BOOK);
@@ -92,10 +104,13 @@ public final class FragmentItems {
 		return fragment.item().map(BuiltInRegistries.ITEM::getValue).map(item -> item == Items.FILLED_MAP).orElse(false);
 	}
 
-	/** The stack a fragment is carried as: a book, a map pointing at {@code mapTarget}, or its item (F11's disc). */
-	public static ItemStack stackFor(Fragment fragment, String playerName, ServerLevel level, BlockPos mapTarget) {
+	/**
+	 * The stack a fragment is carried as: a book (as {@link #book(Fragment, String, List)}), a map pointing at
+	 * {@code mapTarget}, or its item (F11's disc).
+	 */
+	public static ItemStack stackFor(Fragment fragment, String reader, List<LiveBooks.Line> list, ServerLevel level, BlockPos mapTarget) {
 		if (fragment.isBook()) {
-			return book(fragment, playerName);
+			return book(fragment, reader, list);
 		}
 		return isMap(fragment) ? map(fragment, level, mapTarget) : item(fragment);
 	}

@@ -121,8 +121,9 @@ final class Placers {
 
 	// --- shared helpers ---
 
+	/** The fragment's book as it reads now: the list with every known player's line (F06, F23), "you" the request's name. */
 	private static ItemStack book(Request req) {
-		return FragmentItems.book(req.fragment(), req.playerName());
+		return FragmentItems.book(req.fragment(), req.playerName(), req.facts().list());
 	}
 
 	private static List<ItemStack> contents(Request req) {
@@ -511,8 +512,9 @@ final class Placers {
 	}
 
 	/**
-	 * The subject's first crafting table, else first chest, else first block, if it is still where it was put.
-	 * Empty (and waiting) while the base's chunk is not loaded.
+	 * The story owner's first crafting table, else first chest, else first block ({@link Placing.Facts#firstBlocks},
+	 * D-061: one stored player, never anyone else's), if it is still where it was put. Empty (and waiting) while its
+	 * chunk is not loaded.
 	 */
 	static Optional<PlacedBlock> firstBlock(Request req) {
 		ServerLevel level = req.level();
@@ -696,9 +698,16 @@ final class Placers {
 
 	// --- F12 the tunnel that ends under your base ---
 
+	/**
+	 * F12 goes to dig's under-base network whoever's base it runs under (any player's base is "your base" for the
+	 * group, D-058), the one nearest the story's home first. Only without one does lore dig its own under the home.
+	 */
 	private static Optional<Result> underBaseChest(Request req) {
 		ServerLevel level = req.level();
-		for (Site site : sites(req.withBand(req.facts().base(), 0, req.maxDistance()), SiteType.UNDER_BASE)) {
+		List<Site> networks = Services.sites().all().stream()
+				.filter(s -> s.type() == SiteType.UNDER_BASE && !s.claimed() && s.dimension().equals(level.dimension()))
+				.sorted(Comparator.comparingDouble(s -> Builders.horizontalDistSqr(s.pos(), req.facts().base()))).toList();
+		for (Site site : networks) {
 			return chestNear(req, site, 2);
 		}
 		if (!mayBuild(req)) {
@@ -1070,8 +1079,15 @@ final class Placers {
 
 	// --- F27 inside the copy of your house (world builds it after day 20) ---
 
+	/**
+	 * F27 goes into world's one house copy whatever the distance: the copied house is whoever world chose (its own
+	 * stored owner, D-061), and that player's home may be far from the story's.
+	 */
 	private static Optional<Result> houseCopy(Request req) {
-		for (Site site : sites(req, SiteType.HOUSE_COPY)) {
+		List<Site> copies = Services.sites().all().stream()
+				.filter(s -> s.type() == SiteType.HOUSE_COPY && !s.claimed() && s.dimension().equals(req.level().dimension()))
+				.sorted(Comparator.comparingDouble(s -> Builders.horizontalDistSqr(s.pos(), req.origin()))).toList();
+		for (Site site : copies) {
 			if (!ready(req, site.pos(), Math.max(2, site.size()) + 1)) {
 				return Optional.empty();
 			}

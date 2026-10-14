@@ -8,12 +8,14 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.TreeMap;
 import java.util.TreeSet;
+import java.util.UUID;
 
 import com.forzacode.a1016_02.A1016_02;
 import com.mojang.serialization.Codec;
 import com.mojang.serialization.codecs.RecordCodecBuilder;
 
 import net.minecraft.core.GlobalPos;
+import net.minecraft.core.UUIDUtil;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.world.level.saveddata.SavedData;
 import net.minecraft.world.level.saveddata.SavedDataType;
@@ -28,7 +30,9 @@ import net.minecraft.world.level.saveddata.SavedDataType;
  * <li>site claims: which {@code SiteRegistry} site each fragment used</li>
  * <li>eligible since: play ticks when each fragment could first be placed (own builds wait a while after it)</li>
  * <li>own sites: registry sites lore built itself, which are never his traces (D-041)</li>
+ * <li>bases: the last base lore saw for each player, by UUID, for when they are away ({@link Homes}, D-061)</li>
  * </ul>
+ * No player is stored here as "the" player: a v1.0 {@code lore.dat} had none, so it loads as it was.
  */
 public final class LoreData extends SavedData {
 	public static final String GROVE = "grove";
@@ -38,7 +42,8 @@ public final class LoreData extends SavedData {
 			Codec.unboundedMap(Codec.STRING, GlobalPos.CODEC.listOf()).optionalFieldOf("readTargets", Map.of()).forGetter(d -> d.readTargets),
 			Codec.unboundedMap(Codec.STRING, Codec.INT).optionalFieldOf("siteClaims", Map.of()).forGetter(d -> d.siteClaims),
 			Codec.unboundedMap(Codec.STRING, Codec.LONG).optionalFieldOf("eligibleSince", Map.of()).forGetter(d -> d.eligibleSince),
-			Codec.INT.listOf().optionalFieldOf("ownSites", List.of()).forGetter(d -> List.copyOf(d.ownSites))
+			Codec.INT.listOf().optionalFieldOf("ownSites", List.of()).forGetter(d -> List.copyOf(d.ownSites)),
+			Codec.unboundedMap(UUIDUtil.STRING_CODEC, GlobalPos.CODEC).optionalFieldOf("bases", Map.of()).forGetter(d -> d.bases)
 	).apply(i, LoreData::new));
 
 	public static final SavedDataType<LoreData> TYPE = new SavedDataType<>(A1016_02.id("lore"), LoreData::new, CODEC, null);
@@ -49,17 +54,20 @@ public final class LoreData extends SavedData {
 	private final Map<String, Long> eligibleSince = new TreeMap<>();
 	/** Sites lore built itself (left by people, D-041): never "his traces". */
 	private final Set<Integer> ownSites = new TreeSet<>();
+	/** The last base lore saw for each player (D-062.2: by UUID). */
+	private final Map<UUID, GlobalPos> bases = new TreeMap<>();
 
 	public LoreData() {
 	}
 
 	private LoreData(Map<String, GlobalPos> anchors, Map<String, List<GlobalPos>> readTargets, Map<String, Integer> siteClaims,
-			Map<String, Long> eligibleSince, List<Integer> ownSites) {
+			Map<String, Long> eligibleSince, List<Integer> ownSites, Map<UUID, GlobalPos> bases) {
 		this.anchors.putAll(anchors);
 		readTargets.forEach((id, list) -> this.readTargets.put(id, new ArrayList<>(list)));
 		this.siteClaims.putAll(siteClaims);
 		this.eligibleSince.putAll(eligibleSince);
 		this.ownSites.addAll(ownSites);
+		this.bases.putAll(bases);
 	}
 
 	public static LoreData get(MinecraftServer server) {
@@ -128,5 +136,16 @@ public final class LoreData extends SavedData {
 	public void setSiteClaim(String id, int siteId) {
 		siteClaims.put(id, siteId);
 		setDirty();
+	}
+
+	/** The last base lore saw for this player, while they are away. */
+	public Optional<GlobalPos> base(UUID player) {
+		return Optional.ofNullable(bases.get(player));
+	}
+
+	public void setBase(UUID player, GlobalPos base) {
+		if (!base.equals(bases.put(player, base))) {
+			setDirty();
+		}
 	}
 }
