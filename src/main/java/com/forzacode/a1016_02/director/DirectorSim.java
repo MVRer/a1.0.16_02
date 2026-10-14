@@ -9,6 +9,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.UUID;
 import java.util.function.Predicate;
 
 import com.forzacode.a1016_02.core.CardTag;
@@ -18,27 +19,44 @@ import com.forzacode.a1016_02.core.Tier;
 
 import net.minecraft.util.RandomSource;
 
+import org.jspecify.annotations.Nullable;
+
 /**
  * Dry runs of {@link DirectorBrain}: no world, no cards fire. Contexts fit by dice, sessions start and end by
  * dice, and everything the brain decides is recorded. Used by {@code /a1016 director sim}, by timewarp's summary
  * and by the game tests. {@link #check} replays the record against every pacing limit. The director never enters
  * Telling on its own (D-041), so a run reaches Stage 3 only when {@link Params#tellingAtHour} names him.
+ * <p>
+ * {@link #run} plays one player. {@link #runGroup} plays several from a fresh world (D-059, D-060): one shared world
+ * memory and stage, a pacing memory and a clock per player, everyone joining and leaving with the world's sessions
+ * from their own join hour on, and a {@link Sharing} rule for who is close to whom. Each player gets a {@link Result}
+ * of their own, on their own clock: their own fires, the moments they felt from someone else's cards
+ * ({@link Kind#FELT}), their sessions and quiets, and the world's stage changes.
  */
 public final class DirectorSim {
-	/** {@code TELLING}: the subject named him (a dry run's {@link Params#tellingAtHour}). */
-	public enum Kind { STAGE, SESSION_START, SESSION_END, DRAW, GIVE_UP, REFILL, FIRE, QUIET, TELLING }
+	/** The player of a one-player dry run. */
+	public static final UUID SOLO = new UUID(0L, 0xA1016L);
+
+	/** {@code TELLING}: someone named him (a dry run's {@link Params#tellingAtHour}). {@code FELT}: someone else's card, felt. */
+	public enum Kind { STAGE, SESSION_START, SESSION_END, DRAW, GIVE_UP, REFILL, FIRE, FELT, QUIET, TELLING }
 
 	/**
-	 * One recorded decision.
+	 * One recorded decision, on that player's clock.
 	 *
-	 * @param value tension after a fire, or tension before a quiet
+	 * @param value tension after a fire or a felt moment, or tension before a quiet
 	 * @param until end of an empty session (play ticks) or of a quiet (day ticks)
-	 * @param flag  for a fire: the card has a fake version (the fake ratio's denominator); for a session start: empty
+	 * @param flag  for a fire or a felt moment: the card has a fake version (the fake ratio's denominator); for a
+	 *              session start: empty
 	 */
 	public record Event(Kind kind, long play, long dayTicks, Stage stage, Tier tier, String cardId, boolean fake, double value,
 			long until, boolean flag, String note) {
 		public long day() {
 			return Math.floorDiv(dayTicks, DirectorBrain.DAY_TICKS);
+		}
+
+		/** A fire of this player's own or a moment felt from someone else's: what the player went through. */
+		public boolean felt() {
+			return kind == Kind.FIRE || kind == Kind.FELT;
 		}
 	}
 
@@ -47,6 +65,8 @@ public final class DirectorSim {
 		public final int index;
 		public final Map<Tier, Integer> fires = new EnumMap<>(Tier.class);
 		public int fakes;
+		/** Moments felt from someone else's cards. */
+		public int felt;
 		public long quietTicks;
 		public long emptyTicks;
 		public Stage stage = Stage.ALONE;
@@ -77,10 +97,12 @@ public final class DirectorSim {
 		/** Optional per-card override of the context dice (tests). */
 		public Predicate<CardInfo> fits;
 		/**
-		 * Hours into the run at which the subject names him: lore's naming {@code HerobrineEvents.TELLING}, so the
+		 * Hours into the run at which someone names him: lore's naming {@code HerobrineEvents.TELLING}, so the
 		 * run reaches Telling and Stage 3's pacing is exercised. Negative: never (the director alone never gets there).
 		 */
 		public double tellingAtHour = -1;
+		/** Whose pacing a one-player run plays ({@link #run}); {@link #SOLO} by default. */
+		public UUID player = SOLO;
 
 		public static Params from(DirectorConfig config, DirectorRules rules) {
 			Params p = new Params();
@@ -93,12 +115,32 @@ public final class DirectorSim {
 		}
 	}
 
-	/** Everything a run produced. */
+	/** A player of a group run: who, and how many hours into the run they first take part (0: from the start). */
+	public record Seat(UUID player, double joinAtHour) {
+	}
+
+	/** Who shares moments with whom in a group run (D-060), asked before every fire. */
+	@FunctionalInterface
+	public interface Sharing {
+		/** Nobody is ever close to anyone. */
+		Sharing APART = (worldTicks, a, b) -> false;
+		/** Everyone online is always close to everyone. */
+		Sharing TOGETHER = (worldTicks, a, b) -> true;
+
+		boolean together(long worldTicks, UUID a, UUID b);
+	}
+
+	/** Everything a run produced for one player, on their own clock. */
 	public static final class Result {
 		public final DirectorRules rules;
 		public final Params params;
-		public final DirectorMemory start;
-		public final DirectorMemory memory;
+		public final UUID player;
+		/** Copies taken when this player's run started (for a late joiner: when they joined). */
+		public final WorldMemory startWorld;
+		public final PacingMemory startPacing;
+		/** The run's world memory (shared by every player of a group run) and this player's pacing, at the end. */
+		public final WorldMemory world;
+		public final PacingMemory pacing;
 		public final List<Event> events = new ArrayList<>();
 		public final List<HourRow> hours = new ArrayList<>();
 		public final long startPlay;
@@ -111,17 +153,26 @@ public final class DirectorSim {
 		/** Per stage: play ticks [all, active], sampled at every director tick after its decision. */
 		private final Map<Stage, long[]> stageTime = new EnumMap<>(Stage.class);
 
-		Result(DirectorRules rules, Params params, DirectorMemory start, DirectorMemory memory, long startPlay, long startDayTicks) {
+		Result(DirectorRules rules, Params params, UUID player, WorldMemory world, PacingMemory pacing, long startPlay, long startDayTicks) {
 			this.rules = rules;
 			this.params = params;
-			this.start = start;
-			this.memory = memory;
+			this.player = player;
+			this.startWorld = world.copy();
+			this.startPacing = pacing.copy();
+			this.world = world;
+			this.pacing = pacing;
 			this.startPlay = startPlay;
 			this.startDayTicks = startDayTicks;
 		}
 
+		/** This player's own fires. */
 		public List<Event> fires() {
 			return events.stream().filter(e -> e.kind() == Kind.FIRE).toList();
+		}
+
+		/** What this player went through: their own fires and the moments they felt from others, in order. */
+		public List<Event> felt() {
+			return events.stream().filter(Event::felt).toList();
 		}
 
 		public long count(Kind kind) {
@@ -154,9 +205,9 @@ public final class DirectorSim {
 			List<long[]> out = new ArrayList<>();
 			long openStart = -1;
 			long openUntil = -1;
-			if (params.continueSession && start.sessionStart >= 0 && start.sessionEmpty && start.sessionEmptyUntil > startPlay) {
+			if (params.continueSession && startPacing.sessionStart >= 0 && startPacing.sessionEmpty && startPacing.sessionEmptyUntil > startPlay) {
 				openStart = startPlay;
-				openUntil = start.sessionEmptyUntil;
+				openUntil = startPacing.sessionEmptyUntil;
 			}
 			for (Event e : events) {
 				if (openStart >= 0 && (e.kind() == Kind.SESSION_END || e.kind() == Kind.SESSION_START)) {
@@ -178,10 +229,11 @@ public final class DirectorSim {
 			List<String> lines = new ArrayList<>();
 			long fires = count(Kind.FIRE);
 			long fakeable = fires().stream().filter(Event::flag).count();
-			lines.add(String.format(Locale.ROOT, "%.1fh dry run from %s (seed %d, tempo %s): %d fires (amb %d, min %d, maj %d, sig %d), fakes %d of %d",
+			long felt = count(Kind.FELT);
+			lines.add(String.format(Locale.ROOT, "%.1fh dry run from %s (seed %d, tempo %s): %d fires (amb %d, min %d, maj %d, sig %d), fakes %d of %d%s",
 					(endPlay - startPlay) / (double) rules.hourTicks, time(startPlay, rules), params.seed, rules.profile.tempo(), fires,
 					firesOf(Tier.AMBIENT), firesOf(Tier.MINOR), firesOf(Tier.MAJOR), firesOf(Tier.SIGNATURE),
-					fires().stream().filter(Event::fake).count(), fakeable));
+					fires().stream().filter(Event::fake).count(), fakeable, felt == 0 ? "" : ", felt " + felt + " from others"));
 			StringBuilder stages = new StringBuilder();
 			for (Event e : events) {
 				if (e.kind() == Kind.STAGE) {
@@ -202,9 +254,9 @@ public final class DirectorSim {
 			lines.add("");
 			lines.add("hour  stage      amb min maj sig fake  quiet  empty  tension");
 			for (HourRow row : hours) {
-				lines.add(String.format(Locale.ROOT, "h%03d  %-9s  %3d %3d %3d %3d %4d  %4dm  %4dm  %6.1f", row.index, row.stage,
+				lines.add(String.format(Locale.ROOT, "h%03d  %-9s  %3d %3d %3d %3d %4d  %4dm  %4dm  %6.1f%s", row.index, row.stage,
 						row.fires.get(Tier.AMBIENT), row.fires.get(Tier.MINOR), row.fires.get(Tier.MAJOR), row.fires.get(Tier.SIGNATURE),
-						row.fakes, minutes(row.quietTicks, rules), minutes(row.emptyTicks, rules), row.tension));
+						row.fakes, minutes(row.quietTicks, rules), minutes(row.emptyTicks, rules), row.tension, row.felt == 0 ? "" : "  felt " + row.felt));
 			}
 			lines.add("");
 			for (Event e : events) {
@@ -225,6 +277,38 @@ public final class DirectorSim {
 	}
 
 	/**
+	 * A group run: one {@link Result} per player (in seat order), the shared world memory, the world's own stage and
+	 * telling events (on the world clock) and the group's broken limits ({@link #checkGroup}).
+	 */
+	public static final class Group {
+		public final List<Result> players;
+		public final WorldMemory world;
+		public final List<Event> worldEvents;
+		public List<String> violations = List.of();
+
+		Group(List<Result> players, WorldMemory world, List<Event> worldEvents) {
+			this.players = List.copyOf(players);
+			this.world = world;
+			this.worldEvents = List.copyOf(worldEvents);
+		}
+
+		public @Nullable Result player(UUID player) {
+			return players.stream().filter(r -> r.player.equals(player)).findFirst().orElse(null);
+		}
+
+		/** Every player's own and the group's broken limits, one line each. */
+		public List<String> allViolations() {
+			List<String> out = new ArrayList<>(violations);
+			for (int i = 0; i < players.size(); i++) {
+				for (String v : players.get(i).violations) {
+					out.add("player " + (i + 1) + ": " + v);
+				}
+			}
+			return out;
+		}
+	}
+
+	/**
 	 * The soft rates of DESIGN.md 4b pooled over several runs: counts summed over time summed, so long and short
 	 * stages weigh by their length. "Active" time leaves out quiets and empty sessions, as the playthrough's rate
 	 * checks do. Majors count the MAJOR tier only (no signatures), as the playthrough does.
@@ -235,8 +319,17 @@ public final class DirectorSim {
 	public record Rates(int runs, long hourTicks, long tracesTicks, long tracesActiveTicks, int tracesAmbients, long proximityTicks,
 			long proximityActiveTicks, int proximityMinors, int proximityMajors, int sessionsFromTraces, int emptySessions, int silentSessions,
 			int quiets) {
-		/** Pools these runs. They should share one config (one hour length). */
+		/** Pools these runs' own fires. They should share one config (one hour length). */
 		public static Rates of(Collection<Result> results) {
+			return of(results, false);
+		}
+
+		/** Pools what each player felt: their own fires and the moments they shared from someone else's (D-060.3). */
+		public static Rates felt(Collection<Result> results) {
+			return of(results, true);
+		}
+
+		private static Rates of(Collection<Result> results, boolean withFelt) {
 			int runs = 0;
 			long hourTicks = 1;
 			long tracesTicks = 0;
@@ -261,7 +354,8 @@ public final class DirectorSim {
 				boolean openCounts = false;
 				int openFires = 0;
 				for (Event e : r.events) {
-					switch (e.kind()) {
+					Kind kind = e.kind() == Kind.FELT && withFelt ? Kind.FIRE : e.kind();
+					switch (kind) {
 						case FIRE -> {
 							openFires++;
 							if (e.stage() == Stage.TRACES && e.tier() == Tier.AMBIENT) {
@@ -333,6 +427,11 @@ public final class DirectorSim {
 			return proximityMajors == 0 ? Double.POSITIVE_INFINITY : hours(proximityActiveTicks) / proximityMajors;
 		}
 
+		/** Majors per hour of Proximity (0 if none). */
+		public double majorsPerHour() {
+			return per(proximityMajors, hours(proximityTicks));
+		}
+
 		/** Share of Proximity spent in quiets or empty sessions. */
 		public double proximityQuietShare() {
 			return proximityTicks <= 0 ? 0 : 1 - proximityActiveTicks / (double) proximityTicks;
@@ -353,64 +452,50 @@ public final class DirectorSim {
 	}
 
 	/**
-	 * Runs the brain over {@code params.hours} of play from a copy of {@code start}. Nothing outside the copy
-	 * changes.
+	 * Runs the brain over {@code params.hours} of play for one player ({@link Params#player}) from a copy of the
+	 * world part and that player's pacing in {@code start} (a fresh pacing if they have none). Nothing outside the
+	 * copy changes.
 	 */
 	public static Result run(DirectorRules rules, Collection<CardInfo> cards, int historySize, DirectorMemory start, Stage stage,
 			double tension, DirectorBrain.Clock clock, Params params) {
-		DirectorMemory memory = start.copy();
-		Result result = new Result(rules, params, start.copy(), memory, clock.playTicks(), clock.dayTicks());
-		result.startStage = stage;
-		RandomSource random = RandomSource.create(mix(params.seed));
-		SimEnv env = new SimEnv(stage, tension, params, random);
-		DirectorBrain brain = new DirectorBrain(rules, cards, historySize);
-		RecordingRecorder rec = new RecordingRecorder(result, env, rules);
+		PacingMemory pacing = start.find(params.player).orElseGet(() -> new PacingMemory(clock.dayTicks()));
+		return run(rules, cards, historySize, start.world(), pacing, stage, tension, clock, params);
+	}
 
-		DirectorBrain.Clock c = clock;
-		long end = clock.playTicks() + Math.round(params.hours * rules.hourTicks);
-		long tellingAt = params.tellingAtHour < 0 ? Long.MAX_VALUE : clock.playTicks() + Math.round(params.tellingAtHour * rules.hourTicks);
-		boolean told = false;
-		rec.ensureRow(c.playTicks());
-		if (!params.continueSession || memory.sessionStart < 0) {
-			brain.onJoin(memory, c, env, random, rec);
+	/**
+	 * Runs the brain over {@code params.hours} of play for one player from copies of this world part and pacing,
+	 * starting at {@code clock} (their own play ticks, the day ticks and the world clock) with this tension.
+	 */
+	public static Result run(DirectorRules rules, Collection<CardInfo> cards, int historySize, WorldMemory world, PacingMemory pacing,
+			Stage stage, double tension, DirectorBrain.Clock clock, Params params) {
+		Table table = new Table(rules, cards, historySize, world.copy(), stage, clock.worldTicks(), clock.dayTicks(), Sharing.APART, params);
+		table.seats.add(new SeatRun(table, params.player, clock.worldTicks(), pacing.copy(), clock.playTicks(), tension));
+		table.play(cards);
+		return table.seats.getFirst().result;
+	}
+
+	/**
+	 * Plays several players from a fresh world (play tick 0, day 0, Alone, nobody's tension): each seat first takes
+	 * part at its own hour, with a fresh pacing whose first in-game day starts then, and then plays every world
+	 * session to the end. {@code sharing} says who feels whose cards. Same arguments, same run.
+	 */
+	public static Group runGroup(DirectorRules rules, Collection<CardInfo> cards, int historySize, List<Seat> seats, Sharing sharing,
+			Params params) {
+		Table table = new Table(rules, cards, historySize, new WorldMemory(), Stage.ALONE, 0, 0, sharing, params);
+		for (Seat seat : seats) {
+			long joinAt = Math.max(0, Math.round(seat.joinAtHour() * rules.hourTicks));
+			table.seats.add(new SeatRun(table, seat.player(), joinAt, null, 0, 0));
 		}
-		long sessionEnd = params.singleSession ? Long.MAX_VALUE : c.playTicks() + pick(params.sessionMin, params.sessionMax, random);
-		while (c.playTicks() + rules.tickInterval <= end) {
-			c = c.plus(rules.tickInterval);
-			if (c.playTicks() >= sessionEnd) {
-				brain.onLeave(memory, c, rec);
-				brain.onJoin(memory, c, env, random, rec);
-				sessionEnd = c.playTicks() + pick(params.sessionMin, params.sessionMax, random);
-			}
-			if (!told && c.playTicks() >= tellingAt) {
-				// The subject writes his name, as lore's TELLING event reports it to the live director.
-				told = true;
-				rec.named(c);
-				brain.onTelling(memory, c, env, true, rec);
-			}
-			brain.step(memory, c, env, random, rec);
-			HourRow row = rec.ensureRow(c.playTicks());
-			boolean quiet = brain.inQuiet(memory, c);
-			boolean empty = memory.sessionEmpty && c.playTicks() < memory.sessionEmptyUntil;
-			if (quiet) {
-				row.quietTicks += rules.tickInterval;
-			}
-			if (empty) {
-				row.emptyTicks += rules.tickInterval;
-			}
-			row.stage = env.stage;
-			row.tension = env.tension;
-			long[] time = result.stageTime.computeIfAbsent(env.stage, s -> new long[2]);
-			time[0] += rules.tickInterval;
-			if (!quiet && !empty) {
-				time[1] += rules.tickInterval;
+		table.play(cards);
+		List<Result> results = new ArrayList<>();
+		for (SeatRun seat : table.seats) {
+			if (seat.result != null) {
+				results.add(seat.result);
 			}
 		}
-		result.endPlay = c.playTicks();
-		result.stage = env.stage;
-		result.tension = env.tension;
-		result.violations = check(result, cards);
-		return result;
+		Group group = new Group(results, table.world, table.worldEvents);
+		group.violations = checkGroup(group, cards);
+		return group;
 	}
 
 	/** SplitMix64 finalizer: nearby seeds (1, 2, 3) give unrelated first rolls, unlike the bare LCG. */
@@ -425,10 +510,13 @@ public final class DirectorSim {
 		return max <= min ? min : min + (long) (random.nextDouble() * (max - min));
 	}
 
-	/** Replays the record against every pacing limit. Returns one line per broken limit. */
+	/**
+	 * Replays one player's record against every pacing limit: their own fires and the moments they felt from others
+	 * alike, since a shared moment must obey everything theirs would (D-060.3). Returns one line per broken limit.
+	 */
 	public static List<String> check(Result result, Collection<CardInfo> cards) {
 		DirectorRules rules = result.rules;
-		DirectorMemory start = result.start;
+		PacingMemory start = result.startPacing;
 		Map<String, CardInfo> byId = new HashMap<>();
 		cards.forEach(card -> byId.put(card.id(), card));
 		List<String> broken = new ArrayList<>();
@@ -438,6 +526,7 @@ public final class DirectorSim {
 		long quietUntil = start.quietUntilDayTicks;
 		long lastMinor = start.lastFireTier.getOrDefault(Tier.MINOR, DirectorMemory.NEVER);
 		long lastMajor = start.lastMajorOrSignature;
+		long firstDayEnd = start.firstDayTicks + (long) rules.noMajorBeforeDay * DirectorBrain.DAY_TICKS;
 		int aloneAmbients = start.aloneAmbientCount;
 		Map<Tier, Set<String>> cycle = new EnumMap<>(Tier.class);
 		Map<Tier, String> last = new EnumMap<>(Tier.class);
@@ -447,7 +536,7 @@ public final class DirectorSim {
 				last.put(tier, start.lastFired.get(tier));
 			}
 		}
-		Set<String> once = new HashSet<>(start.signaturesFired);
+		Set<String> once = new HashSet<>(result.startWorld.signaturesFired);
 		Event pendingQuiet = null;
 		Stage stage = result.startStage;
 		long namedAt = -1;
@@ -459,7 +548,7 @@ public final class DirectorSim {
 				case STAGE -> {
 					// D-041: Telling only from a telling that names him, never Removal from here, never back.
 					if (e.stage() == Stage.TELLING && namedAt != e.play()) {
-						broken.add(at + "Telling started without the subject naming him");
+						broken.add(at + "Telling started without anyone naming him");
 					}
 					if (e.stage() == Stage.REMOVAL) {
 						broken.add(at + "the director moved into Removal");
@@ -492,7 +581,7 @@ public final class DirectorSim {
 					quietUntil = e.until();
 					pendingQuiet = null;
 				}
-				case FIRE -> {
+				case FIRE, FELT -> {
 					if (pendingQuiet != null) {
 						broken.add(time(pendingQuiet.play(), rules) + " tension reached the threshold without a quiet");
 						pendingQuiet = null;
@@ -500,17 +589,18 @@ public final class DirectorSim {
 					CardInfo card = byId.get(e.cardId());
 					Tier tier = e.tier();
 					long now = e.play();
+					String what = e.kind() == Kind.FELT ? e.cardId() + " (felt)" : e.cardId();
 					if (sessionStart >= 0 && now - sessionStart < rules.joinGrace) {
-						broken.add(at + e.cardId() + " fired " + minutes(now - sessionStart, rules) + " min after joining");
+						broken.add(at + what + " fired " + minutes(now - sessionStart, rules) + " min after joining");
 					}
 					if (e.dayTicks() < quietUntil) {
-						broken.add(at + e.cardId() + " fired during a quiet");
+						broken.add(at + what + " fired during a quiet");
 					}
 					if (e.day() < rules.silenceUntilDay) {
-						broken.add(at + e.cardId() + " fired while the director is silenced");
+						broken.add(at + what + " fired while the director is silenced");
 					}
 					if (emptyUntil > now) {
-						broken.add(at + e.cardId() + " fired in an empty session");
+						broken.add(at + what + " fired in an empty session");
 					}
 					if (tier == Tier.MINOR) {
 						if (now - lastMinor < rules.minorGap) {
@@ -525,8 +615,8 @@ public final class DirectorSim {
 						if (now - lastMajor < rules.majorGap) {
 							broken.add(at + "two majors " + minutes(now - lastMajor, rules) + " min apart");
 						}
-						if (e.day() < rules.noMajorBeforeDay) {
-							broken.add(at + e.cardId() + " on day " + e.day());
+						if (e.dayTicks() < firstDayEnd) {
+							broken.add(at + what + " on day " + e.day() + " (their first in-game day)");
 						}
 						if (tier == Tier.MAJOR && !e.stage().atLeast(rules.majorMinStage)) {
 							broken.add(at + "major in " + e.stage());
@@ -541,22 +631,22 @@ public final class DirectorSim {
 					}
 					if (card != null) {
 						if (card.has(CardTag.ACCIDENT) && now < rules.firstAccident) {
-							broken.add(at + "accident card " + e.cardId() + " before " + time(rules.firstAccident, rules));
+							broken.add(at + "accident card " + what + " before " + time(rules.firstAccident, rules));
 						}
 						if (!e.stage().atLeast(card.earliestStage())) {
-							broken.add(at + e.cardId() + " before its stage " + card.earliestStage());
+							broken.add(at + what + " before its stage " + card.earliestStage());
 						}
 						if (DirectorBrain.oncePerWorld(card) && !once.add(card.id())) {
-							broken.add(at + "signature " + e.cardId() + " fired twice");
+							broken.add(at + "signature " + what + " fired twice");
 						}
 						if (!card.hasFake() && e.fake()) {
-							broken.add(at + e.cardId() + " fired as a fake but has none");
+							broken.add(at + what + " fired as a fake but has none");
 						}
 					}
 					if (e.cardId().equals(last.get(tier))) {
-						broken.add(at + e.cardId() + " fired twice in a row");
+						broken.add(at + what + " fired twice in a row");
 					} else if (cycle.get(tier).contains(e.cardId())) {
-						broken.add(at + e.cardId() + " repeated before its deck ran out");
+						broken.add(at + what + " repeated before its deck ran out");
 					}
 					cycle.get(tier).add(e.cardId());
 					last.put(tier, e.cardId());
@@ -570,6 +660,43 @@ public final class DirectorSim {
 		}
 		if (pendingQuiet != null) {
 			broken.add(time(pendingQuiet.play(), rules) + " tension reached the threshold without a quiet");
+		}
+		return broken;
+	}
+
+	/**
+	 * The group's own limits, beyond each player's ({@link #check}): every once-per-world card fired at most once
+	 * whoever got it, every stage change happened once for the world, and nobody felt a card that nobody fired.
+	 */
+	public static List<String> checkGroup(Group group, Collection<CardInfo> cards) {
+		List<String> broken = new ArrayList<>();
+		Map<String, CardInfo> byId = new HashMap<>();
+		cards.forEach(card -> byId.put(card.id(), card));
+		DirectorRules rules = group.players.isEmpty() ? null : group.players.getFirst().rules;
+		Set<String> once = new HashSet<>();
+		Set<Stage> stages = new HashSet<>();
+		for (Event e : group.worldEvents) {
+			if (e.kind() == Kind.STAGE && !stages.add(e.stage())) {
+				broken.add("the world moved into " + e.stage() + " twice");
+			}
+		}
+		int fired = 0;
+		int felt = 0;
+		for (Result r : group.players) {
+			for (Event e : r.events) {
+				if (e.kind() == Kind.FIRE) {
+					fired++;
+					CardInfo card = byId.get(e.cardId());
+					if (card != null && DirectorBrain.oncePerWorld(card) && !once.add(card.id())) {
+						broken.add((rules == null ? "" : time(e.play(), rules) + " ") + "once-per-world " + e.cardId() + " fired for a second player");
+					}
+				} else if (e.kind() == Kind.FELT) {
+					felt++;
+				}
+			}
+		}
+		if (felt > 0 && fired == 0) {
+			broken.add(felt + " moments felt but nothing fired");
 		}
 		return broken;
 	}
@@ -592,39 +719,223 @@ public final class DirectorSim {
 			case GIVE_UP -> e.tier() + " " + e.cardId() + ": " + e.note();
 			case REFILL -> e.tier() + " deck refilled";
 			case FIRE -> String.format(Locale.ROOT, "%-9s %s%s  tension %.1f", e.tier(), e.cardId(), e.fake() ? " (fake)" : "", e.value());
+			case FELT -> String.format(Locale.ROOT, "%-9s %s%s  tension %.1f (someone else's)", e.tier(), e.cardId(), e.fake() ? " (fake)" : "",
+					e.value());
 			case QUIET -> String.format(Locale.ROOT, "%d days, until day %d (tension was %.1f)",
 					(e.until() - e.dayTicks()) / DirectorBrain.DAY_TICKS, Math.floorDiv(e.until(), DirectorBrain.DAY_TICKS), e.value());
-			case TELLING -> "the subject named him (in " + e.stage() + ")";
+			case TELLING -> "someone named him (in " + e.stage() + ")";
 		};
 	}
 
-	/** Dice instead of a world. */
-	private static final class SimEnv implements DirectorBrain.Env {
+	/** The run's shared state: the world, the stage, the clocks, the seats and the dice. */
+	private static final class Table {
+		final DirectorRules rules;
+		final Params params;
+		final DirectorBrain brain;
+		final RandomSource random;
+		final WorldMemory world;
+		final Sharing sharing;
+		final List<SeatRun> seats = new ArrayList<>();
+		final List<Event> worldEvents = new ArrayList<>();
+		final long worldStart;
 		Stage stage;
-		double tension;
-		private final Params params;
-		private final RandomSource random;
+		long worldTicks;
+		long dayTicks;
 
-		SimEnv(Stage stage, double tension, Params params, RandomSource random) {
-			this.stage = stage;
-			this.tension = tension;
+		Table(DirectorRules rules, Collection<CardInfo> cards, int historySize, WorldMemory world, Stage stage, long worldTicks, long dayTicks,
+				Sharing sharing, Params params) {
+			this.rules = rules;
 			this.params = params;
-			this.random = random;
+			this.brain = new DirectorBrain(rules, cards, historySize);
+			this.random = RandomSource.create(mix(params.seed));
+			this.world = world;
+			this.stage = stage;
+			this.worldStart = worldTicks;
+			this.worldTicks = worldTicks;
+			this.dayTicks = dayTicks;
+			this.sharing = sharing;
+		}
+
+		List<SeatRun> online() {
+			return seats.stream().filter(s -> s.result != null).toList();
+		}
+
+		/** Seats join, sessions turn over, someone names him, and every online player decides each director tick. */
+		void play(Collection<CardInfo> cards) {
+			long interval = rules.tickInterval;
+			long end = worldStart + Math.round(params.hours * rules.hourTicks);
+			long tellingAt = params.tellingAtHour < 0 ? Long.MAX_VALUE : worldStart + Math.round(params.tellingAtHour * rules.hourTicks);
+			boolean told = false;
+			for (SeatRun seat : seats) {
+				if (seat.joinAt <= worldTicks) {
+					seat.join(params.continueSession);
+				}
+			}
+			long sessionEnd = params.singleSession ? Long.MAX_VALUE : worldTicks + pick(params.sessionMin, params.sessionMax, random);
+			int tick = 0;
+			while (worldTicks + interval <= end) {
+				worldTicks += interval;
+				dayTicks += interval;
+				List<SeatRun> online = online();
+				online.forEach(seat -> seat.play += interval);
+				if (worldTicks >= sessionEnd) {
+					online.forEach(seat -> brain.onLeave(seat.pacing, seat.clock(), seat.rec));
+					online.forEach(seat -> brain.onJoin(world, seat.pacing, seat.clock(), seat.env, random, seat.rec));
+					sessionEnd = worldTicks + pick(params.sessionMin, params.sessionMax, random);
+				}
+				for (SeatRun seat : seats) {
+					if (seat.result == null && worldTicks >= seat.joinAt) {
+						seat.join(false);
+					}
+				}
+				online = online();
+				if (!told && worldTicks >= tellingAt && !online.isEmpty()) {
+					// Someone writes his name, as lore's TELLING event reports it to the live director.
+					told = true;
+					SeatRun first = online.getFirst();
+					named();
+					brain.onTelling(world, first.clock(), first.env, true, first.rec);
+				}
+				if (online.isEmpty()) {
+					brain.advanceWorld(world, new DirectorBrain.Clock(worldTicks, dayTicks, worldTicks), new SimEnv(this, null, 0), random,
+							DirectorBrain.Recorder.NONE);
+				}
+				for (int k = 0; k < online.size(); k++) {
+					// Players take turns going first, as the live director staggers them.
+					SeatRun seat = online.get((tick + k) % online.size());
+					brain.step(world, seat.pacing, seat.clock(), seat.env, random, seat.rec);
+				}
+				for (SeatRun seat : online) {
+					seat.bookkeep();
+				}
+				tick++;
+			}
+			for (SeatRun seat : online()) {
+				Result result = seat.result;
+				result.endPlay = seat.play;
+				result.stage = stage;
+				result.tension = seat.env.tension;
+				result.violations = check(result, cards);
+			}
+		}
+
+		/** The world's stage moved: one world event, and one in every online player's record on their own clock. */
+		void stageChanged(Stage from, Stage to) {
+			worldEvents.add(new Event(Kind.STAGE, worldTicks, dayTicks, to, null, null, false, 0, -1, false, from.name()));
+			for (SeatRun seat : online()) {
+				seat.add(Kind.STAGE, seat.clock(), to, null, null, false, 0, -1, false, from.name());
+			}
+		}
+
+		/** The run's naming telling, recorded before the stage change it causes. */
+		void named() {
+			worldEvents.add(new Event(Kind.TELLING, worldTicks, dayTicks, stage, null, null, false, 0, -1, true, "named him"));
+			for (SeatRun seat : online()) {
+				seat.add(Kind.TELLING, seat.clock(), stage, null, null, false, 0, -1, true, "named him");
+			}
+		}
+
+		List<DirectorBrain.Sharer> sharers(SeatRun of) {
+			List<DirectorBrain.Sharer> out = new ArrayList<>();
+			for (SeatRun other : online()) {
+				if (other != of && sharing.together(worldTicks, of.player, other.player)) {
+					out.add(new DirectorBrain.Sharer(other.pacing, other.clock(), other.env, other.rec));
+				}
+			}
+			return out;
+		}
+	}
+
+	/** One player at the table: their pacing, clock, env and record. Online from their join to the end. */
+	private static final class SeatRun {
+		final Table table;
+		final UUID player;
+		final long joinAt;
+		final SimEnv env;
+		final RecordingRecorder rec;
+		PacingMemory pacing;
+		long play;
+		Result result;
+
+		SeatRun(Table table, UUID player, long joinAt, @Nullable PacingMemory pacing, long play, double tension) {
+			this.table = table;
+			this.player = player;
+			this.joinAt = joinAt;
+			this.pacing = pacing;
+			this.play = play;
+			this.env = new SimEnv(table, this, tension);
+			this.rec = new RecordingRecorder(this);
+		}
+
+		DirectorBrain.Clock clock() {
+			return new DirectorBrain.Clock(play, table.dayTicks, table.worldTicks);
+		}
+
+		/** Takes part from now on: a fresh pacing for a newcomer, then a session unless one is kept going. */
+		void join(boolean keepSession) {
+			if (pacing == null) {
+				pacing = new PacingMemory(table.dayTicks);
+			}
+			result = new Result(table.rules, table.params, player, table.world, pacing, play, table.dayTicks);
+			result.startStage = table.stage;
+			rec.ensureRow(play);
+			if (!keepSession || pacing.sessionStart < 0) {
+				table.brain.onJoin(table.world, pacing, clock(), env, table.random, rec);
+			}
+		}
+
+		void add(Kind kind, DirectorBrain.Clock c, Stage stage, Tier tier, String id, boolean fake, double value, long until, boolean flag,
+				String note) {
+			result.events.add(new Event(kind, c.playTicks(), c.dayTicks(), stage, tier, id, fake, value, until, flag, note));
+		}
+
+		void bookkeep() {
+			DirectorRules rules = table.rules;
+			HourRow row = rec.ensureRow(play);
+			DirectorBrain.Clock c = clock();
+			boolean quiet = table.brain.inQuiet(pacing, c);
+			boolean empty = pacing.sessionEmpty && play < pacing.sessionEmptyUntil;
+			if (quiet) {
+				row.quietTicks += rules.tickInterval;
+			}
+			if (empty) {
+				row.emptyTicks += rules.tickInterval;
+			}
+			row.stage = table.stage;
+			row.tension = env.tension;
+			long[] time = result.stageTime.computeIfAbsent(table.stage, s -> new long[2]);
+			time[0] += rules.tickInterval;
+			if (!quiet && !empty) {
+				time[1] += rules.tickInterval;
+			}
+		}
+	}
+
+	/** Dice instead of a world, for one seat (or none, to move the world's time while nobody plays). */
+	private static final class SimEnv implements DirectorBrain.Env {
+		private final Table table;
+		private final @Nullable SeatRun seat;
+		double tension;
+
+		SimEnv(Table table, @Nullable SeatRun seat, double tension) {
+			this.table = table;
+			this.seat = seat;
+			this.tension = tension;
 		}
 
 		@Override
 		public Stage stage() {
-			return stage;
+			return table.stage;
 		}
 
 		@Override
 		public void setStage(Stage stage) {
-			this.stage = stage;
+			table.stage = stage;
 		}
 
 		@Override
 		public double attention() {
-			return params.attention;
+			return table.params.attention;
 		}
 
 		@Override
@@ -639,81 +950,73 @@ public final class DirectorSim {
 
 		@Override
 		public boolean contextFits(CardInfo card) {
-			return params.fits != null ? params.fits.test(card) : random.nextDouble() < params.fitChance;
+			return table.params.fits != null ? table.params.fits.test(card) : table.random.nextDouble() < table.params.fitChance;
 		}
 
 		@Override
 		public FireResult fire(CardInfo card, boolean fake) {
-			return random.nextDouble() < params.noSpotChance ? FireResult.NO_SPOT : FireResult.FIRED;
+			return table.random.nextDouble() < table.params.noSpotChance ? FireResult.NO_SPOT : FireResult.FIRED;
+		}
+
+		@Override
+		public List<DirectorBrain.Sharer> sharers() {
+			return seat == null ? List.of() : table.sharers(seat);
 		}
 	}
 
-	/** Turns brain callbacks into events and hourly rows. */
+	/** Turns brain callbacks into one seat's events and hourly rows (stage changes go to every seat). */
 	private static final class RecordingRecorder implements DirectorBrain.Recorder {
-		private final Result result;
-		private final SimEnv env;
-		private final DirectorRules rules;
+		private final SeatRun seat;
 
-		RecordingRecorder(Result result, SimEnv env, DirectorRules rules) {
-			this.result = result;
-			this.env = env;
-			this.rules = rules;
+		RecordingRecorder(SeatRun seat) {
+			this.seat = seat;
 		}
 
 		HourRow ensureRow(long play) {
-			int index = (int) Math.max(0, (play - result.startPlay - 1) / rules.hourTicks);
+			Result result = seat.result;
+			int index = (int) Math.max(0, (play - result.startPlay - 1) / seat.table.rules.hourTicks);
 			while (result.hours.size() <= index) {
 				HourRow row = new HourRow(result.hours.size());
-				row.stage = env.stage;
-				row.tension = env.tension;
+				row.stage = seat.table.stage;
+				row.tension = seat.env.tension;
 				result.hours.add(row);
 			}
 			return result.hours.get(index);
 		}
 
-		private void add(Kind kind, DirectorBrain.Clock c, Stage stage, Tier tier, String id, boolean fake, double value, long until,
-				boolean flag, String note) {
-			result.events.add(new Event(kind, c.playTicks(), c.dayTicks(), stage, tier, id, fake, value, until, flag, note));
-		}
-
 		@Override
 		public void stageChanged(DirectorBrain.Clock c, Stage from, Stage to) {
-			add(Kind.STAGE, c, to, null, null, false, 0, -1, false, from.name());
-		}
-
-		/** The run's naming telling, recorded before the stage change it causes. */
-		void named(DirectorBrain.Clock c) {
-			add(Kind.TELLING, c, env.stage, null, null, false, 0, -1, true, "named him");
+			seat.table.stageChanged(from, to);
 		}
 
 		@Override
 		public void sessionStarted(DirectorBrain.Clock c, Stage stage, boolean empty, long emptyUntil) {
-			add(Kind.SESSION_START, c, stage, null, null, false, 0, emptyUntil, empty, "");
+			seat.add(Kind.SESSION_START, c, stage, null, null, false, 0, emptyUntil, empty, "");
 		}
 
 		@Override
 		public void sessionEnded(DirectorBrain.Clock c) {
-			add(Kind.SESSION_END, c, env.stage, null, null, false, 0, -1, false, "");
+			seat.add(Kind.SESSION_END, c, seat.table.stage, null, null, false, 0, -1, false, "");
 		}
 
 		@Override
 		public void drew(DirectorBrain.Clock c, CardInfo card) {
-			add(Kind.DRAW, c, env.stage, card.tier(), card.id(), false, 0, -1, false, "");
+			seat.add(Kind.DRAW, c, seat.table.stage, card.tier(), card.id(), false, 0, -1, false, "");
 		}
 
 		@Override
 		public void gaveUp(DirectorBrain.Clock c, Tier tier, String cardId, String why) {
-			add(Kind.GIVE_UP, c, env.stage, tier, cardId, false, 0, -1, false, why);
+			seat.add(Kind.GIVE_UP, c, seat.table.stage, tier, cardId, false, 0, -1, false, why);
 		}
 
 		@Override
 		public void refilled(DirectorBrain.Clock c, Tier tier) {
-			add(Kind.REFILL, c, env.stage, tier, null, false, 0, -1, false, "");
+			seat.add(Kind.REFILL, c, seat.table.stage, tier, null, false, 0, -1, false, "");
 		}
 
 		@Override
 		public void fired(DirectorBrain.Clock c, CardInfo card, boolean fake, boolean forced, Stage stage, double tensionAfter) {
-			add(Kind.FIRE, c, stage, card.tier(), card.id(), fake, tensionAfter, -1, card.hasFake(), forced ? "forced" : "");
+			seat.add(Kind.FIRE, c, stage, card.tier(), card.id(), fake, tensionAfter, -1, card.hasFake(), forced ? "forced" : "");
 			HourRow row = ensureRow(c.playTicks());
 			row.fires.merge(card.tier(), 1, Integer::sum);
 			if (fake) {
@@ -722,8 +1025,14 @@ public final class DirectorSim {
 		}
 
 		@Override
+		public void felt(DirectorBrain.Clock c, CardInfo card, boolean fake, boolean forced, Stage stage, double tensionAfter) {
+			seat.add(Kind.FELT, c, stage, card.tier(), card.id(), fake, tensionAfter, -1, card.hasFake(), forced ? "forced" : "felt");
+			ensureRow(c.playTicks()).felt++;
+		}
+
+		@Override
 		public void quietStarted(DirectorBrain.Clock c, int days, long untilDayTicks, double tensionBefore) {
-			add(Kind.QUIET, c, env.stage, null, null, false, tensionBefore, untilDayTicks, false, days + "d");
+			seat.add(Kind.QUIET, c, seat.table.stage, null, null, false, tensionBefore, untilDayTicks, false, days + "d");
 		}
 	}
 }

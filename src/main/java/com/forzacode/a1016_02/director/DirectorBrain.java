@@ -18,9 +18,20 @@ import com.forzacode.a1016_02.core.Tier;
 import net.minecraft.util.RandomSource;
 
 /**
- * The director's decisions, with no world in sight: a clock, the memory, an {@link Env} for the shared state and
+ * The director's decisions, with no world in sight: clocks, the memories, an {@link Env} for the shared state and
  * the cards' context, and a random in; decisions out. The live director, timewarp and the dry-run simulator all
  * run this same class.
+ *
+ * <p>Multiplayer (D-058 to D-060): the {@link WorldMemory} is shared (the stage clock, once-per-world cards), and
+ * each player has a {@link PacingMemory} of their own, decided on their own clock ({@link Clock#playTicks}). Stages
+ * move only in {@link #advanceWorld}, on the world clock ({@link Clock#worldTicks}): there is one stage, and calling
+ * it again in the same tick (for a second player) moves nothing. A card fires for the player whose pacing picked it.
+ * Everyone who shares that moment ({@link Env#sharers()}, taken at fire time) counts it as felt: it goes into their
+ * gaps, hard limits, major schedule, no-repeat cycle and tension, never as their own draw. So that nobody feels more
+ * than their own rules allow, a card only fires when every sharer could have had it on their own right now (their
+ * gates open, and they have not seen it this cycle); otherwise it waits, as for a moment that does not fit. And so
+ * that a group is not busier than one player, the ambient and minor odds are split between everyone sharing: each
+ * rolls its share of one solo rate.
  *
  * <p>Rules (DESIGN.md "The director", 4b; ARCHITECTURE "Director"):
  * <ul>
@@ -28,19 +39,20 @@ import net.minecraft.util.RandomSource;
  * TRACES to PROXIMITY inside {@code proximityStart(tempo)}. The stage clock runs faster or slower with attention,
  * within the configured band. TELLING comes only from a {@code HerobrineEvents.TELLING} that names him (D-041);
  * other telling (writing near his traces) never moves the stage. REMOVAL never from here.</li>
- * <li>One deck per tier, drawn without replacement and weighted by the profile habits and per-stage tag weights
- * (a weight below 1 also skips the card for that draw with chance 1 - weight). A deck runs out when every card it
- * has not fired this cycle is ruled out by the stage or the profile; only then do its fired cards come back, and
- * the last one fired is never drawn next. Cards that only wait on a passing gate (no accident yet, a sighting
+ * <li>One deck per tier and player, drawn without replacement and weighted by the profile habits and per-stage tag
+ * weights (a weight below 1 also skips the card for that draw with chance 1 - weight). A deck runs out when every
+ * card it has not fired this cycle is ruled out by the stage or the profile; only then do its fired cards come back,
+ * and the last one fired is never drawn next. Cards that only wait on a passing gate (no accident yet, a sighting
  * today, a skip roll) hold the reshuffle back, up to {@code deckStall} of in-game time. Signature cards never come
- * back.</li>
+ * back, and fire at most once per world whoever gets them.</li>
  * <li>A drawn card is held until its context fits; {@code NO_SPOT} and {@code SKIPPED} keep it held. A card held
  * too long goes back into its deck.</li>
  * <li>Gates: the silence flag ({@link DirectorFlags}: nothing at all fires), join grace, forced quiet, empty
  * sessions, a small gap between any two fires, the minor and major gaps (never shortened by the pace multiplier flag),
- * no major (or signature) before {@code noMajorBeforeDay}, no ACCIDENT card before {@code firstAccident}, at most
- * {@code aloneMaxAmbient} ambients in Alone, sightings per day. Every card waits for its own earliest stage and its
- * tier's first stage ({@code minorMinStage}, {@code majorMinStage}, {@code signatureMinStage}).</li>
+ * no major (or signature) in the player's first {@code noMajorBeforeDay} in-game days, no ACCIDENT card before
+ * {@code firstAccident} of their own play, at most {@code aloneMaxAmbient} ambients in Alone, sightings per day.
+ * Every card waits for its own earliest stage and its tier's first stage ({@code minorMinStage},
+ * {@code majorMinStage}, {@code signatureMinStage}).</li>
  * <li>Rates: ambient and minor tiers roll per director tick at their per-hour rate, raised by the pity bonus and
  * spread out by a refractory gap that keeps the mean;
  * majors are scheduled every {@code proximityMajorGap(tempo)}, each slot one gap after the previous slot's due time
@@ -58,7 +70,10 @@ public final class DirectorBrain {
 	static final Set<String> PROFILE_SIGNATURES = Set.of(CardInfo.SIGNATURE_STILL_BURNING, CardInfo.SIGNATURE_HOUSE_ELSEWHERE,
 			CardInfo.SIGNATURE_CROSS_ROW);
 
-	/** Shared state and the world-facing half of the cards. The live director uses the world; dry runs use dice. */
+	/**
+	 * Shared state and the world-facing half of the cards, for the one player being decided for (tension and the cards
+	 * are theirs). The live director uses the world; dry runs use dice.
+	 */
 	public interface Env {
 		Stage stage();
 
@@ -66,6 +81,7 @@ public final class DirectorBrain {
 
 		double attention();
 
+		/** This player's tension (D-059). */
 		double tension();
 
 		void addTension(double delta, String reason);
@@ -73,6 +89,22 @@ public final class DirectorBrain {
 		boolean contextFits(CardInfo card);
 
 		FireResult fire(CardInfo card, boolean fake);
+
+		/**
+		 * Everyone else who would feel a card fired for this player right now (D-060.3), in a fixed order. Called once
+		 * per decision that gets past the global gates, before its draws; the same list gates and records the fire.
+		 * None by default (one player).
+		 */
+		default List<Sharer> sharers() {
+			return List.of();
+		}
+	}
+
+	/**
+	 * Another participant sharing the moment: their pacing, their clock, their env (for their tension) and where
+	 * their decisions are recorded.
+	 */
+	public record Sharer(PacingMemory memory, Clock clock, Env env, Recorder recorder) {
 	}
 
 	/** Observer of decisions (logs, the simulator, tests). Every method is optional. */
@@ -101,21 +133,32 @@ public final class DirectorBrain {
 		default void fired(Clock clock, CardInfo card, boolean fake, boolean forced, Stage stage, double tensionAfter) {
 		}
 
+		/** Someone else's card was felt by this player (D-060.3). */
+		default void felt(Clock clock, CardInfo card, boolean fake, boolean forced, Stage stage, double tensionAfter) {
+		}
+
 		default void quietStarted(Clock clock, int days, long untilDayTicks, double tensionBefore) {
 		}
 	}
 
 	/**
-	 * @param playTicks real play ticks ({@code GameClock.playTicks})
-	 * @param dayTicks  in-game time: {@code GameClock.day * 24000} plus the time of day
+	 * @param playTicks  the player's own play ticks ({@code GameClock.playTicks(server, uuid)}): their pacing runs on it
+	 * @param dayTicks   in-game time: {@code GameClock.day * 24000} plus the time of day (the world's, shared)
+	 * @param worldTicks the world clock ({@code GameClock.playTicks(server)}): the stage clock runs on it
 	 */
-	public record Clock(long playTicks, long dayTicks) {
+	public record Clock(long playTicks, long dayTicks, long worldTicks) {
+		/** One player who has been there all along: their clock is the world's. */
+		public Clock(long playTicks, long dayTicks) {
+			this(playTicks, dayTicks, playTicks);
+		}
+
 		public long day() {
 			return Math.floorDiv(dayTicks, DAY_TICKS);
 		}
 
+		/** Every clock moved by {@code ticks} (the player played them). */
 		public Clock plus(long ticks) {
-			return new Clock(playTicks + ticks, dayTicks + ticks);
+			return new Clock(playTicks + ticks, dayTicks + ticks, worldTicks + ticks);
 		}
 	}
 
@@ -149,24 +192,47 @@ public final class DirectorBrain {
 		return id == null ? null : byId.get(id);
 	}
 
-	// --- sessions ---
+	// --- sessions (per player, D-062.4) ---
 
-	/** The subject joined: a new session. From Traces on, the dice decide whether the whole session stays empty. */
-	public void onJoin(DirectorMemory m, Clock c, Env env, RandomSource random, Recorder rec) {
-		advanceTime(m, c, env, random, rec);
+	/**
+	 * This player started taking part: a new session for them only. From Traces on, the dice decide whether their
+	 * whole session stays empty, except that a player who starts next to someone already in a session takes that
+	 * session's mood (empty until the same moment, or not empty): otherwise each friend's own empty sessions would
+	 * add up and a group would be silent far more often than one player. Nobody else's session changes.
+	 */
+	public void onJoin(WorldMemory w, PacingMemory m, Clock c, Env env, RandomSource random, Recorder rec) {
+		advanceTime(w, m, c, env, random, rec);
 		Stage stage = env.stage();
 		m.sessionStart = c.playTicks();
 		m.sessionCount++;
 		m.sessionMinorRate = rules.minorsPerHourMin + random.nextDouble() * (rules.minorsPerHourMax - rules.minorsPerHourMin);
-		m.sessionEmpty = stage.atLeast(Stage.TRACES) && random.nextDouble() < rules.emptySessionChance;
-		m.sessionEmptyUntil = m.sessionEmpty ? c.playTicks() + rules.emptySessionMax : -1;
+		boolean rolled = stage.atLeast(Stage.TRACES) && random.nextDouble() < rules.emptySessionChance;
+		Sharer company = null;
+		for (Sharer sharer : env.sharers()) {
+			if (sharer.memory().sessionStart >= 0 && sharer.memory().sessionStart <= sharer.clock().playTicks()) {
+				company = sharer;
+				break;
+			}
+		}
+		if (company == null) {
+			m.sessionEmpty = rolled;
+			m.sessionEmptyUntil = rolled ? c.playTicks() + rules.emptySessionMax : -1;
+		} else {
+			PacingMemory theirs = company.memory();
+			long left = theirs.sessionEmptyUntil - company.clock().playTicks();
+			m.sessionEmpty = theirs.sessionEmpty && left > 0;
+			m.sessionEmptyUntil = m.sessionEmpty ? c.playTicks() + left : -1;
+		}
 		if (m.sessionEmpty) {
 			m.emptySessionCount++;
 		}
+		m.lowRenderAccum = 0;
+		m.lowRenderCounted = false;
 		rec.sessionStarted(c, stage, m.sessionEmpty, m.sessionEmptyUntil);
 	}
 
-	public void onLeave(DirectorMemory m, Clock c, Recorder rec) {
+	/** This player stopped taking part: their session ends, nobody else's. */
+	public void onLeave(PacingMemory m, Clock c, Recorder rec) {
 		m.sessionStart = -1;
 		m.sessionEmpty = false;
 		m.sessionEmptyUntil = -1;
@@ -175,48 +241,71 @@ public final class DirectorBrain {
 
 	// --- time ---
 
-	/** Time passes: the stage clock (weighted by attention), stage changes and tension decay. Never fires a card. */
-	public void advanceTime(DirectorMemory m, Clock c, Env env, RandomSource random, Recorder rec) {
+	/** {@link #advanceWorld} then {@link #advancePlayer}: time passes for the world and for this player. Never fires. */
+	public void advanceTime(WorldMemory w, PacingMemory m, Clock c, Env env, RandomSource random, Recorder rec) {
+		advanceWorld(w, c, env, random, rec);
+		advancePlayer(m, c, env, random);
+	}
+
+	/**
+	 * The world's time passes: the stage clock (on the world clock, weighted by attention) and stage changes. Called
+	 * again in the same tick (another player's decision), it moves nothing: the time step is zero and the stage it
+	 * reads has already moved. Never fires a card.
+	 */
+	public void advanceWorld(WorldMemory w, Clock c, Env env, RandomSource random, Recorder rec) {
 		String tempo = rules.profile.tempo().name();
-		if (m.tracesAt < 0 || m.proximityAt < 0 || !tempo.equals(m.rolledTempo)) {
-			m.tracesAt = rules.tracesStart.pick(random);
-			m.proximityAt = Math.max(m.tracesAt + 1, rules.proximityStart.pick(random));
-			m.rolledTempo = tempo;
+		if (w.tracesAt < 0 || w.proximityAt < 0 || !tempo.equals(w.rolledTempo)) {
+			w.tracesAt = rules.tracesStart.pick(random);
+			w.proximityAt = Math.max(w.tracesAt + 1, rules.proximityStart.pick(random));
+			w.rolledTempo = tempo;
 		}
-		if (m.stageClock < 0 || m.lastStepPlay < 0) {
-			m.stageClock = c.playTicks();
+		if (w.stageClock < 0 || w.lastStepPlay < 0) {
+			w.stageClock = c.worldTicks();
+			w.lastStepPlay = c.worldTicks();
+		}
+		long dt = Math.max(0, c.worldTicks() - w.lastStepPlay);
+		w.lastStepPlay = Math.max(w.lastStepPlay, c.worldTicks());
+		if (dt > 0) {
+			w.stageClock += dt / rules.attentionFactor(env.attention());
+		}
+		Stage stage = env.stage();
+		if (stage == Stage.ALONE && w.stageClock >= w.tracesAt) {
+			stage = changeStage(c, env, stage, Stage.TRACES, rec);
+		}
+		if (stage == Stage.TRACES && w.stageClock >= w.proximityAt) {
+			changeStage(c, env, stage, Stage.PROXIMITY, rec);
+		}
+	}
+
+	/** This player's time passes (their own clock): tension decay outside quiet, and their first major slot. */
+	public void advancePlayer(PacingMemory m, Clock c, Env env, RandomSource random) {
+		if (m.lastStepPlay < 0) {
 			m.lastStepPlay = c.playTicks();
 		}
 		long dt = Math.max(0, c.playTicks() - m.lastStepPlay);
 		m.lastStepPlay = Math.max(m.lastStepPlay, c.playTicks());
 		if (dt > 0) {
-			m.stageClock += dt / rules.attentionFactor(env.attention());
 			double tension = env.tension();
 			if (!inQuiet(m, c) && tension > 0) {
 				env.addTension(-Math.min(tension, dt * rules.tensionDecayPerTick), "decay");
 			}
 		}
 		Stage stage = env.stage();
-		if (stage == Stage.ALONE && m.stageClock >= m.tracesAt) {
-			stage = changeStage(c, env, stage, Stage.TRACES, rec);
-		}
-		if (stage == Stage.TRACES && m.stageClock >= m.proximityAt) {
-			stage = changeStage(c, env, stage, Stage.PROXIMITY, rec);
-		}
 		if (stage.atLeast(rules.majorMinStage) && stage != Stage.REMOVAL && m.nextMajorDue < 0) {
 			m.nextMajorDue = c.playTicks() + rules.majorEvery.pick(random);
 		}
 	}
 
 	/**
-	 * Lore fired {@code HerobrineEvents.TELLING}. Every telling counts as telling (the "obeyed after Stop." wait
-	 * starts over), but only one that names him starts Telling (D-041): writing near his traces never moves the stage.
+	 * Lore fired {@code HerobrineEvents.TELLING}, from any player. Every telling counts as telling (the group's
+	 * "obeyed after Stop." wait starts over, D-064), but only one that names him starts Telling (D-041): writing near
+	 * his traces never moves the stage.
 	 *
 	 * @return true if the stage moved to Telling
 	 */
-	public boolean onTelling(DirectorMemory m, Clock c, Env env, boolean namesHim, Recorder rec) {
-		m.lastTellingDay = c.day();
-		m.obeyCounted = false;
+	public boolean onTelling(WorldMemory w, Clock c, Env env, boolean namesHim, Recorder rec) {
+		w.lastTellingDay = c.day();
+		w.obeyCounted = false;
 		return namesHim && enterTelling(c, env, rec);
 	}
 
@@ -239,32 +328,34 @@ public final class DirectorBrain {
 	// --- the decision ---
 
 	/**
-	 * One director tick: let time pass, then draw, hold or fire at most one card, obeying every gate.
+	 * One director tick for one player: let time pass, then draw, hold or fire at most one card for them, obeying every
+	 * gate (theirs, and those of everyone who would share the moment).
 	 *
 	 * @return a one-line description of what happened, for {@code /a1016 director tick} and the log
 	 */
-	public String step(DirectorMemory m, Clock c, Env env, RandomSource random, Recorder rec) {
-		advanceTime(m, c, env, random, rec);
+	public String step(WorldMemory w, PacingMemory m, Clock c, Env env, RandomSource random, Recorder rec) {
+		advanceTime(w, m, c, env, random, rec);
 		if (m.sessionStart < 0 || m.sessionStart > c.playTicks()) {
-			onJoin(m, c, env, random, rec);
+			onJoin(w, m, c, env, random, rec);
 		}
 		// Other systems may have raised tension since the last tick, not only our own fires.
 		checkQuiet(m, c, env, random, rec);
 		Stage stage = env.stage();
-		releaseStaleHolds(m, c, stage, rec);
+		releaseStaleHolds(w, m, c, stage, rec);
 		String blocked = globalBlock(m, c);
 		if (blocked != null) {
 			return "waiting: " + blocked;
 		}
 		List<String> notes = new ArrayList<>();
+		List<Sharer> sharers = env.sharers();
 		for (Tier tier : PRIORITY) {
 			CardInfo card = card(m.held.get(tier));
 			if (card == null) {
-				if (tierBlock(tier, m, c, stage) != null || !due(tier, m, c, stage, random)) {
+				if (tierBlock(tier, m, c, stage) != null || !due(tier, m, c, stage, random, sharers.size())) {
 					continue;
 				}
 				Set<String> passedOver = new HashSet<>();
-				card = draw(tier, m, c, stage, random, rec, passedOver);
+				card = draw(tier, w, m, c, stage, random, rec, passedOver);
 				if (card == null) {
 					if (tier == Tier.MAJOR && !passedOver.isEmpty()) {
 						// A stage weight passed the slot's card over: the slot is spent, as a probabilistic tier's
@@ -277,9 +368,14 @@ public final class DirectorBrain {
 				m.heldSince.put(tier, c.playTicks());
 				rec.drew(c, card);
 			}
-			String why = fireBlock(card, m, c, stage);
+			String why = fireBlock(card, w, m, c, stage);
 			if (why != null) {
 				notes.add(card.id() + " waits (" + why + ")");
+				continue;
+			}
+			String shared = sharedBlock(card, w, sharers, stage);
+			if (shared != null) {
+				notes.add(card.id() + " waits (" + shared + ")");
 				continue;
 			}
 			if (!env.contextFits(card)) {
@@ -289,27 +385,31 @@ public final class DirectorBrain {
 			boolean fake = card.hasFake() && random.nextDouble() < rules.fakeChance;
 			FireResult result = env.fire(card, fake);
 			if (result == FireResult.FIRED) {
-				recordFire(m, c, card, fake, false, stage, env, random, rec);
-				return "fired " + card.id() + (fake ? " (fake)" : "");
+				recordFire(w, m, c, card, fake, false, stage, env, sharers, random, rec);
+				return "fired " + card.id() + (fake ? " (fake)" : "") + (sharers.isEmpty() ? "" : ", felt by " + sharers.size() + " more");
 			}
 			notes.add(card.id() + " " + result + ", kept for later");
 		}
 		return notes.isEmpty() ? "nothing due" : String.join("; ", notes);
 	}
 
-	/** A forced debug fire happened: history, deck and tag times, never pacing, tension or quiet. */
-	public void recordForced(DirectorMemory m, Clock c, CardInfo card, boolean fake, Stage stage, Recorder rec) {
-		recordFire(m, c, card, fake, true, stage, null, null, rec);
+	/**
+	 * A forced debug fire happened for this player: their history, deck and the world's tag times, never their pacing,
+	 * tension or quiet. Everyone who shared the moment counts it as felt like any fire (D-060.3).
+	 */
+	public void recordForced(WorldMemory w, PacingMemory m, Clock c, CardInfo card, boolean fake, Stage stage, List<Sharer> sharers,
+			RandomSource random, Recorder rec) {
+		recordFire(w, m, c, card, fake, true, stage, null, sharers, random, rec);
 	}
 
 	// --- gates ---
 
-	public boolean inQuiet(DirectorMemory m, Clock c) {
+	public boolean inQuiet(PacingMemory m, Clock c) {
 		return c.dayTicks() < m.quietUntilDayTicks;
 	}
 
-	/** Reason nothing at all may fire now, or null. */
-	public String globalBlock(DirectorMemory m, Clock c) {
+	/** Reason nothing at all may fire for this player now, or null. */
+	public String globalBlock(PacingMemory m, Clock c) {
 		long now = c.playTicks();
 		if (c.day() < rules.silenceUntilDay) {
 			return rules.silenceUntilDay == DirectorFlags.FOREVER ? "silenced for good" : "silenced until day " + rules.silenceUntilDay;
@@ -329,20 +429,33 @@ public final class DirectorBrain {
 		return null;
 	}
 
-	/** Reason this tier may not fire now, or null. */
-	public String tierBlock(Tier tier, DirectorMemory m, Clock c, Stage stage) {
+	/** Reason this tier may not fire for this player now, or null. */
+	public String tierBlock(Tier tier, PacingMemory m, Clock c, Stage stage) {
 		long now = c.playTicks();
 		return switch (tier) {
 			case AMBIENT -> stage == Stage.ALONE && m.aloneAmbientCount >= rules.aloneMaxAmbient ? "Alone ambient cap" : null;
 			case MINOR -> !stage.atLeast(rules.minorMinStage) ? "stage"
 					: now - m.lastFireTier.getOrDefault(Tier.MINOR, DirectorMemory.NEVER) < rules.minorGap ? "minor gap" : null;
 			case MAJOR -> !stage.atLeast(rules.majorMinStage) ? "stage"
-					: c.day() < rules.noMajorBeforeDay ? "first day"
+					: firstDay(m, c) ? "first day"
 					: now - m.lastMajorOrSignature < rules.majorGap ? "major gap" : null;
 			case SIGNATURE -> !stage.atLeast(rules.signatureMinStage) ? "stage"
-					: c.day() < rules.noMajorBeforeDay ? "first day"
+					: firstDay(m, c) ? "first day"
 					: now - m.lastMajorOrSignature < rules.majorGap ? "major gap" : null;
 		};
+	}
+
+	/**
+	 * True inside the player's own first {@code noMajorBeforeDay} in-game days, counted from when they first took part
+	 * (D-011; for the world's first player that is day 0 on).
+	 */
+	public boolean firstDay(PacingMemory m, Clock c) {
+		return c.dayTicks() < firstDayEnd(m);
+	}
+
+	/** Day ticks at which the player's first-day rule ends. */
+	public long firstDayEnd(PacingMemory m) {
+		return m.firstDayTicks + (long) rules.noMajorBeforeDay * DAY_TICKS;
 	}
 
 	/** First stage a tier draws in. */
@@ -361,14 +474,40 @@ public final class DirectorBrain {
 		return tier.atLeast(card.earliestStage()) ? tier : card.earliestStage();
 	}
 
-	/** Reason this card may not fire now (tier and card gates), or null. */
-	public String fireBlock(CardInfo card, DirectorMemory m, Clock c, Stage stage) {
+	/** Reason this card may not fire for this player now (tier and card gates), or null. */
+	public String fireBlock(CardInfo card, WorldMemory w, PacingMemory m, Clock c, Stage stage) {
 		String tier = tierBlock(card.tier(), m, c, stage);
-		return tier != null ? tier : cardBlock(card, m, c, stage);
+		return tier != null ? tier : cardBlock(card, w, m, c, stage);
 	}
 
-	private String cardBlock(CardInfo card, DirectorMemory m, Clock c, Stage stage) {
-		String fixed = staticBlock(card, m, stage);
+	/**
+	 * Why a card picked for someone else may not reach this player now (D-060.3), or null: the moment must be one they
+	 * could have had on their own (every gate of theirs open), and new to them (not in their cycle, not their last).
+	 */
+	public String sharedBlock(CardInfo card, WorldMemory w, PacingMemory m, Clock c, Stage stage) {
+		String why = globalBlock(m, c);
+		if (why == null) {
+			why = fireBlock(card, w, m, c, stage);
+		}
+		if (why == null && (m.cycleFired.get(card.tier()).contains(card.id()) || card.id().equals(m.lastFired.get(card.tier())))) {
+			why = "already had it";
+		}
+		return why;
+	}
+
+	/** The first sharer's reason ({@link #sharedBlock(CardInfo, WorldMemory, PacingMemory, Clock, Stage)}), or null. */
+	public String sharedBlock(CardInfo card, WorldMemory w, List<Sharer> sharers, Stage stage) {
+		for (Sharer sharer : sharers) {
+			String why = sharedBlock(card, w, sharer.memory(), sharer.clock(), stage);
+			if (why != null) {
+				return "someone close by: " + why;
+			}
+		}
+		return null;
+	}
+
+	private String cardBlock(CardInfo card, WorldMemory w, PacingMemory m, Clock c, Stage stage) {
+		String fixed = staticBlock(card, w, stage);
 		if (fixed != null) {
 			return fixed;
 		}
@@ -384,8 +523,8 @@ public final class DirectorBrain {
 		return null;
 	}
 
-	/** Blocks that only change with the stage, the profile or a once-per-world fire (never with the moment). */
-	private String staticBlock(CardInfo card, DirectorMemory m, Stage stage) {
+	/** Blocks that only change with the stage, the profile or a once-per-world fire (never with the moment or the player). */
+	private String staticBlock(CardInfo card, WorldMemory w, Stage stage) {
 		if (!stage.atLeast(minStage(card))) {
 			return "stage";
 		}
@@ -395,7 +534,7 @@ public final class DirectorBrain {
 		if (rules.habitWeight(card) <= 0) {
 			return "not this world's habits";
 		}
-		if (oncePerWorld(card) && m.signaturesFired.contains(card.id())) {
+		if (oncePerWorld(card) && w.signaturesFired.contains(card.id())) {
 			return "once per world";
 		}
 		return switch (card.id()) {
@@ -411,14 +550,14 @@ public final class DirectorBrain {
 	}
 
 	/** The pity bonus: after a long stretch without any fire, the odds rise slowly up to the cap. */
-	public double pity(DirectorMemory m, Clock c) {
+	public double pity(PacingMemory m, Clock c) {
 		long since = c.playTicks() - Math.max(0, m.lastFireAny);
 		double hoursPast = (since - rules.pityStart) / (double) rules.hourTicks;
 		return hoursPast <= 0 ? 0 : Math.min(rules.pityMaxBonus, hoursPast * rules.pityBonusPerHour);
 	}
 
 	/** Per-hour rate of a probabilistic tier in this stage (before pity), or -1 for scheduled tiers. */
-	public double rate(Tier tier, DirectorMemory m, Stage stage) {
+	public double rate(Tier tier, PacingMemory m, Stage stage) {
 		return switch (tier) {
 			case AMBIENT -> switch (stage) {
 				case ALONE -> rules.aloneAmbientPerHour;
@@ -434,7 +573,12 @@ public final class DirectorBrain {
 		};
 	}
 
-	private boolean due(Tier tier, DirectorMemory m, Clock c, Stage stage, RandomSource random) {
+	/**
+	 * @param sharing how many others share this player's moments right now: together, the group rolls one solo rate
+	 *                between them (each of the {@code sharing + 1} a share of it, after the same refractory wait), so being
+	 *                together never multiplies the ambient and minor odds (D-060.3)
+	 */
+	private boolean due(Tier tier, PacingMemory m, Clock c, Stage stage, RandomSource random, int sharing) {
 		return switch (tier) {
 			case AMBIENT, MINOR -> {
 				double perHour = rate(tier, m, stage);
@@ -449,6 +593,7 @@ public final class DirectorBrain {
 					}
 					perHour /= 1 - rules.rateRefractory;
 				}
+				perHour /= 1 + Math.max(0, sharing);
 				double perTick = perHour * (1 + pity(m, c)) * rules.tickInterval / rules.hourTicks;
 				yield random.nextDouble() < 1 - Math.exp(-perTick);
 			}
@@ -459,13 +604,13 @@ public final class DirectorBrain {
 
 	// --- decks ---
 
-	/** Cards of this tier that could be drawn now: undrawn this cycle, not the last one fired, every gate open. */
-	public List<CardInfo> candidates(Tier tier, DirectorMemory m, Clock c, Stage stage) {
+	/** Cards of this tier this player could draw now: undrawn this cycle, not the last one fired, every gate open. */
+	public List<CardInfo> candidates(Tier tier, WorldMemory w, PacingMemory m, Clock c, Stage stage) {
 		Set<String> cycle = m.cycleFired.get(tier);
 		String last = m.lastFired.get(tier);
 		List<CardInfo> out = new ArrayList<>();
 		for (CardInfo card : byTier.get(tier)) {
-			if (!cycle.contains(card.id()) && !card.id().equals(last) && cardBlock(card, m, c, stage) == null) {
+			if (!cycle.contains(card.id()) && !card.id().equals(last) && cardBlock(card, w, m, c, stage) == null) {
 				out.add(card);
 			}
 		}
@@ -480,17 +625,17 @@ public final class DirectorBrain {
 	 *
 	 * @param skipped filled with the cards a stage weight passed over in this draw
 	 */
-	private CardInfo draw(Tier tier, DirectorMemory m, Clock c, Stage stage, RandomSource random, Recorder rec, Set<String> skipped) {
+	private CardInfo draw(Tier tier, WorldMemory w, PacingMemory m, Clock c, Stage stage, RandomSource random, Recorder rec, Set<String> skipped) {
 		boolean refilled = false;
 		String givenUp = m.lastGivenUp.get(tier);
 		while (true) {
-			List<CardInfo> eligible = candidates(tier, m, c, stage);
+			List<CardInfo> eligible = candidates(tier, w, m, c, stage);
 			eligible.removeIf(card -> skipped.contains(card.id()));
 			if (eligible.isEmpty()) {
 				if (refilled || tier == Tier.SIGNATURE || m.cycleFired.get(tier).isEmpty()) {
 					return null;
 				}
-				if (!runOut(tier, m, stage)) {
+				if (!runOut(tier, w, m, stage)) {
 					Long stuckSince = m.deckStuckSince.get(tier);
 					if (stuckSince == null || stuckSince > c.dayTicks()) {
 						stuckSince = c.dayTicks();
@@ -527,10 +672,10 @@ public final class DirectorBrain {
 	 * A deck has run out when every card it has not fired this cycle is ruled out by the stage or the profile (or
 	 * already fired once per world). A card that only waits on the moment (a gate, a skip roll) keeps it going.
 	 */
-	public boolean runOut(Tier tier, DirectorMemory m, Stage stage) {
+	public boolean runOut(Tier tier, WorldMemory w, PacingMemory m, Stage stage) {
 		Set<String> cycle = m.cycleFired.get(tier);
 		for (CardInfo card : byTier.get(tier)) {
-			if (!cycle.contains(card.id()) && staticBlock(card, m, stage) == null) {
+			if (!cycle.contains(card.id()) && staticBlock(card, w, stage) == null) {
 				return false;
 			}
 		}
@@ -558,7 +703,7 @@ public final class DirectorBrain {
 		return eligible.getLast();
 	}
 
-	private void releaseStaleHolds(DirectorMemory m, Clock c, Stage stage, Recorder rec) {
+	private void releaseStaleHolds(WorldMemory w, PacingMemory m, Clock c, Stage stage, Recorder rec) {
 		for (Tier tier : Tier.values()) {
 			String id = m.held.get(tier);
 			if (id == null) {
@@ -571,7 +716,7 @@ public final class DirectorBrain {
 			} else if (c.playTicks() - m.heldSince.getOrDefault(tier, c.playTicks()) >= rules.holdGiveUp) {
 				why = "held too long";
 			} else {
-				why = staticBlock(card, m, stage);
+				why = staticBlock(card, w, stage);
 			}
 			if (why != null) {
 				m.held.remove(tier);
@@ -584,10 +729,10 @@ public final class DirectorBrain {
 		}
 	}
 
-	// --- fires, tension, quiet ---
+	// --- fires, felt moments, tension, quiet ---
 
-	private void recordFire(DirectorMemory m, Clock c, CardInfo card, boolean fake, boolean forced, Stage stage, Env env,
-			RandomSource random, Recorder rec) {
+	private void recordFire(WorldMemory w, PacingMemory m, Clock c, CardInfo card, boolean fake, boolean forced, Stage stage, Env env,
+			List<Sharer> sharers, RandomSource random, Recorder rec) {
 		Tier tier = card.tier();
 		long now = c.playTicks();
 		if (card.id().equals(m.held.get(tier))) {
@@ -599,23 +744,70 @@ public final class DirectorBrain {
 		m.lastGivenUp.remove(tier);
 		m.deckStuckSince.remove(tier);
 		if (oncePerWorld(card)) {
-			m.signaturesFired.add(card.id());
+			// D-062.3: set in the same call that fired it, so nobody else's decision can fire it again this tick.
+			w.signaturesFired.add(card.id());
 		}
+		for (CardTag tag : card.tags()) {
+			w.lastTag.put(tag, c.worldTicks());
+			m.lastTag.put(tag, now);
+		}
+		countSighting(m, c, card);
+		m.addHistory(new DirectorMemory.HistoryEntry(now, c.day(), card.id(), tier, fake, forced, stage, false), historySize);
+		if (forced) {
+			rec.fired(c, card, fake, true, stage, Double.NaN);
+		} else {
+			m.lastFireAny = now;
+			m.lastFireTier.put(tier, now);
+			if (tier == Tier.MAJOR || tier == Tier.SIGNATURE) {
+				m.lastMajorOrSignature = now;
+			}
+			if (tier == Tier.MAJOR) {
+				scheduleNextMajor(m, now, random);
+			}
+			if (tier == Tier.AMBIENT && stage == Stage.ALONE) {
+				m.aloneAmbientCount++;
+			}
+			m.totalFires++;
+			if (card.hasFake()) {
+				m.fakeableFires++;
+			}
+			if (fake) {
+				m.fakeFires++;
+			}
+			env.addTension(rules.tensionFor(tier) * (fake ? rules.fakeTensionFactor : 1), "fired " + card.id());
+			rec.fired(c, card, fake, false, stage, env.tension());
+			checkQuiet(m, c, env, random, rec);
+		}
+		for (Sharer sharer : sharers) {
+			recordFelt(sharer, card, fake, forced, stage, random);
+		}
+	}
+
+	/**
+	 * Someone else's card reached this player (D-060.3): it counts in their pacing as if it had been theirs (the gaps
+	 * and hard limits of its tier, the major schedule, the Alone cap, sightings per day, the no-repeat cycle, tension
+	 * and the quiet it may start), but not as their own draw: their held cards (other than this one) and their fire
+	 * counts stay as they were.
+	 */
+	private void recordFelt(Sharer sharer, CardInfo card, boolean fake, boolean forced, Stage stage, RandomSource random) {
+		PacingMemory m = sharer.memory();
+		Clock c = sharer.clock();
+		Env env = sharer.env();
+		Recorder rec = sharer.recorder();
+		Tier tier = card.tier();
+		long now = c.playTicks();
+		if (card.id().equals(m.held.get(tier))) {
+			m.held.remove(tier);
+			m.heldSince.remove(tier);
+		}
+		m.cycleFired.get(tier).add(card.id());
+		m.lastFired.put(tier, card.id());
 		for (CardTag tag : card.tags()) {
 			m.lastTag.put(tag, now);
 		}
-		if (card.has(CardTag.SIGHTING)) {
-			if (m.sightingDay != c.day()) {
-				m.sightingDay = c.day();
-				m.sightingsThatDay = 0;
-			}
-			m.sightingsThatDay++;
-		}
-		m.addHistory(new DirectorMemory.HistoryEntry(now, c.day(), card.id(), tier, fake, forced, stage), historySize);
-		if (forced) {
-			rec.fired(c, card, fake, true, stage, Double.NaN);
-			return;
-		}
+		countSighting(m, c, card);
+		m.addHistory(new DirectorMemory.HistoryEntry(now, c.day(), card.id(), tier, fake, forced, stage, true), historySize);
+		m.feltFires++;
 		m.lastFireAny = now;
 		m.lastFireTier.put(tier, now);
 		if (tier == Tier.MAJOR || tier == Tier.SIGNATURE) {
@@ -627,16 +819,19 @@ public final class DirectorBrain {
 		if (tier == Tier.AMBIENT && stage == Stage.ALONE) {
 			m.aloneAmbientCount++;
 		}
-		m.totalFires++;
-		if (card.hasFake()) {
-			m.fakeableFires++;
-		}
-		if (fake) {
-			m.fakeFires++;
-		}
-		env.addTension(rules.tensionFor(tier) * (fake ? rules.fakeTensionFactor : 1), "fired " + card.id());
-		rec.fired(c, card, fake, false, stage, env.tension());
+		env.addTension(rules.tensionFor(tier) * (fake ? rules.fakeTensionFactor : 1), "felt " + card.id());
+		rec.felt(c, card, fake, forced, stage, env.tension());
 		checkQuiet(m, c, env, random, rec);
+	}
+
+	private static void countSighting(PacingMemory m, Clock c, CardInfo card) {
+		if (card.has(CardTag.SIGHTING)) {
+			if (m.sightingDay != c.day()) {
+				m.sightingDay = c.day();
+				m.sightingsThatDay = 0;
+			}
+			m.sightingsThatDay++;
+		}
 	}
 
 	/**
@@ -646,19 +841,19 @@ public final class DirectorBrain {
 	 * once as a longer gap): majors drifted about half an hour per slot behind the 4b schedule. The next slot is
 	 * never closer than the shortest gap after now, so a late major is never followed by a hurried one.
 	 */
-	private void scheduleNextMajor(DirectorMemory m, long now, RandomSource random) {
+	private void scheduleNextMajor(PacingMemory m, long now, RandomSource random) {
 		long slot = m.nextMajorDue >= 0 && m.nextMajorDue <= now ? m.nextMajorDue : now;
 		m.nextMajorDue = Math.max(slot + rules.majorEvery.pick(random), now + rules.majorEvery.min());
 	}
 
 	/** Tension at the threshold starts a quiet, whatever raised it. A running quiet is never restarted. */
-	private void checkQuiet(DirectorMemory m, Clock c, Env env, RandomSource random, Recorder rec) {
+	private void checkQuiet(PacingMemory m, Clock c, Env env, RandomSource random, Recorder rec) {
 		if (!inQuiet(m, c) && env.tension() >= rules.tensionThreshold) {
 			startQuiet(m, c, env, random, rec);
 		}
 	}
 
-	private void startQuiet(DirectorMemory m, Clock c, Env env, RandomSource random, Recorder rec) {
+	private void startQuiet(PacingMemory m, Clock c, Env env, RandomSource random, Recorder rec) {
 		int days = rules.quietMinDays + random.nextInt(rules.quietMaxDays - rules.quietMinDays + 1);
 		double before = env.tension();
 		m.quietStartDayTicks = c.dayTicks();

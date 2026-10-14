@@ -1,134 +1,100 @@
 package com.forzacode.a1016_02.director;
 
-import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collections;
-import java.util.EnumMap;
-import java.util.LinkedHashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
+import java.util.Optional;
+import java.util.UUID;
 import java.util.function.Function;
 
-import com.forzacode.a1016_02.core.CardTag;
 import com.forzacode.a1016_02.core.Stage;
 import com.forzacode.a1016_02.core.Tier;
 
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.nbt.ListTag;
 
+import org.jspecify.annotations.Nullable;
+
 /**
- * Everything the director remembers: stage timers, deck cycles, held cards, pacing timestamps, quiet, the
- * current session, trigger bookkeeping and a short fire history. Plain data; {@link DirectorBrain} changes it,
- * {@link DirectorData} stores it. All times are play ticks unless the name says day ticks (in-game days * 24000
- * plus time of day, including timewarp).
+ * Everything the director remembers (D-059): one {@link WorldMemory} shared by everyone, and one {@link PacingMemory}
+ * per player who has taken part, keyed by UUID in the order they first did (D-062.2). {@link DirectorData} stores it.
+ * <p>
+ * Format 2 stores {@code format}, {@code world} and {@code players} (each with its {@code uuid}). A v1
+ * {@code director.dat} (one memory for the single subject, every field at the top level) reads as a world part plus
+ * one {@linkplain #unowned() unowned} pacing memory: {@link DirectorData#get} hands it to the first known player
+ * ({@code HerobrineState.players()}, who is v1.0's subject), so the old timers keep running on that player's clock
+ * (core gives them the old play ticks as their own). Until someone is known it stays unowned and is saved as such.
  */
 public final class DirectorMemory {
 	/** "Never happened": far enough in the past that subtracting it from any play time cannot overflow. */
 	public static final long NEVER = Long.MIN_VALUE / 4;
+	static final int FORMAT = 2;
 
-	/** One fire, newest last in {@link #history()}. */
-	public record HistoryEntry(long playTicks, long day, String cardId, Tier tier, boolean fake, boolean forced, Stage stage) {
+	/**
+	 * One fire, newest last in {@link PacingMemory#history()}.
+	 *
+	 * @param playTicks that player's own clock
+	 * @param felt      someone else's card, felt here because they were close (D-060.3)
+	 */
+	public record HistoryEntry(long playTicks, long day, String cardId, Tier tier, boolean fake, boolean forced, Stage stage, boolean felt) {
 	}
 
-	// --- stage timers ---
-	long lastStepPlay = -1;
-	/** Play ticks weighted by attention; stages move when it passes the rolled points. -1 = not started. */
-	double stageClock = -1;
-	long tracesAt = -1;
-	long proximityAt = -1;
-	String rolledTempo = "";
-	long nextMajorDue = -1;
-
-	// --- decks ---
-	/** Cards fired in the current cycle of each deck; cleared when the deck runs out. */
-	final Map<Tier, Set<String>> cycleFired = new EnumMap<>(Tier.class);
-	final Map<Tier, String> lastFired = new EnumMap<>(Tier.class);
-	final Map<Tier, String> held = new EnumMap<>(Tier.class);
-	final Map<Tier, Long> heldSince = new EnumMap<>(Tier.class);
-	final Map<Tier, String> lastGivenUp = new EnumMap<>(Tier.class);
-	/** Day ticks at which a deck first found nothing to draw while only gated cards held its reshuffle back. */
-	final Map<Tier, Long> deckStuckSince = new EnumMap<>(Tier.class);
-	final Set<String> signaturesFired = new LinkedHashSet<>();
-
-	// --- pacing ---
-	long lastFireAny = NEVER;
-	final Map<Tier, Long> lastFireTier = new EnumMap<>(Tier.class);
-	long lastMajorOrSignature = NEVER;
-	final Map<CardTag, Long> lastTag = new EnumMap<>(CardTag.class);
-	int aloneAmbientCount;
-	long sightingDay = -1;
-	int sightingsThatDay;
-
-	// --- quiet ---
-	long quietUntilDayTicks = -1;
-	long quietStartDayTicks = -1;
-	int quietCount;
-
-	// --- session ---
-	long sessionStart = -1;
-	boolean sessionEmpty;
-	long sessionEmptyUntil = -1;
-	double sessionMinorRate = -1;
-	int sessionCount;
-	int emptySessionCount;
-
-	// --- stats and history ---
-	int totalFires;
-	int fakeFires;
-	/** Fires of cards that could have been fakes (the denominator of the fake ratio). */
-	int fakeableFires;
-	final ArrayDeque<HistoryEntry> history = new ArrayDeque<>();
-
-	// --- attention trigger bookkeeping ---
-	long lowRenderAccum;
-	long daylightAccum;
-	long lastSleptDay = -1;
-	long stopSeenDay = -1;
-	long lastTellingDay = -1;
-	boolean obeyCounted;
-	long avoidCountedVisitDay = -1;
-	long lastAvoidCheckDay = -1;
-	long lastDisc13Play = NEVER;
-	String lastWarpSummary = "";
+	private final WorldMemory world;
+	private final Map<UUID, PacingMemory> players = new LinkedHashMap<>();
+	/** A v1 subject's pacing whose owner is not known yet (see the class comment). */
+	private @Nullable PacingMemory unowned;
 
 	public DirectorMemory() {
-		for (Tier tier : Tier.values()) {
-			cycleFired.put(tier, new LinkedHashSet<>());
+		this(new WorldMemory());
+	}
+
+	/** A memory around this world part, with nobody's pacing yet (dry runs and tests). */
+	DirectorMemory(WorldMemory world) {
+		this.world = world;
+	}
+
+	/** Sets a player's pacing (dry runs and tests); the live director creates them through {@link #pacing}. */
+	void put(UUID player, PacingMemory pacing) {
+		players.put(player, pacing);
+	}
+
+	public WorldMemory world() {
+		return world;
+	}
+
+	/** That player's pacing, created (their first in-game day starting at {@code dayTicksNow}) if they have none yet. */
+	public PacingMemory pacing(UUID player, long dayTicksNow) {
+		return players.computeIfAbsent(player, k -> new PacingMemory(dayTicksNow));
+	}
+
+	/** That player's pacing, or empty if they never had one. Never creates one (read-only callers). */
+	public Optional<PacingMemory> find(UUID player) {
+		return Optional.ofNullable(players.get(player));
+	}
+
+	/** Every player's pacing, in the order they first took part. Unmodifiable. */
+	public Map<UUID, PacingMemory> players() {
+		return Collections.unmodifiableMap(players);
+	}
+
+	/** A v1 subject's pacing still waiting for its owner, or null. */
+	public @Nullable PacingMemory unowned() {
+		return unowned;
+	}
+
+	/**
+	 * Gives the unowned v1 pacing to this player (v1.0's subject: the first known player), unless they already have
+	 * one of their own. Returns true if anything changed.
+	 */
+	public boolean adoptUnowned(UUID firstKnown) {
+		if (unowned == null) {
+			return false;
 		}
-	}
-
-	// --- read access for other classes in this workstream and tests ---
-
-	public List<HistoryEntry> history() {
-		return Collections.unmodifiableList(new ArrayList<>(history));
-	}
-
-	public long quietUntilDayTicks() {
-		return quietUntilDayTicks;
-	}
-
-	public long lastTagFire(CardTag tag) {
-		return lastTag.getOrDefault(tag, NEVER);
-	}
-
-	public String held(Tier tier) {
-		return held.get(tier);
-	}
-
-	public Set<String> cycleFired(Tier tier) {
-		return Collections.unmodifiableSet(cycleFired.get(tier));
-	}
-
-	public Set<String> signaturesFired() {
-		return Collections.unmodifiableSet(signaturesFired);
-	}
-
-	void addHistory(HistoryEntry entry, int max) {
-		history.addLast(entry);
-		while (history.size() > Math.max(1, max)) {
-			history.removeFirst();
-		}
+		players.putIfAbsent(firstKnown, unowned);
+		unowned = null;
+		return true;
 	}
 
 	/** A deep copy (dry runs work on copies). */
@@ -140,140 +106,47 @@ public final class DirectorMemory {
 
 	public CompoundTag toTag() {
 		CompoundTag tag = new CompoundTag();
-		tag.putLong("lastStepPlay", lastStepPlay);
-		tag.putDouble("stageClock", stageClock);
-		tag.putLong("tracesAt", tracesAt);
-		tag.putLong("proximityAt", proximityAt);
-		tag.putString("rolledTempo", rolledTempo);
-		tag.putLong("nextMajorDue", nextMajorDue);
-
-		CompoundTag cycles = new CompoundTag();
-		cycleFired.forEach((tier, ids) -> cycles.putString(tier.name(), String.join(",", ids)));
-		tag.put("cycleFired", cycles);
-		tag.put("lastFired", strings(lastFired));
-		tag.put("held", strings(held));
-		tag.put("heldSince", longs(heldSince));
-		tag.put("lastGivenUp", strings(lastGivenUp));
-		tag.put("deckStuckSince", longs(deckStuckSince));
-		tag.putString("signaturesFired", String.join(",", signaturesFired));
-
-		tag.putLong("lastFireAny", lastFireAny);
-		tag.put("lastFireTier", longs(lastFireTier));
-		tag.putLong("lastMajorOrSignature", lastMajorOrSignature);
-		tag.put("lastTag", longs(lastTag));
-		tag.putInt("aloneAmbientCount", aloneAmbientCount);
-		tag.putLong("sightingDay", sightingDay);
-		tag.putInt("sightingsThatDay", sightingsThatDay);
-
-		tag.putLong("quietUntilDayTicks", quietUntilDayTicks);
-		tag.putLong("quietStartDayTicks", quietStartDayTicks);
-		tag.putInt("quietCount", quietCount);
-
-		tag.putLong("sessionStart", sessionStart);
-		tag.putBoolean("sessionEmpty", sessionEmpty);
-		tag.putLong("sessionEmptyUntil", sessionEmptyUntil);
-		tag.putDouble("sessionMinorRate", sessionMinorRate);
-		tag.putInt("sessionCount", sessionCount);
-		tag.putInt("emptySessionCount", emptySessionCount);
-
-		tag.putInt("totalFires", totalFires);
-		tag.putInt("fakeFires", fakeFires);
-		tag.putInt("fakeableFires", fakeableFires);
+		tag.putInt("format", FORMAT);
+		tag.put("world", world.toTag());
 		ListTag list = new ListTag();
-		for (HistoryEntry entry : history) {
-			CompoundTag e = new CompoundTag();
-			e.putLong("play", entry.playTicks());
-			e.putLong("day", entry.day());
-			e.putString("card", entry.cardId());
-			e.putString("tier", entry.tier().name());
-			e.putBoolean("fake", entry.fake());
-			e.putBoolean("forced", entry.forced());
-			e.putString("stage", entry.stage().name());
-			list.add(e);
+		players.forEach((uuid, pacing) -> {
+			CompoundTag entry = pacing.toTag();
+			entry.putString("uuid", uuid.toString());
+			list.add(entry);
+		});
+		tag.put("players", list);
+		if (unowned != null) {
+			tag.put("unowned", unowned.toTag());
 		}
-		tag.put("history", list);
-
-		tag.putLong("lowRenderAccum", lowRenderAccum);
-		tag.putLong("daylightAccum", daylightAccum);
-		tag.putLong("lastSleptDay", lastSleptDay);
-		tag.putLong("stopSeenDay", stopSeenDay);
-		tag.putLong("lastTellingDay", lastTellingDay);
-		tag.putBoolean("obeyCounted", obeyCounted);
-		tag.putLong("avoidCountedVisitDay", avoidCountedVisitDay);
-		tag.putLong("lastAvoidCheckDay", lastAvoidCheckDay);
-		tag.putLong("lastDisc13Play", lastDisc13Play);
-		tag.putString("lastWarpSummary", lastWarpSummary);
 		return tag;
 	}
 
+	/** Reads format 2, or a v1 file (see the class comment). */
 	public static DirectorMemory fromTag(CompoundTag tag) {
-		DirectorMemory m = new DirectorMemory();
-		m.lastStepPlay = tag.getLongOr("lastStepPlay", -1);
-		m.stageClock = tag.getDoubleOr("stageClock", -1);
-		m.tracesAt = tag.getLongOr("tracesAt", -1);
-		m.proximityAt = tag.getLongOr("proximityAt", -1);
-		m.rolledTempo = tag.getStringOr("rolledTempo", "");
-		m.nextMajorDue = tag.getLongOr("nextMajorDue", -1);
-
-		CompoundTag cycles = tag.getCompoundOrEmpty("cycleFired");
-		for (Tier tier : Tier.values()) {
-			m.cycleFired.get(tier).addAll(split(cycles.getStringOr(tier.name(), "")));
+		if (tag.getIntOr("format", 1) < FORMAT) {
+			DirectorMemory legacy = new DirectorMemory(WorldMemory.fromTag(tag));
+			if (!tag.isEmpty()) {
+				legacy.unowned = PacingMemory.fromTag(tag);
+			}
+			return legacy;
 		}
-		readStrings(tag.getCompoundOrEmpty("lastFired"), m.lastFired);
-		readStrings(tag.getCompoundOrEmpty("held"), m.held);
-		readLongs(tag.getCompoundOrEmpty("heldSince"), m.heldSince, Tier::valueOf);
-		readStrings(tag.getCompoundOrEmpty("lastGivenUp"), m.lastGivenUp);
-		readLongs(tag.getCompoundOrEmpty("deckStuckSince"), m.deckStuckSince, Tier::valueOf);
-		m.signaturesFired.addAll(split(tag.getStringOr("signaturesFired", "")));
-
-		m.lastFireAny = tag.getLongOr("lastFireAny", NEVER);
-		readLongs(tag.getCompoundOrEmpty("lastFireTier"), m.lastFireTier, Tier::valueOf);
-		m.lastMajorOrSignature = tag.getLongOr("lastMajorOrSignature", NEVER);
-		readLongs(tag.getCompoundOrEmpty("lastTag"), m.lastTag, CardTag::valueOf);
-		m.aloneAmbientCount = tag.getIntOr("aloneAmbientCount", 0);
-		m.sightingDay = tag.getLongOr("sightingDay", -1);
-		m.sightingsThatDay = tag.getIntOr("sightingsThatDay", 0);
-
-		m.quietUntilDayTicks = tag.getLongOr("quietUntilDayTicks", -1);
-		m.quietStartDayTicks = tag.getLongOr("quietStartDayTicks", -1);
-		m.quietCount = tag.getIntOr("quietCount", 0);
-
-		m.sessionStart = tag.getLongOr("sessionStart", -1);
-		m.sessionEmpty = tag.getBooleanOr("sessionEmpty", false);
-		m.sessionEmptyUntil = tag.getLongOr("sessionEmptyUntil", -1);
-		m.sessionMinorRate = tag.getDoubleOr("sessionMinorRate", -1);
-		m.sessionCount = tag.getIntOr("sessionCount", 0);
-		m.emptySessionCount = tag.getIntOr("emptySessionCount", 0);
-
-		m.totalFires = tag.getIntOr("totalFires", 0);
-		m.fakeFires = tag.getIntOr("fakeFires", 0);
-		m.fakeableFires = tag.getIntOr("fakeableFires", 0);
-		ListTag list = tag.getListOrEmpty("history");
+		DirectorMemory m = new DirectorMemory(WorldMemory.fromTag(tag.getCompoundOrEmpty("world")));
+		ListTag list = tag.getListOrEmpty("players");
 		for (int i = 0; i < list.size(); i++) {
-			CompoundTag e = list.getCompoundOrEmpty(i);
+			CompoundTag entry = list.getCompoundOrEmpty(i);
 			try {
-				m.history.addLast(new HistoryEntry(e.getLongOr("play", 0), e.getLongOr("day", 0), e.getStringOr("card", "?"),
-						Tier.valueOf(e.getStringOr("tier", "AMBIENT")), e.getBooleanOr("fake", false), e.getBooleanOr("forced", false),
-						Stage.valueOf(e.getStringOr("stage", "ALONE"))));
+				m.players.putIfAbsent(UUID.fromString(entry.getStringOr("uuid", "")), PacingMemory.fromTag(entry));
 			} catch (IllegalArgumentException ignored) {
-				// unknown enum name from an older version: drop the entry
+				// a broken uuid: that player starts over
 			}
 		}
-
-		m.lowRenderAccum = tag.getLongOr("lowRenderAccum", 0);
-		m.daylightAccum = tag.getLongOr("daylightAccum", 0);
-		m.lastSleptDay = tag.getLongOr("lastSleptDay", -1);
-		m.stopSeenDay = tag.getLongOr("stopSeenDay", -1);
-		m.lastTellingDay = tag.getLongOr("lastTellingDay", -1);
-		m.obeyCounted = tag.getBooleanOr("obeyCounted", false);
-		m.avoidCountedVisitDay = tag.getLongOr("avoidCountedVisitDay", -1);
-		m.lastAvoidCheckDay = tag.getLongOr("lastAvoidCheckDay", -1);
-		m.lastDisc13Play = tag.getLongOr("lastDisc13Play", NEVER);
-		m.lastWarpSummary = tag.getStringOr("lastWarpSummary", "");
+		tag.getCompound("unowned").ifPresent(unowned -> m.unowned = PacingMemory.fromTag(unowned));
 		return m;
 	}
 
-	private static CompoundTag strings(Map<Tier, String> map) {
+	// --- shared tag helpers ---
+
+	static CompoundTag strings(Map<Tier, String> map) {
 		CompoundTag tag = new CompoundTag();
 		map.forEach((tier, value) -> {
 			if (value != null) {
@@ -283,19 +156,19 @@ public final class DirectorMemory {
 		return tag;
 	}
 
-	private static <E extends Enum<E>> CompoundTag longs(Map<E, Long> map) {
+	static <E extends Enum<E>> CompoundTag longs(Map<E, Long> map) {
 		CompoundTag tag = new CompoundTag();
 		map.forEach((key, value) -> tag.putLong(key.name(), value));
 		return tag;
 	}
 
-	private static void readStrings(CompoundTag tag, Map<Tier, String> into) {
+	static void readStrings(CompoundTag tag, Map<Tier, String> into) {
 		for (Tier tier : Tier.values()) {
 			tag.getString(tier.name()).filter(s -> !s.isEmpty()).ifPresent(s -> into.put(tier, s));
 		}
 	}
 
-	private static <E extends Enum<E>> void readLongs(CompoundTag tag, Map<E, Long> into, Function<String, E> parse) {
+	static <E extends Enum<E>> void readLongs(CompoundTag tag, Map<E, Long> into, Function<String, E> parse) {
 		for (String key : tag.keySet()) {
 			try {
 				E e = parse.apply(key);
@@ -306,7 +179,7 @@ public final class DirectorMemory {
 		}
 	}
 
-	private static List<String> split(String joined) {
+	static List<String> split(String joined) {
 		List<String> out = new ArrayList<>();
 		for (String part : joined.split(",")) {
 			if (!part.isBlank()) {

@@ -5,7 +5,6 @@ import com.forzacode.a1016_02.core.Services;
 
 import net.fabricmc.fabric.api.entity.event.v1.EntitySleepEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
-import net.fabricmc.fabric.api.networking.v1.ServerPlayConnectionEvents;
 
 import net.minecraft.server.level.ServerPlayer;
 
@@ -20,15 +19,12 @@ public final class DirectorInit {
 		Services.installDirector(DIRECTOR);
 		DirectorCommands.register(DIRECTOR);
 
-		// Core's JOIN handler runs first (CoreInit registers before us), so the subject is already known.
-		ServerPlayConnectionEvents.JOIN.register((handler, sender, server) -> {
-			if (Services.watch().isSubject(handler.player)) {
-				DIRECTOR.onJoin(server);
-			}
-		});
-		ServerPlayConnectionEvents.DISCONNECT.register((handler, server) -> {
-			if (Services.watch().isSubject(handler.player)) {
-				DIRECTOR.onLeave(server);
+		// Sessions are per player (D-062.4): one player starting or stopping touches only their own pacing.
+		HerobrineEvents.PARTICIPATION.register((server, player, participating) -> {
+			if (participating) {
+				DIRECTOR.onJoin(server, player);
+			} else {
+				DIRECTOR.onLeave(server, player);
 			}
 		});
 		HerobrineEvents.TELLING.register((player, text, pos, namesHim) -> DIRECTOR.onTelling(player.level().getServer(), namesHim));
@@ -37,7 +33,10 @@ public final class DirectorInit {
 				DirectorTriggers.onStartSleeping(player);
 			}
 		});
-		ServerLifecycleEvents.SERVER_STOPPED.register(server -> DirectorTriggers.clear());
+		ServerLifecycleEvents.SERVER_STOPPED.register(server -> {
+			DirectorTriggers.clear();
+			DIRECTOR.clear();
+		});
 	}
 
 	/** The installed director (tests and commands). */

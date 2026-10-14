@@ -2,9 +2,9 @@ package com.forzacode.a1016_02.director;
 
 import java.util.EnumSet;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
-import java.util.Optional;
 import java.util.Set;
 
 import com.forzacode.a1016_02.A1016_02;
@@ -14,6 +14,7 @@ import com.forzacode.a1016_02.core.GameClock;
 import com.forzacode.a1016_02.core.HerobrineState;
 import com.forzacode.a1016_02.core.ModConfig;
 import com.forzacode.a1016_02.core.Pacing;
+import com.forzacode.a1016_02.core.PlayerWatch;
 import com.forzacode.a1016_02.core.Services;
 import com.forzacode.a1016_02.core.SiteRegistry;
 import com.forzacode.a1016_02.core.SiteType;
@@ -33,9 +34,18 @@ import net.minecraft.world.level.levelgen.Heightmap;
 import net.minecraft.world.phys.Vec3;
 
 /**
- * The attention triggers the director owns (D-017): sleeping, low render distance, daylight in open areas,
- * disc 13 underground and stopping it, obeying after "Stop.", and avoiding his traces. Only the subject counts.
- * Server thread only.
+ * The attention triggers the director owns (D-017), for any participant. Attention is one value for the world
+ * (D-058), so a trigger counts once per occasion, not once per witness, unless it is about one player's own setup:
+ * <ul>
+ * <li>SLEPT: per occasion, one per night however many sleep (with {@code sleptOncePerDay} off, one per sleep that
+ * nobody else was already in).</li>
+ * <li>LOW_RENDER_DISTANCE: per player (their own view distance, a personal record, D-061), at most once per session.</li>
+ * <li>DAYLIGHT_OPEN_AREAS: per occasion, one world tally that runs while anyone plays in open, clear daylight.</li>
+ * <li>DISC_13_UNDERGROUND and STOPPED_DISC_13: per occasion, one per jukebox with anyone in earshot.</li>
+ * <li>OBEYED_AFTER_STOP: per occasion, the group's obeying (D-064): anyone's telling starts the wait over.</li>
+ * <li>AVOIDED_TRACES: per occasion, from the shared footprint: each visit by anyone counts once.</li>
+ * </ul>
+ * The per-occasion memory is in {@link WorldMemory}, the per-player one in {@link PacingMemory}. Server thread only.
  */
 public final class DirectorTriggers {
 	/** Jukeboxes whose underground disc 13 counted, so stopping it mid-track can count too. */
@@ -48,48 +58,72 @@ public final class DirectorTriggers {
 		DISC_13_PLAYING.clear();
 	}
 
-	/** Runs with the director tick (every {@code directorTickSeconds} of play). */
-	static void periodic(MinecraftServer server, ServerPlayer subject, DirectorRules rules, DirectorBrain.Clock clock) {
+	/** Runs with the world's director step: the triggers that count once per occasion. */
+	static void periodicWorld(MinecraftServer server, List<ServerPlayer> participants, DirectorRules rules, DirectorBrain.Clock clock) {
 		DirectorData data = DirectorData.get(server);
-		DirectorMemory m = data.memory();
+		WorldMemory w = data.memory().world();
 		DirectorConfig config = DirectorConfig.get();
 		Pacing pacing = ModConfig.pacing();
-		lowRenderDistance(server, subject, rules, m, config, pacing);
-		daylightOpenAreas(server, subject, rules, m, config);
-		obeyedAfterStop(server, m, clock, pacing);
-		avoidedTraces(server, m, clock, config);
+		boolean daylight = false;
+		for (ServerPlayer player : participants) {
+			daylight |= player.isAlive() && inOpenDaylight(player, config);
+		}
+		long period = Math.max(1, ModConfig.realTicks(config.daylightTriggerMinutes * 60));
+		if (daylightRule(w, daylight, rules.tickInterval, period)) {
+			Attention.trigger(server, AttentionTrigger.DAYLIGHT_OPEN_AREAS);
+		}
+		obeyedAfterStop(server, w, clock, pacing);
+		avoidedTraces(server, w, clock, config);
 		data.setDirty();
 	}
 
-	// --- LOW_RENDER_DISTANCE: the original sighting was on a slow PC with a tiny render distance ---
-
-	private static void lowRenderDistance(MinecraftServer server, ServerPlayer subject, DirectorRules rules, DirectorMemory m,
-			DirectorConfig config, Pacing pacing) {
-		if (subject.requestedViewDistance() > pacing.lowRenderDistanceChunks) {
-			return;
-		}
-		m.lowRenderAccum += rules.tickInterval;
+	/** Runs with one player's own director tick: the triggers that are theirs. */
+	static void periodicFor(MinecraftServer server, ServerPlayer player, PacingMemory m, DirectorRules rules) {
+		DirectorConfig config = DirectorConfig.get();
+		boolean low = player.requestedViewDistance() <= ModConfig.pacing().lowRenderDistanceChunks;
 		long period = Math.max(1, ModConfig.realTicks(config.lowRenderTriggerMinutes * 60));
-		if (m.lowRenderAccum >= period) {
-			m.lowRenderAccum -= period;
+		if (lowRenderRule(m, low, rules.tickInterval, period)) {
 			Attention.trigger(server, AttentionTrigger.LOW_RENDER_DISTANCE);
 		}
 	}
 
+	// --- LOW_RENDER_DISTANCE: the original sighting was on a slow PC with a tiny render distance ---
+
+	/**
+	 * LOW_RENDER_DISTANCE's rule for one player: {@code period} of play at a low view distance in a session counts once,
+	 * and then not again until their next session (the brain clears the tally when a session starts).
+	 */
+	static boolean lowRenderRule(PacingMemory m, boolean low, long step, long period) {
+		if (!low || m.lowRenderCounted) {
+			return false;
+		}
+		m.lowRenderAccum += step;
+		if (m.lowRenderAccum < period) {
+			return false;
+		}
+		m.lowRenderCounted = true;
+		return true;
+	}
+
 	// --- DAYLIGHT_OPEN_AREAS: no fog for him to stand in ---
 
-	private static void daylightOpenAreas(MinecraftServer server, ServerPlayer subject, DirectorRules rules, DirectorMemory m,
-			DirectorConfig config) {
-		ServerLevel level = subject.level();
-		if (level.dimension() != Level.OVERWORLD || !level.isBrightOutside() || level.isRaining() || !isOpen(level, subject, config)) {
-			return;
+	/** One world tally: {@code period} of world play with anyone in open daylight counts once, then the tally restarts. */
+	static boolean daylightRule(WorldMemory w, boolean anyoneInOpenDaylight, long step, long period) {
+		if (!anyoneInOpenDaylight) {
+			return false;
 		}
-		m.daylightAccum += rules.tickInterval;
-		long period = Math.max(1, ModConfig.realTicks(config.daylightTriggerMinutes * 60));
-		if (m.daylightAccum >= period) {
-			m.daylightAccum -= period;
-			Attention.trigger(server, AttentionTrigger.DAYLIGHT_OPEN_AREAS);
+		w.daylightAccum += step;
+		if (w.daylightAccum < period) {
+			return false;
 		}
+		w.daylightAccum -= period;
+		return true;
+	}
+
+	/** In the overworld, in clear daylight, in the open (see {@link #isOpen}), in their own level. */
+	static boolean inOpenDaylight(ServerPlayer player, DirectorConfig config) {
+		ServerLevel level = player.level();
+		return level.dimension() == Level.OVERWORLD && level.isBrightOutside() && !level.isRaining() && isOpen(level, player, config);
 	}
 
 	/** Open: nothing above the player's eyes, here and at most of eight points around (trees and roofs count). */
@@ -119,56 +153,56 @@ public final class DirectorTriggers {
 
 	// --- OBEYED_AFTER_STOP: writing nothing for obeyDays in-game days after "Stop." ---
 
-	private static void obeyedAfterStop(MinecraftServer server, DirectorMemory m, DirectorBrain.Clock clock, Pacing pacing) {
-		if (obeyRule(HerobrineState.get(server), m, clock.day(), pacing.obeyDays)) {
+	private static void obeyedAfterStop(MinecraftServer server, WorldMemory w, DirectorBrain.Clock clock, Pacing pacing) {
+		if (obeyRule(HerobrineState.get(server), w, clock.day(), pacing.obeyDays)) {
 			Attention.trigger(server, AttentionTrigger.OBEYED_AFTER_STOP);
 		}
 	}
 
 	/**
-	 * OBEYED_AFTER_STOP's rule: after "Stop.", {@code obeyDays} in-game days with no telling (since "Stop." was seen or
-	 * the last telling). True the moment it fires (once until the next telling). Keeps
+	 * OBEYED_AFTER_STOP's rule: after "Stop.", {@code obeyDays} in-game days with no telling from anyone (since "Stop."
+	 * was seen or the last telling). True the moment it fires (once until the next telling). Keeps
 	 * {@link DirectorFlags#OBEYED_AFTER_STOP} set exactly while it has fired and no telling came since, so the endings
 	 * read the same rule.
 	 */
-	static boolean obeyRule(HerobrineState state, DirectorMemory m, long day, int obeyDays) {
+	static boolean obeyRule(HerobrineState state, WorldMemory w, long day, int obeyDays) {
 		boolean fires = false;
 		if (!state.stopFired()) {
-			m.stopSeenDay = -1;
-			m.obeyCounted = false;
+			w.stopSeenDay = -1;
+			w.obeyCounted = false;
 		} else {
-			if (m.stopSeenDay < 0) {
-				m.stopSeenDay = day;
+			if (w.stopSeenDay < 0) {
+				w.stopSeenDay = day;
 			}
-			long since = day - Math.max(m.stopSeenDay, m.lastTellingDay);
-			if (!m.obeyCounted && since >= obeyDays) {
-				m.obeyCounted = true;
+			long since = day - Math.max(w.stopSeenDay, w.lastTellingDay);
+			if (!w.obeyCounted && since >= obeyDays) {
+				w.obeyCounted = true;
 				fires = true;
 			}
 		}
-		if (state.hasFlag(DirectorFlags.OBEYED_AFTER_STOP) != m.obeyCounted) {
-			state.setFlag(DirectorFlags.OBEYED_AFTER_STOP, m.obeyCounted);
+		if (state.hasFlag(DirectorFlags.OBEYED_AFTER_STOP) != w.obeyCounted) {
+			state.setFlag(DirectorFlags.OBEYED_AFTER_STOP, w.obeyCounted);
 		}
 		return fires;
 	}
 
 	// --- AVOIDED_TRACES: no visit near his tunnels and pyramids for several days ---
 
-	private static void avoidedTraces(MinecraftServer server, DirectorMemory m, DirectorBrain.Clock clock, DirectorConfig config) {
+	private static void avoidedTraces(MinecraftServer server, WorldMemory w, DirectorBrain.Clock clock, DirectorConfig config) {
 		long day = clock.day();
-		if (day == m.lastAvoidCheckDay || !HerobrineState.get(server).stage().atLeast(Stage.TRACES)) {
+		if (day == w.lastAvoidCheckDay || !HerobrineState.get(server).stage().atLeast(Stage.TRACES)) {
 			return;
 		}
-		m.lastAvoidCheckDay = day;
+		w.lastAvoidCheckDay = day;
 		long lastVisit = lastTraceVisit(server, config);
 		// Never having been near one is not avoiding. Each visit can count once.
-		if (lastVisit >= 0 && day - lastVisit >= config.avoidDays && m.avoidCountedVisitDay != lastVisit) {
-			m.avoidCountedVisitDay = lastVisit;
+		if (lastVisit >= 0 && day - lastVisit >= config.avoidDays && w.avoidCountedVisitDay != lastVisit) {
+			w.avoidCountedVisitDay = lastVisit;
 			Attention.trigger(server, AttentionTrigger.AVOIDED_TRACES);
 		}
 	}
 
-	/** The last in-game day any player was near a trace site of the configured types, or -1. */
+	/** The last in-game day any participant was near a trace site of the configured types, or -1. */
 	static long lastTraceVisit(MinecraftServer server, DirectorConfig config) {
 		Set<SiteType> types = EnumSet.noneOf(SiteType.class);
 		for (String name : config.avoidSiteTypes) {
@@ -201,45 +235,75 @@ public final class DirectorTriggers {
 	// --- SLEPT: he works while you aren't watching ---
 
 	static void onStartSleeping(ServerPlayer player) {
-		if (!Services.watch().isSubject(player)) {
+		PlayerWatch watch = Services.watch();
+		if (!watch.isParticipant(player)) {
 			return;
 		}
 		MinecraftServer server = player.level().getServer();
-		DirectorData data = DirectorData.get(server);
-		DirectorMemory m = data.memory();
-		long day = GameClock.day(server);
-		if (DirectorConfig.get().sleptOncePerDay && m.lastSleptDay == day) {
-			return;
+		boolean someoneElseAsleep = false;
+		for (ServerPlayer other : watch.participants(server)) {
+			someoneElseAsleep |= !other.getUUID().equals(player.getUUID()) && watch.isSleeping(other);
 		}
-		m.lastSleptDay = day;
-		data.setDirty();
-		Attention.trigger(server, AttentionTrigger.SLEPT);
+		DirectorData data = DirectorData.get(server);
+		if (sleptRule(data.memory().world(), GameClock.day(server), someoneElseAsleep, DirectorConfig.get().sleptOncePerDay)) {
+			data.setDirty();
+			Attention.trigger(server, AttentionTrigger.SLEPT);
+		}
+	}
+
+	/**
+	 * SLEPT's rule, once per occasion: a participant lay down. Someone else already asleep makes it the same night's
+	 * sleep; with {@code oncePerDay} (the default) a night that already counted never counts again, whoever sleeps.
+	 */
+	static boolean sleptRule(WorldMemory w, long day, boolean someoneElseAsleep, boolean oncePerDay) {
+		if (someoneElseAsleep || oncePerDay && w.lastSleptDay == day) {
+			return false;
+		}
+		w.lastSleptDay = day;
+		return true;
 	}
 
 	// --- DISC_13_UNDERGROUND / STOPPED_DISC_13 (jukebox mixin) ---
 
-	/** A jukebox started a song. Counts disc 13 below {@code disc13BelowY} with the subject in earshot. */
+	/** A jukebox started a song. Counts disc 13 below {@code disc13BelowY} with any alive participant in earshot, once. */
 	public static void onJukeboxPlay(ServerLevel level, BlockPos pos, Holder<JukeboxSong> song) {
 		if (!song.is(JukeboxSongs.THIRTEEN) || pos.getY() >= ModConfig.pacing().disc13BelowY) {
 			return;
 		}
 		MinecraftServer server = level.getServer();
-		Optional<ServerPlayer> subject = Services.watch().subject(server);
 		DirectorConfig config = DirectorConfig.get();
-		double radius = config.disc13HearRadius;
-		if (subject.isEmpty() || subject.get().level() != level || subject.get().distanceToSqr(Vec3.atCenterOf(pos)) > radius * radius) {
-			return;
-		}
+		boolean heard = anyoneInEarshot(Services.watch().participants(server), level, pos, config.disc13HearRadius);
 		DirectorData data = DirectorData.get(server);
-		DirectorMemory m = data.memory();
 		long now = GameClock.playTicks(server);
-		if (now - m.lastDisc13Play < ModConfig.realTicks(config.disc13CooldownMinutes * 60)) {
+		if (!disc13Rule(data.memory().world(), now, heard, ModConfig.realTicks(config.disc13CooldownMinutes * 60))) {
 			return;
 		}
-		m.lastDisc13Play = now;
 		data.setDirty();
 		DISC_13_PLAYING.put(GlobalPos.of(level.dimension(), pos.immutable()), now);
 		Attention.trigger(server, AttentionTrigger.DISC_13_UNDERGROUND);
+	}
+
+	/** True if any alive one of these participants is in this level within {@code radius} blocks of the jukebox. */
+	static boolean anyoneInEarshot(List<ServerPlayer> participants, ServerLevel level, BlockPos pos, double radius) {
+		Vec3 center = Vec3.atCenterOf(pos);
+		for (ServerPlayer player : participants) {
+			if (player.isAlive() && player.level() == level && player.distanceToSqr(center) <= radius * radius) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	/**
+	 * DISC_13_UNDERGROUND's rule, once per occasion: one jukebox start counts once however many hear it (the caller
+	 * asks only whether anyone does), and none counts within {@code cooldown} of world play after the last one.
+	 */
+	static boolean disc13Rule(WorldMemory w, long worldNow, boolean anyoneInEarshot, long cooldown) {
+		if (!anyoneInEarshot || worldNow - w.lastDisc13Play < cooldown) {
+			return false;
+		}
+		w.lastDisc13Play = worldNow;
+		return true;
 	}
 
 	/** A jukebox stopped. Counts only a disc 13 that counted when it started and is stopped before its end. */

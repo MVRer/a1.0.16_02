@@ -2,6 +2,7 @@ package com.forzacode.a1016_02.debug;
 
 import java.util.List;
 import java.util.StringJoiner;
+import java.util.UUID;
 
 import com.forzacode.a1016_02.A1016_02;
 import com.forzacode.a1016_02.accident.AccidentPlannerImpl;
@@ -23,8 +24,9 @@ import net.minecraft.server.level.ServerPlayer;
 
 /**
  * Dev overlay, server side. Only in a development environment and only after {@code /a1016 debug overlay on} (off
- * by default, never saved): once per second, every op player gets the director's state as an {@link OverlayPayload}.
- * Read-only: it never changes the director or the world.
+ * by default, never saved): once per second, every op player gets the director's state as they see it (their own
+ * pacing and tension, the shared stage and attention) as an {@link OverlayPayload}. Read-only: it never changes the
+ * director or the world.
  */
 final class DebugOverlay {
 	private static final int PERIOD_TICKS = 20;
@@ -53,32 +55,30 @@ final class DebugOverlay {
 
 	static void setEnabled(MinecraftServer server, boolean on) {
 		enabled = on && available();
-		if (enabled) {
-			sendToOps(server, build(server));
-		} else {
-			sendToOps(server, OverlayPayload.OFF);
-		}
+		sendToOps(server, enabled);
 	}
 
 	private static void tick(MinecraftServer server) {
 		if (enabled && server.getTickCount() % PERIOD_TICKS == 0) {
-			sendToOps(server, build(server));
+			sendToOps(server, true);
 		}
 	}
 
-	static OverlayPayload build(MinecraftServer server) {
+	/** The overlay for one viewer: their own pacing and tension, the shared stage and attention. */
+	static OverlayPayload build(MinecraftServer server, UUID viewer) {
 		try {
-			return new OverlayPayload(true, OverlayText.rows(DirectorApi.snapshot(server), trap(server), sighting(server)));
+			return new OverlayPayload(true, OverlayText.rows(DirectorApi.snapshot(server, viewer), trap(server), sighting(server)));
 		} catch (RuntimeException e) {
 			A1016_02.LOGGER.error("[a1016] debug overlay failed", e);
 			return new OverlayPayload(true, List.of("error" + OverlayPayload.SEPARATOR + e));
 		}
 	}
 
-	private static void sendToOps(MinecraftServer server, OverlayPayload payload) {
+	/** Every op player gets their own overlay, or the payload that hides it. */
+	private static void sendToOps(MinecraftServer server, boolean on) {
 		for (ServerPlayer player : server.getPlayerList().getPlayers()) {
 			if (Commands.LEVEL_GAMEMASTERS.check(player.permissions())) {
-				OverlayPayload.send(player, payload);
+				OverlayPayload.send(player, on ? build(server, player.getUUID()) : OverlayPayload.OFF);
 			}
 		}
 	}

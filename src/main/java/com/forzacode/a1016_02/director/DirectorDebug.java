@@ -4,37 +4,97 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.StringJoiner;
+import java.util.UUID;
 
 import com.forzacode.a1016_02.core.HerobrineState;
+import com.forzacode.a1016_02.core.Services;
 import com.forzacode.a1016_02.core.Stage;
 import com.forzacode.a1016_02.core.Tier;
 
 import net.minecraft.server.MinecraftServer;
+import net.minecraft.server.level.ServerPlayer;
 
-/** Text for {@code /a1016 state} and {@code /a1016 director}. */
+/** Text for {@code /a1016 state} and {@code /a1016 director}: the world part, then each player's own pacing. */
 final class DirectorDebug {
 	private DirectorDebug() {
 	}
 
-	/** The short block shown by {@code /a1016 state}. */
+	/** The short block shown by {@code /a1016 state}: the world part, then one line per participant. */
 	static List<String> stateLines(DirectorImpl director, MinecraftServer server) {
-		HerobrineState state = HerobrineState.get(server);
-		DirectorMemory m = DirectorData.get(server).memory();
 		DirectorRules rules = director.rules(server);
-		DirectorBrain brain = director.brain(server, rules);
-		DirectorBrain.Clock c = DirectorImpl.clock(server);
+		DirectorBrain brain = director.brain(rules);
+		List<String> lines = new ArrayList<>(worldLines(server, rules));
+		DirectorMemory memory = DirectorData.get(server).memory();
+		HerobrineState state = HerobrineState.get(server);
+		List<ServerPlayer> participants = Services.watch().participants(server);
+		for (ServerPlayer player : participants) {
+			UUID uuid = player.getUUID();
+			PacingMemory m = memory.find(uuid).orElseGet(PacingMemory::new);
+			lines.add(pacingLine(player.getName().getString(), m, DirectorImpl.clock(server, uuid), state.stage(), state.tension(uuid), rules, brain));
+		}
+		int away = memory.players().size() - (int) participants.stream().filter(p -> memory.find(p.getUUID()).isPresent()).count();
+		if (participants.isEmpty() || away > 0) {
+			lines.add(String.format(Locale.ROOT, "director: %d taking part, %d more paced and away%s", participants.size(), Math.max(0, away),
+					memory.unowned() != null ? ", one old memory waiting for its player" : ""));
+		}
+		return lines;
+	}
+
+	/** The world part: the shared stage clock, the flags, once-per-world cards and the last timewarp. */
+	static List<String> worldLines(MinecraftServer server, DirectorRules rules) {
+		HerobrineState state = HerobrineState.get(server);
+		WorldMemory w = DirectorData.get(server).memory().world();
+		List<String> lines = new ArrayList<>();
+		lines.add(String.format(Locale.ROOT, "director: world stage clock %s (runs x%.2f at attention %.0f), traces at %s, proximity at %s",
+				dur(rules, (long) Math.max(0, w.stageClock)), 1 / rules.attentionFactor(state.attention()), state.attention(),
+				w.tracesAt < 0 ? "-" : dur(rules, w.tracesAt), w.proximityAt < 0 ? "-" : dur(rules, w.proximityAt)));
+		lines.add("director: flags " + new DirectorFlags.Values(rules.silenceUntilDay, rules.paceMultiplier).describe()
+				+ String.format(Locale.ROOT, " (minor gap %s, major gap %s, majors every %s to %s)", dur(rules, rules.minorGap),
+						dur(rules, rules.majorGap), dur(rules, rules.majorEvery.min()), dur(rules, rules.majorEvery.max())));
+		lines.add("director: once per world fired " + (w.signaturesFired.isEmpty() ? "-" : String.join(", ", w.signaturesFired))
+				+ (w.lastWarpSummary.isEmpty() ? "" : " | last timewarp " + w.lastWarpSummary));
+		return lines;
+	}
+
+	/** One player's pacing on one line: tension, quiet, pity, session, held cards, the gate now, what is next, counts. */
+	static String pacingLine(String name, PacingMemory m, DirectorBrain.Clock c, Stage stage, double tension, DirectorRules rules,
+			DirectorBrain brain) {
+		long now = c.playTicks();
+		String quiet = brain.inQuiet(m, c) ? "until day " + Math.floorDiv(m.quietUntilDayTicks, DirectorBrain.DAY_TICKS) : "no";
+		String session = m.sessionStart < 0 ? "none" : dur(rules, now - m.sessionStart) + (m.sessionEmpty && now < m.sessionEmptyUntil ? " (empty)" : "");
+		StringJoiner held = new StringJoiner(", ");
+		for (Tier tier : Tier.values()) {
+			String id = m.held.get(tier);
+			if (id != null) {
+				held.add(tier.name().toLowerCase(Locale.ROOT) + " " + id);
+			}
+		}
+		String blocked = brain.globalBlock(m, c);
+		return String.format(Locale.ROOT,
+				"director: %s: play %s, tension %.1f/%.0f, quiet %s, pity +%.0f%%, session %s, held %s | now %s | next minor %s, major %s | fires %d, felt %d",
+				name, dur(rules, now), tension, rules.tensionThreshold, quiet, brain.pity(m, c) * 100, session, held.length() == 0 ? "-" : held,
+				blocked == null ? "open" : blocked, nextAllowed(Tier.MINOR, m, c, stage, rules, brain), nextAllowed(Tier.MAJOR, m, c, stage, rules, brain),
+				m.totalFires, m.feltFires);
+	}
+
+	/** The long block shown by {@code /a1016 director}: the world part, then one player's pacing, decks and history. */
+	static List<String> fullLines(DirectorImpl director, MinecraftServer server, UUID player) {
+		DirectorRules rules = director.rules(server);
+		DirectorBrain brain = director.brain(rules);
+		List<String> lines = new ArrayList<>(worldLines(server, rules));
+		DirectorMemory memory = DirectorData.get(server).memory();
+		WorldMemory w = memory.world();
+		PacingMemory m = memory.find(player).orElse(null);
+		String name = DirectorImpl.name(server, player);
+		if (m == null) {
+			lines.add("director: " + name + " has no pacing yet (never took part)");
+			return lines;
+		}
+		HerobrineState state = HerobrineState.get(server);
+		DirectorBrain.Clock c = DirectorImpl.clock(server, player);
 		Stage stage = state.stage();
 		long now = c.playTicks();
-		List<String> lines = new ArrayList<>();
-
-		lines.add(String.format(Locale.ROOT, "director: stage clock %s (runs x%.2f at attention %.0f), traces at %s, proximity at %s",
-				dur(rules, (long) Math.max(0, m.stageClock)), 1 / rules.attentionFactor(state.attention()), state.attention(),
-				m.tracesAt < 0 ? "-" : dur(rules, m.tracesAt), m.proximityAt < 0 ? "-" : dur(rules, m.proximityAt)));
-
-		String quiet = brain.inQuiet(m, c) ? "until day " + Math.floorDiv(m.quietUntilDayTicks, DirectorBrain.DAY_TICKS) : "no";
-		String session = m.sessionStart < 0 ? "none" : dur(rules, now - m.sessionStart) + (m.sessionEmpty && now < m.sessionEmptyUntil ? " (empty on purpose)" : "");
-		lines.add(String.format(Locale.ROOT, "director: tension %.1f/%.0f, quiet %s, pity +%.0f%%, session %s, minors/h %.2f",
-				state.tension(), rules.tensionThreshold, quiet, brain.pity(m, c) * 100, session, brain.rate(Tier.MINOR, m, stage)));
+		lines.add(pacingLine(name, m, c, stage, state.tension(player), rules, brain));
 
 		StringJoiner held = new StringJoiner(", ");
 		for (Tier tier : Tier.values()) {
@@ -43,54 +103,23 @@ final class DirectorDebug {
 				held.add(tier + "=" + id + " (" + dur(rules, now - m.heldSince.getOrDefault(tier, now)) + ")");
 			}
 		}
-		String blocked = brain.globalBlock(m, c);
-		lines.add("director: held " + (held.length() == 0 ? "-" : held) + " | now " + (blocked == null ? "open" : blocked));
-		lines.add("director: flags " + new DirectorFlags.Values(rules.silenceUntilDay, rules.paceMultiplier).describe()
-				+ String.format(Locale.ROOT, " (minor gap %s, major gap %s, majors every %s to %s)", dur(rules, rules.minorGap),
-						dur(rules, rules.majorGap), dur(rules, rules.majorEvery.min()), dur(rules, rules.majorEvery.max())));
-
+		lines.add(String.format(Locale.ROOT, "director: %s: held %s | first day until day %.2f | minors/h %.2f", name, held.length() == 0 ? "-" : held,
+				brain.firstDayEnd(m) / (double) DirectorBrain.DAY_TICKS, brain.rate(Tier.MINOR, m, stage)));
 		StringJoiner next = new StringJoiner(" | ");
 		for (Tier tier : DirectorBrain.PRIORITY) {
 			next.add(tier.name().toLowerCase(Locale.ROOT) + " " + nextAllowed(tier, m, c, stage, rules, brain));
 		}
-		lines.add("director: next " + next);
-
-		StringJoiner decks = new StringJoiner(", ");
-		for (Tier tier : Tier.values()) {
-			int total = brain.cards(tier).size();
-			long undrawn = brain.cards(tier).stream().filter(card -> !m.cycleFired.get(tier).contains(card.id())
-					&& !(DirectorBrain.oncePerWorld(card) && m.signaturesFired.contains(card.id()))).count();
-			decks.add(tier.name().toLowerCase(Locale.ROOT) + " " + undrawn + "/" + total);
-		}
-		lines.add(String.format(Locale.ROOT, "director: decks %s | fires %d (%d of %d fakeable were fakes), quiets %d, empty sessions %d/%d",
-				decks, m.totalFires, m.fakeFires, m.fakeableFires, m.quietCount, m.emptySessionCount, m.sessionCount));
-		if (!m.history.isEmpty()) {
-			DirectorMemory.HistoryEntry last = m.history.getLast();
-			lines.add(String.format(Locale.ROOT, "director: last fire %s (%s%s%s) %s ago", last.cardId(), last.tier(),
-					last.fake() ? ", fake" : "", last.forced() ? ", forced" : "", dur(rules, now - last.playTicks())));
-		}
-		if (!m.lastWarpSummary.isEmpty()) {
-			lines.add("director: last timewarp " + m.lastWarpSummary);
-		}
-		return lines;
-	}
-
-	/** The long block shown by {@code /a1016 director}: state plus deck contents and recent history. */
-	static List<String> fullLines(DirectorImpl director, MinecraftServer server) {
-		List<String> lines = new ArrayList<>(stateLines(director, server));
-		DirectorMemory m = DirectorData.get(server).memory();
-		DirectorRules rules = director.rules(server);
-		DirectorBrain brain = director.brain(server, rules);
-		DirectorBrain.Clock c = DirectorImpl.clock(server);
-		Stage stage = HerobrineState.get(server).stage();
+		lines.add("director: " + name + ": next " + next);
+		lines.add(String.format(Locale.ROOT, "director: %s: fires %d (%d of %d fakeable were fakes), felt %d from others, quiets %d, empty sessions %d/%d",
+				name, m.totalFires, m.fakeFires, m.fakeableFires, m.feltFires, m.quietCount, m.emptySessionCount, m.sessionCount));
 		for (Tier tier : Tier.values()) {
 			List<String> undrawn = new ArrayList<>();
 			List<String> fired = new ArrayList<>();
 			for (CardInfo card : brain.cards(tier)) {
-				boolean used = m.cycleFired.get(tier).contains(card.id()) || DirectorBrain.oncePerWorld(card) && m.signaturesFired.contains(card.id());
+				boolean used = m.cycleFired.get(tier).contains(card.id()) || DirectorBrain.oncePerWorld(card) && w.signaturesFired.contains(card.id());
 				(used ? fired : undrawn).add(card.id());
 			}
-			int drawable = brain.candidates(tier, m, c, stage).size();
+			int drawable = brain.candidates(tier, w, m, c, stage).size();
 			Long stuck = m.deckStuckSince.get(tier);
 			String waiting = stuck == null ? "" : String.format(Locale.ROOT, ", waiting on gated cards for %.1f days",
 					(c.dayTicks() - stuck) / (double) DirectorBrain.DAY_TICKS);
@@ -100,13 +129,13 @@ final class DirectorDebug {
 		List<DirectorMemory.HistoryEntry> history = m.history();
 		int from = Math.max(0, history.size() - 5);
 		for (DirectorMemory.HistoryEntry e : history.subList(from, history.size())) {
-			lines.add(String.format(Locale.ROOT, "fired %s day %d: %s %s%s%s (%s)", dur(rules, e.playTicks()), e.day(), e.tier(), e.cardId(),
-					e.fake() ? " fake" : "", e.forced() ? " forced" : "", e.stage()));
+			lines.add(String.format(Locale.ROOT, "%s %s day %d: %s %s%s%s (%s)", e.felt() ? "felt " : "fired", dur(rules, e.playTicks()), e.day(), e.tier(),
+					e.cardId(), e.fake() ? " fake" : "", e.forced() ? " forced" : "", e.stage()));
 		}
 		return lines;
 	}
 
-	private static String nextAllowed(Tier tier, DirectorMemory m, DirectorBrain.Clock c, Stage stage, DirectorRules rules, DirectorBrain brain) {
+	private static String nextAllowed(Tier tier, PacingMemory m, DirectorBrain.Clock c, Stage stage, DirectorRules rules, DirectorBrain brain) {
 		long now = c.playTicks();
 		String block = brain.tierBlock(tier, m, c, stage);
 		long wait = switch (tier) {

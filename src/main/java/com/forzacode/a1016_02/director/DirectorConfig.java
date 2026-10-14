@@ -73,19 +73,19 @@ public final class DirectorConfig {
 	public double deckStallDays = 3;
 
 	// --- attention triggers the director owns (D-017) ---
-	/** LOW_RENDER_DISTANCE fires once per this much play at a low view distance (real minutes). */
+	/** LOW_RENDER_DISTANCE: this much of a player's own play at a low view distance counts once per session (real minutes). */
 	public double lowRenderTriggerMinutes = 10;
-	/** DAYLIGHT_OPEN_AREAS fires once per this much play in clear daylight in the open (real minutes). */
+	/** DAYLIGHT_OPEN_AREAS fires once per this much world play with anyone in clear daylight in the open (real minutes). */
 	public double daylightTriggerMinutes = 10;
 	/** Horizontal distance of the sky samples around the player for "open area". */
 	public int daylightOpenRadius = 8;
 	/** How many of the 8 samples (plus the player's own column) must see the sky. */
 	public int daylightOpenMinSamples = 7;
-	/** SLEPT counts at most once per in-game day. */
+	/** SLEPT counts at most once per in-game day, however many sleep. */
 	public boolean sleptOncePerDay = true;
-	/** The subject must be this close to the jukebox for disc 13 to count. */
+	/** Someone taking part must be this close to the jukebox for disc 13 to count (one count however many hear it). */
 	public int disc13HearRadius = 64;
-	/** DISC_13_UNDERGROUND counts at most once per this much play (real minutes). */
+	/** DISC_13_UNDERGROUND counts at most once per this much world play (real minutes). */
 	public double disc13CooldownMinutes = 10;
 	/** AVOIDED_TRACES: no visit near these site types for this many in-game days. */
 	public int avoidDays = 4;
@@ -101,7 +101,7 @@ public final class DirectorConfig {
 	public double simSessionMinMinutes = 45;
 	public double simSessionMaxMinutes = 180;
 	/**
-	 * Hours into a dry run at which the subject names him (a naming TELLING), so the run reaches Stage 3 and its
+	 * Hours into a dry run at which someone names him (a naming TELLING), so the run reaches Stage 3 and its
 	 * pacing is exercised. Negative = never, the default: the director never enters Telling on its own (D-041).
 	 * {@code /a1016 director sim} and the scripted playthrough use it; timewarp never does.
 	 */
