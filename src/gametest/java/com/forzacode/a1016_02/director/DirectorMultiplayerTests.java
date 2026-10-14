@@ -233,7 +233,8 @@ public class DirectorMultiplayerTests {
 
 	/**
 	 * A shared moment must be one each of them could have had on their own: Ana's card waits while Ben, close by, is in
-	 * his join grace, in a quiet, or has already had that card this cycle; it fires once nothing of his holds it back.
+	 * his join grace, in a quiet, or has already had the card she was holding from before he came close; it fires once
+	 * nothing of his holds it back. (A card he already had is never drawn beside him: see the next test.)
 	 */
 	@GameTest
 	public void aSharedMomentWaitsForEveryonesOwnGates(GameTestHelper helper) {
@@ -255,7 +256,11 @@ public class DirectorMultiplayerTests {
 			switch (case_) {
 				case "join grace" -> ben.sessionStart = benClock.playTicks() - 1;
 				case "quiet" -> ben.quietUntilDayTicks = benClock.dayTicks() + DirectorBrain.DAY_TICKS;
-				case "already had it" -> ben.cycleFired.get(Tier.MAJOR).add("major_x");
+				case "already had it" -> {
+					ben.cycleFired.get(Tier.MAJOR).add("major_x");
+					ana.held.put(Tier.MAJOR, "major_x");
+					ana.heldSince.put(Tier.MAJOR, w);
+				}
 				case "first day" -> ben.firstDayTicks = benClock.dayTicks() - 10;
 				default -> {
 				}
@@ -273,6 +278,58 @@ public class DirectorMultiplayerTests {
 			}
 		}
 		A1016_02.LOGGER.info("[a1016] director shared gates: {}", reasons);
+		helper.succeed();
+	}
+
+	/**
+	 * Ben, who joined late, never draws a card Ana beside him already had (in her cycle, or her last): it could not reach
+	 * her, so it would only sit held and block his tier while they stay together. He draws the one she has not had;
+	 * with nothing left that is new to both, he draws nothing, holds nothing and his own deck is not refilled for it.
+	 * Once she walks off he draws from his own deck as before.
+	 */
+	@GameTest
+	public void aLateJoinerNeverDrawsWhatTheFriendBesideThemHad(GameTestHelper helper) {
+		DirectorRules rules = rules(Tempo.SLOW_BURN, Signature.CROSS_ROW);
+		rules.minorsPerHourMin = rules.minorsPerHourMax = 1_000_000;
+		rules.proximityAmbientPerHour = 0;
+		DirectorBrain brain = new DirectorBrain(rules, List.of(card("m_a", Tier.MINOR, Stage.TRACES, false), card("m_b", Tier.MINOR, Stage.TRACES, false),
+				card("m_c", Tier.MINOR, Stage.TRACES, false)), 50);
+		SharedStage stage = new SharedStage(Stage.PROXIMITY);
+		long w = 6 * rules.hourTicks;
+		DirectorBrain.Clock anaClock = clock(w, w);
+		DirectorBrain.Clock benClock = clock(rules.hourTicks, w);
+		for (int seed = 0; seed < 20; seed++) {
+			WorldMemory world = new WorldMemory();
+			DirectorTestSupport.pin(world, rules);
+			PacingMemory ana = playing();
+			ana.cycleFired.get(Tier.MINOR).add("m_a");
+			ana.lastFired.put(Tier.MINOR, "m_b");
+			PacingMemory ben = playing();
+			ben.lastStepPlay = benClock.playTicks();
+			PlayerEnv benEnv = new PlayerEnv(stage);
+			benEnv.fits = card -> false; // the moment never fits, so whatever he draws stays held where the test sees it
+			benEnv.sharers = List.of(new DirectorBrain.Sharer(ana, anaClock, new PlayerEnv(stage), DirectorBrain.Recorder.NONE));
+			String outcome = brain.step(world, ben, benClock, benEnv, RandomSource.create(seed), DirectorBrain.Recorder.NONE);
+			helper.assertTrue("m_c".equals(ben.held(Tier.MINOR)), "seed " + seed + ": beside Ana, Ben drew " + ben.held(Tier.MINOR) + " (" + outcome + ")");
+		}
+
+		WorldMemory world = new WorldMemory();
+		DirectorTestSupport.pin(world, rules);
+		PacingMemory ana = playing();
+		ana.cycleFired.get(Tier.MINOR).addAll(List.of("m_a", "m_c"));
+		ana.lastFired.put(Tier.MINOR, "m_b");
+		PacingMemory ben = playing();
+		ben.cycleFired.get(Tier.MINOR).add("m_a");
+		ben.lastStepPlay = benClock.playTicks();
+		PlayerEnv benEnv = new PlayerEnv(stage);
+		benEnv.fits = card -> false;
+		benEnv.sharers = List.of(new DirectorBrain.Sharer(ana, anaClock, new PlayerEnv(stage), DirectorBrain.Recorder.NONE));
+		brain.step(world, ben, benClock, benEnv, RandomSource.create(7), DirectorBrain.Recorder.NONE);
+		helper.assertTrue(ben.held(Tier.MINOR) == null && ben.cycleFired(Tier.MINOR).equals(Set.of("m_a")),
+				"with nothing new to both, Ben held " + ben.held(Tier.MINOR) + ", his cycle " + ben.cycleFired(Tier.MINOR));
+		benEnv.sharers = List.of();
+		brain.step(world, ben, benClock.plus(rules.tickInterval), benEnv, RandomSource.create(7), DirectorBrain.Recorder.NONE);
+		helper.assertTrue(Set.of("m_b", "m_c").contains(ben.held(Tier.MINOR)), "alone again, Ben drew " + ben.held(Tier.MINOR));
 		helper.succeed();
 	}
 
@@ -640,6 +697,33 @@ public class DirectorMultiplayerTests {
 		helper.succeed();
 	}
 
+	/**
+	 * The server's tick count went back (a new server without a stop): restarting the schedule from the new count
+	 * gives everyone a decision within one interval again, staggered and in the same order, where their old ticks
+	 * would have held every decision back for hours.
+	 */
+	@GameTest
+	public void aTickCountThatWentBackDoesNotStarveDecisions(GameTestHelper helper) {
+		DecisionSchedule schedule = new DecisionSchedule();
+		long interval = 600;
+		schedule.start(ANA, 2_000_000, interval);
+		schedule.start(BEN, 2_000_000, interval);
+		long now = 50;
+		helper.assertFalse(schedule.anyDue(now + 2 * interval), "the old ticks are due on the new count");
+		schedule.restart(now, interval);
+		helper.assertTrue(schedule.players().equals(List.of(ANA, BEN)), "the restart changed who is scheduled: " + schedule.players());
+		long ana = schedule.nextTick(ANA);
+		long ben = schedule.nextTick(BEN);
+		helper.assertTrue(ana == now + interval && ben > now && ben - now <= interval + 1 && Math.floorMod(ana, interval) != Math.floorMod(ben, interval),
+				"next ticks after the restart " + ana + ", " + ben);
+		int decisions = 0;
+		for (long tick = now; tick <= now + 2 * interval + 1; tick++) {
+			decisions += schedule.due(tick, interval).size();
+		}
+		helper.assertTrue(decisions == 4, decisions + " decisions in two intervals after the restart, not 4");
+		helper.succeed();
+	}
+
 	/** {@code /a1016 state} and the director lines: one line per player, each with their own numbers, Locale.ROOT. */
 	@GameTest
 	public void debugLinesShowEachPlayersOwnPacing(GameTestHelper helper) {
@@ -666,6 +750,85 @@ public class DirectorMultiplayerTests {
 		helper.assertTrue(benLine.contains("Ben:") && benLine.contains("tension 0.0/") && benLine.contains("session none")
 				&& benLine.contains("minor held_card") && benLine.contains("felt 3"), "Ben's line: " + benLine);
 		helper.assertFalse((anaLine + benLine).matches(".*\\d,\\d.*"), "a localized decimal: " + anaLine + " / " + benLine);
+		helper.succeed();
+	}
+
+	/**
+	 * D-064: Ending A's obeying is the group's. After "Stop.", {@code director:obeyed_after_stop} comes only once nobody
+	 * has told for {@code obeyDays} in-game days. Ana keeping quiet while Ben tells is no obeying: his telling takes the
+	 * flag away at once and the wait starts over from his day; Ana's later telling starts it over again from hers.
+	 */
+	@GameTest
+	public void obeyedAfterStopMeansNobodyInTheGroupTold(GameTestHelper helper) {
+		DirectorRules rules = rules(Tempo.SLOW_BURN, Signature.CROSS_ROW);
+		DirectorBrain brain = new DirectorBrain(rules, List.of(), 10);
+		SharedStage stage = new SharedStage(Stage.TELLING);
+		HerobrineState state = new HerobrineState();
+		state.setStopFired(true);
+		WorldMemory world = new WorldMemory();
+		int days = 3;
+		long day = DirectorBrain.DAY_TICKS;
+		helper.assertFalse(DirectorTriggers.obeyRule(state, world, 10, days), "fired the day Stop. was seen");
+		helper.assertTrue(DirectorTriggers.obeyRule(state, world, 13, days) && state.hasFlag(DirectorFlags.OBEYED_AFTER_STOP),
+				"nobody told for three days, yet the group did not obey");
+
+		// Ben tells on day 14 (on his own clock; Ana says nothing): the flag goes at once, before any world step.
+		brain.onTelling(world, new DirectorBrain.Clock(rules.hourTicks, 14 * day + 100, 30 * rules.hourTicks), new PlayerEnv(stage), false,
+				DirectorBrain.Recorder.NONE);
+		DirectorTriggers.obeyBroken(state);
+		helper.assertFalse(state.hasFlag(DirectorFlags.OBEYED_AFTER_STOP), "Ben told, yet the group still counts as obeying");
+		helper.assertFalse(DirectorTriggers.obeyRule(state, world, 16, days) || state.hasFlag(DirectorFlags.OBEYED_AFTER_STOP),
+				"two days after Ben's telling counted as obeying");
+
+		// Ana tells on day 16: the wait starts over from her day, not Ben's.
+		brain.onTelling(world, new DirectorBrain.Clock(25 * rules.hourTicks, 16 * day + 500, 30 * rules.hourTicks), new PlayerEnv(stage), false,
+				DirectorBrain.Recorder.NONE);
+		DirectorTriggers.obeyBroken(state);
+		helper.assertFalse(DirectorTriggers.obeyRule(state, world, 17, days) || DirectorTriggers.obeyRule(state, world, 18, days),
+				"three days after Ben's telling counted, though Ana told since");
+		helper.assertTrue(DirectorTriggers.obeyRule(state, world, 19, days) && state.hasFlag(DirectorFlags.OBEYED_AFTER_STOP),
+				"three quiet days after the last telling of anyone did not count");
+		DirectorTriggers.obeyBroken(new HerobrineState());
+		helper.succeed();
+	}
+
+	/**
+	 * Nobody takes part for the run's first two hours, then Ana, then Ben an hour later. The world clock, the day and
+	 * the stage wait for the first of them (the live world clock stops while nobody takes part), so every stage change
+	 * is the world's once and on Ana's record; each seat decides from one tick after its join, so the time it books is
+	 * exactly its play time; and every hard limit holds.
+	 */
+	@GameTest(maxTicks = 2000)
+	public void theWorldWaitsWhileNobodyIsSeated(GameTestHelper helper) {
+		List<CardInfo> deck = DirectorTestSupport.registryDeck();
+		int stages = 0;
+		for (Tempo tempo : Tempo.values()) {
+			for (DirectorSim.Group group : DirectorTestSupport.groupRuns(tempo, List.of(new DirectorSim.Seat(ANA, 2), new DirectorSim.Seat(BEN, 3)),
+					DirectorSim.Sharing.TOGETHER, SEEDS.subList(0, 32))) {
+				DirectorSim.Result ana = group.player(ANA);
+				DirectorSim.Result ben = group.player(BEN);
+				String at = tempo + " seed " + ana.params.seed + ": ";
+				helper.assertTrue(group.allViolations().isEmpty(), at + group.allViolations());
+				long hour = ana.rules.hourTicks;
+				helper.assertTrue(ana.startDayTicks == 0 && ben.startDayTicks == hour && ana.startStage == Stage.ALONE,
+						at + "the world ran while nobody was seated: Ana joined at day tick " + ana.startDayTicks + " in " + ana.startStage + ", Ben at "
+								+ ben.startDayTicks);
+				long worldStages = group.worldEvents.stream().filter(e -> e.kind() == Kind.STAGE).count();
+				helper.assertTrue(worldStages == ana.count(Kind.STAGE), at + worldStages + " world stage changes, " + ana.count(Kind.STAGE) + " on Ana's record");
+				stages += (int) worldStages;
+				for (DirectorSim.Result player : group.players) {
+					long booked = 0;
+					for (Stage s : Stage.values()) {
+						booked += player.stageTicks(s);
+					}
+					helper.assertTrue(booked == player.endPlay - player.startPlay,
+							at + "booked " + booked + " of " + (player.endPlay - player.startPlay) + " play ticks");
+					List<String> hard = DirectorTestSupport.feltHardLimits(player, deck);
+					helper.assertTrue(hard.isEmpty(), at + hard);
+				}
+			}
+		}
+		helper.assertTrue(stages > 0, "no stage ever moved: the test proved nothing");
 		helper.succeed();
 	}
 }

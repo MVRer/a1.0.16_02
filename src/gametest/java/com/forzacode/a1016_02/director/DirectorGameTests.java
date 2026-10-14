@@ -815,9 +815,12 @@ public class DirectorGameTests extends DirectorMultiplayerTests {
 		WorldMemory world = new WorldMemory();
 		PacingMemory memory = new PacingMemory();
 		DirectorBrain.Clock clock = new DirectorBrain.Clock(1234, 100, 5000);
-		// A friend close by (D-060.3), on their own clock: they count it as felt, pacing and tension included.
+		// A friend close by (D-060.3), on their own clock: a forced fire skipped every gate, so it counts for them as it
+		// does for its target (history, deck, tag time), never their pacing, tension or quiet, even one short of it.
 		PacingMemory friend = new PacingMemory();
-		ScriptEnv friendEnv = new ScriptEnv(Stage.ALONE, 0, rules.attentionNeutral);
+		long friendQuiet = friend.quietUntilDayTicks;
+		long friendMajor = friend.nextMajorDue;
+		ScriptEnv friendEnv = new ScriptEnv(Stage.ALONE, rules.tensionThreshold - 1, rules.attentionNeutral);
 		DirectorBrain.Sharer close = new DirectorBrain.Sharer(friend, new DirectorBrain.Clock(77, 100, 5000), friendEnv, DirectorBrain.Recorder.NONE);
 		brain.recordForced(world, memory, clock, sighting, true, Stage.ALONE, List.of(close), RandomSource.create(3), DirectorBrain.Recorder.NONE);
 		DirectorMemory.HistoryEntry last = memory.history().getLast();
@@ -830,11 +833,12 @@ public class DirectorGameTests extends DirectorMultiplayerTests {
 
 		DirectorMemory.HistoryEntry felt = friend.history().getLast();
 		helper.assertTrue(felt.cardId().equals("forced_card") && felt.felt() && felt.forced() && felt.playTicks() == 77, "the friend's history: " + friend.history());
-		helper.assertTrue(friend.lastFireAny == 77 && friend.lastMajorOrSignature == 77 && friend.nextMajorDue >= 77 + rules.majorEvery.min(),
-				"the friend's gaps and major slot did not count it");
-		helper.assertTrue(Math.abs(friendEnv.tension - rules.tensionFor(Tier.MAJOR) * rules.fakeTensionFactor) < 1e-9, "the friend's tension " + friendEnv.tension);
-		helper.assertTrue(friend.totalFires == 0 && friend.feltFires == 1 && friend.cycleFired(Tier.MAJOR).contains("forced_card"),
-				"felt is not the friend's own draw, but their deck saw it");
+		helper.assertTrue(friend.lastFireAny == DirectorMemory.NEVER && friend.lastMajorOrSignature == DirectorMemory.NEVER
+				&& !friend.lastFireTier.containsKey(Tier.MAJOR) && friend.nextMajorDue == friendMajor, "a forced fire moved the friend's gaps or major slot");
+		helper.assertTrue(friendEnv.tension == rules.tensionThreshold - 1 && friend.quietUntilDayTicks == friendQuiet,
+				"a forced fire changed the friend's tension (" + friendEnv.tension + ") or started their quiet");
+		helper.assertTrue(friend.totalFires == 0 && friend.feltFires == 0 && friend.cycleFired(Tier.MAJOR).contains("forced_card"),
+				"a forced fire counted as the friend's moment, or their deck did not see it");
 		helper.succeed();
 	}
 

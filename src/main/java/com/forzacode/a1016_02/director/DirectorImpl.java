@@ -56,9 +56,15 @@ public final class DirectorImpl implements Director {
 	@Override
 	public void tick(MinecraftServer server) {
 		long now = server.getTickCount();
-		// A tick count that went back (a new server without a stop) restarts the world cadence.
-		if (now >= nextWorldTick || nextWorldTick - now > worldInterval) {
+		// A tick count that went back (a new server without a stop) restarts the world cadence, and every player's:
+		// their next decisions would otherwise wait for ticks far ahead of the new count, and the world step would
+		// not start them again since they are still scheduled. Their sessions go on as they were.
+		boolean wentBack = nextWorldTick - now > worldInterval;
+		if (now >= nextWorldTick || wentBack) {
 			DirectorRules rules = rules(server);
+			if (wentBack) {
+				schedule.restart(now, rules.tickInterval);
+			}
 			worldInterval = rules.tickInterval;
 			nextWorldTick = now + rules.tickInterval;
 			worldStep(server, rules);
@@ -136,6 +142,7 @@ public final class DirectorImpl implements Director {
 	 * That player's own play ticks since a card with this tag fired for them or was felt by them (D-060.3), or
 	 * {@link Long#MAX_VALUE} if none ever did. The per-player form of {@link #ticksSinceTag(MinecraftServer, CardTag)}.
 	 */
+	@Override
 	public long ticksSinceTag(MinecraftServer server, UUID player, CardTag tag) {
 		long at = DirectorData.get(server).memory().find(player).map(m -> m.lastTagFire(tag)).orElse(DirectorMemory.NEVER);
 		return at == DirectorMemory.NEVER ? Long.MAX_VALUE : GameClock.playTicks(server, player) - at;
@@ -156,6 +163,7 @@ public final class DirectorImpl implements Director {
 	}
 
 	/** True while this player is in a forced quiet of their own. */
+	@Override
 	public boolean inQuiet(MinecraftServer server, UUID player) {
 		return DirectorData.get(server).memory().find(player).map(m -> GameClock.dayTicks(server) < m.quietUntilDayTicks()).orElse(false);
 	}
@@ -255,9 +263,7 @@ public final class DirectorImpl implements Director {
 		DirectorData data = DirectorData.get(server);
 		brain(rules(server)).onTelling(data.memory().world(), worldClock(server), new WorldEnv(server, null, null), namesHim, DirectorLog.WORLD);
 		HerobrineState state = HerobrineState.get(server);
-		if (state.hasFlag(DirectorFlags.OBEYED_AFTER_STOP)) {
-			state.setFlag(DirectorFlags.OBEYED_AFTER_STOP, false); // the obeying starts over
-		}
+		DirectorTriggers.obeyBroken(state); // the group's obeying starts over, whoever told
 		if (namesHim && !state.tellingStarted()) {
 			state.setTellingStarted(true);
 		}

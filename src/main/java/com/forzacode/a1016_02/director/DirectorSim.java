@@ -760,7 +760,12 @@ public final class DirectorSim {
 			return seats.stream().filter(s -> s.result != null).toList();
 		}
 
-		/** Seats join, sessions turn over, someone names him, and every online player decides each director tick. */
+		/**
+		 * Seats join, sessions turn over, someone names him, and every online player decides each director tick. The
+		 * run's hours, each seat's join hour and the naming hour count on the run's own time; the world clock, the day
+		 * and with them the stage only move while someone is seated, as the live world clock stops while nobody takes
+		 * part. A seat decides from one director tick after it joins, as the live director schedules a newcomer.
+		 */
 		void play(Collection<CardInfo> cards) {
 			long interval = rules.tickInterval;
 			long end = worldStart + Math.round(params.hours * rules.hourTicks);
@@ -773,39 +778,42 @@ public final class DirectorSim {
 			}
 			long sessionEnd = params.singleSession ? Long.MAX_VALUE : worldTicks + pick(params.sessionMin, params.sessionMax, random);
 			int tick = 0;
-			while (worldTicks + interval <= end) {
-				worldTicks += interval;
-				dayTicks += interval;
+			long runTicks = worldStart;
+			while (runTicks + interval <= end) {
+				runTicks += interval;
 				List<SeatRun> online = online();
+				if (!online.isEmpty()) {
+					worldTicks += interval;
+					dayTicks += interval;
+				}
 				online.forEach(seat -> seat.play += interval);
 				if (worldTicks >= sessionEnd) {
 					online.forEach(seat -> brain.onLeave(seat.pacing, seat.clock(), seat.rec));
 					online.forEach(seat -> brain.onJoin(world, seat.pacing, seat.clock(), seat.env, random, seat.rec));
 					sessionEnd = worldTicks + pick(params.sessionMin, params.sessionMax, random);
 				}
+				List<SeatRun> joined = new ArrayList<>();
 				for (SeatRun seat : seats) {
-					if (seat.result == null && worldTicks >= seat.joinAt) {
+					if (seat.result == null && runTicks >= seat.joinAt) {
 						seat.join(false);
+						joined.add(seat);
 					}
 				}
 				online = online();
-				if (!told && worldTicks >= tellingAt && !online.isEmpty()) {
+				if (!told && runTicks >= tellingAt && !online.isEmpty()) {
 					// Someone writes his name, as lore's TELLING event reports it to the live director.
 					told = true;
 					SeatRun first = online.getFirst();
 					named();
 					brain.onTelling(world, first.clock(), first.env, true, first.rec);
 				}
-				if (online.isEmpty()) {
-					brain.advanceWorld(world, new DirectorBrain.Clock(worldTicks, dayTicks, worldTicks), new SimEnv(this, null, 0), random,
-							DirectorBrain.Recorder.NONE);
-				}
-				for (int k = 0; k < online.size(); k++) {
+				List<SeatRun> deciding = joined.isEmpty() ? online : online.stream().filter(seat -> !joined.contains(seat)).toList();
+				for (int k = 0; k < deciding.size(); k++) {
 					// Players take turns going first, as the live director staggers them.
-					SeatRun seat = online.get((tick + k) % online.size());
+					SeatRun seat = deciding.get((tick + k) % deciding.size());
 					brain.step(world, seat.pacing, seat.clock(), seat.env, random, seat.rec);
 				}
-				for (SeatRun seat : online) {
+				for (SeatRun seat : deciding) {
 					seat.bookkeep();
 				}
 				tick++;
@@ -911,13 +919,13 @@ public final class DirectorSim {
 		}
 	}
 
-	/** Dice instead of a world, for one seat (or none, to move the world's time while nobody plays). */
+	/** Dice instead of a world, for one seat. */
 	private static final class SimEnv implements DirectorBrain.Env {
 		private final Table table;
-		private final @Nullable SeatRun seat;
+		private final SeatRun seat;
 		double tension;
 
-		SimEnv(Table table, @Nullable SeatRun seat, double tension) {
+		SimEnv(Table table, SeatRun seat, double tension) {
 			this.table = table;
 			this.seat = seat;
 			this.tension = tension;
@@ -960,7 +968,7 @@ public final class DirectorSim {
 
 		@Override
 		public List<DirectorBrain.Sharer> sharers() {
-			return seat == null ? List.of() : table.sharers(seat);
+			return table.sharers(seat);
 		}
 	}
 

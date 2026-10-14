@@ -39,6 +39,17 @@ final class DecisionSchedule {
 		return first;
 	}
 
+	/**
+	 * Schedules every player again from {@code now}, in the order they started, each with a first decision one
+	 * interval on and staggered as {@link #start} does. For a server tick count that went back: their old ticks lie far
+	 * ahead of it and would hold every decision back. Nobody is added or dropped.
+	 */
+	void restart(long now, long interval) {
+		List<UUID> players = players();
+		next.clear();
+		players.forEach(player -> start(player, now, interval));
+	}
+
 	/** Stops deciding for this player only. */
 	void stop(UUID player) {
 		next.remove(player);

@@ -186,6 +186,17 @@ public final class DirectorTriggers {
 		return fires;
 	}
 
+	/**
+	 * Someone told, whoever it was (D-064: the group obeys only while nobody in it tells): with the world's wait
+	 * started over ({@code DirectorBrain.onTelling}), {@link DirectorFlags#OBEYED_AFTER_STOP} goes at once, not at the
+	 * next world step, so Ending A never reads an obeying that a friend's telling already broke.
+	 */
+	static void obeyBroken(HerobrineState state) {
+		if (state.hasFlag(DirectorFlags.OBEYED_AFTER_STOP)) {
+			state.setFlag(DirectorFlags.OBEYED_AFTER_STOP, false);
+		}
+	}
+
 	// --- AVOIDED_TRACES: no visit near his tunnels and pyramids for several days ---
 
 	private static void avoidedTraces(MinecraftServer server, WorldMemory w, DirectorBrain.Clock clock, DirectorConfig config) {
