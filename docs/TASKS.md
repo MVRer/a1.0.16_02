@@ -45,6 +45,8 @@ Status values: queued, running, review, fix, merged, blocked. Only the orchestra
 | MP-6 | World signatures and diggers with several players: owners stored (D-061), once-per-world guards, each player's base | world + dig | feat/mp-world-dig | v1.1-multiplayer | queued | After MP-0 |
 | MP-7 | Multiplayer bug hunt: adversarial review of every workstream against D-062, two-player game tests for each finding | (all) | feat/mp-bughunt | v1.1-multiplayer | queued | After MP-1 to MP-6 merge |
 | MP-8 | Multiplayer integration: remove the deprecated `subject()`, ARCHITECTURE, 3/3 green | core | feat/mp-integration | v1.1-multiplayer | queued | Last |
+| STORY-0 | Clue design proposal: map every ending step to its pointers, three-clue rule, late clues for stuck groups (`docs/STORY_CLUES.md`) | (design) | - | v1.1-multiplayer | running | Mariano (2026-10-14): "more clues, keep the mystery". Text goes into DESIGN.md only after Mariano approves |
+| STORY-1 | Implement the approved clues: fragment text, new fragments, places, late clues | lore + ending | feat/story-clues | v1.1-multiplayer | blocked | Waits for Mariano's approval of STORY-0, and for MP-2 and MP-3 to merge (one worker per package) |
 
 ## Milestones
 | Tag | Closes when | Status |
