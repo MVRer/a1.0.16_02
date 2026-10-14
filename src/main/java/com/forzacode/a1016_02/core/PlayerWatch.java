@@ -40,8 +40,12 @@ import org.jspecify.annotations.Nullable;
  * Server thread only.
  */
 public final class PlayerWatch {
-	/** Where the online players, the state and the participation events go. Tests make their own. */
-	interface Source {
+	/**
+	 * Where the online players, the state and the participation events go. Tests in any package make their own and
+	 * pass {@code new PlayerWatch(source)} to the code under test, so two-player tests never depend on who else is
+	 * online on the shared game test server.
+	 */
+	public interface Source {
 		/** Every online player, spectators included, in the server's order. */
 		List<ServerPlayer> online(MinecraftServer server);
 
@@ -101,7 +105,8 @@ public final class PlayerWatch {
 		this(SERVER);
 	}
 
-	PlayerWatch(Source source) {
+	/** A watch over a test's own online list and state (see {@link Source}). Production uses {@link Services#watch()}. */
+	public PlayerWatch(Source source) {
 		this.source = source;
 	}
 
