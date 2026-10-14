@@ -4,12 +4,15 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.EnumMap;
 import java.util.HashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.TreeMap;
 import java.util.TreeSet;
 import java.util.UUID;
+import java.util.function.Predicate;
 
 import com.forzacode.a1016_02.A1016_02;
 import com.forzacode.a1016_02.core.CoreCodecs;
@@ -27,10 +30,16 @@ import org.jspecify.annotations.Nullable;
 
 /**
  * The ending workstream's saved data ({@code data/a1016_02/ending.dat}): the path ({@link EndingPath}), each path's
- * progress (its beat), what the player did that the commit rules read, and each beat's own memory. Times are
- * {@code GameClock.dayTicks} ("-1" = never) unless named "play" ({@code GameClock.playTicks}). Server thread only;
- * change it through its methods, which mark it dirty. Other workstreams read and change the path through
- * {@link EndingApi}.
+ * progress (its beat), what the group did that the commit rules read, each beat's own memory, and per player only what
+ * has to be (D-061, D-063): whose line a hardcore marked death finished, and who last held each fragment. One story per
+ * world (D-058): what "the player did" is what any participant did. Times are {@code GameClock.dayTicks} ("-1" =
+ * never) unless named "play" ({@code GameClock.playTicks}, the world clock). Server thread only; change it through its
+ * methods, which mark it dirty. Other workstreams read and change the path through {@link EndingApi}.
+ * <p>
+ * Old saves (D-062.8): a v1.0 {@code ending.dat} stored no player at all (the one subject was implied), so it loads as
+ * it is: its home is the group's home, its marked deaths seen stay a count of the world's, no line is finished, and a
+ * fragment held back then has no keeper (it counts as the first known player's, the old subject's: see
+ * {@link #unburned(Predicate, UUID)}).
  */
 public final class EndingState extends SavedData {
 	/** "Never" for every time field. */
@@ -107,10 +116,19 @@ public final class EndingState extends SavedData {
 		).apply(i, Beats::new));
 	}
 
+	/** Per player, by UUID (D-062.2): whose line is finished, and who last held each fragment. */
+	record Group(List<UUID> finishedLines, Map<String, UUID> keepers) {
+		static final Codec<Group> CODEC = RecordCodecBuilder.create(i -> i.group(
+				UUIDUtil.CODEC.listOf().optionalFieldOf("finishedLines", List.of()).forGetter(Group::finishedLines),
+				Codec.unboundedMap(Codec.STRING, UUIDUtil.CODEC).optionalFieldOf("keepers", Map.of()).forGetter(Group::keepers)
+		).apply(i, Group::new));
+	}
+
 	public static final Codec<EndingState> CODEC = RecordCodecBuilder.create(i -> i.group(
 			Run.CODEC.optionalFieldOf("run").forGetter(s -> Optional.of(s.run())),
 			Watch.CODEC.optionalFieldOf("watch").forGetter(s -> Optional.of(s.watch())),
 			Beats.CODEC.optionalFieldOf("beats").forGetter(s -> Optional.of(s.beats())),
+			Group.CODEC.optionalFieldOf("group").forGetter(s -> Optional.of(s.group())),
 			Codec.STRING.listOf().optionalFieldOf("log", List.of()).forGetter(s -> s.log)
 	).apply(i, EndingState::new));
 
@@ -127,7 +145,7 @@ public final class EndingState extends SavedData {
 	private int deathsSeen;
 	private long lastArmPlay = NEVER;
 
-	// --- what the player did ---
+	// --- what the group did ---
 	private long stopSeenAt = NEVER;
 	private long lastTellingAt = NEVER;
 	private long lastNamedAt = NEVER;
@@ -155,13 +173,17 @@ public final class EndingState extends SavedData {
 	private boolean f20Placed;
 	private final List<Waiter> waiters = new ArrayList<>();
 
+	// --- per player (D-061, D-063) ---
+	private final Set<UUID> finishedLines = new LinkedHashSet<>();
+	private final Map<String, UUID> keepers = new TreeMap<>();
+
 	private final List<String> log = new ArrayList<>();
 
 	/** A fresh state: no path. Tests make their own. */
 	public EndingState() {
 	}
 
-	private EndingState(Optional<Run> run, Optional<Watch> watch, Optional<Beats> beats, List<String> log) {
+	private EndingState(Optional<Run> run, Optional<Watch> watch, Optional<Beats> beats, Optional<Group> group, List<String> log) {
 		run.ifPresent(r -> {
 			path = r.path();
 			pathSince = r.pathSince();
@@ -201,6 +223,10 @@ public final class EndingState extends SavedData {
 			f20Placed = b.f20Placed();
 			waiters.addAll(b.waiters());
 		});
+		group.ifPresent(g -> {
+			finishedLines.addAll(g.finishedLines());
+			keepers.putAll(g.keepers());
+		});
 		this.log.addAll(log);
 	}
 
@@ -222,6 +248,10 @@ public final class EndingState extends SavedData {
 	private Beats beats() {
 		return new Beats(quietUntil, sightingTries, lastSightingAt, lastArmAt, Optional.ofNullable(deathPos), deathAt, Optional.ofNullable(house),
 				copyRequested, Optional.ofNullable(finalTrap), lastHomeArmPlay, f20Placed, List.copyOf(waiters));
+	}
+
+	private Group group() {
+		return new Group(List.copyOf(finishedLines), Map.copyOf(keepers));
 	}
 
 	// --- path and progress ---
@@ -290,7 +320,10 @@ public final class EndingState extends SavedData {
 		return beatSince;
 	}
 
-	/** True once the story is over: A or B finished, or any marked death in hardcore. Nothing more is armed or moved. */
+	/**
+	 * True once the story is over, for everyone (D-058): A or B finished, D's last plank, or in hardcore the marked death
+	 * that left nobody in it (D-063). Nothing more is armed or moved.
+	 */
 	public boolean ended() {
 		return ended;
 	}
@@ -314,7 +347,10 @@ public final class EndingState extends SavedData {
 		setDirty();
 	}
 
-	/** Marked deaths already handled (for the third-death rule). */
+	/**
+	 * How many of the world's marked deaths (everyone's, oldest first, {@code HerobrineState.markedDeaths()}) are
+	 * already handled: the ones after it are new.
+	 */
 	public int deathsSeen() {
 		return deathsSeen;
 	}
@@ -334,7 +370,7 @@ public final class EndingState extends SavedData {
 		setDirty();
 	}
 
-	// --- what the player did ---
+	// --- what the group did ---
 
 	public long stopSeenAt() {
 		return stopSeenAt;
@@ -388,22 +424,22 @@ public final class EndingState extends SavedData {
 		setDirty();
 	}
 
-	/** Fragment items thrown into lava or fire. */
+	/** Fragment items anyone in the group threw into lava or fire. */
 	public int fragmentsBurned() {
 		return fragmentsBurned;
 	}
 
-	/** Every fragment id the player has ever held. Unmodifiable. */
+	/** Every fragment id anyone in the group has ever held. Unmodifiable. */
 	public Set<String> everHeld() {
 		return Collections.unmodifiableSet(everHeld);
 	}
 
-	/** Every fragment id the player burned. Unmodifiable. */
+	/** Every fragment id the group burned. Unmodifiable. */
 	public Set<String> burnedIds() {
 		return Collections.unmodifiableSet(burnedIds);
 	}
 
-	/** They held this fragment. True if it was new. */
+	/** Someone held this fragment, nobody knows who (an old save's way). True if it was new. */
 	boolean addHeld(String id) {
 		boolean added = everHeld.add(id);
 		if (added) {
@@ -412,22 +448,52 @@ public final class EndingState extends SavedData {
 		return added;
 	}
 
-	/** They threw this fragment into lava or fire (it was theirs, so it was held). */
+	/** {@code keeper} holds this fragment now: it was held, and they are the last one who had it. True if it was new. */
+	boolean addHeld(String id, UUID keeper) {
+		boolean added = addHeld(id);
+		if (!burnedIds.contains(id) && !keeper.equals(keepers.put(id, keeper))) {
+			setDirty();
+		}
+		return added;
+	}
+
+	/** Who last held this fragment, if someone was seen with it (and it never burned). */
+	public Optional<UUID> keeper(String id) {
+		return Optional.ofNullable(keepers.get(id));
+	}
+
+	/** They threw this fragment into lava or fire (it was theirs, so it was held). It is gone: nobody keeps it. */
 	void addBurned(String id) {
 		fragmentsBurned++;
 		everHeld.add(id);
 		burnedIds.add(id);
+		keepers.remove(id);
 		setDirty();
 	}
 
-	/** Fragments they held that never went into the fire. */
+	/** Fragments anyone held that never went into the fire. */
 	public Set<String> unburned() {
 		Set<String> left = new TreeSet<>(everHeld);
 		left.removeAll(burnedIds);
 		return left;
 	}
 
-	/** Player-placed blocks around the home that the player broke themselves. */
+	/**
+	 * Ending C's group rule (D-064): the fragments that never went into the fire and whose keeper still plays. A
+	 * fragment its last keeper took along (they are offline, or out of the story) is not the playing group's to burn,
+	 * so a friend who is away never blocks C; it counts again the moment they play and carry it again. A fragment held
+	 * before keepers were kept (an old save) counts as {@code fallbackKeeper}'s, the first known player (the old subject).
+	 */
+	public Set<String> unburned(Predicate<UUID> playing, @Nullable UUID fallbackKeeper) {
+		Set<String> left = unburned();
+		left.removeIf(id -> {
+			UUID keeper = keepers.getOrDefault(id, fallbackKeeper);
+			return keeper != null && !playing.test(keeper);
+		});
+		return left;
+	}
+
+	/** Player-placed blocks around the home that someone in the group broke by hand. */
 	public int ownBroken() {
 		return ownBroken;
 	}
@@ -573,6 +639,37 @@ public final class EndingState extends SavedData {
 
 	public List<Waiter> waiters() {
 		return Collections.unmodifiableList(waiters);
+	}
+
+	// --- finished lines (D-063) ---
+
+	/**
+	 * The players whose line a hardcore marked death finished, in the order it happened: their story is over (they stay
+	 * spectators), the others go on. Unmodifiable.
+	 */
+	public Set<UUID> finishedLines() {
+		return Collections.unmodifiableSet(finishedLines);
+	}
+
+	public boolean lineFinished(UUID player) {
+		return finishedLines.contains(player);
+	}
+
+	/** Finishes this player's line. True if it was still open. */
+	boolean finishLine(UUID player) {
+		boolean added = finishedLines.add(player);
+		if (added) {
+			setDirty();
+		}
+		return added;
+	}
+
+	/** Debug ({@code /a1016 ending path}): every line is open again. */
+	void reopenLines() {
+		if (!finishedLines.isEmpty()) {
+			finishedLines.clear();
+			setDirty();
+		}
 	}
 
 	void addWaiter(Waiter waiter) {

@@ -1,6 +1,8 @@
 package com.forzacode.a1016_02.ending.d;
 
+import java.util.List;
 import java.util.Optional;
+import java.util.function.Predicate;
 
 import com.forzacode.a1016_02.A1016_02;
 import com.forzacode.a1016_02.core.HerobrineState;
@@ -17,8 +19,9 @@ import net.minecraft.world.entity.item.ItemEntity;
 import net.minecraft.world.level.block.state.BlockState;
 
 /**
- * Step 3, take it back: at the F13 cairn (the ocean pyramid nearest the base, whose center holds the player's first
- * block) the player leaves no offering, breaks the first block out of the center and carries it away. Its drop is
+ * Step 3, take it back: at the F13 cairn (the ocean pyramid nearest the base, whose center holds the first block of
+ * the {@code story:first_blocks} owner, lore's choice, D-061) the group leaves no offering, someone breaks the first
+ * block out of the center and someone carries it away: any of them (D-064), whoever's block it was. Its drop is
  * marked, and followed wherever it is placed ({@link Marks}). The danger is accident's cairn lure: the way they always
  * walk to the cairn goes hollow over a drop or lava ({@code AccidentPlanner.arm}).
  */
@@ -26,7 +29,10 @@ public final class Cairn {
 	/** Accident's cairn lure. */
 	public static final TrapType LURE = new TrapType("lure_cairn");
 
-	/** The current visit, in memory: at the cairn, and whether an offering was left on it. */
+	/**
+	 * The group's current visit, in memory: someone is at the cairn, and whether anyone left an offering on it (an item
+	 * thrown by anyone spoils it). The visit ends once nobody is near.
+	 */
 	private static boolean atCairn;
 	private static boolean offering;
 	private static long nextArm;
@@ -44,25 +50,38 @@ public final class Cairn {
 		return center(server).filter(c -> c.dimension().equals(level.dimension()) && c.pos().equals(pos)).isPresent();
 	}
 
-	/** Visits and offerings, each check. */
-	static void watch(ServerPlayer player, EndingDConfig cfg) {
-		Optional<GlobalPos> cairn = center(player.level().getServer());
-		if (cairn.isEmpty() || !cairn.get().dimension().equals(player.level().dimension())) {
+	/** The group's visit, each check: it starts when anyone comes within the radius, and ends once all of them are far. */
+	static void watch(List<ServerPlayer> players, EndingDConfig cfg) {
+		if (players.isEmpty()) {
 			return;
 		}
-		double d2 = cairn.get().pos().distToCenterSqr(player.position());
-		if (d2 <= (double) cfg.cairnRadius * cfg.cairnRadius) {
+		Optional<GlobalPos> cairn = center(players.getFirst().level().getServer());
+		if (cairn.isEmpty()) {
+			return;
+		}
+		double r2 = (double) cfg.cairnRadius * cfg.cairnRadius;
+		boolean near = false;
+		boolean allFar = true;
+		for (ServerPlayer player : players) {
+			if (!cairn.get().dimension().equals(player.level().dimension())) {
+				continue;
+			}
+			double d2 = cairn.get().pos().distToCenterSqr(player.position());
+			near |= d2 <= r2;
+			allFar &= d2 > 4.0 * r2;
+		}
+		if (near) {
 			atCairn = true;
-		} else if (d2 > 4.0 * cfg.cairnRadius * cfg.cairnRadius && atCairn) {
+		} else if (allFar && atCairn) {
 			atCairn = false;
 			offering = false;
 		}
 	}
 
-	/** An item entity was added: one the subject threw down at the cairn is an offering. */
-	static void onItemAdded(ServerLevel level, ItemEntity item, EndingDConfig cfg) {
+	/** An item entity was added: one that anyone who takes part threw down at the cairn is an offering. */
+	static void onItemAdded(ServerLevel level, ItemEntity item, EndingDConfig cfg, Predicate<ServerPlayer> takesPart) {
 		Entity owner = item.getOwner();
-		if (!(owner instanceof ServerPlayer player) || !Services.watch().isSubject(player)) {
+		if (!(owner instanceof ServerPlayer player) || !takesPart.test(player)) {
 			return;
 		}
 		Optional<GlobalPos> cairn = center(level.getServer());
@@ -73,17 +92,15 @@ public final class Cairn {
 	}
 
 	/**
-	 * A player is breaking a block: the subject breaking the cairn's center takes the first block back. Its drop is
-	 * marked; it counts for step 3 only with no offering left on this visit.
+	 * A player is breaking a block: anyone who takes part breaking the cairn's center takes the first block back. Its
+	 * drop is marked; it counts for step 3 only with no offering left on this visit. True if it was the center.
 	 */
-	static void onBreak(ServerLevel level, ServerPlayer player, BlockPos pos, BlockState state) {
-		if (Services.watch().isSubject(player)) {
-			take(level, EndingDState.get(level.getServer()), pos, state);
-		}
+	static boolean onBreak(ServerLevel level, ServerPlayer player, BlockPos pos, BlockState state, EndingDState data, Predicate<ServerPlayer> takesPart) {
+		return takesPart.test(player) && take(level, data, pos, state);
 	}
 
 	/**
-	 * The subject broke this block: if it is the cairn's center, the first block is taken back (its drop is marked) and
+	 * Someone broke this block: if it is the cairn's center, the first block is taken back (its drop is marked) and
 	 * counts for step 3 only if no offering was left on this visit. True if it was the center.
 	 */
 	public static boolean take(ServerLevel level, EndingDState data, BlockPos pos, BlockState state) {
@@ -101,7 +118,10 @@ public final class Cairn {
 		offering = value;
 	}
 
-	/** True once the first block came out cleanly and is carried at least {@code carryAwayBlocks} from the cairn. */
+	/**
+	 * True once the first block came out cleanly and this player carries it at least {@code carryAwayBlocks} from the
+	 * cairn (whoever took it out, whoever's it was).
+	 */
 	static boolean carriedAway(ServerPlayer player, EndingDState data, EndingDConfig cfg) {
 		if (!data.has(EndingDState.FIRST_TAKEN) || !Marks.carries(player, Marks.FIRST_BLOCK)) {
 			return false;
@@ -111,17 +131,26 @@ public final class Cairn {
 				|| cairn.get().pos().distToCenterSqr(player.position()) >= (double) cfg.carryAwayBlocks * cfg.carryAwayBlocks;
 	}
 
-	/** Step 3's danger: while the player is away from the cairn, arm accident's cairn lure (once). */
-	static void danger(ServerPlayer player, EndingDState data, EndingDConfig cfg) {
-		MinecraftServer server = player.level().getServer();
+	/**
+	 * Step 3's danger: while nobody is at the cairn, arm accident's cairn lure (once for the world), for the first one
+	 * in it the planner can set it for (the route they used before goes hollow; it stays deniable for whoever walks it).
+	 */
+	static void danger(List<ServerPlayer> players, EndingDState data, EndingDConfig cfg) {
+		if (players.isEmpty()) {
+			return;
+		}
+		MinecraftServer server = players.getFirst().level().getServer();
 		long now = server.getTickCount();
 		if (data.has(EndingDState.CAIRN_ARMED) || now < nextArm || atCairn || Services.accidents().armed().isPresent()) {
 			return;
 		}
 		nextArm = now + EndingDConfig.ticks(cfg.cairnArmRetrySeconds);
-		if (Services.accidents().arm(player, LURE)) {
-			data.set(EndingDState.CAIRN_ARMED, true);
-			A1016_02.LOGGER.info("[a1016] ending d: the way to the cairn is hollow now");
+		for (ServerPlayer player : players) {
+			if (Services.accidents().arm(player, LURE)) {
+				data.set(EndingDState.CAIRN_ARMED, true);
+				A1016_02.LOGGER.info("[a1016] ending d: the way to the cairn is hollow now ({})", player.getName().getString());
+				return;
+			}
 		}
 	}
 

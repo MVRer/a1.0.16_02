@@ -216,14 +216,14 @@ public class EndingWorldTests extends EndingBeatTests {
 		helper.succeed();
 	}
 
-	/** The entity's stare-down (FigureApi.STARED) is staring into the fog for Ending C; only the subject's counts. */
+	/** The entity's stare-down (FigureApi.STARED) is staring into the fog for Ending C; anyone who takes part counts. */
 	@GameTest
 	public void staringHimDownIsStaringIntoTheFog(GameTestHelper helper) {
 		Run r = new Run(helper);
-		helper.assertFalse(EndingWatch.onStared(r.player, r.data, r.now, p -> false), "another player's stare counted");
-		helper.assertTrue(r.data.lastFogStareAt() == EndingState.NEVER, "another player's stare was recorded");
-		helper.assertTrue(EndingWatch.onStared(r.player, r.data, r.now, p -> p == r.player) && r.data.lastFogStareAt() == r.now,
-				"the subject's stare did not count");
+		helper.assertFalse(EndingWatch.onStared(r.player, r.data, r.now, p -> false), "the stare of someone who takes no part counted");
+		helper.assertTrue(r.data.lastFogStareAt() == EndingState.NEVER, "the stare of someone who takes no part was recorded");
+		helper.assertTrue(EndingWatch.onStared(r.player, r.data, r.now, r.watch::isParticipant) && r.data.lastFogStareAt() == r.now,
+				"a participant's stare did not count");
 		EndingFacts f = EndingTestSupport.facts(Stage.TELLING, true, r.now + GameClock.TICKS_PER_DAY, 5 * GameClock.TICKS_PER_DAY,
 				5 * GameClock.TICKS_PER_DAY, 5 * GameClock.TICKS_PER_DAY, EndingState.NEVER, -1, r.data.lastFogStareAt(), 6, 0, 20, 0, 2, 0, false, 40, 8, 32);
 		helper.assertTrue(EndingRules.cWhy(f, r.cfg).map(why -> why.contains("fog")).orElse(false), "C did not wait out the stare: " + EndingRules.cWhy(f, r.cfg));
@@ -280,7 +280,7 @@ public class EndingWorldTests extends EndingBeatTests {
 				p -> p == thrower), "a shulker box with a fragment in it did not count");
 		helper.assertTrue(data.burnedIds().contains("F09"), "the fragment in the shulker box did not burn");
 
-		// The live path through the item mixin: the fragment burns (it is not the subject's, so nothing counts).
+		// The live path through the item mixin: the fragment burns (a mock thrower is no participant, so nothing counts).
 		ItemEntity live = thrown(level, at, fragment, thrower);
 		live.hurtServer(level, level.damageSources().lava(), 10.0F);
 		helper.assertTrue(live.isRemoved(), "the fragment did not burn");
@@ -388,14 +388,27 @@ public class EndingWorldTests extends EndingBeatTests {
 		d.addWaiter(new EndingState.Waiter(mob, new BlockPos(1, 2, 3), new BlockPos(1, 2, 4), 4100));
 		d.log("a line");
 		d.setEnded(5000);
+		UUID friend = UUID.randomUUID();
+		UUID other = UUID.randomUUID();
+		d.finishLine(friend);
+		d.finishLine(other);
+		d.addHeld("F09", friend);
 		Tag tag = EndingState.CODEC.encodeStart(NbtOps.INSTANCE, d).getOrThrow();
 		EndingState back = EndingState.CODEC.parse(NbtOps.INSTANCE, tag).getOrThrow();
+		helper.assertTrue(List.copyOf(back.finishedLines()).equals(List.of(friend, other)) && back.keeper("F09").equals(Optional.of(friend)),
+				"the finished lines or the fragments' keepers were not kept: " + back.finishedLines());
+		// A v1.0 ending.dat (no group at all): it loads with every line open and no keepers, the rest as it was.
+		net.minecraft.nbt.CompoundTag v1 = ((net.minecraft.nbt.CompoundTag) tag).copy();
+		v1.remove("group");
+		EndingState old = EndingState.CODEC.parse(NbtOps.INSTANCE, v1).getOrThrow();
+		helper.assertTrue(old.finishedLines().isEmpty() && old.keeper("F09").isEmpty() && old.path() == EndingPath.B && old.home().equals(Optional.of(home))
+				&& old.unburned().equals(Set.of("F05", "F09")), "an old ending.dat did not load as it was");
 		helper.assertTrue(back.path() == EndingPath.B && back.reason().equals("kept telling") && back.pathSince() == 3000, "the path was not kept");
 		helper.assertTrue(back.progress(EndingPath.B) == B.DOORWAY.ordinal() && back.progress(EndingPath.A) == EndingBeats.A.SIGN.ordinal(),
 				"the progress was not kept: " + back.allProgress());
 		helper.assertTrue(back.stopSeenAt() == 1000 && back.lastNamedAt() == 2000 && back.tellingsSinceStop() == 1, "the watch was not kept");
 		helper.assertTrue(back.home().equals(Optional.of(home)) && back.housePeak() == 40 && back.ownBroken() == 1 && back.fragmentsBurned() == 1
-				&& back.everHeld().equals(Set.of("F02", "F05")) && back.unburned().equals(Set.of("F05")), "C's work was not kept");
+				&& back.everHeld().equals(Set.of("F02", "F05", "F09")) && back.unburned().equals(Set.of("F05", "F09")), "C's work was not kept");
 		helper.assertTrue(back.lastArmPlay() == 77000 && back.quietUntil() == 123456
 				&& back.finalTrap().equals(Optional.of(new EndingState.Trap("dark_corner", home))), "the arm memory was not kept");
 		helper.assertTrue(back.deathPos().equals(Optional.of(home)) && back.house().equals(Optional.of(home)) && back.f20Placed(), "the beats were not kept");
@@ -423,9 +436,10 @@ public class EndingWorldTests extends EndingBeatTests {
 		helper.assertTrue(card.isPresent(), "missing_first_block is not registered");
 		helper.assertTrue(card.get().tier() == Tier.SIGNATURE && card.get().earliestStage() == Stage.REMOVAL, "wrong tier or stage");
 		HerobrineState state = new HerobrineState();
-		helper.assertTrue(MissingFirstBlockCard.takenByF13(state, helper.getLevel()), "no first block known, yet it is not taken");
+		helper.assertTrue(MissingFirstBlockCard.takenByF13(state, helper.getLevel(), null), "no owner chosen, yet it is not taken");
+		helper.assertTrue(MissingFirstBlockCard.takenByF13(state, helper.getLevel(), UUID.randomUUID()), "no first block known, yet it is not taken");
 		state.setFragmentPlaced("F13", GlobalPos.of(helper.getLevel().dimension(), helper.absolutePos(BlockPos.ZERO)));
-		helper.assertTrue(MissingFirstBlockCard.takenByF13(state, helper.getLevel()), "F13's cairn does not count as taking it");
+		helper.assertTrue(MissingFirstBlockCard.takenByF13(state, helper.getLevel(), UUID.randomUUID()), "F13's cairn does not count as taking it");
 		ServerPlayer player = (ServerPlayer) helper.makeMockServerPlayer(GameType.SURVIVAL);
 		FireResult result = card.get().fire(new FireContext(player, helper.getLevel(), false, true, RandomSource.create()));
 		helper.assertTrue(result == FireResult.SKIPPED, "the card did something: " + result);

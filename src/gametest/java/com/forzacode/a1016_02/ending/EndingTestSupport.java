@@ -5,10 +5,12 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
+import java.util.UUID;
 
 import com.forzacode.a1016_02.core.FireResult;
 import com.forzacode.a1016_02.core.GameClock;
 import com.forzacode.a1016_02.core.HerobrineState;
+import com.forzacode.a1016_02.core.MarkedDeath;
 import com.forzacode.a1016_02.core.MobTamper;
 import com.forzacode.a1016_02.core.PlayerWatch;
 import com.forzacode.a1016_02.core.Services;
@@ -219,13 +221,39 @@ final class EndingTestSupport {
 			return Services.mobs();
 		}
 
+		/** The run's own watch (over its own online list and state); live by default. */
+		PlayerWatch watch = Services.watch();
+
 		@Override
 		public PlayerWatch watch() {
-			return Services.watch();
+			return watch;
 		}
 	}
 
-	/** One run: private states, recording ports, a mock subject (not in the level) and a clock the test moves. */
+	/** A watch over a test's own online players and state: mock players are never in the server's list (MP-0). */
+	static PlayerWatch watchOver(List<ServerPlayer> online, HerobrineState state) {
+		return new PlayerWatch(new PlayerWatch.Source() {
+			@Override
+			public List<ServerPlayer> online(MinecraftServer server) {
+				return List.copyOf(online);
+			}
+
+			@Override
+			public HerobrineState state(MinecraftServer server) {
+				return state;
+			}
+
+			@Override
+			public void participation(MinecraftServer server, UUID player, boolean participating) {
+			}
+		});
+	}
+
+	/**
+	 * One run: private states, recording ports, mock players (never in the level or the server's list: their own online
+	 * list and {@link PlayerWatch} make them participants) and a clock the test moves. {@link #player} is online from
+	 * the start; {@link #friend} adds another.
+	 */
 	static final class Run {
 		final GameTestHelper helper;
 		final MinecraftServer server;
@@ -235,21 +263,50 @@ final class EndingTestSupport {
 		final Ports ports = new Ports();
 		final EndingEngine engine = new EndingEngine(ports);
 		final ServerPlayer player;
+		/** Who is online in this run (spectators included); change it to have someone join or leave. */
+		final List<ServerPlayer> online = new ArrayList<>();
+		final PlayerWatch watch;
 		final RandomSource random = RandomSource.create(42L);
 		/** {@code GameClock.dayTicks}: starts at day 10, noon. */
 		long now = 10 * GameClock.TICKS_PER_DAY + 6000;
 		/** {@code GameClock.playTicks}: 20 hours in. */
 		long play = 20L * 72000;
+		boolean hardcore;
 
 		Run(GameTestHelper helper) {
 			this.helper = helper;
 			this.server = helper.getLevel().getServer();
 			this.player = (ServerPlayer) helper.makeMockServerPlayer(GameType.SURVIVAL);
+			online.add(player);
+			watch = watchOver(online, state);
+			ports.watch = watch;
 			state.setStage(server, Stage.TELLING);
 		}
 
+		/** Another player joins this run. */
+		ServerPlayer friend() {
+			ServerPlayer friend = (ServerPlayer) helper.makeMockServerPlayer(GameType.SURVIVAL);
+			online.add(friend);
+			return friend;
+		}
+
+		/** Who is in it now: online, a participant, alive, line open ({@link EndingApi#players}). */
+		List<ServerPlayer> inIt() {
+			return EndingApi.players(server, watch, data);
+		}
+
 		EndingEngine.Ctx ctx() {
-			return new EndingEngine.Ctx(server, player, state, data, cfg, now, play, random, false);
+			return new EndingEngine.Ctx(server, inIt(), state, data, cfg, now, play, random, false, hardcore);
+		}
+
+		/** A marked death of {@code who} at {@code pos}: recorded as theirs (as the death marker does), then the event. */
+		void die(ServerPlayer who, GlobalPos pos) {
+			state.addMarkedDeath(who.getUUID(), new MarkedDeath("test", pos, today()));
+			engine.onMarkedDeath(ctx());
+		}
+
+		void die(GlobalPos pos) {
+			die(player, pos);
 		}
 
 		long today() {
@@ -273,7 +330,7 @@ final class EndingTestSupport {
 		EndingFacts quiet() {
 			return new EndingFacts(state.stage(), state.stopFired(), state.tellingStarted(), now, data.stopSeenAt(), data.lastTellingAt(),
 					data.lastNamedAt(), data.lastReadAt(), -1, data.lastFogStareAt(), state.tellingCount(), data.tellingsSinceStop(), state.attention(),
-					state.markedDeaths().size(), data.fragmentsBurned(), data.unburned().size(), false, data.housePeak(), data.housePeak(),
+					EndingWatch.mostOwnMarkedDeaths(state), data.fragmentsBurned(), data.unburned().size(), false, data.housePeak(), data.housePeak(),
 					data.ownBroken(), state.hasFlag(DirectorHooks.OBEYED_AFTER_STOP));
 		}
 

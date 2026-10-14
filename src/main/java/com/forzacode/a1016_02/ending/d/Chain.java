@@ -4,12 +4,15 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
+import java.util.UUID;
 import java.util.function.Predicate;
+import java.util.stream.Collectors;
 
 import com.forzacode.a1016_02.A1016_02;
 import com.forzacode.a1016_02.core.GameClock;
 import com.forzacode.a1016_02.core.HerobrineState;
 import com.forzacode.a1016_02.core.Services;
+import com.forzacode.a1016_02.ending.EndingApi;
 
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.GlobalPos;
@@ -18,9 +21,11 @@ import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 
 /**
- * Ending D's chain, step by step (DESIGN.md "Ending D"). Each check looks at the subject: has the current step been
- * done, and its danger. Steps only count in order; what the player did earlier (logs cut, signs written, torches
- * placed) counts once its step comes. Server thread only.
+ * Ending D's chain, step by step (DESIGN.md "Ending D"). Each check looks at everyone in it (D-064: any participant
+ * can do a step, progress is shared): has the current step been done by any of them, and each one's danger. Steps only
+ * count in order, and one check moves the chain at most one step, so two players doing the same step in one tick
+ * commit it once; what anyone did earlier (logs cut, signs written, torches placed) counts once its step comes.
+ * Nothing here keeps a player across checks (D-062.1). Server thread only.
  */
 public final class Chain {
 	private static long nextStairTry;
@@ -32,32 +37,57 @@ public final class Chain {
 	}
 
 	static void check(MinecraftServer server, EndingDState data, EndingDConfig cfg) {
-		Optional<ServerPlayer> subject = Services.watch().subject(server);
-		if (subject.isEmpty()) {
+		List<ServerPlayer> players = EndingApi.players(server);
+		if (players.isEmpty()) {
 			return;
 		}
 		HerobrineState state = HerobrineState.get(server);
 		background(server, data, cfg, state, server.getTickCount());
-		check(server, data, cfg, subject.get(), state.fragmentsRead()::contains, View.TRACES);
+		check(server, data, cfg, players, state.fragmentsRead()::contains, View.TRACES, deadFriends(server, state));
 	}
 
 	/**
-	 * One check of the current step for this player. {@code read} says which fragments were read; {@code view} is
-	 * the out-of-view question the dangers ask first (core asks again on every edit).
+	 * Known players whose line a hardcore marked death finished (D-063): the group may light one more torch for each of
+	 * them in step 5.
 	 */
+	static int deadFriends(MinecraftServer server, HerobrineState state) {
+		int count = 0;
+		for (UUID player : EndingApi.finishedLines(server)) {
+			if (state.player(player).isPresent()) {
+				count++;
+			}
+		}
+		return count;
+	}
+
+	/** One check of the current step for this one player (tests), with no dead friends. */
 	public static void check(MinecraftServer server, EndingDState data, EndingDConfig cfg, ServerPlayer player, Predicate<String> read, View view) {
+		check(server, data, cfg, List.of(player), read, view, 0);
+	}
+
+	/**
+	 * One check of the current step for everyone in it ({@code players}, fresh this tick). {@code read} says which
+	 * fragments were read (the world's: one reader unlocks it for all, D-058); {@code view} is the out-of-view question
+	 * the dangers ask first (core asks again on every edit); {@code deadFriends} is how many friends' lines are finished
+	 * (step 5).
+	 */
+	public static void check(MinecraftServer server, EndingDState data, EndingDConfig cfg, List<ServerPlayer> players, Predicate<String> read, View view,
+			int deadFriends) {
+		if (players.isEmpty()) {
+			return;
+		}
 		long now = server.getTickCount();
-		Cairn.watch(player, cfg);
+		Cairn.watch(players, cfg);
 		Step step = data.step();
 		switch (step) {
 			case MAP -> {
-				Camp.danger(player, view, cfg);
-				if (read.test("F28") && inGrove(player)) {
+				Camp.danger(players, view, cfg);
+				if (read.test("F28") && players.stream().anyMatch(Chain::inGrove)) {
 					advance(server, data, step);
 				}
 			}
 			case GROVE -> {
-				Grove.dangers(player, view, cfg);
+				Grove.dangers(players, view, cfg);
 				if (read.test("F30") && data.groveLogs() >= cfg.groveLogsMin) {
 					advance(server, data, step);
 				}
@@ -65,26 +95,33 @@ public final class Chain {
 			case TAKE_BACK -> {
 				if (view == View.TRACES) {
 					// Accident's own planner, with its own view rules (not in tests with fixed viewpoints).
-					Cairn.danger(player, data, cfg);
+					Cairn.danger(players, data, cfg);
 				}
-				if (Cairn.carriedAway(player, data, cfg)) {
+				if (players.stream().anyMatch(p -> Cairn.carriedAway(p, data, cfg))) {
 					advance(server, data, step);
 				}
 			}
 			case UNDER_SEED -> {
 				Optional<StairPlan> plan = data.stair().filter(StairPlan::complete);
-				if (plan.isEmpty() || !plan.get().dimension().equals(player.level().dimension())) {
+				if (plan.isEmpty()) {
 					return;
 				}
-				if (!data.has(EndingDState.FLOODED) && Stair.inShaftBelow(player, plan.get(), cfg.floodDepthBlocks)
-						&& Stair.flood(player, plan.get(), view)) {
-					data.set(EndingDState.FLOODED, true);
+				boolean down = false;
+				for (ServerPlayer player : players) {
+					if (!plan.get().dimension().equals(player.level().dimension())) {
+						continue;
+					}
+					if (!data.has(EndingDState.FLOODED) && Stair.inShaftBelow(player, plan.get(), cfg.floodDepthBlocks)
+							&& Stair.flood(player, plan.get(), view)) {
+						data.set(EndingDState.FLOODED, true);
+					}
+					down |= plan.get().inChamber(player.blockPosition());
 				}
-				if (plan.get().inChamber(player.blockPosition())) {
+				if (down) {
 					advance(server, data, step);
 				}
 			}
-			case TORCHES, SENTENCE, CROSS -> chamber(server, data, cfg, player, step, now, view);
+			case TORCHES, SENTENCE, CROSS -> chamber(server, data, cfg, players, step, now, view, deadFriends);
 			case LAST_MINUTE, AFTERWARD -> {
 			}
 		}
@@ -103,29 +140,47 @@ public final class Chain {
 		}
 	}
 
-	/** Steps 5 to 7: down in the chamber. */
-	private static void chamber(MinecraftServer server, EndingDState data, EndingDConfig cfg, ServerPlayer player, Step step, long now, View view) {
+	/**
+	 * Steps 5 to 7: down in the chamber (in the stair's own dimension, whoever is elsewhere). The room is read once per
+	 * check; each one down there or near it has their own danger (the fall after naming); the stair loses a block while
+	 * anyone is down.
+	 */
+	private static void chamber(MinecraftServer server, EndingDState data, EndingDConfig cfg, List<ServerPlayer> players, Step step, long now, View view,
+			int deadFriends) {
 		Optional<StairPlan> found = data.stair().filter(StairPlan::complete);
-		if (found.isEmpty() || !found.get().dimension().equals(player.level().dimension())) {
+		ServerLevel level = found.map(p -> server.getLevel(p.dimension())).orElse(null);
+		if (found.isEmpty() || level == null) {
 			return;
 		}
 		StairPlan plan = found.get();
-		ServerLevel level = player.level();
-		boolean down = plan.inChamber(player.blockPosition()) || Stair.inShaftBelow(player, plan, 0);
-		if (!down && player.blockPosition().distSqr(plan.twin()) > 48 * 48) {
+		List<ServerPlayer> near = new ArrayList<>();
+		boolean anyDown = false;
+		for (ServerPlayer player : players) {
+			if (!plan.dimension().equals(player.level().dimension())) {
+				continue;
+			}
+			boolean down = plan.inChamber(player.blockPosition()) || Stair.inShaftBelow(player, plan, 0);
+			if (down || player.blockPosition().distSqr(plan.twin()) <= 48 * 48) {
+				near.add(player);
+				anyDown |= down;
+			}
+		}
+		if (near.isEmpty()) {
 			return;
 		}
 		List<Chamber.Written> signs = Chamber.signs(level, plan);
-		Chamber.watchNaming(player, data, signs);
-		Chamber.namedFall(player, data, view);
-		if (down && now >= nextLoss) {
+		Chamber.watchNaming(server, data, signs);
+		for (ServerPlayer player : near) {
+			Chamber.namedFall(player, data, view);
+		}
+		if (anyDown && now >= nextLoss) {
 			double seconds = step == Step.CROSS ? cfg.stairLossFastSeconds : cfg.stairLossSeconds;
 			nextLoss = now + EndingDConfig.ticks(seconds);
-			Stair.loseBlock(player, data, plan, view);
+			Stair.loseBlock(level, data, plan, view);
 		}
 		switch (step) {
 			case TORCHES -> {
-				if (Chamber.torches(level, plan) == cfg.torchesRequired) {
+				if (torchesCount(Chamber.torches(level, plan), cfg, deadFriends)) {
 					advance(server, data, step);
 				}
 			}
@@ -138,12 +193,21 @@ public final class Chain {
 			case CROSS -> {
 				if (Chamber.cross(level, plan, data).isPresent()) {
 					A1016_02.LOGGER.info("[a1016] ending d: the last plank is on his cross");
-					LastMinute.start(server, data, false, player.blockPosition());
+					// Once for the world: start() moves the step on at once, so no one else starts it again.
+					LastMinute.start(server, data, false, near.getFirst().blockPosition());
 				}
 			}
 			default -> {
 			}
 		}
+	}
+
+	/**
+	 * Step 5: exactly {@code torchesRequired} torches (one per dead list member), or exactly that many plus one for each
+	 * friend whose line was finished (a group may light one for a dead friend). Any other count does nothing.
+	 */
+	public static boolean torchesCount(int torches, EndingDConfig cfg, int deadFriends) {
+		return torches == cfg.torchesRequired || deadFriends > 0 && torches == cfg.torchesRequired + deadFriends;
 	}
 
 	static boolean inGrove(ServerPlayer player) {
@@ -164,7 +228,10 @@ public final class Chain {
 		HerobrineState state = HerobrineState.get(server);
 		Step step = data.step();
 		lines.add("Ending D, step " + step + (state.hasFlag(EndingDInit.COMPLETE_FLAG) ? ", complete on day " + data.completeDay() : ""));
-		Optional<ServerPlayer> player = Services.watch().subject(server);
+		List<ServerPlayer> players = EndingApi.players(server);
+		lines.add("in it: " + (players.isEmpty() ? "nobody" : players.stream().map(p -> p.getName().getString()).collect(Collectors.joining(", ")))
+				+ "; first blocks owner: " + state.owner(EndingApi.FIRST_BLOCKS_OWNER).flatMap(state::player).map(HerobrineState.Subject::name)
+						.orElse("not chosen"));
 		boolean f28 = state.fragmentsRead().contains("F28");
 		lines.add("stair: " + data.stair().map(p -> p.complete() ? "built at " + p.twin().toShortString() + " (" + p.stairs().size() + " steps, top "
 				+ p.yTop() + ")" : "building, down to " + (p.builtTo() == Integer.MAX_VALUE ? "nothing yet" : p.builtTo())).orElse(lastStair.detail())
@@ -173,7 +240,7 @@ public final class Chain {
 			case MAP -> {
 				lines.add("missing: " + (f28 ? "" : "F28 read (the map); ") + "reach the untouched grove at "
 						+ Grove.center(server).map(c -> c.pos().toShortString()).orElse("(not chosen yet)")
-						+ player.map(p -> inGrove(p) ? " (in it now)" : "").orElse(""));
+						+ (players.stream().anyMatch(Chain::inGrove) ? " (someone is in it now)" : ""));
 			}
 			case GROVE -> {
 				boolean f30 = state.fragmentsRead().contains("F30");
@@ -182,13 +249,18 @@ public final class Chain {
 			}
 			case TAKE_BACK -> {
 				Optional<GlobalPos> cairn = Cairn.center(server);
-				String carry = player.map(p -> Marks.carries(p, Marks.FIRST_BLOCK) ? "carrying it" : "not carrying it").orElse("offline");
-				String dist = player.flatMap(p -> cairn.filter(c -> c.dimension().equals(p.level().dimension()))
-						.map(c -> String.format(Locale.ROOT, "%.0f/%d blocks from the cairn", Math.sqrt(c.pos().distToCenterSqr(p.position())),
-								cfg.carryAwayBlocks))).orElse("");
+				List<String> carrying = new ArrayList<>();
+				for (ServerPlayer p : players) {
+					if (Marks.carries(p, Marks.FIRST_BLOCK)) {
+						String dist = cairn.filter(c -> c.dimension().equals(p.level().dimension()))
+								.map(c -> String.format(Locale.ROOT, " %.0f/%d blocks from the cairn", Math.sqrt(c.pos().distToCenterSqr(p.position())),
+										cfg.carryAwayBlocks)).orElse(" in another dimension");
+						carrying.add(p.getName().getString() + dist);
+					}
+				}
 				lines.add("cairn: " + cairn.map(c -> c.pos().toShortString()).orElse("F13 not placed") + "; first block out cleanly: "
-						+ data.has(EndingDState.FIRST_TAKEN) + " (offering this visit: " + Cairn.offering() + "); " + carry + ", " + dist
-						+ "; lure armed: " + data.has(EndingDState.CAIRN_ARMED));
+						+ data.has(EndingDState.FIRST_TAKEN) + " (offering this visit: " + Cairn.offering() + "); carried by "
+						+ (carrying.isEmpty() ? "nobody" : String.join(", ", carrying)) + "; lure armed: " + data.has(EndingDState.CAIRN_ARMED));
 			}
 			case UNDER_SEED -> lines.add("missing: dig through the seed pyramid's floor and go down to the chamber; flooded: " + data.has(EndingDState.FLOODED));
 			case TORCHES, SENTENCE, CROSS -> {
@@ -197,7 +269,9 @@ public final class Chain {
 					if (level == null) {
 						return;
 					}
-					lines.add("torches in the chamber: " + Chamber.torches(level, plan) + "/" + cfg.torchesRequired + "; stair blocks left above: "
+					int dead = deadFriends(server, state);
+					lines.add("torches in the chamber: " + Chamber.torches(level, plan) + "/" + cfg.torchesRequired
+							+ (dead > 0 ? " or " + (cfg.torchesRequired + dead) : "") + "; stair blocks left above: "
 							+ Stair.standing(level, plan) + "/" + plan.stairs().stream().filter(s -> s.getY() >= plan.chamberCeil()).count());
 					Optional<String> sentence = Chamber.sentence();
 					lines.add("sentence under the twin: " + (sentence.isPresent()

@@ -1,6 +1,8 @@
 package com.forzacode.a1016_02.ending.d;
 
 import com.forzacode.a1016_02.core.CommandHooks;
+import com.forzacode.a1016_02.core.HerobrineEvents;
+import com.forzacode.a1016_02.core.Services;
 import com.forzacode.a1016_02.ending.EndingApi;
 import com.forzacode.a1016_02.ending.EndingPath;
 
@@ -20,7 +22,8 @@ import net.minecraft.world.level.Level;
 
 /**
  * Ending D, "No longer with us": the chain, the last minute, the afterward and the sting. Called by
- * {@code ending.EndingInit}. State lives in {@link EndingDState}; shared facts in {@code HerobrineState} flags.
+ * {@code ending.EndingInit}. State lives in {@link EndingDState}; shared facts in {@code HerobrineState} flags. One
+ * chain for the world (D-064): any participant can do a step, and nothing waits for one player in particular.
  */
 public final class EndingDInit {
 	/** Set when D is complete (the last plank on his cross). Gates the sting. */
@@ -48,18 +51,26 @@ public final class EndingDInit {
 		// ending:last_minute never outlives a run: cleared before the save (a resume sets it again), then the rest.
 		ServerLifecycleEvents.SERVER_STOPPING.register(LastMinute::clearFlag);
 		ServerLifecycleEvents.SERVER_STOPPED.register(server -> clear());
+		// Anyone who takes part can do a step (D-064): whoever breaks the block, throws the item, cuts the log.
 		PlayerBlockBreakEvents.BEFORE.register((level, player, pos, state, blockEntity) -> {
 			if (level instanceof ServerLevel serverLevel && player instanceof ServerPlayer serverPlayer) {
+				EndingDState data = EndingDState.get(serverLevel.getServer());
 				Marks.onBreak(serverLevel, serverPlayer, pos, state);
-				Grove.onBreak(serverLevel, serverPlayer, pos, state);
-				Cairn.onBreak(serverLevel, serverPlayer, pos, state);
+				Grove.onBreak(serverLevel, serverPlayer, pos, state, data, EndingApi::takesPart);
+				Cairn.onBreak(serverLevel, serverPlayer, pos, state, data, EndingApi::takesPart);
 			}
 			return true;
 		});
 		ServerEntityEvents.ENTITY_LOAD.register((entity, level) -> {
 			if (entity instanceof ItemEntity item) {
 				Marks.onItemAdded(level, item);
-				Cairn.onItemAdded(level, item, EndingDConfig.get());
+				Cairn.onItemAdded(level, item, EndingDConfig.get(), EndingApi::takesPart);
+			}
+		});
+		// Someone joins in the middle of the last minute: it plays for them too.
+		HerobrineEvents.PARTICIPATION.register((server, player, participating) -> {
+			if (participating) {
+				Services.watch().participant(server, player).ifPresent(p -> LastMinute.onParticipation(p, EndingDConfig.get()));
 			}
 		});
 		UseBlockCallback.EVENT.register((player, level, hand, hit) -> {

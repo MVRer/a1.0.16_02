@@ -463,11 +463,11 @@ public final class Stair {
 	}
 
 	/**
-	 * Steps 5 to 7: the stair above the chamber loses one block, out of view: one stair (lowest first), or once, one
-	 * of the player's torches on the stairwell. Ledgered as {@value #LOSS_CAUSE}; the last minute puts them back.
+	 * Steps 5 to 7: the stair above the chamber (in its own level) loses one block, out of view: one stair (lowest
+	 * first), or once, one of the players' torches on the stairwell. Ledgered as {@value #LOSS_CAUSE}; the last minute
+	 * puts them back.
 	 */
-	public static boolean loseBlock(ServerPlayer player, EndingDState data, StairPlan plan, View view) {
-		ServerLevel level = player.level();
+	public static boolean loseBlock(ServerLevel level, EndingDState data, StairPlan plan, View view) {
 		if (!data.has(EndingDState.STAIR_TORCH)) {
 			for (BlockPos torch : stairwellTorches(level, plan)) {
 				if (view.outOfView(level, torch) && Services.traces().remove(level, torch, LOSS_CAUSE)) {

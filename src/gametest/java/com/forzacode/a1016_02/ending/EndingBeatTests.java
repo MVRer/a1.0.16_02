@@ -5,6 +5,7 @@ import java.util.Optional;
 
 import com.forzacode.a1016_02.core.FireResult;
 import com.forzacode.a1016_02.core.GameClock;
+import com.forzacode.a1016_02.core.MarkedDeath;
 import com.forzacode.a1016_02.core.Stage;
 import com.forzacode.a1016_02.ending.EndingBeats.A;
 import com.forzacode.a1016_02.ending.EndingBeats.B;
@@ -77,8 +78,7 @@ public class EndingBeatTests extends EndingRuleTests {
 		helper.assertTrue(r.ports.armed.equals(List.of("lava_floor")), "the lava floor was not armed: " + r.ports.armed);
 
 		GlobalPos death = r.at(3, 1, 3);
-		r.state.addMarkedDeath(new com.forzacode.a1016_02.core.MarkedDeath("lava", death, r.today()));
-		r.engine.onMarkedDeath(r.ctx(), death, 1, false);
+		r.die(death);
 		helper.assertTrue(r.beat(A.class, EndingPath.A) == A.SIGN && r.data.deathPos().equals(Optional.of(death)), "the death did not lead to the sign");
 		r.tick();
 		helper.assertTrue(r.ports.signMovedTo.isEmpty() && r.beat(A.class, EndingPath.A) == A.SIGN, "the sign moved with no cross standing");
@@ -181,7 +181,7 @@ public class EndingBeatTests extends EndingRuleTests {
 		helper.assertTrue(r.ports.armed.equals(List.of("dark_corner")) && r.data.finalTrap().isPresent(), "the final trap was not armed in the copy");
 		helper.assertTrue(r.ports.copyBounds.contains(r.data.finalTrap().get().pos()), "the final trap is not inside the copy");
 
-		r.engine.onMarkedDeath(r.ctx(), r.ports.copySite, 1, false);
+		r.die(r.ports.copySite);
 		helper.assertTrue(r.beat(B.class, EndingPath.B) == B.RECORD && r.ports.f10Finished == 1, "the final death did not finish F10");
 		r.tick();
 		helper.assertTrue(r.beat(B.class, EndingPath.B) == B.RECORD, "B ended before F20 was placed");
@@ -235,7 +235,7 @@ public class EndingBeatTests extends EndingRuleTests {
 		// Another trap's death inside the copy: not the final one.
 		r.ports.trapArmed = true;
 		r.ports.armedRef = new EndingState.Trap("lava_floor", inside);
-		r.engine.onMarkedDeath(r.ctx(), inside, 1, false);
+		r.die(inside);
 		helper.assertTrue(r.beat(B.class, EndingPath.B) == B.FINAL && r.ports.f10Finished == 0, "another trap's death was the final one");
 		r.ports.trapArmed = false;
 		r.ports.armedRef = null;
@@ -247,15 +247,15 @@ public class EndingBeatTests extends EndingRuleTests {
 		EndingState.Trap finalTrap = r.ports.armedRef;
 
 		// The final trap armed, but the death outside the copy: not the final one.
-		r.engine.onMarkedDeath(r.ctx(), r.at(0, 150, 100), 2, false);
+		r.die(r.at(0, 150, 100));
 		helper.assertTrue(r.beat(B.class, EndingPath.B) == B.FINAL && r.ports.f10Finished == 0, "a death outside the copy was the final one");
 		// Inside, but the planner holds another trap now: not the final one.
 		r.ports.armedRef = new EndingState.Trap("gravel_ceiling", inside);
-		r.engine.onMarkedDeath(r.ctx(), inside, 2, false);
+		r.die(inside);
 		helper.assertTrue(r.beat(B.class, EndingPath.B) == B.FINAL && r.ports.f10Finished == 0, "a death by another trap was the final one");
-		// Inside, by the final trap.
+		// Inside, by the final trap: a friend's death counts as much as anyone's (one ending per world).
 		r.ports.armedRef = finalTrap;
-		r.engine.onMarkedDeath(r.ctx(), inside, 2, false);
+		r.die(r.friend(), inside);
 		helper.assertTrue(r.beat(B.class, EndingPath.B) == B.RECORD && r.ports.f10Finished == 1, "the final trap's death inside the copy was not final");
 		helper.succeed();
 	}
@@ -346,10 +346,10 @@ public class EndingBeatTests extends EndingRuleTests {
 			if (path != EndingPath.NONE) {
 				r.commit(path);
 			}
-			r.engine.onMarkedDeath(r.ctx(), r.at(1, 1, 1), 1, false);
-			r.engine.onMarkedDeath(r.ctx(), r.at(1, 1, 1), 2, false);
+			r.die(r.at(1, 1, 1));
+			r.die(r.at(1, 1, 1));
 			helper.assertTrue(r.data.path() == path, path + ": changed before the third death");
-			r.engine.onMarkedDeath(r.ctx(), r.at(1, 1, 1), 3, false);
+			r.die(r.at(1, 1, 1));
 			helper.assertTrue(r.data.path() == EndingPath.B && r.data.reason().contains("third"), path + ": the third death did not commit B");
 			helper.assertTrue(r.state.stage() == Stage.REMOVAL && DirectorHooks.pace(r.state).isPresent(), path + ": B did not start");
 			if (path == EndingPath.C) {
@@ -362,8 +362,10 @@ public class EndingBeatTests extends EndingRuleTests {
 		Run r = new Run(helper);
 		r.commit(EndingPath.A);
 		r.data.setProgress(EndingPath.A, A.ACCIDENT.ordinal(), r.now);
+		r.state.addMarkedDeath(r.player.getUUID(), new MarkedDeath("fell", r.at(2, 1, 2), r.today()));
+		r.state.addMarkedDeath(r.player.getUUID(), new MarkedDeath("fell", r.at(2, 1, 2), r.today()));
 		r.data.setDeathsSeen(2);
-		r.engine.onMarkedDeath(r.ctx(), r.at(2, 1, 2), 3, false);
+		r.die(r.at(2, 1, 2));
 		helper.assertTrue(r.data.path() == EndingPath.B && r.beat(A.class, EndingPath.A) == A.SIGN, "A's last beat was lost to B");
 		r.ports.cross = r.at(2, 1, 3);
 		r.tick();
@@ -373,41 +375,49 @@ public class EndingBeatTests extends EndingRuleTests {
 		// The tick catches deaths the event missed.
 		Run missed = new Run(helper);
 		for (int i = 0; i < 3; i++) {
-			missed.state.addMarkedDeath(new com.forzacode.a1016_02.core.MarkedDeath("fell", missed.at(0, 1, 0), missed.today()));
+			missed.state.addMarkedDeath(missed.player.getUUID(), new MarkedDeath("fell", missed.at(0, 1, 0), missed.today()));
 		}
 		missed.tick();
 		helper.assertTrue(missed.data.path() == EndingPath.B, "three recorded deaths did not commit B on the tick");
+		helper.assertTrue(missed.data.deathsSeen() == 3, "the tick did not note the deaths as handled");
 		helper.succeed();
 	}
 
+	/** Alone in hardcore, one marked death leaves nobody in it: the story ends, with Ending B's record (D-063). */
 	@GameTest
 	public void hardcoreOneMarkedDeathEndsTheStory(GameTestHelper helper) {
 		Run none = new Run(helper);
-		none.engine.onMarkedDeath(none.ctx(), none.at(1, 1, 1), 1, true);
+		none.hardcore = true;
+		none.die(none.at(1, 1, 1));
 		helper.assertTrue(none.data.ended() && none.state.hasFlag(EndingEngine.ENDED_FLAG), "a hardcore death did not end the story");
+		helper.assertTrue(none.data.lineFinished(none.player.getUUID()) && none.state.hasFlag(EndingApi.LINE_FINISHED_FLAG + none.player.getUUID()),
+				"the hardcore death did not finish their line");
+		helper.assertTrue(none.data.path() == EndingPath.B && none.ports.f10Finished == 1, "nobody left in it, and the story did not end with B's record");
 		helper.assertTrue(DirectorHooks.silence(none.state).orElse(0L) == DirectorHooks.FOREVER, "the director kept going after the end");
 		none.ports.armable.add("lava_floor");
 		none.state.setStopFired(true);
 		none.data.setStopSeenAt(none.now - 10 * GameClock.TICKS_PER_DAY);
 		none.engine.tick(none.ctx(), obeying(none.now).at(none.now));
-		helper.assertTrue(none.data.path() == EndingPath.NONE && none.ports.armed.isEmpty(), "something committed or armed after the end");
+		helper.assertTrue(none.data.path() == EndingPath.B && none.ports.armed.isEmpty(), "something committed or armed after the end");
 
 		Run a = new Run(helper);
+		a.hardcore = true;
 		a.commit(EndingPath.A);
-		a.engine.onMarkedDeath(a.ctx(), a.at(2, 1, 2), 1, true);
+		a.die(a.at(2, 1, 2));
 		helper.assertTrue(a.data.ended() && a.beat(A.class, EndingPath.A) == A.SIGN, "hardcore A did not go to the sign");
 		a.ports.cross = a.at(2, 1, 3);
 		a.tick();
 		helper.assertTrue(a.beat(A.class, EndingPath.A) == A.DONE && a.ports.signMovedTo.size() == 1, "hardcore A's sign did not move");
 
 		Run b = new Run(helper);
+		b.hardcore = true;
 		b.commit(EndingPath.B);
-		b.engine.onMarkedDeath(b.ctx(), b.at(2, 1, 2), 1, true);
+		b.die(b.at(2, 1, 2));
 		helper.assertTrue(b.data.ended() && b.ports.f10Finished == 1 && b.beat(B.class, EndingPath.B) == B.RECORD, "hardcore B did not finish F10");
 		b.ports.f20Ready = true;
 		b.tick();
 		helper.assertTrue(b.beat(B.class, EndingPath.B) == B.DONE && b.data.f20Placed(), "hardcore B did not place F20");
-		b.engine.onMarkedDeath(b.ctx(), b.at(2, 1, 2), 2, true);
+		b.die(b.at(2, 1, 2));
 		helper.assertTrue(b.data.path() == EndingPath.B && b.ports.f10Finished == 1, "a death after the end changed something");
 		helper.assertTrue(DirectorHooks.pace(b.state).isEmpty() && b.state.stage() == Stage.REMOVAL, "the final state is not consistent");
 		helper.succeed();
@@ -443,7 +453,7 @@ public class EndingBeatTests extends EndingRuleTests {
 	public void theTickCommitsFromNoneAndStopIsNoticed(GameTestHelper helper) {
 		Run r = new Run(helper);
 		r.state.setStopFired(true);
-		EndingWatch.sample(null, r.state, r.data, r.cfg, r.ports.watch(), r.now);
+		EndingWatch.sample(r.server, List.of(), r.state, r.data, r.cfg, r.watch, r.now);
 		helper.assertTrue(r.data.stopSeenAt() == r.now, "Stop. was not noticed");
 		long stop = r.now;
 		r.days(1);

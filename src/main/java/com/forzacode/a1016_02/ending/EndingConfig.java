@@ -17,7 +17,10 @@ public final class EndingConfig {
 	public double checkSeconds = 10;
 	/** No path commits on its own before this stage (the third-death rule and debug always can). */
 	public String commitMinStage = "TELLING";
-	/** After A or B finish (normal mode) and after any hardcore marked death, the director stays silent for good. */
+	/**
+	 * After A or B finish, and after the hardcore marked death that leaves nobody in it (D-063), the director stays
+	 * silent for good.
+	 */
 	public boolean silenceAfterEnd = true;
 	/** Trap scans are not cheap: the ending tries to arm (or fire the last sighting) at most once per this many real seconds. */
 	public double armRetrySeconds = 60;
@@ -34,7 +37,7 @@ public final class EndingConfig {
 	public double aSightingMaxDays = 3;
 	/** Fire the last sighting again (if he was never seen) at most this many times. */
 	public int aSightingTries = 3;
-	/** Trap ids tried in order for the one ordinary accident (centered on the player, so their own mine route). */
+	/** Trap ids tried in order for the one ordinary accident (centered on one who is in it, so their own mine route). */
 	public List<String> aTraps = new ArrayList<>(List.of("lava_floor", "lava_wall"));
 	/** If the trap's window ran out without a death, arm again after this many days. */
 	public double aRearmDays = 1;
@@ -106,7 +109,7 @@ public final class EndingConfig {
 	public double cHouseTakenFraction = 0.75;
 	/** A house needs at least this many player-placed blocks. */
 	public int cMinHouseBlocks = 12;
-	/** Radius (cube) around the base for the player's own blocks. */
+	/** Radius (cube) around the group's home for the players' own blocks. */
 	public int cHouseRadius = 12;
 	/** Fog staring: standing still outdoors this long, looking level, at dusk, at night or in rain. */
 	public double fogStareSeconds = 20;

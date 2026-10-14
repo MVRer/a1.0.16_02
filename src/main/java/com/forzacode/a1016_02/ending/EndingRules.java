@@ -36,7 +36,7 @@ public final class EndingRules {
 	}
 
 	/**
-	 * Ending A: after "Stop.", the player obeys. OBEYED_AFTER_STOP's rule is the director's (its flag
+	 * Ending A: after "Stop.", the group obeys: nobody tells (D-064). OBEYED_AFTER_STOP's rule is the director's (its flag
 	 * {@code director:obeyed_after_stop}: no telling for {@code pacing.obeyDays} since "Stop." or the last telling;
 	 * {@code obeyDays} here only words the status), never his name since "Stop.", and no fragment read and no trace
 	 * visited for {@code aQuietDays}.
@@ -92,8 +92,10 @@ public final class EndingRules {
 	}
 
 	/**
-	 * Ending C: every fragment held thrown into lava or fire, the house taken apart by the player's own hand, and no
-	 * name, no scar and no fog staring for {@code cQuietDays}.
+	 * Ending C, one rule set for the group that plays (D-064): every fragment held by someone still playing thrown into
+	 * lava or fire (one a friend took along while they are away does not count, see
+	 * {@link EndingState#unburned(java.util.function.Predicate, java.util.UUID)}), the group's house taken apart by
+	 * their own hands, and nobody naming him, visiting a scar or staring into the fog for {@code cQuietDays}.
 	 */
 	public static Optional<String> cWhy(EndingFacts f, EndingConfig cfg) {
 		if (!f.stage().atLeast(cfg.minStage())) {
@@ -127,7 +129,7 @@ public final class EndingRules {
 		return Optional.empty();
 	}
 
-	/** Most of their own blocks around the base broken by them, and most of them gone. */
+	/** Most of the players' own blocks around the home broken by their hands, and most of them gone. */
 	public static boolean houseTakenApart(EndingFacts f, EndingConfig cfg) {
 		int peak = f.housePeak();
 		if (peak < cfg.cMinHouseBlocks) {

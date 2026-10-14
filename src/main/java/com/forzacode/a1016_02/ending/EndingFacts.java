@@ -4,20 +4,23 @@ import com.forzacode.a1016_02.core.GameClock;
 import com.forzacode.a1016_02.core.Stage;
 
 /**
- * Everything the commit rules read, at one moment. Times are {@code GameClock.dayTicks} ({@link EndingState#NEVER}
- * if never); {@code lastTraceVisitDay} is an in-game day ({@code -1} if never). Built live by {@link EndingWatch};
- * tests build it by hand with a forced clock.
+ * Everything the commit rules read, at one moment: the group's, since whatever an ending asks of "you" is asked of the
+ * group that plays (D-064). Times are {@code GameClock.dayTicks} ({@link EndingState#NEVER} if never);
+ * {@code lastTraceVisitDay} is an in-game day ({@code -1} if never). Built live by {@link EndingWatch}; tests build it
+ * by hand with a forced clock.
  *
  * @param tellingCount      every telling so far ({@code LoreApi.tellingCount})
  * @param tellingsSinceStop tellings after "Stop." was first seen
- * @param lastFogStareAt    the last time they stared into the fog: the ending's own guess (still, outdoors, looking
+ * @param lastFogStareAt    the last time anyone stared into the fog: the ending's own guess (still, outdoors, looking
  *                          level at dusk) or the entity's stare-down of him ({@code FigureApi.STARED})
- * @param fragmentsBurned   fragment items the player threw into lava or fire
- * @param fragmentsUnburned fragments the player ever held that never went into lava or fire
- * @param holdsFragment     a fragment item is held anywhere: inventory (nested too), ender chest, containers at the base
- * @param housePeak         the most player-placed blocks ever seen around the home
+ * @param markedDeaths      the most marked deaths any one player has of their own (D-063)
+ * @param fragmentsBurned   fragment items anyone threw into lava or fire
+ * @param fragmentsUnburned fragments anyone held that never went into lava or fire and whose keeper still plays
+ * @param holdsFragment     a fragment item is held by anyone in it (inventory, nested too, ender chest) or in a container
+ *                          at the home
+ * @param housePeak         the most player-placed blocks ever seen around the group's home
  * @param houseLeft         player-placed blocks around the home now
- * @param ownBroken         of those, how many the player broke themselves
+ * @param ownBroken         of those, how many the group broke by hand
  * @param obeyedAfterStop   the director's {@code director:obeyed_after_stop}: OBEYED_AFTER_STOP fired and no telling
  *                          came since (Ending A's obeying rule is the director's)
  */

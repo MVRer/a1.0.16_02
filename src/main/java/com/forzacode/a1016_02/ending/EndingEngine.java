@@ -9,13 +9,17 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.UUID;
 
 import com.forzacode.a1016_02.core.FireResult;
 import com.forzacode.a1016_02.core.GameClock;
 import com.forzacode.a1016_02.core.HerobrineState;
+import com.forzacode.a1016_02.core.MarkedDeath;
 import com.forzacode.a1016_02.core.MobTamper;
 import com.forzacode.a1016_02.core.ModConfig;
 import com.forzacode.a1016_02.core.Pacing;
+import com.forzacode.a1016_02.core.PlacedBlock;
+import com.forzacode.a1016_02.core.PlayerWatch;
 import com.forzacode.a1016_02.core.Stage;
 import com.forzacode.a1016_02.core.TraceBatch;
 import com.forzacode.a1016_02.core.TraceService;
@@ -42,6 +46,12 @@ import org.jspecify.annotations.Nullable;
  * {@link TraceService} and {@link MobTamper} (by way of {@link EndingPorts}) and only out of view; it never spawns a
  * mob and never damages, targets or touches the player. Accidents are the accident planner's own traps (deniable,
  * one clue each). Server thread only.
+ * <p>
+ * With friends (D-058, D-063, D-064): one ending per world, and its beats are the world's (B's escalation, the pace,
+ * the house, the copy). A beat that needs someone to happen around (a sighting, an accident, the final trap) picks
+ * from {@link Ctx#players}, who are in it this very moment, and keeps nobody across ticks (D-062.1). Each player's
+ * own marked deaths count for the third-death rule; in hardcore a marked death finishes that player's line, and the
+ * story ends only once nobody is left in it.
  */
 public final class EndingEngine {
 	/** Ledger cause of the house being emptied (Ending D's undo puts it back). */
@@ -79,15 +89,21 @@ public final class EndingEngine {
 	}
 
 	/**
-	 * One moment of the engine's work.
+	 * One moment of the engine's work. Made fresh for each moment and never kept (D-062.1).
 	 *
-	 * @param player the subject, or null if offline
-	 * @param now    {@code GameClock.dayTicks}
-	 * @param play   {@code GameClock.playTicks} (real play time, for the pacing floors)
-	 * @param force  debug: waits are skipped and edits use the forced trace service
+	 * @param players  who is in it now ({@link EndingApi#players}): online participants, alive, whose line is open, in
+	 *                 first-join order; empty while nobody is
+	 * @param now      {@code GameClock.dayTicks}
+	 * @param play     {@code GameClock.playTicks(server)}, the world clock (real play time, for the pacing floors)
+	 * @param force    debug: waits are skipped and edits use the forced trace service
+	 * @param hardcore the world is hardcore: a marked death finishes that player's line (D-063)
 	 */
-	public record Ctx(MinecraftServer server, @Nullable ServerPlayer player, HerobrineState state, EndingState data, EndingConfig cfg, long now,
-			long play, RandomSource random, boolean force) {
+	public record Ctx(MinecraftServer server, List<ServerPlayer> players, HerobrineState state, EndingState data, EndingConfig cfg, long now,
+			long play, RandomSource random, boolean force, boolean hardcore) {
+		public Ctx {
+			players = List.copyOf(players);
+		}
+
 		long today() {
 			return Math.floorDiv(now, GameClock.TICKS_PER_DAY);
 		}
@@ -96,27 +112,29 @@ public final class EndingEngine {
 			return at == EndingState.NEVER ? Double.POSITIVE_INFINITY : (now - at) / (double) GameClock.TICKS_PER_DAY;
 		}
 
-		boolean playerActive() {
-			return player != null && player.isAlive() && !player.isSpectator();
+		/** The first one in it (join order), if anyone is. */
+		Optional<ServerPlayer> first() {
+			return players.stream().findFirst();
 		}
 
 		Ctx forced() {
-			return new Ctx(server, player, state, data, cfg, now, play, random, true);
+			return new Ctx(server, players, state, data, cfg, now, play, random, true, hardcore);
+		}
+
+		String name(@Nullable UUID player) {
+			return player == null ? "someone" : state.player(player).map(HerobrineState.Subject::name).orElse(player.toString());
 		}
 	}
 
 	// --- the periodic step ---
 
-	/** The third-death rule for deaths the event missed, the commits, then the path's beat. */
+	/** Marked deaths the event missed, the commits, then the path's beat. */
 	public void tick(Ctx c, EndingFacts facts) {
 		EndingState data = c.data();
+		onMarkedDeath(c);
 		if (data.ended()) {
 			finals(c);
 			return;
-		}
-		if (facts.markedDeaths() > data.deathsSeen()) {
-			data.setDeathsSeen(facts.markedDeaths());
-			thirdDeath(c, facts.markedDeaths());
 		}
 		maybeCommit(c, facts);
 		run(c);
@@ -259,46 +277,87 @@ public final class EndingEngine {
 	// --- events ---
 
 	/**
-	 * A marked death of the subject. Hardcore: it ends the story (A's sign and B's record still follow). Otherwise it
-	 * may be A's ordinary accident or B's final death, and the third one commits B whatever the path.
+	 * Every marked death not handled yet, oldest first: the event's (the death is recorded before it fires) and any it
+	 * missed (the tick calls this too). The world's list is append-only, so the new ones are its tail past
+	 * {@link EndingState#deathsSeen}; each is handled exactly once, whoever's it is (D-063).
 	 */
-	public void onMarkedDeath(Ctx c, GlobalPos pos, int count, boolean hardcore) {
+	public void onMarkedDeath(Ctx c) {
 		EndingState data = c.data();
-		boolean fresh = count > data.deathsSeen();
-		data.setDeathsSeen(Math.max(data.deathsSeen(), count));
+		List<MarkedDeath> all = c.state().markedDeaths();
+		if (data.deathsSeen() > all.size()) {
+			// The world's list shrank (a debug reset): start counting from what is there now.
+			data.setDeathsSeen(all.size());
+		}
+		if (all.size() == data.deathsSeen()) {
+			return;
+		}
+		List<MarkedDeath> fresh = List.copyOf(all.subList(data.deathsSeen(), all.size()));
+		data.setDeathsSeen(all.size());
+		for (MarkedDeath death : fresh) {
+			onMarkedDeath(c, death);
+		}
+	}
+
+	/**
+	 * One marked death, that player's own (D-063). In hardcore it finishes their line, whatever else happens; it ends
+	 * the story only if nobody is left in it (then A's sign, or B's record, or B's record as the end it now is), and
+	 * otherwise only through the path's own last beat, as in normal mode (A's ordinary accident, B's final death in the
+	 * copy). In normal mode it may be one of those beats, and that player's own third one commits B whatever the path.
+	 */
+	private void onMarkedDeath(Ctx c, MarkedDeath death) {
+		EndingState data = c.data();
+		UUID player = death.player();
+		GlobalPos pos = death.pos();
+		if (c.hardcore() && player != null && data.finishLine(player)) {
+			c.state().setFlag(EndingApi.LINE_FINISHED_FLAG + player, true);
+			data.log(c.name(player) + "'s line is finished (a marked death in hardcore)");
+		}
 		if (data.ended()) {
 			return;
 		}
 		EndingPath path = data.path();
-		if (hardcore) {
-			if (path == EndingPath.A) {
+		boolean accident = path == EndingPath.A && data.progress(EndingPath.A) == A.ACCIDENT.ordinal();
+		boolean finalDeath = path == EndingPath.B && data.progress(EndingPath.B) == B.FINAL.ordinal() && isFinalDeath(c, pos);
+		if (c.hardcore()) {
+			boolean nobodyLeft = c.players().stream().noneMatch(p -> !p.getUUID().equals(player) && !data.lineFinished(p.getUUID()));
+			if (path == EndingPath.A && (accident || nobodyLeft)) {
 				data.setDeath(pos, c.now());
-				setBeat(c, EndingPath.A, A.SIGN, "hardcore: this death was the ending");
-			} else if (path == EndingPath.B) {
-				toRecord(c, "hardcore: this death was the final one");
+				setBeat(c, EndingPath.A, A.SIGN, accident ? "the ordinary accident" : "hardcore: this death was the ending");
+			} else if (path == EndingPath.B && (finalDeath || nobodyLeft)) {
+				toRecord(c, finalDeath ? "the final death, inside the copy" : "hardcore: nobody is left in it");
+			} else if (nobodyLeft && path != EndingPath.A && path != EndingPath.B) {
+				commit(c, EndingPath.B, "hardcore: " + c.name(player) + " was the last one in it");
+				toRecord(c, "hardcore: nobody is left in it");
 			}
-			endStory(c, "hardcore: one marked death ends the story");
+			if (nobodyLeft) {
+				endStory(c, "hardcore: nobody is left in it");
+			} else {
+				data.log(c.name(player) + " is out; the story goes on for the others");
+			}
 			return;
 		}
-		if (path == EndingPath.A && data.progress(EndingPath.A) == A.ACCIDENT.ordinal()) {
+		if (accident) {
 			data.setDeath(pos, c.now());
 			setBeat(c, EndingPath.A, A.SIGN, "the ordinary accident");
-		} else if (path == EndingPath.B && data.progress(EndingPath.B) == B.FINAL.ordinal() && isFinalDeath(c, pos)) {
+		} else if (finalDeath) {
 			toRecord(c, "the final death, inside the copy");
 		}
-		if (fresh) {
-			thirdDeath(c, count);
+		if (player != null) {
+			thirdDeath(c, player, c.state().markedDeaths(player).size());
 		}
 	}
 
-	/** The third marked death commits B, whatever the path. */
-	private void thirdDeath(Ctx c, int count) {
-		if (count >= ModConfig.pacing().endingBMarkedDeaths && c.data().path() != EndingPath.B && !c.data().ended()) {
-			commit(c, EndingPath.B, "marked death " + count + ", the third-death rule");
+	/** A player's own third marked death commits B, whatever the path (D-063: each player's own count, the solo pace). */
+	private void thirdDeath(Ctx c, UUID player, int own) {
+		if (own >= ModConfig.pacing().endingBMarkedDeaths && c.data().path() != EndingPath.B && !c.data().ended()) {
+			commit(c, EndingPath.B, c.name(player) + "'s marked death " + own + ", the third-death rule");
 		}
 	}
 
-	/** A telling by the subject (already recorded). Naming him during C undoes it: "say his name once and it all starts again". */
+	/**
+	 * A telling by anyone who takes part (already recorded): the group's, so one friend naming him during C undoes it
+	 * for all (D-064): "say his name once and it all starts again".
+	 */
 	public void onTelling(Ctx c, boolean namesHim) {
 		EndingState data = c.data();
 		if (!namesHim || data.path() != EndingPath.C || data.ended()) {
@@ -334,7 +393,10 @@ public final class EndingEngine {
 		}
 	}
 
-	/** He is seen once, far off, walking away into the fog: {@code sighting_last_one}, through its own gates. */
+	/**
+	 * He is seen once, far off, walking away into the fog: {@code sighting_last_one}, through its own gates, for the
+	 * first one in it whose context fits (one sighting for the world; the figure is one entity everyone can see).
+	 */
 	void aSighting(Ctx c) {
 		EndingState data = c.data();
 		EndingConfig cfg = c.cfg();
@@ -350,7 +412,7 @@ public final class EndingEngine {
 			toQuiet(c, "he was never seen; the quiet starts anyway");
 			return;
 		}
-		if (!c.playerActive() || ports.figureOut(c.server())) {
+		if (c.players().isEmpty() || ports.figureOut(c.server())) {
 			return;
 		}
 		if (data.sightingTries() >= cfg.aSightingTries) {
@@ -360,9 +422,12 @@ public final class EndingEngine {
 		if (!mayTry(c, "a/sighting")) {
 			return;
 		}
-		if (ports.lastSighting(c.player()) == FireResult.FIRED) {
-			data.recordSighting(c.now());
-			data.log("A: he walks away into the fog, far off (try " + data.sightingTries() + ")");
+		for (ServerPlayer player : c.players()) {
+			if (ports.lastSighting(player) == FireResult.FIRED) {
+				data.recordSighting(c.now());
+				data.log("A: he walks away into the fog, far off, for " + player.getName().getString() + " (try " + data.sightingTries() + ")");
+				return;
+			}
 		}
 	}
 
@@ -388,21 +453,31 @@ public final class EndingEngine {
 		}
 	}
 
-	/** One ordinary accident in a place they trusted: a lava floor on their own mine route (the planner looks around them). */
+	/**
+	 * One ordinary accident in a place they trusted: a lava floor on someone's own mine route (the planner looks around
+	 * them). One for the world: the first one in it, past their join grace, around whom a trap can be set.
+	 */
 	void aAccident(Ctx c) {
 		EndingState data = c.data();
-		if (!c.playerActive() || ports.trapArmed()) {
+		if (c.players().isEmpty() || ports.trapArmed()) {
 			return;
 		}
-		if (!c.force() && (data.lastArmAt() != EndingState.NEVER && c.daysSince(data.lastArmAt()) < c.cfg().aRearmDays || !mayArm(c, 0)
+		if (!c.force() && (data.lastArmAt() != EndingState.NEVER && c.daysSince(data.lastArmAt()) < c.cfg().aRearmDays || !mayArmNow(c, 0)
 				|| !mayTry(c, "a/accident"))) {
 			return;
 		}
-		armFirst(c, c.cfg().aTraps).ifPresent(id -> {
-			data.setLastArmAt(c.now());
-			data.setLastArmPlay(c.play());
-			data.log("A: one ordinary accident in a place they trusted (" + id + ")");
-		});
+		for (ServerPlayer player : c.players()) {
+			if (!c.force() && !pastJoinGrace(player)) {
+				continue;
+			}
+			Optional<String> armed = armFirst(player, c.cfg().aTraps);
+			if (armed.isPresent()) {
+				data.setLastArmAt(c.now());
+				data.setLastArmPlay(c.play());
+				data.log("A: one ordinary accident in a place " + player.getName().getString() + " trusted (" + armed.get() + ")");
+				return;
+			}
+		}
 	}
 
 	/** On that marked death: the "Stop." sign stands in front of the cross. */
@@ -438,8 +513,34 @@ public final class EndingEngine {
 
 	private void enterB(Ctx c) {
 		DirectorHooks.pace(c.state(), c.cfg().bPaceMultiplier);
-		GlobalPos house = c.player() != null ? ports.watch().base(c.player()).orElse(null) : null;
-		c.data().setHouse(house != null ? house : c.data().home().orElse(null));
+		c.data().setHouse(bHouse(c).orElse(null));
+	}
+
+	/**
+	 * "Your house" for B (D-061, never flips once B stored it): the house the copy elsewhere copies, the house copy
+	 * owner's ({@code world:house_copy}, world's choice) base while they are online, else their first crafting table,
+	 * chest or block; with no house copy owner (or the same player as the home's), the group's home
+	 * ({@code ending:home}, see {@link EndingWatch#sampleHome}); else the first one in it's base.
+	 */
+	Optional<GlobalPos> bHouse(Ctx c) {
+		PlayerWatch watch = ports.watch();
+		Optional<UUID> copyOwner = watch.owner(c.server(), EndingApi.HOUSE_COPY_OWNER);
+		if (copyOwner.isPresent() && (c.data().home().isEmpty() || !copyOwner.equals(watch.owner(c.server(), EndingApi.HOME_OWNER)))) {
+			Optional<GlobalPos> base = watch.participant(c.server(), copyOwner.get()).flatMap(watch::base);
+			if (base.isPresent()) {
+				return base;
+			}
+			HerobrineState.FirstBlocks first = c.state().firstBlocks(copyOwner.get());
+			for (PlacedBlock block : new PlacedBlock[] {first.craftingTable(), first.chest(), first.block()}) {
+				if (block != null) {
+					return Optional.of(block.pos());
+				}
+			}
+		}
+		if (c.data().home().isPresent()) {
+			return c.data().home();
+		}
+		return c.first().flatMap(watch::base);
 	}
 
 	private void runB(Ctx c) {
@@ -475,8 +576,8 @@ public final class EndingEngine {
 	void bEmpty(Ctx c) {
 		EndingState data = c.data();
 		EndingConfig cfg = c.cfg();
-		if (data.house().isEmpty() && c.player() != null) {
-			ports.watch().base(c.player()).ifPresent(data::setHouse);
+		if (data.house().isEmpty()) {
+			bHouse(c).ifPresent(data::setHouse);
 		}
 		Optional<GlobalPos> house = data.house();
 		ServerLevel level = house.map(h -> c.server().getLevel(h.dimension())).orElse(null);
@@ -596,7 +697,7 @@ public final class EndingEngine {
 		mobs.face(mob, Vec3.atCenterOf(door), ticks);
 	}
 
-	/** The doorway's mobs keep waiting until the player comes close (then the game takes over) or their time is up. */
+	/** The doorway's mobs keep waiting until anyone in it comes close (then the game takes over) or their time is up. */
 	void tendWaiters(Ctx c) {
 		EndingState data = c.data();
 		if (data.waiters().isEmpty()) {
@@ -611,8 +712,8 @@ public final class EndingEngine {
 				}
 				continue;
 			}
-			boolean near = c.player() != null && c.player().level() == level
-					&& c.player().position().distanceTo(Vec3.atBottomCenterOf(waiter.spot())) <= c.cfg().bDoorwayReleaseBlocks;
+			Vec3 spot = Vec3.atBottomCenterOf(waiter.spot());
+			boolean near = c.players().stream().anyMatch(p -> p.level() == level && p.position().distanceTo(spot) <= c.cfg().bDoorwayReleaseBlocks);
 			if (near || c.daysSince(waiter.since()) >= c.cfg().bDoorwayHoldDays) {
 				ports.mobs().release(mob);
 				data.removeWaiter(waiter);
@@ -635,47 +736,55 @@ public final class EndingEngine {
 	}
 
 	/**
-	 * Accidents closer to home: while the player is near their base, the ending arms one there itself, paced like a
-	 * director major (see {@link #mayArm}): at least {@code bHomeArmMinutes} of real play after the ending's last trap
-	 * (never under D-045's hour, persisted across sessions), never in the join grace or the director's quiet.
+	 * Accidents closer to home: while anyone in it is near the house, the ending arms one there itself, around them,
+	 * paced like a director major for the world (B's escalation is the world's, D-064; see {@link #mayArmNow}): at least
+	 * {@code bHomeArmMinutes} of real play after the ending's last trap (never under D-045's hour, persisted across
+	 * sessions), never in that player's join grace or the director's quiet.
 	 */
 	void homeAccident(Ctx c) {
 		EndingState data = c.data();
 		EndingConfig cfg = c.cfg();
 		Optional<GlobalPos> house = data.house();
-		if (!c.playerActive() || house.isEmpty() || ports.trapArmed()) {
+		if (c.players().isEmpty() || house.isEmpty() || ports.trapArmed()) {
 			return;
 		}
-		if (!c.player().level().dimension().equals(house.get().dimension()) || horizontal(c.player().blockPosition(), house.get().pos()) > cfg.bHomeRadius) {
+		List<ServerPlayer> near = c.players().stream().filter(p -> p.level().dimension().equals(house.get().dimension())
+				&& horizontal(p.blockPosition(), house.get().pos()) <= cfg.bHomeRadius).toList();
+		if (near.isEmpty()) {
 			return;
 		}
-		if (!c.force() && (ports.directorQuiet(c.server()) || !mayArm(c, ModConfig.realTicks(cfg.bHomeArmMinutes * 60)) || !mayTry(c, "b/home"))) {
+		if (!c.force() && (ports.directorQuiet(c.server()) || !mayArmNow(c, ModConfig.realTicks(cfg.bHomeArmMinutes * 60)) || !mayTry(c, "b/home"))) {
 			return;
 		}
 		List<String> order = new ArrayList<>(cfg.bHomeTraps);
 		if (!order.isEmpty()) {
 			Collections.rotate(order, c.random().nextInt(order.size()));
 		}
-		armFirst(c, order).ifPresent(id -> {
-			data.setLastHomeArmPlay(c.play());
-			data.setLastArmPlay(c.play());
-			data.log("B: an accident close to home (" + id + ")");
-		});
+		for (ServerPlayer player : near) {
+			if (!c.force() && !pastJoinGrace(player)) {
+				continue;
+			}
+			Optional<String> armed = armFirst(player, order);
+			if (armed.isPresent()) {
+				data.setLastHomeArmPlay(c.play());
+				data.setLastArmPlay(c.play());
+				data.log("B: an accident close to home (" + armed.get() + ", around " + player.getName().getString() + ")");
+				return;
+			}
+		}
 	}
 
 	/**
-	 * The ending may arm a trap now: not in the join grace, at least {@code max(pacing.majorGapMinutes, minGap)} of
-	 * real play since the ending's last trap (kept in {@link EndingState}, so a rejoin does not reset it), and at least
-	 * {@code pacing.majorGapMinutes} since the director's own last accident (D-045's floor between majors).
+	 * The ending may arm a trap now, for the world: at least {@code max(pacing.majorGapMinutes, minGap)} of real play
+	 * (the world clock) since the ending's last trap (kept in {@link EndingState}, so a rejoin does not reset it), and at
+	 * least {@code pacing.majorGapMinutes} since the director's own last accident (D-045's floor between majors). Who it
+	 * arms around must also be past their own join grace ({@link #pastJoinGrace}).
 	 */
-	boolean mayArm(Ctx c, long minGap) {
+	boolean mayArmNow(Ctx c, long minGap) {
 		if (c.force()) {
 			return true;
 		}
 		Pacing pacing = ModConfig.pacing();
-		if (c.player() == null || ports.ticksSinceJoin(c.player()) < pacing.joinGraceTicks()) {
-			return false;
-		}
 		long last = c.data().lastArmPlay();
 		if (last != EndingState.NEVER && c.play() >= last && c.play() - last < Math.max(pacing.majorGapTicks(), minGap)) {
 			return false;
@@ -683,9 +792,15 @@ public final class EndingEngine {
 		return ports.ticksSinceDirectorAccident(c.server()) >= pacing.majorGapTicks();
 	}
 
+	/** Nothing is armed around a player in their first minutes of a session (the join grace, per player). */
+	boolean pastJoinGrace(ServerPlayer player) {
+		return ports.ticksSinceJoin(player) >= ModConfig.pacing().joinGraceTicks();
+	}
+
 	/**
-	 * The final death happens inside the copy: the player is inside it, and the trap is armed only where every spot
-	 * the planner could pick lies inside it too. Without a copy, the emptied house's own shell takes its place.
+	 * The final death happens inside the copy: someone in it is inside it, and the trap is armed around them only where
+	 * every spot the planner could pick lies inside it too. Anyone's death there by that trap is the final one (an
+	 * offline friend never holds it up, D-064). Without a copy, the emptied house's own shell takes its place.
 	 */
 	void bFinal(Ctx c) {
 		EndingState data = c.data();
@@ -695,30 +810,35 @@ public final class EndingEngine {
 			data.setFinalTrap(null);
 			data.log("B: the final trap's time ran out; it waits for them again");
 		}
-		if (data.finalTrap().isPresent() || !c.playerActive() || armed.isPresent()) {
+		if (data.finalTrap().isPresent() || c.players().isEmpty() || armed.isPresent()) {
 			return;
 		}
 		Optional<Bounds> bounds = finalBounds(c);
 		if (bounds.isEmpty()) {
 			return;
 		}
-		if (!c.force() && (!bounds.get().contains(c.player().level().dimension(), c.player().blockPosition()) || !mayArm(c, 0)
-				|| !mayTry(c, "b/final"))) {
+		List<ServerPlayer> inside = c.players().stream().filter(p -> bounds.get().contains(p.level().dimension(), p.blockPosition())).toList();
+		if (!c.force() && (inside.isEmpty() || !mayArmNow(c, 0) || !mayTry(c, "b/final"))) {
 			return;
 		}
-		for (String id : cfg.bFinalTraps) {
-			if (ports.armTrapInside(c.player(), id, bounds.get())) {
-				data.setFinalTrap(ports.armedTrap(c.server())
-						.orElse(new EndingState.Trap(id, GlobalPos.of(c.player().level().dimension(), c.player().blockPosition()))));
-				data.setLastArmAt(c.now());
-				data.setLastArmPlay(c.play());
-				data.log("B: the final trap, inside the copy (" + id + " at " + data.finalTrap().get().pos().pos().toShortString() + ")");
-				return;
+		for (ServerPlayer player : inside.isEmpty() ? c.players() : inside) {
+			if (!c.force() && !pastJoinGrace(player)) {
+				continue;
+			}
+			for (String id : cfg.bFinalTraps) {
+				if (ports.armTrapInside(player, id, bounds.get())) {
+					data.setFinalTrap(ports.armedTrap(c.server())
+							.orElse(new EndingState.Trap(id, GlobalPos.of(player.level().dimension(), player.blockPosition()))));
+					data.setLastArmAt(c.now());
+					data.setLastArmPlay(c.play());
+					data.log("B: the final trap, inside the copy (" + id + " at " + data.finalTrap().get().pos().pos().toShortString() + ")");
+					return;
+				}
 			}
 		}
 	}
 
-	/** The copy's box (every block moved into it); without a copy, the box of the player's own blocks at the house. */
+	/** The copy's box (every block moved into it); without a copy, the box of the players' own blocks at the house. */
 	Optional<Bounds> finalBounds(Ctx c) {
 		if (ports.copyExists(c.server())) {
 			Optional<Bounds> copy = ports.copyBounds(c.server());
@@ -747,7 +867,10 @@ public final class EndingEngine {
 		return bounds.isPresent() && bounds.get().contains(pos);
 	}
 
-	/** F10 gains its last line, "* removed [PLAYER NAME]". */
+	/**
+	 * F10 gains its last line, "* removed [PLAYER NAME]": Ending B's record, once for the world (the beat it sets is the
+	 * guard). A friend's line finished in hardcore while others play is only {@code ending:line_finished=<uuid>}.
+	 */
 	private void toRecord(Ctx c, String why) {
 		ports.finishF10(c.server());
 		setBeat(c, EndingPath.B, B.RECORD, why + "; F10 is finished");
@@ -829,8 +952,7 @@ public final class EndingEngine {
 			case QUIET -> aQuiet(f);
 			case ACCIDENT -> {
 				aAccident(f);
-				GlobalPos at = f.player() != null ? GlobalPos.of(f.player().level().dimension(), f.player().blockPosition())
-						: f.data().home().orElse(null);
+				GlobalPos at = f.first().map(p -> GlobalPos.of(p.level().dimension(), p.blockPosition())).orElse(f.data().home().orElse(null));
 				if (at != null) {
 					f.data().setDeath(at, f.now());
 				}
@@ -860,9 +982,10 @@ public final class EndingEngine {
 
 	// --- helpers ---
 
-	private Optional<String> armFirst(Ctx c, List<String> ids) {
+	/** The first of these traps the planner can arm around this player. */
+	private Optional<String> armFirst(ServerPlayer player, List<String> ids) {
 		for (String id : ids) {
-			if (ports.armTrap(c.player(), id)) {
+			if (ports.armTrap(player, id)) {
 				return Optional.of(id);
 			}
 		}

@@ -4,6 +4,7 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Optional;
+import java.util.function.Predicate;
 
 import com.forzacode.a1016_02.core.MobTamper;
 import com.forzacode.a1016_02.core.Services;
@@ -23,14 +24,15 @@ import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
 
 /**
- * Step 2, the untouched grove (lore's chosen Dappled Forest, protected in {@code ProtectedAreas}): the poplar logs the
- * player cuts there, and its two dangers. While they climb, the leaf under their feet goes (only while they look up,
- * D-027). Existing spiders are moved into the canopy and held there, motionless. Both through core, out of view.
+ * Step 2, the untouched grove (lore's chosen Dappled Forest, protected in {@code ProtectedAreas}): the poplar logs
+ * anyone in the group cuts there, and its two dangers. While someone climbs, the leaf under their feet goes (only while
+ * they look up, D-027). Existing spiders are moved into the canopy and held there, motionless. Both through core, out of
+ * view, for whoever is there.
  */
 public final class Grove {
 	public static final String LEAF_CAUSE = "ending:d/grove_leaves";
 
-	/** Per visit, in memory. */
+	/** The group's visit, in memory: it ends once all of them are far from the grove. */
 	private static boolean inGrove;
 	private static int spidersThisVisit;
 	private static long nextLeaf;
@@ -58,16 +60,17 @@ public final class Grove {
 		return state.is(Blocks.POPLAR_LOG) || state.is(Blocks.POPLAR_WOOD);
 	}
 
-	/** A player is breaking a block: a poplar log in the grove counts, and its drop is marked as grove wood. */
-	static void onBreak(ServerLevel level, ServerPlayer player, BlockPos pos, BlockState state) {
-		if (Services.watch().isSubject(player)) {
-			cutLog(level, EndingDState.get(level.getServer()), pos, state);
-		}
+	/**
+	 * A player is breaking a block: a poplar log in the grove cut by anyone who takes part counts, and its drop is
+	 * marked as grove wood. True if it counted.
+	 */
+	static boolean onBreak(ServerLevel level, ServerPlayer player, BlockPos pos, BlockState state, EndingDState data, Predicate<ServerPlayer> takesPart) {
+		return takesPart.test(player) && cutLog(level, data, pos, state);
 	}
 
 	/**
-	 * The subject cut this block: a poplar log that grew in the untouched grove (inside its protected area, and not
-	 * placed by a player: a log carried in does not count) counts, and its drop is grove wood. True if it counted.
+	 * Someone cut this block: a poplar log that grew in the untouched grove (inside its protected area, and not placed
+	 * by a player: a log carried in does not count) counts, and its drop is grove wood. True if it counted.
 	 */
 	public static boolean cutLog(ServerLevel level, EndingDState data, BlockPos pos, BlockState state) {
 		if (!isPoplarLog(state) || !grewInGrove(level, pos)) {
@@ -78,13 +81,30 @@ public final class Grove {
 		return true;
 	}
 
-	/** Step 2's dangers, for the subject in the grove. */
-	static void dangers(ServerPlayer player, View view, EndingDConfig cfg) {
-		ServerLevel level = player.level();
-		MinecraftServer server = level.getServer();
-		boolean inside = contains(server, GlobalPos.of(level.dimension(), player.blockPosition()));
-		if (!inside) {
-			if (inGrove && center(server).map(c -> c.pos().distSqr(player.blockPosition()) > 4.0 * UntouchedGrove.RADIUS * UntouchedGrove.RADIUS).orElse(true)) {
+	/**
+	 * Step 2's dangers, for whoever of the group is in the grove: the leaf under a climber (any of them, at most one per
+	 * cooldown), and spiders into the canopy (a budget per group visit, near one of them).
+	 */
+	static void dangers(List<ServerPlayer> players, View view, EndingDConfig cfg) {
+		if (players.isEmpty()) {
+			return;
+		}
+		MinecraftServer server = players.getFirst().level().getServer();
+		List<ServerPlayer> inside = new ArrayList<>();
+		boolean allFar = true;
+		Optional<GlobalPos> center = center(server);
+		for (ServerPlayer player : players) {
+			GlobalPos at = GlobalPos.of(player.level().dimension(), player.blockPosition());
+			if (contains(server, at)) {
+				inside.add(player);
+			}
+			if (center.isPresent() && center.get().dimension().equals(at.dimension())
+					&& center.get().pos().distSqr(at.pos()) <= 4.0 * UntouchedGrove.RADIUS * UntouchedGrove.RADIUS) {
+				allFar = false;
+			}
+		}
+		if (inside.isEmpty()) {
+			if (inGrove && allFar) {
 				inGrove = false;
 				spidersThisVisit = 0;
 			}
@@ -92,13 +112,21 @@ public final class Grove {
 		}
 		inGrove = true;
 		long now = server.getTickCount();
-		if (now >= nextLeaf && leafUnderClimber(player, view, cfg)) {
-			nextLeaf = now + EndingDConfig.ticks(cfg.leafDropCooldownSeconds);
+		if (now >= nextLeaf) {
+			for (ServerPlayer player : inside) {
+				if (leafUnderClimber(player, view, cfg)) {
+					nextLeaf = now + EndingDConfig.ticks(cfg.leafDropCooldownSeconds);
+					break;
+				}
+			}
 		}
 		if (now >= nextSpider && spidersThisVisit < cfg.spidersPerVisit) {
 			nextSpider = now + EndingDConfig.ticks(cfg.spiderCooldownSeconds);
-			if (spiderIntoCanopy(player, view, cfg, level.getRandom())) {
-				spidersThisVisit++;
+			for (ServerPlayer player : inside) {
+				if (spiderIntoCanopy(player, view, cfg, player.level().getRandom())) {
+					spidersThisVisit++;
+					break;
+				}
 			}
 		}
 	}

@@ -15,7 +15,7 @@ import net.minecraft.world.phys.AABB;
 /**
  * The out-of-view question Ending D asks before it touches anything. In play it is core's
  * {@link TraceService#isOutOfView} (and every edit is checked again by core, with its dependents). Game tests use
- * fixed viewpoints, since a mock player in the level would join the shared test server as the subject.
+ * fixed viewpoints, since a mock player in the level would join the shared test server as a participant.
  */
 public interface View {
 	boolean outOfView(ServerLevel level, Collection<BlockPos> positions);

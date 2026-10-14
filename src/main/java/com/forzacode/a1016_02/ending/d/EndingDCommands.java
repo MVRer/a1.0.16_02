@@ -7,6 +7,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.TreeMap;
 
+import com.forzacode.a1016_02.core.Services;
 import com.forzacode.a1016_02.core.TraceLedger;
 import com.mojang.brigadier.arguments.IntegerArgumentType;
 import com.mojang.brigadier.builder.LiteralArgumentBuilder;
@@ -15,18 +16,22 @@ import com.mojang.brigadier.context.CommandContext;
 import net.minecraft.commands.CommandBuildContext;
 import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.commands.Commands;
+import net.minecraft.commands.arguments.EntityArgument;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
 
+import org.jspecify.annotations.Nullable;
+
 /**
- * {@code /a1016 ending d ...}: {@code status} (the step and what is missing), {@code step <n>} (jump the chain, for
- * testing; 4 and up build the stair now if it is not there, 8 starts the last minute for real), {@code lastminute}
- * (a cosmetic preview of the last minute where the player stands: no flags, no clock, no figure, nothing given back;
- * only the silence, the fog and the music), {@code undo status}, {@code kit}
- * (marked items for steps 5 to 7: a first block and grove planks, debug only).
+ * {@code /a1016 ending d ...}: {@code status} (the step and what is missing), {@code step <n> [player]} (jump the
+ * chain, for testing; 4 and up build the stair now if it is not there, 8 starts the last minute for real where that
+ * player stands), {@code lastminute [player]} (a cosmetic preview of the last minute where that player stands, for them
+ * only: no flags, no clock, no figure, nothing given back; only the silence, the fog and the music), {@code undo status},
+ * {@code kit [player]} (marked items for steps 5 to 7: a first block and grove planks, debug only). Each acts on the
+ * player who runs it or the one named (D-062.9); from the console, on the first participant.
  */
 public final class EndingDCommands {
 	private EndingDCommands() {
@@ -35,10 +40,22 @@ public final class EndingDCommands {
 	static void register(LiteralArgumentBuilder<CommandSourceStack> root, CommandBuildContext context) {
 		root.then(Commands.literal("ending").then(Commands.literal("d")
 				.then(Commands.literal("status").executes(EndingDCommands::status))
-				.then(Commands.literal("step").then(Commands.argument("n", IntegerArgumentType.integer(1, 9)).executes(EndingDCommands::step)))
-				.then(Commands.literal("lastminute").executes(EndingDCommands::lastMinute))
+				.then(Commands.literal("step").then(Commands.argument("n", IntegerArgumentType.integer(1, 9))
+						.executes(ctx -> step(ctx, actor(ctx)))
+						.then(Commands.argument("player", EntityArgument.player()).executes(ctx -> step(ctx, EntityArgument.getPlayer(ctx, "player"))))))
+				.then(Commands.literal("lastminute")
+						.executes(ctx -> lastMinute(ctx, actor(ctx)))
+						.then(Commands.argument("player", EntityArgument.player()).executes(ctx -> lastMinute(ctx, EntityArgument.getPlayer(ctx, "player")))))
 				.then(Commands.literal("undo").then(Commands.literal("status").executes(EndingDCommands::undoStatus)))
-				.then(Commands.literal("kit").executes(EndingDCommands::kit))));
+				.then(Commands.literal("kit")
+						.executes(ctx -> kit(ctx, actor(ctx)))
+						.then(Commands.argument("player", EntityArgument.player()).executes(ctx -> kit(ctx, EntityArgument.getPlayer(ctx, "player")))))));
+	}
+
+	/** The player running the command, else (the console) the first participant, else nobody. */
+	private static @Nullable ServerPlayer actor(CommandContext<CommandSourceStack> ctx) {
+		ServerPlayer player = ctx.getSource().getPlayer();
+		return player != null ? player : Services.watch().participants(ctx.getSource().getServer()).stream().findFirst().orElse(null);
 	}
 
 	private static void say(CommandSourceStack source, String line) {
@@ -53,7 +70,7 @@ public final class EndingDCommands {
 		return 1;
 	}
 
-	private static int step(CommandContext<CommandSourceStack> ctx) {
+	private static int step(CommandContext<CommandSourceStack> ctx, @Nullable ServerPlayer actor) {
 		MinecraftServer server = ctx.getSource().getServer();
 		EndingDState data = EndingDState.get(server);
 		EndingDConfig cfg = EndingDConfig.get();
@@ -67,7 +84,7 @@ public final class EndingDCommands {
 		}
 		LastMinute.reset();
 		if (step == Step.LAST_MINUTE) {
-			Optional<ServerPlayer> player = Optional.ofNullable(ctx.getSource().getPlayer());
+			Optional<ServerPlayer> player = Optional.ofNullable(actor);
 			LastMinute.start(server, data, false, player.map(ServerPlayer::blockPosition).orElse(Chain.twinOr(data, server.overworld().getRespawnData().pos())));
 		} else {
 			data.setStep(step);
@@ -76,14 +93,13 @@ public final class EndingDCommands {
 		return 1;
 	}
 
-	private static int lastMinute(CommandContext<CommandSourceStack> ctx) {
-		ServerPlayer player = ctx.getSource().getPlayer();
+	private static int lastMinute(CommandContext<CommandSourceStack> ctx, @Nullable ServerPlayer player) {
 		if (player == null) {
-			say(ctx.getSource(), "run it as a player");
+			say(ctx.getSource(), "name a player, or run it as one");
 			return 0;
 		}
-		LastMinute.start(ctx.getSource().getServer(), EndingDState.get(ctx.getSource().getServer()), true, player.blockPosition());
-		say(ctx.getSource(), "the last minute (preview) plays here");
+		LastMinute.preview(ctx.getSource().getServer(), EndingDState.get(ctx.getSource().getServer()), player);
+		say(ctx.getSource(), "the last minute (preview) plays where " + player.getName().getString() + " stands, for them only");
 		return 1;
 	}
 
@@ -106,9 +122,9 @@ public final class EndingDCommands {
 		return 1;
 	}
 
-	private static int kit(CommandContext<CommandSourceStack> ctx) {
-		ServerPlayer player = ctx.getSource().getPlayer();
+	private static int kit(CommandContext<CommandSourceStack> ctx, @Nullable ServerPlayer player) {
 		if (player == null) {
+			say(ctx.getSource(), "name a player, or run it as one");
 			return 0;
 		}
 		ItemStack first = new ItemStack(Items.CRAFTING_TABLE);
@@ -119,7 +135,7 @@ public final class EndingDCommands {
 		player.getInventory().add(planks);
 		player.getInventory().add(new ItemStack(Items.TORCH, 6));
 		player.getInventory().add(new ItemStack(Items.OAK_SIGN, 2));
-		say(ctx.getSource(), "kit: a marked first block, grove planks, six torches, two signs");
+		say(ctx.getSource(), "kit for " + player.getName().getString() + ": a marked first block, grove planks, six torches, two signs");
 		return 1;
 	}
 }

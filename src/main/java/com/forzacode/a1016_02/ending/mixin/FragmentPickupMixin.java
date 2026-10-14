@@ -10,7 +10,7 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.entity.item.ItemEntity;
 
-/** Observes pickups: every fragment the subject ever picks up must later go into lava or fire for Ending C. */
+/** Observes pickups: every fragment anyone in the group picks up (and still keeps) must later go into lava or fire for Ending C. */
 @Mixin(ServerPlayer.class)
 abstract class FragmentPickupMixin {
 	@Inject(method = "onItemPickup", at = @At("HEAD"))

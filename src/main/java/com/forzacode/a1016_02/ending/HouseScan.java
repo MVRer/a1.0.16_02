@@ -32,8 +32,9 @@ import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.state.properties.DoubleBlockHalf;
 
 /**
- * Reads the player's real house around their base: what is inside it (Ending B empties it, the shell stays) and
- * where its doorways are (mobs wait there). Only blocks the player placed count. Read-only.
+ * Reads the real house around a base (Ending B's house: the house copy owner's, or the group's home): what is inside
+ * it (Ending B empties it, the shell stays) and where its doorways are (mobs wait there). Only blocks players placed
+ * count. Read-only.
  */
 public final class HouseScan {
 	/** A spot just outside a door (or an opening) and the door itself. */

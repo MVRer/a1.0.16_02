@@ -111,12 +111,12 @@ public class EndingDDangerTests extends EndingDUndoTests {
 		level.setBlockAndUpdate(torch, torchState);
 		Services.watch().onPlaced(player, level, torch, torchState);
 
-		helper.assertFalse(Stair.loseBlock(player, data, plan, EndingDSupport.EVERYONE), "the stair lost a block in view");
+		helper.assertFalse(Stair.loseBlock(level, data, plan, EndingDSupport.EVERYONE), "the stair lost a block in view");
 		helper.assertTrue(Stair.standing(level, plan) == standing && level.getBlockState(torch).is(Blocks.WALL_TORCH), "something went in view");
 
-		helper.assertTrue(Stair.loseBlock(player, data, plan, EndingDSupport.NOBODY), "the torch did not go");
+		helper.assertTrue(Stair.loseBlock(level, data, plan, EndingDSupport.NOBODY), "the torch did not go");
 		helper.assertTrue(level.getBlockState(torch).isAir() && data.has(EndingDState.STAIR_TORCH), "the stairwell torch is still there");
-		helper.assertTrue(Stair.loseBlock(player, data, plan, EndingDSupport.NOBODY), "no stair went");
+		helper.assertTrue(Stair.loseBlock(level, data, plan, EndingDSupport.NOBODY), "no stair went");
 		helper.assertTrue(Stair.standing(level, plan) == standing - 1, "expected one stair fewer");
 		BlockPos lowest = plan.stairs().stream().filter(s -> s.getY() >= plan.chamberCeil()).min(java.util.Comparator.comparingInt(BlockPos::getY)).orElseThrow();
 		helper.assertTrue(level.getBlockState(lowest).isAir(), "the lowest stair above the chamber should go first");

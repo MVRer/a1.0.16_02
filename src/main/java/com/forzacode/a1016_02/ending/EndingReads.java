@@ -1,12 +1,14 @@
 package com.forzacode.a1016_02.ending;
 
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
+import java.util.UUID;
 
 import com.forzacode.a1016_02.core.ModConfig;
-import com.forzacode.a1016_02.core.Services;
 import com.forzacode.a1016_02.lore.FragmentItems;
 import com.forzacode.a1016_02.lore.LoreConfig;
 import com.forzacode.a1016_02.lore.LoreData;
@@ -30,16 +32,17 @@ import net.minecraft.world.phys.HitResult;
 import net.minecraft.world.phys.Vec3;
 
 /**
- * Every read of a fragment by the subject, not only the first (lore's {@code FRAGMENT_READ} fires once per
+ * Every read of a fragment by anyone who takes part, not only the first (lore's {@code FRAGMENT_READ} fires once per
  * fragment): opening a fragment book or map, a fragment book on a lectern, holding a fragment map, and looking at a
  * fragment's sign (lore's read targets) up close for a moment, with lore's own distance, cone and dwell. Each one
- * moves {@link EndingState#lastReadAt}, which Ending A's "no more reading" reads. Only observes; changes nothing.
+ * moves {@link EndingState#lastReadAt}, which Ending A's "no more reading" reads: the group's, so anyone's read counts
+ * (D-064). Only observes; changes nothing.
  */
 public final class EndingReads {
 	private static final int LOOK_CHECK_TICKS = 10;
 
-	/** Ticks the subject has been looking at each read target. */
-	private static final Map<GlobalPos, Integer> DWELL = new HashMap<>();
+	/** Ticks each player (by UUID, D-062.2) has been looking at each read target. */
+	private static final Map<UUID, Map<GlobalPos, Integer>> DWELL = new HashMap<>();
 
 	private EndingReads() {
 	}
@@ -64,10 +67,15 @@ public final class EndingReads {
 		DWELL.clear();
 	}
 
+	/** A player stopped taking part (PARTICIPATION): their looking starts over. */
+	static void forget(UUID player) {
+		DWELL.remove(player);
+	}
+
 	/** Opening this stack: a fragment book or map is read. */
 	static void read(ServerPlayer player, ItemStack stack) {
 		Optional<String> id = readable(stack);
-		if (id.isPresent() && Services.watch().isSubject(player)) {
+		if (id.isPresent() && EndingApi.takesPart(player)) {
 			noteRead(EndingState.get(player.level().getServer()), id.get(), EndingAbcInit.now(player.level().getServer()));
 		}
 	}
@@ -89,37 +97,42 @@ public final class EndingReads {
 		}
 	}
 
-	/** Every server tick: the subject holding a fragment map, or looking at a fragment sign long enough. */
+	/** Every server tick: anyone in it holding a fragment map, or looking at a fragment sign long enough. */
 	static void tick(MinecraftServer server) {
 		if (server.getTickCount() % LOOK_CHECK_TICKS != 0) {
 			return;
 		}
-		ServerPlayer player = Services.watch().subject(server).orElse(null);
-		if (player == null || !player.isAlive() || player.isSpectator()) {
-			DWELL.clear();
+		List<ServerPlayer> players = EndingApi.players(server);
+		Set<UUID> present = new HashSet<>();
+		players.forEach(p -> present.add(p.getUUID()));
+		DWELL.keySet().retainAll(present);
+		if (players.isEmpty()) {
 			return;
 		}
 		EndingState data = EndingState.get(server);
 		long now = EndingAbcInit.now(server);
-		for (ItemStack held : List.of(player.getMainHandItem(), player.getOffhandItem())) {
-			if (held.is(Items.FILLED_MAP)) {
-				FragmentItems.fragmentId(held).ifPresent(id -> noteRead(data, id, now));
-			}
-		}
 		LoreConfig config = LoreConfig.get();
 		long dwellTicks = Math.max(LOOK_CHECK_TICKS, ModConfig.realTicks(config.readDwellSeconds));
 		Map<GlobalPos, String> targets = new HashMap<>();
 		LoreData.get(server).readTargets().forEach((id, list) -> list.forEach(pos -> targets.put(pos, id)));
-		DWELL.keySet().retainAll(targets.keySet());
-		for (Map.Entry<GlobalPos, String> target : targets.entrySet()) {
-			GlobalPos pos = target.getKey();
-			if (!pos.dimension().equals(player.level().dimension()) || !looksAt(player, pos.pos(), config.readDistance, config.readConeDegrees)) {
-				DWELL.remove(pos);
-				continue;
+		for (ServerPlayer player : players) {
+			for (ItemStack held : List.of(player.getMainHandItem(), player.getOffhandItem())) {
+				if (held.is(Items.FILLED_MAP)) {
+					FragmentItems.fragmentId(held).ifPresent(id -> noteRead(data, id, now));
+				}
 			}
-			if (DWELL.merge(pos, LOOK_CHECK_TICKS, Integer::sum) >= dwellTicks) {
-				DWELL.remove(pos);
-				noteRead(data, target.getValue(), now);
+			Map<GlobalPos, Integer> dwell = DWELL.computeIfAbsent(player.getUUID(), k -> new HashMap<>());
+			dwell.keySet().retainAll(targets.keySet());
+			for (Map.Entry<GlobalPos, String> target : targets.entrySet()) {
+				GlobalPos pos = target.getKey();
+				if (!pos.dimension().equals(player.level().dimension()) || !looksAt(player, pos.pos(), config.readDistance, config.readConeDegrees)) {
+					dwell.remove(pos);
+					continue;
+				}
+				if (dwell.merge(pos, LOOK_CHECK_TICKS, Integer::sum) >= dwellTicks) {
+					dwell.remove(pos);
+					noteRead(data, target.getValue(), now);
+				}
 			}
 		}
 	}
