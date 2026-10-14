@@ -11,7 +11,7 @@ import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.damagesource.DamageSource;
 import net.minecraft.world.entity.item.ItemEntity;
 
-/** An item destroyed by damage: a fragment the subject threw into lava or fire counts toward Ending C. */
+/** An item destroyed by damage: a fragment anyone who takes part threw into lava or fire counts toward Ending C. */
 @Mixin(ItemEntity.class)
 abstract class FragmentBurnMixin {
 	@Inject(method = "hurtServer", at = @At(value = "INVOKE",

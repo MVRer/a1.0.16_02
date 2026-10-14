@@ -3,7 +3,9 @@ package com.forzacode.a1016_02.ending.d;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Locale;
 import java.util.Optional;
+import java.util.UUID;
 
 import com.forzacode.a1016_02.A1016_02;
 import com.forzacode.a1016_02.core.ClientEffects;
@@ -22,9 +24,13 @@ import com.forzacode.a1016_02.entity.FigureApi;
 import com.forzacode.a1016_02.entity.HimEntity;
 import com.forzacode.a1016_02.entity.Variant;
 
+import net.fabricmc.fabric.api.networking.v1.ServerPlayNetworking;
+
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
 import net.minecraft.core.Holder;
 import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.resources.ResourceKey;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
@@ -32,6 +38,8 @@ import net.minecraft.sounds.SoundSource;
 import net.minecraft.util.Mth;
 import net.minecraft.world.clock.WorldClock;
 import net.minecraft.world.clock.WorldClocks;
+import net.minecraft.world.entity.Entity;
+import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.BaseTorchBlock;
 import net.minecraft.world.level.block.StairBlock;
 import net.minecraft.world.level.block.state.BlockState;
@@ -46,21 +54,127 @@ import org.jspecify.annotations.Nullable;
  * <ol>
  * <li>every ambient sound stops (the torches keep burning);</li>
  * <li>the missing stair blocks come back one at a time, climbing like footsteps, in view on purpose (D-048: the exact
- * ledgered blocks, through core's {@code restoreVisibly} while {@link #FLAG} is set; each one's step sound for the
- * player);</li>
+ * ledgered blocks, through core's {@code restoreVisibly} while {@link #FLAG} is set; each one's step sound for everyone
+ * within hearing);</li>
  * <li>a torch they lost is back on the stairwell wall (a ledgered torch, through {@code restoreBlock});</li>
  * <li>they come out at dawn and the fog pulls back to full render distance (dusk fog 0, for good);</li>
  * <li>on the far shore, at the edge of render distance, he stands facing them, and once seen turns and walks into the
- * bare grove behind him ({@code FigureApi}, walking);</li>
+ * bare grove behind him ({@code FigureApi}, walking, never running);</li>
  * <li>the leaves fill back in after him in one red and orange wave, in view on purpose (D-048: his own taken leaves
  * from the ledger through {@code restoreVisibly}, crowns on the old bare trunks through {@code regrowVisibly}, both
  * while {@link #FLAG} is set); where he stood, nothing;</li>
  * <li>music: back on, and one of the game's calm tracks starts.</li>
  * </ol>
- * Then the afterward. Server thread only; the phase is saved, the rest starts over after a restart.
+ * Then the afterward. It plays for everyone present (D-064): the silence and the music reach every online player, the
+ * climb and his spot follow whoever of the group is there, in the stair's own dimension. It keeps no player: each tick
+ * it is handed who is there ({@link Present}), so whoever placed the last plank may leave or die and it goes on for the
+ * others; with nobody online at all it waits, its timers held. Server thread only; the phase is saved, the rest starts
+ * over after a restart, and the completion (the story's end, the flags) happens once for the world.
  */
 public final class LastMinute {
 	public enum Phase { START, FOOTSTEPS, TORCH, CLIMB, FIGURE, LEAVES, MUSIC, DONE }
+
+	/** Who is there this tick: every online player (the effects reach them all) and those in it (the climb, his spot). */
+	public record Present(List<ServerPlayer> everyone, List<ServerPlayer> inIt) {
+		public Present {
+			everyone = List.copyOf(everyone);
+			inIt = List.copyOf(inIt);
+		}
+
+		/** The live server's, now. */
+		static Present of(MinecraftServer server) {
+			return new Present(server.getPlayerList().getPlayers(), EndingApi.players(server));
+		}
+
+		/** The same players for both (tests). */
+		static Present of(List<ServerPlayer> players) {
+			return new Present(players, players);
+		}
+	}
+
+	/**
+	 * What the last minute does beyond giving blocks back: ending the story, the client effects, his spawn, which
+	 * groves there are. {@link #LIVE} in play; tests record instead, so a test's last minute never ends the world's story.
+	 */
+	interface Ports {
+		/** D is complete: the path, the end of the story, the flags, the sting, the dawn. Called once for the world. */
+		void complete(MinecraftServer server, EndingDConfig cfg);
+
+		void silence(ServerPlayer player, int ticks, int fadeTicks);
+
+		void calmMusic(ServerPlayer player);
+
+		/** The fog pulls back for good (stored, sent to everyone online). */
+		void fogGone(MinecraftServer server);
+
+		/** Music back on (stored, sent to everyone online). */
+		void musicOn(MinecraftServer server);
+
+		/**
+		 * A debug preview's fog pulling back and music, for the one previewing only (D-062.9): nothing stored, so a
+		 * rejoin's sync puts their fog back.
+		 */
+		void previewEffects(ServerPlayer player, boolean fogGone, boolean musicOn);
+
+		Optional<HimEntity> spawn(ServerLevel level, Vec3 feet, float yaw);
+
+		/** The bare groves the world recorded, nearest {@code near} first. */
+		List<SiteRegistry.Site> groves(ServerLevel level, BlockPos near);
+
+		Ports LIVE = new Ports() {
+			@Override
+			public void complete(MinecraftServer server, EndingDConfig cfg) {
+				LastMinute.complete(server, cfg);
+			}
+
+			@Override
+			public void silence(ServerPlayer player, int ticks, int fadeTicks) {
+				if (player.connection != null) {
+					ClientEffects.silence(player, ticks, fadeTicks);
+				}
+			}
+
+			@Override
+			public void calmMusic(ServerPlayer player) {
+				if (player.connection != null) {
+					CalmMusicPayload.send(player);
+				}
+			}
+
+			@Override
+			public void fogGone(MinecraftServer server) {
+				ClientEffects.setDuskFog(server, 0.0F);
+			}
+
+			@Override
+			public void musicOn(MinecraftServer server) {
+				ClientEffects.setMusicOff(server, false);
+			}
+
+			@Override
+			public void previewEffects(ServerPlayer player, boolean fogGone, boolean musicOn) {
+				if (player.connection == null) {
+					return;
+				}
+				if (fogGone && ServerPlayNetworking.canSend(player, ClientEffects.DuskFog.TYPE)) {
+					ServerPlayNetworking.send(player, new ClientEffects.DuskFog(0.0F));
+				}
+				if (musicOn && ServerPlayNetworking.canSend(player, ClientEffects.MusicOff.TYPE)) {
+					ServerPlayNetworking.send(player, new ClientEffects.MusicOff(false));
+				}
+			}
+
+			@Override
+			public Optional<HimEntity> spawn(ServerLevel level, Vec3 feet, float yaw) {
+				return FigureApi.spawnAt(level, Variant.ACROSS_WATER, feet, yaw);
+			}
+
+			@Override
+			public List<SiteRegistry.Site> groves(ServerLevel level, BlockPos near) {
+				return Regrow.groves(level, near);
+			}
+		};
+	}
 
 	/**
 	 * Set only while the last minute gives things back in view on purpose (the footsteps and the leaf wave, D-048):
@@ -82,13 +196,17 @@ public final class LastMinute {
 	private record WaveItem(BlockPos pos, TraceLedger.@Nullable Entry entry, Regrow.@Nullable Crown crown) {
 	}
 
+	private static Ports ports = Ports.LIVE;
+
 	private static Phase phase = Phase.START;
 	private static long phaseStart;
 	private static long nextFootstep;
 	private static int tries;
 	private static List<TraceLedger.Entry> footsteps = new ArrayList<>();
 	private static List<BlockPos> previewSteps = new ArrayList<>();
-	private static @Nullable HimEntity figure;
+	/** The figure this sequence spawned, by UUID and level (D-062.1: looked up again each tick, never kept). */
+	private static @Nullable UUID figureId;
+	private static @Nullable ResourceKey<Level> figureLevel;
 	private static boolean walkedAway;
 	private static @Nullable Vec3 lastSeenAt;
 	private static SiteRegistry.@Nullable Site grove;
@@ -96,14 +214,20 @@ public final class LastMinute {
 	private static boolean waveBuilt;
 	private static @Nullable BlockPos origin;
 	private static boolean running;
-	/** The running sequence is the debug preview: purely cosmetic. */
+	/** The running sequence is the debug preview: purely cosmetic, and only for {@link #previewer}. */
 	private static boolean previewing;
+	private static @Nullable UUID previewer;
 	/** The server this class last set {@link #FLAG} on, so {@link #reset} can clear it. */
 	private static @Nullable MinecraftServer flagSetOn;
 	/** The tick being played (the server's tick count; tests step it themselves). */
 	private static long clock;
 
 	private LastMinute() {
+	}
+
+	/** Tests: what the last minute does beyond the blocks. Put {@link Ports#LIVE} back in a {@code finally}. */
+	static void use(Ports value) {
+		ports = value;
 	}
 
 	public static Phase phase() {
@@ -114,15 +238,25 @@ public final class LastMinute {
 		return running;
 	}
 
-	/** The figure this sequence spawned, if any (tests). */
-	static @Nullable HimEntity figure() {
-		return figure;
+	/** The figure this sequence spawned, looked up again now: null if none was spawned, or he is gone or unloaded. */
+	static @Nullable HimEntity figure(MinecraftServer server) {
+		if (figureId == null || figureLevel == null) {
+			return null;
+		}
+		ServerLevel level = server.getLevel(figureLevel);
+		Entity entity = level == null ? null : level.getEntity(figureId);
+		return entity instanceof HimEntity him && !him.isRemoved() ? him : null;
+	}
+
+	/** True if this sequence ever had him out (tests). */
+	static boolean spawnedHim() {
+		return figureId != null;
 	}
 
 	/**
-	 * Starts the sequence. {@code preview} (debug) plays it at the player's spot without completing the ending and
-	 * without changing the world: no flags, no clock change, no figure, nothing given back (the footsteps are sounds
-	 * only); only the client effects (the silence, the fog pulling back, the music). Only a real completion gives back.
+	 * Starts the real sequence (the last plank, or debug step 8) at {@code at}: the step becomes the last minute in the
+	 * same tick (D-062.3), so it starts once for the world. {@code preview} (only through {@link #preview}) plays it
+	 * without completing the ending and without changing the world.
 	 */
 	public static void start(MinecraftServer server, EndingDState data, boolean preview, BlockPos at) {
 		reset();
@@ -140,6 +274,21 @@ public final class LastMinute {
 		syncFlag(server);
 	}
 
+	/**
+	 * Debug: plays a cosmetic preview where {@code player} stands, for them only: no flags, no clock change, no figure,
+	 * nothing given back (the footsteps are sounds only), nothing stored; only their client effects (the silence, the
+	 * fog pulling back, the music). It stops if they leave. Only a real completion gives back.
+	 */
+	public static void preview(MinecraftServer server, EndingDState data, ServerPlayer player) {
+		BlockPos at = player.blockPosition();
+		start(server, data, true, at);
+		previewer = player.getUUID();
+		Direction facing = player.getDirection();
+		for (int i = 1; i <= 10; i++) {
+			previewSteps.add(at.above(i * 2).relative(facing, i));
+		}
+	}
+
 	/** After a restart in the middle of it: carry on from the saved phase (the climb at the earliest). */
 	static void resume(MinecraftServer server, EndingDState data) {
 		if (running || data.step() != Step.LAST_MINUTE) {
@@ -147,6 +296,7 @@ public final class LastMinute {
 		}
 		reset();
 		running = true;
+		data.set(EndingDState.PREVIEW, false);
 		Phase saved = Phase.values()[Mth.clamp(data.lastMinutePhase(), 0, Phase.values().length - 1)];
 		phase = saved.ordinal() <= Phase.CLIMB.ordinal() ? Phase.START : saved;
 		origin = data.stair().map(StairPlan::twin).orElse(null);
@@ -184,11 +334,13 @@ public final class LastMinute {
 		}
 		flagSetOn = null;
 		previewing = false;
+		previewer = null;
 		running = false;
 		phase = Phase.START;
 		footsteps = new ArrayList<>();
 		previewSteps = new ArrayList<>();
-		figure = null;
+		figureId = null;
+		figureLevel = null;
 		walkedAway = false;
 		lastSeenAt = null;
 		grove = null;
@@ -204,44 +356,62 @@ public final class LastMinute {
 		tries = 0;
 		data.setLastMinutePhase(next.ordinal());
 		syncFlag(server);
-		A1016_02.LOGGER.info("[a1016] ending d: last minute, {}", next.name().toLowerCase(java.util.Locale.ROOT));
+		A1016_02.LOGGER.info("[a1016] ending d: last minute, {}", next.name().toLowerCase(Locale.ROOT));
 	}
 
+	/** Every server tick while it runs: one tick for whoever is there now. */
 	static void tick(MinecraftServer server, EndingDState data, EndingDConfig cfg) {
 		if (running) {
-			Services.watch().subject(server).ifPresent(player -> tick(server, data, cfg, player));
+			tick(server, data, cfg, Present.of(server), server.getTickCount());
 		}
 	}
 
-	/** One tick of the sequence, for this player. */
-	public static void tick(MinecraftServer server, EndingDState data, EndingDConfig cfg, ServerPlayer player) {
-		tick(server, data, cfg, player, server.getTickCount());
+	/**
+	 * Someone started taking part (PARTICIPATION) while it runs: a real sequence's silence reaches them too, until the
+	 * music (the stored fog and music they get on joining anyway).
+	 */
+	static void onParticipation(ServerPlayer player, EndingDConfig cfg) {
+		if (running && !previewing && phase.ordinal() > Phase.START.ordinal() && phase.ordinal() < Phase.MUSIC.ordinal()) {
+			ports.silence(player, (int) EndingDConfig.ticks(cfg.silenceSeconds), cfg.silenceFadeTicks);
+		}
 	}
 
-	/** One tick of the sequence at tick {@code at} (tests play it without waiting for the server). */
-	static void tick(MinecraftServer server, EndingDState data, EndingDConfig cfg, ServerPlayer player, long at) {
+	/** One tick of the sequence at tick {@code at}, for who is {@code present} (tests play it without waiting for the server). */
+	static void tick(MinecraftServer server, EndingDState data, EndingDConfig cfg, Present present, long at) {
 		if (!running) {
 			return;
 		}
+		long elapsed = Math.max(0, at - clock);
 		clock = at;
-		boolean preview = data.has(EndingDState.PREVIEW);
+		ServerPlayer viewer = null;
+		if (previewing) {
+			viewer = find(present.everyone(), previewer);
+			if (viewer == null) {
+				// The one who asked for the preview is gone: it was only for them.
+				reset();
+				return;
+			}
+		} else if (present.everyone().isEmpty()) {
+			// Nobody online to witness it: it waits, its clocks held, and goes on when someone is back.
+			phaseStart += elapsed;
+			nextFootstep += elapsed;
+			return;
+		}
+		List<ServerPlayer> audience = previewing ? List.of(viewer) : present.everyone();
 		long now = clock;
 		long inPhase = now - phaseStart;
 		switch (phase) {
 			case START -> {
-				if (player.connection != null) {
-					ClientEffects.silence(player, (int) EndingDConfig.ticks(cfg.silenceSeconds), cfg.silenceFadeTicks);
+				for (ServerPlayer player : audience) {
+					ports.silence(player, (int) EndingDConfig.ticks(cfg.silenceSeconds), cfg.silenceFadeTicks);
 				}
-				if (!preview && !HerobrineState.get(server).hasFlag(EndingDInit.COMPLETE_FLAG)) {
-					complete(server, data, cfg);
+				if (!previewing && !completed(server, data)) {
+					// Once for the world, guarded in the same tick (D-062.3): the day is saved first.
+					data.setCompleteDay(GameClock.day(server));
+					ports.complete(server, cfg);
 				}
 				// The preview gives nothing back: its footsteps are sounds only.
-				footsteps = preview ? new ArrayList<>() : footstepEntries(server, data);
-				if (preview) {
-					for (int i = 1; i <= 10; i++) {
-						previewSteps.add(player.blockPosition().above(i * 2).relative(player.getDirection(), i));
-					}
-				}
+				footsteps = previewing ? new ArrayList<>() : footstepEntries(server, data);
 				nextFootstep = now + EndingDConfig.ticks(cfg.footstepLeadSeconds);
 				enter(server, data, Phase.FOOTSTEPS);
 			}
@@ -257,16 +427,16 @@ public final class LastMinute {
 					// In view on purpose (D-048): the stair climbs back like footsteps while they watch.
 					boolean back = level != null && TraceLedger.get(server).entries().contains(entry) && Services.traces().restoreVisibly(level, entry, CAUSE);
 					if (back) {
-						footstep(player, entry.pos().pos(), state);
+						footstep(level, entry.pos().pos(), state);
 					}
 					if (back || ++tries * cfg.footstepTicks > EndingDConfig.ticks(cfg.footstepGiveUpSeconds)
 							|| !TraceLedger.get(server).entries().contains(entry)) {
 						footsteps.removeFirst();
 						tries = 0;
 					}
-				} else if (!previewSteps.isEmpty()) {
+				} else if (previewing && !previewSteps.isEmpty()) {
 					BlockPos pos = previewSteps.removeFirst();
-					footstep(player, pos, player.level().getBlockState(player.blockPosition().below()));
+					previewStep(viewer, pos);
 				} else {
 					enter(server, data, Phase.TORCH);
 				}
@@ -275,7 +445,7 @@ public final class LastMinute {
 				if (inPhase < EndingDConfig.ticks(cfg.torchDelaySeconds)) {
 					return;
 				}
-				Optional<TraceLedger.Entry> torch = preview ? Optional.empty() : lostTorch(server, data);
+				Optional<TraceLedger.Entry> torch = previewing ? Optional.empty() : lostTorch(server, data);
 				if (torch.isEmpty()) {
 					enter(server, data, Phase.CLIMB);
 					return;
@@ -287,48 +457,61 @@ public final class LastMinute {
 				}
 			}
 			case CLIMB -> {
-				boolean out = cameOut(player, data, preview);
-				if (!preview && figure == null && (out || nearTop(player, data))) {
-					trySpawn(player, data, cfg);
+				boolean out;
+				if (previewing) {
+					out = cameOut(viewer, data, true);
+				} else {
+					List<ServerPlayer> climbers = climbers(present, data);
+					Optional<ServerPlayer> first = climbers.stream().filter(p -> cameOut(p, data, false)).findFirst();
+					if (figureId == null) {
+						first.or(() -> climbers.stream().filter(p -> nearTop(p, data)).findFirst()).ifPresent(p -> trySpawn(p, data, cfg));
+					}
+					// Nobody left in it to climb (only spectators watching): the rest of the minute plays for them.
+					out = first.isPresent() || present.inIt().isEmpty();
 				}
 				if (out || inPhase > EndingDConfig.ticks(cfg.climbTimeoutSeconds)) {
-					ClientEffects.setDuskFog(server, 0.0F);
+					if (previewing) {
+						ports.previewEffects(viewer, true, false);
+					} else {
+						ports.fogGone(server);
+					}
 					enter(server, data, Phase.FIGURE);
 				}
 			}
 			case FIGURE -> {
-				if (preview) {
+				if (previewing) {
 					enter(server, data, Phase.LEAVES); // no figure in a preview
 					return;
 				}
-				if (figure == null) {
+				HimEntity him = figure(server);
+				if (figureId == null) {
 					if (now % SPAWN_RETRY_TICKS == 0) {
-						trySpawn(player, data, cfg);
+						spotter(present, data).ifPresent(p -> trySpawn(p, data, cfg));
 					}
-				} else if (figure.isRemoved()) {
+				} else if (him == null) {
 					enter(server, data, Phase.LEAVES);
 					return;
 				} else {
-					lastSeenAt = figure.position();
-					if (!walkedAway && figure.everSeen() && figure.seenFor() >= EndingDConfig.ticks(cfg.figureStareSeconds)) {
-						FigureApi.walkAway(figure, true);
+					lastSeenAt = him.position();
+					if (!walkedAway && him.everSeen() && him.seenFor() >= EndingDConfig.ticks(cfg.figureStareSeconds)) {
+						FigureApi.walkAway(him, true);
 						walkedAway = true;
 					}
 				}
 				if (inPhase > EndingDConfig.ticks(cfg.figureTimeoutSeconds)) {
-					if (figure != null && !figure.isRemoved()) {
-						FigureApi.walkAway(figure, true);
+					if (him != null) {
+						FigureApi.walkAway(him, true);
 					}
 					enter(server, data, Phase.LEAVES);
 				}
 			}
 			case LEAVES -> {
-				ServerLevel level = player.level();
+				ServerLevel level = previewing ? viewer.level() : stairLevel(server, data);
 				if (!waveBuilt) {
-					if (preview) {
+					if (previewing) {
 						waveBuilt = true; // a preview grows nothing back: the wave is empty
 					} else {
-						buildWave(level, player);
+						buildWave(level, data);
 					}
 				}
 				int budget = Math.max(1, cfg.leafWavePerTick);
@@ -356,27 +539,70 @@ public final class LastMinute {
 				if (inPhase < EndingDConfig.ticks(cfg.musicDelaySeconds)) {
 					return;
 				}
-				ClientEffects.setMusicOff(server, false);
-				if (player.connection != null) {
-					ClientEffects.silence(player, 1, cfg.silenceFadeTicks);
-					CalmMusicPayload.send(player);
+				if (previewing) {
+					ports.previewEffects(viewer, false, true);
+				} else {
+					ports.musicOn(server);
 				}
+				for (ServerPlayer player : audience) {
+					ports.silence(player, 1, cfg.silenceFadeTicks);
+					ports.calmMusic(player);
+				}
+				boolean wasPreview = previewing;
 				running = false;
 				enter(server, data, Phase.DONE);
-				if (!preview) {
+				if (!wasPreview) {
 					data.setStep(Step.AFTERWARD);
 				}
 				data.set(EndingDState.PREVIEW, false);
+				previewing = false;
+				previewer = null;
 			}
 			case DONE -> running = false;
 		}
 	}
 
+	/** True once D was completed: by this world's flag, or by this sequence's saved day (a resume never completes twice). */
+	static boolean completed(MinecraftServer server, EndingDState data) {
+		return data.completeDay() >= 0 || HerobrineState.get(server).hasFlag(EndingDInit.COMPLETE_FLAG);
+	}
+
+	private static @Nullable ServerPlayer find(List<ServerPlayer> players, @Nullable UUID uuid) {
+		for (ServerPlayer player : players) {
+			if (player.getUUID().equals(uuid)) {
+				return player;
+			}
+		}
+		return null;
+	}
+
+	/** Those in it, in the stair's dimension (a friend in the Nether is not climbing). */
+	private static List<ServerPlayer> climbers(Present present, EndingDState data) {
+		ResourceKey<Level> dimension = data.stair().map(StairPlan::dimension).orElse(Level.OVERWORLD);
+		return present.inIt().stream().filter(p -> p.level().dimension().equals(dimension)).toList();
+	}
+
+	/** Whose eyes his spot is picked for: one in it who came out, else one in it, else anyone online there. */
+	private static Optional<ServerPlayer> spotter(Present present, EndingDState data) {
+		List<ServerPlayer> climbers = climbers(present, data);
+		Optional<ServerPlayer> out = climbers.stream().filter(p -> cameOut(p, data, false)).findFirst();
+		if (out.isPresent() || !climbers.isEmpty()) {
+			return out.or(() -> climbers.stream().findFirst());
+		}
+		ResourceKey<Level> dimension = data.stair().map(StairPlan::dimension).orElse(Level.OVERWORLD);
+		return present.everyone().stream().filter(p -> p.level().dimension().equals(dimension)).findFirst();
+	}
+
+	private static ServerLevel stairLevel(MinecraftServer server, EndingDState data) {
+		ServerLevel level = data.stair().map(s -> server.getLevel(s.dimension())).orElse(null);
+		return level != null ? level : server.overworld();
+	}
+
 	/**
-	 * D is complete: the flags (the director's silence for good, the sting), the day, the dawn. Also the path to D
-	 * in the ending workstream's API once it exists.
+	 * D is complete: the flags (the director's silence for good, the sting), the dawn, and the path to D in the
+	 * ending workstream's API, which ends the story for everyone.
 	 */
-	static void complete(MinecraftServer server, EndingDState data, EndingDConfig cfg) {
+	static void complete(MinecraftServer server, EndingDConfig cfg) {
 		HerobrineState state = HerobrineState.get(server);
 		// The path becomes D (Stage 4; whatever A, B or C was doing stops), then the story ends: nothing more is armed.
 		EndingApi.commitD(server, "his cross");
@@ -385,7 +611,6 @@ public final class LastMinute {
 		state.setFlag(EndingDInit.COMPLETE_FLAG, true);
 		// The director's silence for good, through the ending's writer (whatever the ending's own config says).
 		DirectorHooks.silenceForever(state);
-		data.setCompleteDay(GameClock.day(server));
 		Sting.refresh(server);
 		if (cfg.forceDawn) {
 			toDawn(server, cfg);
@@ -408,21 +633,33 @@ public final class LastMinute {
 		clock.ifPresent(holder -> server.clockManager().addTicks(holder, (int) (target - time)));
 	}
 
-	/** The step sound of a block coming back, for the player only (blocks, not ambient: the silence does not mute it). */
-	private static void footstep(ServerPlayer player, BlockPos pos, BlockState state) {
-		if (player.connection == null) {
-			return;
-		}
-		SoundCues.playTo(player, BuiltInRegistries.SOUND_EVENT.wrapAsHolder(state.getSoundType().getStepSound()), SoundSource.BLOCKS,
+	/**
+	 * The step sound of a block coming back, for everyone within hearing of it (D-060; blocks, not ambient: the silence
+	 * does not mute it).
+	 */
+	private static void footstep(ServerLevel level, BlockPos pos, BlockState state) {
+		SoundCues.playAt(level, BuiltInRegistries.SOUND_EVENT.wrapAsHolder(state.getSoundType().getStepSound()), SoundSource.BLOCKS,
 				Vec3.atCenterOf(pos), 0.9F, 0.9F);
 	}
 
-	/** The stair blocks he took, lowest first: they come back climbing upward. */
+	/** A preview's footstep: a sound for the one previewing only. */
+	private static void previewStep(ServerPlayer player, BlockPos pos) {
+		if (player.connection == null) {
+			return;
+		}
+		BlockState under = player.level().getBlockState(player.blockPosition().below());
+		SoundCues.playTo(player, BuiltInRegistries.SOUND_EVENT.wrapAsHolder(under.getSoundType().getStepSound()), SoundSource.BLOCKS,
+				Vec3.atCenterOf(pos), 0.9F, 0.9F);
+	}
+
+	/** The stair blocks he took from this stair, lowest first: they come back climbing upward. */
 	static List<TraceLedger.Entry> footstepEntries(MinecraftServer server, EndingDState data) {
 		List<TraceLedger.Entry> steps = new ArrayList<>();
+		Optional<StairPlan> plan = data.stair();
 		for (TraceLedger.Entry entry : TraceLedger.get(server).entries()) {
 			if (entry.kind() == TraceLedger.Kind.REMOVE && entry.cause().equals(Stair.LOSS_CAUSE)
-					&& entry.state().map(s -> s.getBlock() instanceof StairBlock).orElse(false)) {
+					&& entry.state().map(s -> s.getBlock() instanceof StairBlock).orElse(false)
+					&& plan.map(p -> p.dimension().equals(entry.pos().dimension()) && p.stairs().contains(entry.pos().pos())).orElse(true)) {
 				steps.add(entry);
 			}
 		}
@@ -432,7 +669,7 @@ public final class LastMinute {
 
 	/**
 	 * A torch they lost, back on the stairwell wall: the one the stair took, else the oldest torch he took anywhere in
-	 * the stairwell. Only ledgered torches, put back exactly where they were.
+	 * the stairwell. Only ledgered torches from this stairwell, put back exactly where they were.
 	 */
 	static Optional<TraceLedger.Entry> lostTorch(MinecraftServer server, EndingDState data) {
 		Optional<StairPlan> plan = data.stair();
@@ -442,18 +679,21 @@ public final class LastMinute {
 					|| Undo.skipReason(server, entry).isPresent()) {
 				continue;
 			}
-			if (entry.cause().equals(Stair.LOSS_CAUSE)) {
+			boolean inStairwell = plan.isPresent() && inStairwell(plan.get(), entry);
+			if (entry.cause().equals(Stair.LOSS_CAUSE) && (plan.isEmpty() || inStairwell)) {
 				return Optional.of(entry);
 			}
-			if (fallback == null && plan.isPresent() && entry.pos().dimension().equals(plan.get().dimension())) {
-				BlockPos p = entry.pos().pos();
-				StairPlan s = plan.get();
-				if (Math.abs(p.getX() - s.axisX()) <= 2 && Math.abs(p.getZ() - s.axisZ()) <= 2 && p.getY() >= s.chamberCeil() && p.getY() <= s.yTop()) {
-					fallback = entry;
-				}
+			if (fallback == null && inStairwell) {
+				fallback = entry;
 			}
 		}
 		return Optional.ofNullable(fallback);
+	}
+
+	private static boolean inStairwell(StairPlan s, TraceLedger.Entry entry) {
+		BlockPos p = entry.pos().pos();
+		return entry.pos().dimension().equals(s.dimension()) && Math.abs(p.getX() - s.axisX()) <= 2 && Math.abs(p.getZ() - s.axisZ()) <= 2
+				&& p.getY() >= s.chamberCeil() && p.getY() <= s.yTop();
 	}
 
 	/** Out of the pyramid: above the stair's top with the sky over their head (out of the water). */
@@ -477,21 +717,23 @@ public final class LastMinute {
 	public record Spot(Vec3 feet, float yaw, SiteRegistry.@Nullable Site grove) {
 	}
 
+	/** He comes out where this player's eyes would find him (render distance, facing), seen from the pyramid. */
 	private static void trySpawn(ServerPlayer player, EndingDState data, EndingDConfig cfg) {
 		ServerLevel level = player.level();
-		BlockPos from = data.has(EndingDState.PREVIEW) || data.stair().isEmpty() ? player.blockPosition()
+		BlockPos from = data.stair().isEmpty() ? player.blockPosition()
 				: new BlockPos(data.stair().get().axisX(), level.getSeaLevel(), data.stair().get().axisZ());
 		Optional<Spot> spot = farShore(level, player, from, cfg);
 		if (spot.isEmpty()) {
 			return;
 		}
-		Optional<HimEntity> him = FigureApi.spawnAt(level, Variant.ACROSS_WATER, spot.get().feet(), spot.get().yaw());
+		Optional<HimEntity> him = ports.spawn(level, spot.get().feet(), spot.get().yaw());
 		if (him.isPresent()) {
-			figure = him.get();
+			figureId = him.get().getUUID();
+			figureLevel = level.dimension();
 			// "He doesn't run. He turns and walks into the bare grove behind him."
-			FigureApi.setNoRun(figure, true);
+			FigureApi.setNoRun(him.get(), true);
 			grove = spot.get().grove();
-			lastSeenAt = figure.position();
+			lastSeenAt = him.get().position();
 			A1016_02.LOGGER.info("[a1016] ending d: he stands on the far shore at {}, {} blocks out{}", BlockPos.containing(spot.get().feet()).toShortString(),
 					Math.round(Math.sqrt(spot.get().feet().distanceToSqr(Vec3.atCenterOf(from)))), grove != null ? ", a bare grove behind him" : "");
 		}
@@ -507,14 +749,14 @@ public final class LastMinute {
 		double render = FogLimits.of(player).renderLimit();
 		double ticking = Math.max(32, server.getPlayerList().getSimulationDistance() * 16 - 24);
 		double far = Math.min(render * cfg.figureDistanceFraction, ticking);
-		List<SiteRegistry.Site> groves = Regrow.groves(level, from);
+		List<SiteRegistry.Site> groves = ports.groves(level, from);
 		double base = groves.isEmpty() ? Math.toRadians(player.getYRot() + 90.0F)
 				: Math.atan2(groves.getFirst().pos().getZ() - from.getZ(), groves.getFirst().pos().getX() - from.getX());
 		for (int turn = 0; turn <= 18; turn++) {
 			double angle = base + Math.toRadians((turn % 2 == 0 ? 1 : -1) * ((turn + 1) / 2) * 10.0);
 			double dx = Math.cos(angle);
 			double dz = Math.sin(angle);
-			for (double d = far; d >= far * 0.5; d -= 2.0) {
+			for (double d = far; d >= far * 0.5 && d > 0; d -= 2.0) {
 				int x = Mth.floor(from.getX() + dx * d);
 				int z = Mth.floor(from.getZ() + dz * d);
 				if (level.getChunkSource().getChunkNow(x >> 4, z >> 4) == null) {
@@ -569,13 +811,16 @@ public final class LastMinute {
 
 	// --- the leaves ---
 
-	private static void buildWave(ServerLevel level, ServerPlayer player) {
+	/** The wave starts where he was last seen, else at the stair, in the stair's own level (not wherever a player is). */
+	private static void buildWave(ServerLevel level, EndingDState data) {
 		waveBuilt = true;
 		wave = new ArrayList<>();
-		Vec3 from = lastSeenAt != null ? lastSeenAt : player.position();
+		Vec3 from = lastSeenAt != null ? lastSeenAt
+				: data.stair().map(s -> Vec3.atCenterOf(new BlockPos(s.axisX(), level.getSeaLevel(), s.axisZ())))
+						.orElse(origin != null ? Vec3.atCenterOf(origin) : Vec3.atCenterOf(level.getRespawnData().pos()));
 		SiteRegistry.Site target = grove;
 		if (target == null) {
-			List<SiteRegistry.Site> near = Regrow.groves(level, BlockPos.containing(from));
+			List<SiteRegistry.Site> near = ports.groves(level, BlockPos.containing(from));
 			target = near.isEmpty() ? null : near.getFirst();
 		}
 		if (target == null || !target.dimension().equals(level.dimension())) {
@@ -598,7 +843,7 @@ public final class LastMinute {
 		if (!running) {
 			return "not running";
 		}
-		return phase.name().toLowerCase(java.util.Locale.ROOT) + (phase == Phase.FOOTSTEPS ? " (" + footsteps.size() + " to come back)" : "")
-				+ (phase == Phase.LEAVES ? " (" + wave.size() + " left)" : "") + (figure != null ? ", he is out" : "");
+		return phase.name().toLowerCase(Locale.ROOT) + (phase == Phase.FOOTSTEPS ? " (" + footsteps.size() + " to come back)" : "")
+				+ (phase == Phase.LEAVES ? " (" + wave.size() + " left)" : "") + (figureId != null ? ", he is out" : "") + (previewing ? ", a preview" : "");
 	}
 }

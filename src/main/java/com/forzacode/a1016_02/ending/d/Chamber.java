@@ -18,6 +18,7 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.core.GlobalPos;
 import net.minecraft.network.chat.Component;
+import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.level.block.BaseTorchBlock;
@@ -30,10 +31,11 @@ import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.levelgen.structure.BoundingBox;
 
 /**
- * Steps 5 to 7, in the bedrock chamber: exactly six torches (a wrong count does nothing); the sentence finished under
- * F30's twin ("he is no longer with us", the words F08 carries, any case and spacing; his name or "sorry" there counts
- * as naming him, and the next block they stand on above bedrock is gone); his cross on bedrock between the torches,
- * built on their first block and topped with poplar planks from the untouched grove.
+ * Steps 5 to 7, in the bedrock chamber: exactly six torches, or six and one more for each friend whose line was finished
+ * ({@link Chain#torchesCount}; a wrong count does nothing); the sentence finished under F30's twin ("he is no longer
+ * with us", the words F08 carries, any case and spacing; his name or "sorry" there counts as naming him, and the next
+ * block someone stands on above bedrock is gone); his cross on bedrock between the torches, built (by anyone) on the
+ * first block taken out of the cairn and topped with poplar planks from the untouched grove.
  */
 public final class Chamber {
 	public static final String NAMED_CAUSE = "ending:d/named";
@@ -138,10 +140,10 @@ public final class Chamber {
 	}
 
 	/**
-	 * Signs in the chamber that name him (or say sorry), each counted once: it arms the fall (the next block they stand
-	 * on above bedrock goes) and counts as naming him.
+	 * Signs in the chamber that name him (or say sorry), each counted once, whoever wrote it: it arms the fall (the next
+	 * block anyone down there stands on above bedrock goes) and counts as naming him.
 	 */
-	static void watchNaming(ServerPlayer player, EndingDState data, List<Written> signs) {
+	static void watchNaming(MinecraftServer server, EndingDState data, List<Written> signs) {
 		for (Written sign : signs) {
 			String key = "named@" + sign.pos().getX() + "," + sign.pos().getY() + "," + sign.pos().getZ() + "#" + letters(sign.front() + sign.back()).hashCode();
 			if (!sign.names() || data.has(key)) {
@@ -151,15 +153,16 @@ public final class Chamber {
 			data.set(EndingDState.NAMED, true);
 			if (!NameMatcher.namesHim(sign.front() + " " + sign.back())) {
 				// "sorry" names him too; his name itself is already lore's telling.
-				Attention.trigger(player.level().getServer(), AttentionTrigger.NAMED_HIM);
+				Attention.trigger(server, AttentionTrigger.NAMED_HIM);
 			}
 			A1016_02.LOGGER.info("[a1016] ending d: named in the chamber at {}", sign.pos().toShortString());
 		}
 	}
 
 	/**
-	 * Naming's danger: the next block the player stands on above bedrock is gone, the moment it is out of view (in
-	 * practice while they look up, D-027). One clue: the missing block under where they stood.
+	 * Naming's danger: the next block this player (whoever of the group stands first) stands on above bedrock is gone,
+	 * the moment it is out of view of everyone (in practice while they look up, D-027). One clue: the missing block
+	 * under where they stood.
 	 */
 	public static boolean namedFall(ServerPlayer player, EndingDState data, View view) {
 		if (!data.has(EndingDState.NAMED) || !player.onGround()) {
@@ -186,9 +189,9 @@ public final class Chamber {
 	}
 
 	/**
-	 * Step 7: his cross, if it stands. On bedrock in the chamber, its foot is the player's first block (placed from the
-	 * item taken out of the cairn), a post goes up from it with arms to both sides, and its top is poplar planks made
-	 * from logs cut in the untouched grove.
+	 * Step 7: his cross, if it stands, whoever built it. On bedrock in the chamber, its foot is the first block (the
+	 * {@code story:first_blocks} owner's, placed from the item anyone took out of the cairn), a post goes up from it with
+	 * arms to both sides, and its top is poplar planks made from logs cut in the untouched grove.
 	 */
 	public static Optional<BlockPos> cross(ServerLevel level, StairPlan plan, EndingDState data) {
 		BoundingBox box = box(level, plan);

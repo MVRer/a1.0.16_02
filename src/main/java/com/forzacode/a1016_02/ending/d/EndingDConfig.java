@@ -8,7 +8,7 @@ import com.forzacode.a1016_02.core.ModConfig;
  */
 public final class EndingDConfig {
 	// --- the chain ---
-	/** How often the chain looks at the subject, in ticks (not real time: detection, not pacing). */
+	/** How often the chain looks at everyone in it, in ticks (not real time: detection, not pacing). */
 	public int checkTicks = 10;
 	/** Poplar logs the player must cut in the untouched grove (step 2). */
 	public int groveLogsMin = 1;
@@ -16,7 +16,10 @@ public final class EndingDConfig {
 	public int cairnRadius = 16;
 	/** How far from the cairn the first block must be carried (step 3). */
 	public int carryAwayBlocks = 32;
-	/** Torches in the bedrock chamber (step 5): one per dead list member. */
+	/**
+	 * Torches in the bedrock chamber (step 5): one per dead list member. With friends, this many plus one for each
+	 * friend whose line a hardcore marked death finished counts too.
+	 */
 	public int torchesRequired = 6;
 	/** How far (horizontally) from F30's twin the sentence may stand (step 6). */
 	public int sentenceRadius = 2;

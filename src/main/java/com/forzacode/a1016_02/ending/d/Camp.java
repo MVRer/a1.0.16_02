@@ -25,7 +25,7 @@ import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
 
 /**
- * Step 1's danger (DESIGN.md: "creepers moved into the tents at night, silent"): at night, while the player is near
+ * Step 1's danger (DESIGN.md: "creepers moved into the tents at night, silent"): at night, while anyone in it is near
  * the Abandoned Camp whose secret chest holds F28, creepers that are already out there are moved into the camp's tents
  * (out of view where they are and where they go) and silenced. None is ever spawned. Deniable: creepers wander in the
  * dark. The clue: a creeper standing inside a tent that made no sound.
@@ -44,15 +44,27 @@ public final class Camp {
 		return Optional.ofNullable(HerobrineState.get(server).fragmentsPlaced().get("F28"));
 	}
 
-	/** Each check of step 1: at night, near the camp, at most {@code creepersPerNight}. */
-	static void danger(ServerPlayer player, View view, EndingDConfig cfg) {
+	/**
+	 * Each check of step 1: at night, while anyone in it is near the camp, at most {@code creepersPerNight} for the
+	 * world (the camp's danger, not one per player).
+	 */
+	static void danger(List<ServerPlayer> players, View view, EndingDConfig cfg) {
+		for (ServerPlayer player : players) {
+			if (danger(player, view, cfg)) {
+				return;
+			}
+		}
+	}
+
+	/** True if this player was near the camp at night and a creeper was tried for (moved or not). */
+	private static boolean danger(ServerPlayer player, View view, EndingDConfig cfg) {
 		ServerLevel level = player.level();
 		MinecraftServer server = level.getServer();
 		Optional<GlobalPos> camp = camp(server);
 		long now = server.getTickCount();
 		if (camp.isEmpty() || !camp.get().dimension().equals(level.dimension()) || !level.isDarkOutside() || now < next
 				|| camp.get().pos().distToCenterSqr(player.position()) > (double) cfg.campWatchRadius * cfg.campWatchRadius) {
-			return;
+			return false;
 		}
 		long today = GameClock.day(server);
 		if (today != night) {
@@ -60,12 +72,13 @@ public final class Camp {
 			movedTonight = 0;
 		}
 		if (movedTonight >= cfg.creepersPerNight) {
-			return;
+			return true;
 		}
 		next = now + EndingDConfig.ticks(cfg.creeperCooldownSeconds);
 		if (creepersIntoTents(level, camp.get().pos(), view, cfg, level.getRandom())) {
 			movedTonight++;
 		}
+		return true;
 	}
 
 	/**

@@ -36,7 +36,7 @@ import net.minecraft.world.phys.Vec3;
  * Game tests of Ending D (registered through {@code ending.EndingGameTests}): each step's detection, the team's
  * stair. The dangers, the undo and the sting are in the superclasses.
  */
-public class EndingDGameTests extends EndingDDangerTests {
+public class EndingDGameTests extends EndingDGroupTests {
 	private static final Set<String> NONE_READ = Set.of();
 
 	private static void write(GameTestHelper helper, BlockPos rel, String... lines) {
@@ -284,19 +284,20 @@ public class EndingDGameTests extends EndingDDangerTests {
 		TraceLedger.Entry taken = TraceLedger.get(server).entries().stream()
 				.filter(e -> e.cause().equals(Stair.LOSS_CAUSE) && e.pos().pos().equals(stair)).findFirst().orElseThrow();
 		try {
-			LastMinute.start(server, data, true, player.blockPosition());
+			LastMinute.preview(server, data, player);
 			long now = server.getTickCount();
 			boolean flag = false;
 			for (int i = 0; i < 40000 && LastMinute.running(); i++) {
-				LastMinute.tick(server, data, cfg, player, now + i);
+				LastMinute.tick(server, data, cfg, LastMinute.Present.of(List.of(player)), now + i);
 				flag |= state.hasFlag(LastMinute.FLAG);
-				helper.assertTrue(LastMinute.figure() == null, "a preview spawned him");
+				helper.assertFalse(LastMinute.spawnedHim(), "a preview spawned him");
 			}
 			helper.assertFalse(LastMinute.running(), "the preview did not finish: " + LastMinute.phase());
 			helper.assertFalse(flag || state.hasFlag(LastMinute.FLAG), "a preview set ending:last_minute");
 			helper.assertTrue(TraceLedger.get(server).entries().contains(taken) && level.getBlockState(stair).isAir(), "a preview gave a stair block back");
 			helper.assertFalse(state.hasFlag(EndingDInit.COMPLETE_FLAG) || state.hasFlag(EndingDInit.SILENCE_FOREVER_FLAG), "a preview completed the ending");
 			helper.assertTrue(data.step() == Step.MAP, "a preview moved the chain");
+			helper.assertTrue(state.effects().equals(effects), "a preview changed everyone's stored fog or music");
 		} finally {
 			LastMinute.reset();
 			Services.traces().forced().restoreBlock(level, taken, stair);
