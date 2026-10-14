@@ -14,6 +14,7 @@ import com.forzacode.a1016_02.core.AttentionTrigger;
 import com.forzacode.a1016_02.core.GameClock;
 import com.forzacode.a1016_02.core.ModConfig;
 import com.forzacode.a1016_02.core.Pacing;
+import com.forzacode.a1016_02.core.PlayerWatch;
 import com.forzacode.a1016_02.core.Services;
 import com.forzacode.a1016_02.core.SiteRegistry;
 import com.forzacode.a1016_02.core.SiteType;
@@ -38,11 +39,13 @@ import net.minecraft.world.level.LightLayer;
 import net.minecraft.world.level.levelgen.Heightmap;
 import net.minecraft.world.phys.Vec3;
 
-import org.jspecify.annotations.Nullable;
-
 /**
- * The dig workstream's server tick: delayed sound cues, the torches-behind-you follower, explored-cave and
- * planted-sapling tracking, the tunnel that grows between visits, the ENTERED_TUNNEL trigger and "Under you".
+ * The dig workstream's server tick: delayed sound cues, the torches-behind-you followers, explored-cave and
+ * planted-sapling tracking, the tunnel that grows between visits, the ENTERED_TUNNEL trigger and "Under you". With
+ * friends (D-058 to D-062) it does all of it for every participant, looked up fresh each time and keyed by UUID:
+ * each player has their own torch follower and explored-cave sampling, a cue plays at its spot for everyone in
+ * hearing range, ENTERED_TUNNEL counts once per occasion ({@link TunnelEntries}), and a player who stops taking part
+ * (leaves, or turns spectator) has whatever ran for them stopped ({@link #onStop}).
  */
 public final class DigTicker {
 	public static final DigTicker INSTANCE = new DigTicker();
@@ -51,20 +54,20 @@ public final class DigTicker {
 	private static final int SAMPLE_TICKS = 20;
 	private static final int NETWORK_TICKS = 100;
 
-	private record Cue(UUID player, long at, Holder<SoundEvent> sound, SoundSource source, Vec3 pos, float volume, float pitch) {
+	/** A sound queued for a player's card, played at its spot in its dimension for everyone in hearing range. */
+	private record Cue(UUID player, ResourceKey<Level> dimension, long at, Holder<SoundEvent> sound, SoundSource source, Vec3 pos, float volume,
+			float pitch) {
 	}
 
-	/** The torches of a cave that go out once the player is far enough past them. */
+	/** The torches of a cave that go out once its player (and everyone else there) is far enough past them. */
 	private static final class TorchSession {
-		final UUID player;
 		final ResourceKey<Level> dimension;
 		final LongOpenHashSet torches = new LongOpenHashSet();
 		final long end;
 		long next;
 		long refresh;
 
-		TorchSession(UUID player, ResourceKey<Level> dimension, long end) {
-			this.player = player;
+		TorchSession(ResourceKey<Level> dimension, long end) {
 			this.dimension = dimension;
 			this.end = end;
 		}
@@ -72,9 +75,9 @@ public final class DigTicker {
 
 	private final List<Cue> cues = new ArrayList<>();
 	private final Map<UUID, BlockPos> lastExplored = new HashMap<>();
+	private final Map<UUID, TorchSession> torchSessions = new HashMap<>();
+	private final TunnelEntries entries = new TunnelEntries();
 	private final RandomSource random = RandomSource.create();
-	private @Nullable TorchSession torchSession;
-	private long lastEnteredPlayTick = Long.MIN_VALUE;
 
 	private DigTicker() {
 	}
@@ -82,18 +85,28 @@ public final class DigTicker {
 	void clear() {
 		cues.clear();
 		lastExplored.clear();
-		torchSession = null;
-		lastEnteredPlayTick = Long.MIN_VALUE;
+		torchSessions.clear();
+		entries.clear();
 	}
 
-	/** Plays a vanilla sound at {@code pos} for this player only, after {@code delay} ticks ({@link SoundCues}). */
+	/**
+	 * D-062.5: a player stopped taking part (left, or turned spectator). Their torch follower stops where it is (the
+	 * torches that already went stay gone, out of view); their sampling forgets them. Cues already queued still play at
+	 * their spot for whoever is there to hear.
+	 */
+	void onStop(UUID player) {
+		torchSessions.remove(player);
+		lastExplored.remove(player);
+	}
+
+	/** Plays a vanilla sound at {@code pos} after {@code delay} ticks, for everyone in hearing range there ({@link SoundCues#playAt}). */
 	public void schedule(ServerPlayer player, long delay, SoundEvent sound, SoundSource source, Vec3 pos, float volume, float pitch) {
 		schedule(player, delay, BuiltInRegistries.SOUND_EVENT.wrapAsHolder(sound), source, pos, volume, pitch);
 	}
 
 	public void schedule(ServerPlayer player, long delay, Holder<SoundEvent> sound, SoundSource source, Vec3 pos, float volume, float pitch) {
 		long now = player.level().getServer().getTickCount();
-		cues.add(new Cue(player.getUUID(), now + Math.max(0, delay), sound, source, pos, volume, pitch));
+		cues.add(new Cue(player.getUUID(), player.level().dimension(), now + Math.max(0, delay), sound, source, pos, volume, pitch));
 	}
 
 	/** Cues still waiting (for tests and debug). */
@@ -106,43 +119,48 @@ public final class DigTicker {
 		return cues.stream().filter(cue -> cue.player().equals(player)).map(Cue::pos).toList();
 	}
 
-	public boolean torchSessionActive() {
-		return torchSession != null;
+	/** True while this player's torches-behind-you follower runs. */
+	public boolean torchSessionActive(UUID player) {
+		return torchSessions.containsKey(player);
 	}
 
-	/** Starts (or replaces) the torches-behind-you follower. */
+	/** Starts (or replaces) this player's torches-behind-you follower. */
 	public void startTorchSession(ServerPlayer player, List<BlockPos> torches) {
 		MinecraftServer server = player.level().getServer();
 		long now = server.getTickCount();
-		TorchSession session = new TorchSession(player.getUUID(), player.level().dimension(),
-				now + ModConfig.realTicks(DigConfig.get().torchesBehindSessionMinutes * 60));
+		TorchSession session = new TorchSession(player.level().dimension(), now + ModConfig.realTicks(DigConfig.get().torchesBehindSessionMinutes * 60));
 		torches.forEach(pos -> session.torches.add(pos.asLong()));
 		session.next = now;
 		session.refresh = now + 200;
-		torchSession = session;
+		torchSessions.put(player.getUUID(), session);
 	}
 
 	void tick(MinecraftServer server) {
 		long now = server.getTickCount();
 		playCues(server, now);
-		Optional<ServerPlayer> subject = Services.watch().subject(server);
-		if (subject.isEmpty()) {
+		PlayerWatch watch = Services.watch();
+		List<ServerPlayer> players = watch.participants(server);
+		torchSessions.keySet().removeIf(uuid -> watch.participant(server, uuid).isEmpty()); // gone without a stop event: stop quietly
+		if (players.isEmpty()) {
 			return;
 		}
-		ServerPlayer player = subject.get();
 		DigData data = DigData.get(server);
 		DigConfig config = DigConfig.get();
 		if (now % SAMPLE_TICKS == 0) {
-			sampleExplored(player, data, config);
-			checkEnteredTunnel(server, player, data, config);
-			trackGrowingTunnel(server, player, data, config);
-			tickTorchSession(player, now);
+			for (ServerPlayer player : players) {
+				sampleExplored(player, data, config);
+				tickTorchSession(player, players, now);
+			}
+			checkEnteredTunnel(server, watch, players, data, config, () -> Attention.trigger(server, AttentionTrigger.ENTERED_TUNNEL));
+			trackGrowingTunnel(server, players, data, config);
 		}
 		if (now % Math.max(SAMPLE_TICKS, Math.round(config.saplingScanSeconds * 20)) == 0) {
-			scanSaplings(player, data, config);
+			for (ServerPlayer player : players) {
+				scanSaplings(player, data, config);
+			}
 		}
 		if (now % NETWORK_TICKS == 0) {
-			UnderYou.tick(server, player, data, random);
+			UnderYou.tick(server, Bases.live(server), random);
 		}
 	}
 
@@ -157,9 +175,9 @@ public final class DigTicker {
 				continue;
 			}
 			it.remove();
-			ServerPlayer player = server.getPlayerList().getPlayer(cue.player());
-			if (player != null) {
-				SoundCues.playTo(player, cue.sound(), cue.source(), cue.pos(), cue.volume(), cue.pitch());
+			ServerLevel level = server.getLevel(cue.dimension());
+			if (level != null) {
+				SoundCues.playAt(level, cue.sound(), cue.source(), cue.pos(), cue.volume(), cue.pitch());
 			}
 		}
 	}
@@ -205,16 +223,23 @@ public final class DigTicker {
 		}
 	}
 
-	private void checkEnteredTunnel(MinecraftServer server, ServerPlayer player, DigData data, DigConfig config) {
-		long play = GameClock.playTicks(server);
+	/**
+	 * ENTERED_TUNNEL for everyone in his tunnels now, once per occasion ({@link TunnelEntries}): each player's
+	 * cooldown runs on their own play ticks, and the friends sharing the moment ({@link PlayerWatch#sharingWith}) share
+	 * it. Returns how many times it counted.
+	 */
+	int checkEnteredTunnel(MinecraftServer server, PlayerWatch watch, List<ServerPlayer> players, DigData data, DigConfig config, Runnable trigger) {
+		List<ServerPlayer> inside = new ArrayList<>();
+		for (ServerPlayer player : players) {
+			if (watch.isTargetable(player) && insideHisTunnel(player, data)) {
+				inside.add(player);
+			}
+		}
+		if (inside.isEmpty()) {
+			return 0;
+		}
 		long cooldown = ModConfig.realTicks(config.enteredTunnelCooldownMinutes * 60);
-		if (lastEnteredPlayTick != Long.MIN_VALUE && play - lastEnteredPlayTick < cooldown) {
-			return;
-		}
-		if (insideHisTunnel(player, data)) {
-			lastEnteredPlayTick = play;
-			Attention.trigger(server, AttentionTrigger.ENTERED_TUNNEL);
-		}
+		return entries.check(inside, watch::sharingWith, uuid -> GameClock.playTicks(server, uuid), cooldown, trigger);
 	}
 
 	/** In one of his 2x2 tunnels: a cell of ours, or within a recorded CUT, or at a TUNNEL_END. */
@@ -239,14 +264,30 @@ public final class DigTicker {
 		return false;
 	}
 
-	private void trackGrowingTunnel(MinecraftServer server, ServerPlayer player, DigData data, DigConfig config) {
+	/**
+	 * The tunnel that grows: anyone near it counts as a visit; it grows (out of view of everyone) only once every
+	 * participant in its dimension is at least {@code growingLeaveDistance} from it, so it never grows with a friend
+	 * standing in it.
+	 */
+	private void trackGrowingTunnel(MinecraftServer server, List<ServerPlayer> players, DigData data, DigConfig config) {
 		GrowingTunnel tunnel = data.growing;
-		if (tunnel == null || tunnel.complete || !player.level().dimension().equals(tunnel.dimension) || tunnel.anchors.isEmpty()) {
+		if (tunnel == null || tunnel.complete || tunnel.anchors.isEmpty()) {
 			return;
 		}
+		ServerLevel level = server.getLevel(tunnel.dimension);
 		double nearest = Double.MAX_VALUE;
-		for (BlockPos anchor : tunnel.anchors) {
-			nearest = Math.min(nearest, player.position().distanceTo(Vec3.atLowerCornerOf(anchor).add(1, 1, 1)));
+		boolean anyone = false;
+		for (ServerPlayer player : players) {
+			if (player.level() != level) {
+				continue;
+			}
+			anyone = true;
+			for (BlockPos anchor : tunnel.anchors) {
+				nearest = Math.min(nearest, player.position().distanceTo(Vec3.atLowerCornerOf(anchor).add(1, 1, 1)));
+			}
+		}
+		if (level == null || !anyone) {
+			return;
 		}
 		if (nearest <= config.growingVisitRadius) {
 			if (!tunnel.visited) {
@@ -259,7 +300,7 @@ public final class DigTicker {
 		if (tunnel.visited && nearest >= config.growingLeaveDistance && day - tunnel.lastGrowDay >= config.growingMinDaysBetween) {
 			Pacing pacing = ModConfig.pacing();
 			boolean wasComplete = tunnel.complete;
-			if (tunnel.grow(player.level(), pacing.tunnelGrowthPerVisit, config.tunnelPlayerClearance, config, Services.traces(), day)) {
+			if (tunnel.grow(level, pacing.tunnelGrowthPerVisit, config.tunnelPlayerClearance, config, Services.traces(), day)) {
 				tunnel.visited = false;
 				data.changed();
 			} else if (tunnel.complete != wasComplete) {
@@ -268,20 +309,24 @@ public final class DigTicker {
 		}
 	}
 
-	private void tickTorchSession(ServerPlayer player, long now) {
-		TorchSession session = torchSession;
+	/**
+	 * This player's torches-behind-you follower: the nearest of their cave's torches that every participant here is
+	 * {@code torchesBehindDistance} past goes out, one at a time. It ends when they change dimension or time runs out.
+	 */
+	private void tickTorchSession(ServerPlayer player, List<ServerPlayer> players, long now) {
+		TorchSession session = torchSessions.get(player.getUUID());
 		if (session == null) {
 			return;
 		}
-		if (!session.player.equals(player.getUUID()) || !session.dimension.equals(player.level().dimension()) || now > session.end) {
-			torchSession = null;
+		if (!session.dimension.equals(player.level().dimension()) || now > session.end) {
+			torchSessions.remove(player.getUUID());
 			return;
 		}
 		ServerLevel level = player.level();
-		BlockPos base = DigCard.base(player).orElse(null);
+		List<BlockPos> bases = DigCard.bases(level);
 		if (now >= session.refresh) {
 			session.refresh = now + 200;
-			for (BlockPos torch : TorchCards.caveTorches(level, player.blockPosition(), 64, base)) {
+			for (BlockPos torch : TorchCards.caveTorches(level, player.blockPosition(), 64, bases)) {
 				session.torches.add(torch.asLong());
 			}
 		}
@@ -296,9 +341,9 @@ public final class DigTicker {
 			if (!level.isLoaded(torch)) {
 				continue;
 			}
-			if (!TorchCards.caveTorch(level, torch, base)) {
+			if (!TorchCards.caveTorchAwayFrom(level, torch, bases)) {
 				gone.add(packed);
-			} else if (torch.distToCenterSqr(player.position()) >= (double) behind * behind) {
+			} else if (pastEveryone(torch, level, players, behind)) {
 				candidates.add(torch);
 			}
 		}
@@ -313,8 +358,18 @@ public final class DigTicker {
 			}
 		}
 		if (session.torches.isEmpty()) {
-			torchSession = null;
+			torchSessions.remove(player.getUUID());
 		}
+	}
+
+	/** True if every participant in this level is at least {@code behind} blocks from the torch. */
+	static boolean pastEveryone(BlockPos torch, ServerLevel level, List<ServerPlayer> players, int behind) {
+		for (ServerPlayer other : players) {
+			if (other.level() == level && torch.distToCenterSqr(other.position()) < (double) behind * behind) {
+				return false;
+			}
+		}
+		return true;
 	}
 
 	static long horizontalDistSqr(BlockPos a, BlockPos b) {

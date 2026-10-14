@@ -29,7 +29,8 @@ import org.jspecify.annotations.Nullable;
  * "Under you" home cue: a chest in the base is one stack short. The stack is moved into the chest in the network
  * ({@code TraceService.moveStack}); while the network has no chest yet, it is taken out and kept in the ledger, and
  * once the chest is in, those stacks are moved into it a few per night ({@link NetworkChest#restoreLedgered}). Only
- * ordinary stackable items, never tools or gear.
+ * ordinary stackable items, never tools or gear. The base is the player's the card fired for, and the network is the
+ * one under that base (a friend's shared one too).
  */
 final class UnderYouStackCard extends DigCard {
 	static final String ID = "under_you_stack";
@@ -42,7 +43,7 @@ final class UnderYouStackCard extends DigCard {
 	@Override
 	public boolean contextFits(ServerPlayer player, ServerLevel world) {
 		Optional<BlockPos> base = base(player);
-		return base.isPresent() && data(world).network().isPresent() && baseLoaded(world, base.get()) && !playerChests(world, base.get()).isEmpty();
+		return base.isPresent() && networkOf(player).isPresent() && baseLoaded(world, base.get()) && !playerChests(world, base.get()).isEmpty();
 	}
 
 	@Override
@@ -51,7 +52,7 @@ final class UnderYouStackCard extends DigCard {
 		if (base.isEmpty() || !baseLoaded(ctx.level(), base.get())) {
 			return FireResult.NO_SPOT;
 		}
-		Network net = data(ctx.level()).network().filter(n -> n.dimension.equals(ctx.level().dimension())).orElse(null);
+		Network net = networkOf(ctx.player()).orElse(null);
 		boolean taken = takeStack(ctx.level(), base.get(), net, ctx.random(), Services.traces());
 		if (taken) {
 			data(ctx.level()).setDirty();

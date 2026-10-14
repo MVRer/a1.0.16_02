@@ -87,18 +87,26 @@ public final class CardTunnels {
 		return null;
 	}
 
-	/**
-	 * "Tunnel into your mine": finds a 2-high tunnel the player dug, at least {@code intoMineMinDistance} from
-	 * {@code playerPos}, and bores a 2x2 tunnel through its wall that leads straight away and ends in stone. Only the
-	 * breakthrough touches the player's space; the rest keeps the card clearance and never opens into a cave.
-	 */
+	/** {@link #intoMine(ServerLevel, BlockPos, List, DigConfig, int, RandomSource, TraceService)} with nobody else around. */
 	public static @Nullable Carved intoMine(ServerLevel level, BlockPos playerPos, DigConfig config, int clearance, RandomSource random,
 			TraceService traces) {
+		return intoMine(level, playerPos, List.of(), config, clearance, random, traces);
+	}
+
+	/**
+	 * "Tunnel into your mine": finds a 2-high tunnel a player dug, at least {@code intoMineMinDistance} from
+	 * {@code playerPos} and from every one of {@code others} (everyone has left it), and bores a 2x2 tunnel through
+	 * its wall that leads straight away and ends in stone. Only the breakthrough touches the player's space; the rest
+	 * keeps the card clearance and never opens into a cave.
+	 */
+	public static @Nullable Carved intoMine(ServerLevel level, BlockPos playerPos, List<BlockPos> others, DigConfig config, int clearance,
+			RandomSource random, TraceService traces) {
 		PlayerWatch watch = Services.watch();
 		List<BlockPos> dug = new ArrayList<>();
 		long minSqr = (long) config.intoMineMinDistance * config.intoMineMinDistance;
 		for (BlockPos pos : watch.dugNear(level, playerPos, 128)) {
-			if (pos.distSqr(playerPos) >= minSqr && level.isLoaded(pos) && watch.wasDugByPlayer(level, pos.above())) {
+			if (pos.distSqr(playerPos) >= minSqr && level.isLoaded(pos) && watch.wasDugByPlayer(level, pos.above())
+					&& others.stream().allMatch(other -> pos.distSqr(other) >= minSqr)) {
 				dug.add(pos);
 			}
 		}

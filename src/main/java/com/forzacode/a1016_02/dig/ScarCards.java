@@ -25,7 +25,10 @@ import net.minecraft.world.level.block.state.BlockState;
 
 import org.jspecify.annotations.Nullable;
 
-/** Dig cards that leave a scar: the tunnel that grows, the tunnel into the player's mine, stripped trees. */
+/**
+ * Dig cards that leave a scar: the tunnel that grows (one per world, toward the base of the player it first fired
+ * for), the tunnel into a player's mine, stripped trees. Each works only where every participant is away.
+ */
 final class ScarCards {
 	private ScarCards() {
 	}
@@ -105,7 +108,8 @@ final class ScarCards {
 
 	static CardTunnels.@Nullable Carved intoMine(ServerLevel level, ServerPlayer player, RandomSource random, TraceService traces) {
 		DigConfig config = DigConfig.get();
-		CardTunnels.Carved carved = CardTunnels.intoMine(level, player.blockPosition(), config, config.tunnelPlayerClearance, random, traces);
+		CardTunnels.Carved carved = CardTunnels.intoMine(level, player.blockPosition(), DigCard.everyone(level), config, config.tunnelPlayerClearance,
+				random, traces);
 		if (carved != null) {
 			DigCard.data(level).addTunnel(new DigData.CardTunnel(level.dimension(), carved.anchors(), ID_INTO_MINE, carved.siteId()));
 		}
@@ -114,7 +118,7 @@ final class ScarCards {
 
 	static final String ID_INTO_MINE = "tunnel_into_mine";
 
-	/** Leaves gone from trees the player planted (saplings they placed that grew), only while they are away. */
+	/** Leaves gone from trees a player planted (saplings they placed that grew), only while everyone is away. */
 	static final class TreesStripped extends DigCard {
 		static final String ID = "trees_stripped";
 
@@ -129,15 +133,17 @@ final class ScarCards {
 
 		@Override
 		public FireResult fire(FireContext ctx) {
-			return stripPlanted(ctx.level(), ctx.player().blockPosition(), ctx.random(), Services.traces()) > 0 ? FireResult.FIRED : FireResult.NO_SPOT;
+			List<BlockPos> away = new ArrayList<>(everyone(ctx.level()));
+			away.add(ctx.player().blockPosition());
+			return stripPlanted(ctx.level(), away, ctx.random(), Services.traces()) > 0 ? FireResult.FIRED : FireResult.NO_SPOT;
 		}
 	}
 
 	/**
 	 * Strips up to {@link DigConfig#treesPerFire} grown planted trees at least {@link DigConfig#treesAwayDistance}
-	 * from {@code playerPos} (one, then the ones near it). Returns how many were stripped.
+	 * from every one of {@code away} (one, then the ones near it). Returns how many were stripped.
 	 */
-	static int stripPlanted(ServerLevel level, BlockPos playerPos, RandomSource random, TraceService traces) {
+	static int stripPlanted(ServerLevel level, List<BlockPos> away, RandomSource random, TraceService traces) {
 		DigData data = DigCard.data(level);
 		DigConfig config = DigConfig.get();
 		PosSet planted = data.planted(level.dimension());
@@ -151,7 +157,7 @@ final class ScarCards {
 			}
 			BlockState state = level.getBlockState(pos);
 			if (state.is(BlockTags.LOGS)) {
-				if (pos.distSqr(playerPos) >= awaySqr) {
+				if (away.stream().allMatch(p -> pos.distSqr(p) >= awaySqr)) {
 					grown.add(pos);
 				}
 			} else if (!state.is(BlockTags.SAPLINGS)) {

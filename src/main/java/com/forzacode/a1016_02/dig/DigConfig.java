@@ -11,8 +11,15 @@ public final class DigConfig {
 	// --- "Under you": the network under the base ---
 	/** Tunnel length (2x2 steps) the network grows per in-game night. */
 	public int networkBlocksPerNight = 6;
-	/** Nights a base must have existed before the network starts under it. */
+	/** Nights a base must have existed (and its player been at home there) before a network starts under it. */
 	public int networkStartAfterNights = 1;
+	/**
+	 * Bases within this distance of a network's base share that network (friends in one house get one network); a
+	 * base farther from every network gets its own (blocks).
+	 */
+	public int networkShareDistance = 64;
+	/** At most this many networks per world (every base a group ever had counts). */
+	public int networkMaxPerWorld = 6;
 	/** Corridor depth below the base (blocks), unless the player's digs force it deeper. */
 	public int networkDepthBelowBase = 12;
 	/** How far the network spreads from the base (horizontal, blocks). */
@@ -27,7 +34,10 @@ public final class DigConfig {
 	public int networkShaftAfterNights = 4;
 	/** Nights of growth before the dead end for the chest is dug. */
 	public int networkChestAfterNights = 3;
-	/** A base that moves farther than this starts a new network. */
+	/**
+	 * A player's base that moves farther than this is a new base (its nights count again before a network starts under
+	 * it); stacks taken from chests this close to a network's base go into that network's chest.
+	 */
 	public int networkBaseMoveDistance = 64;
 	/** Run length of a corridor before it turns (straight runs, rare turns). */
 	public int networkRunMin = 6;
@@ -35,7 +45,7 @@ public final class DigConfig {
 	/** Chance that a corridor branches when it turns. */
 	public double networkBranchChance = 0.35;
 	public int networkMaxHeads = 4;
-	/** Chests he can take for the network: at least this far from the player and the base. */
+	/** Chests he can take for the network: at least this far from every player and from the base. */
 	public int chestSourceMinDistance = 96;
 	/** How far from the base he looks for a chest at a recorded site. */
 	public int chestSourceSiteRadius = 1000;
@@ -62,7 +72,7 @@ public final class DigConfig {
 	public int growingMinDaysBetween = 1;
 	public int intoMineLengthMin = 12;
 	public int intoMineLengthMax = 24;
-	/** The player has left a mine this far away. */
+	/** Every participant has left a mine this far away. */
 	public int intoMineMinDistance = 32;
 	public int demoTunnelLength = 16;
 
@@ -100,7 +110,10 @@ public final class DigConfig {
 	public double underYouStepStillSeconds = 3;
 
 	// --- trigger and sampling ---
-	/** ENTERED_TUNNEL fires at most once per this many real minutes. */
+	/**
+	 * ENTERED_TUNNEL fires at most once per this many real minutes of a player's own play, and once per occasion:
+	 * everyone sharing the moment (D-060) shares the cooldown.
+	 */
 	public double enteredTunnelCooldownMinutes = 10;
 	/** Explored-cave sampling: a new point when the player is this far from the last one. */
 	public int exploredSpacing = 3;

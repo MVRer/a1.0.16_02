@@ -27,7 +27,7 @@ import net.minecraft.world.phys.shapes.VoxelShape;
 import org.jspecify.annotations.Nullable;
 
 /**
- * The subject's first shelter, read from the world: which player-placed blocks make its shell, which air is its
+ * One player's first shelter (the house copy owner's), read from the world: which player-placed blocks make its shell, which air is its
  * inside, which blocks are its roof, and which blocks can be taken without opening it. "Open" cells are those a mob
  * could pass (no collision taller than half a block: air, plants, carpets, torches, water) and furniture the player
  * may move any time; doors, glass and fences close. A house is closed when no open path leads from its inside out of

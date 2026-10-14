@@ -6,7 +6,6 @@ import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 import java.util.Set;
 import java.util.function.Consumer;
 import java.util.function.Predicate;
@@ -17,7 +16,9 @@ import com.forzacode.a1016_02.core.ModConfig;
 import com.forzacode.a1016_02.core.Services;
 import com.forzacode.a1016_02.core.SiteType;
 import com.forzacode.a1016_02.core.TraceBatch;
+import com.forzacode.a1016_02.world.Bases;
 import com.forzacode.a1016_02.world.WorldConfig;
+import com.forzacode.a1016_02.world.WorldData;
 import com.forzacode.a1016_02.world.WorldSites;
 import com.forzacode.a1016_02.world.gen.ScarContext;
 import com.forzacode.a1016_02.world.gen.ScarPlanner;
@@ -25,7 +26,6 @@ import com.forzacode.a1016_02.world.gen.Terrain;
 import com.forzacode.a1016_02.world.gen.Vegetation;
 
 import net.minecraft.core.BlockPos;
-import net.minecraft.core.GlobalPos;
 import net.minecraft.core.Holder;
 import net.minecraft.resources.ResourceKey;
 import net.minecraft.server.MinecraftServer;
@@ -45,11 +45,18 @@ import net.minecraft.world.level.levelgen.structure.BoundingBox;
 import org.jspecify.annotations.Nullable;
 
 /**
- * New scars (DESIGN.md "New scar out of view"): a hill the player crossed days ago goes dead, or a grove goes
- * bare. Only in chunks the player visited and then left for {@code Pacing.newScarAwayDays} in-game days, and only
- * out of view (one {@link TraceBatch}: all of it or nothing). Edges stop on chunk lines where the player was more
- * recently, so they end on a sharp line. Protected areas ({@code Services.protectedAreas()}, the untouched grove)
- * are skipped: no candidate centered in one, and no column inside one is changed. Server thread only.
+ * New scars (DESIGN.md "New scar out of view"): a hill someone crossed days ago goes dead, or a grove goes bare.
+ * The search is around the player the card fired for (D-059: their own pacing picked it), but the rules are
+ * everyone's: only in chunks a participant visited and then nobody visited for {@code Pacing.newScarAwayDays}
+ * in-game days ({@code PlayerWatch.lastVisitDay} counts any participant), never near any known player's base, and
+ * only out of view of every player (one {@link TraceBatch}: all of it or nothing). Edges stop on chunk lines where
+ * someone was more recently, so they end on a sharp line. Protected areas ({@code Services.protectedAreas()}, the
+ * untouched grove) are skipped: no candidate centered in one, and no column inside one is changed.
+ * <p>
+ * World-wide rate: one new scar waits for its chunks at a time, and a real one (a dead hill or a bare grove, not the
+ * fake bare tree) happens at most once per {@code newScarWorldGapDays} in-game days in the whole world, recorded the
+ * tick it is applied. Three players far apart each keep their own pacing, but they never triple the world's scars.
+ * Server thread only.
  */
 public final class NewScarPlacer {
 	public static final String CAUSE = "world:new_scar";
@@ -57,7 +64,7 @@ public final class NewScarPlacer {
 	public static final TicketType TICKET = new TicketType(1200L, TicketType.FLAG_LOADING);
 	/** At most this many stale chunks are looked at per try. */
 	private static final int MAX_LOOKS = 64;
-	/** New scars keep this far (plus their radius) from the player's base. */
+	/** New scars keep this far (plus their radius) from every known player's base. */
 	private static final int BASE_CLEARANCE = 64;
 	/** Loading tickets asked for per tick while a new scar waits for its chunks. */
 	private static final int LOADS_PER_TICK = 2;
@@ -136,13 +143,21 @@ public final class NewScarPlacer {
 		return chunk -> cache.computeIfAbsent(chunk.pack(), k -> stale(visits.lastVisitDay(level, chunk), today, away));
 	}
 
-	/** {@code /a1016 world newscar now}: the subject's best stale area, rules kept. {@code report} hears how it ends. */
-	public static Outcome forceNow(MinecraftServer server, @Nullable Consumer<String> report) {
-		Optional<ServerPlayer> subject = Services.watch().subject(server);
-		if (subject.isEmpty()) {
-			return Outcome.failed("the subject is not online");
+	/** {@code /a1016 world newscar now}: the best stale area around this player, rules kept. {@code report} hears how it ends. */
+	public static Outcome forceNow(ServerPlayer player, @Nullable Consumer<String> report) {
+		return place(player, RandomSource.create(), false, Services.watch()::lastVisitDay, GameClock.day(player.level().getServer()), report);
+	}
+
+	/**
+	 * Why no real new scar may happen in the world today, or null: the last one, anywhere, is less than
+	 * {@code newScarWorldGapDays} in-game days old.
+	 */
+	public static @Nullable String rateRefusal(WorldData data, long today, WorldConfig config) {
+		long last = data.lastNewScarDay();
+		if (last != Long.MIN_VALUE && today - last < Math.max(0, config.newScarWorldGapDays)) {
+			return "the world's last new scar is from day " + last + " (at most one every " + config.newScarWorldGapDays + " in-game day(s))";
 		}
-		return place(subject.get(), RandomSource.create(), false, Services.watch()::lastVisitDay, GameClock.day(server), report);
+		return null;
 	}
 
 	/**
@@ -160,6 +175,10 @@ public final class NewScarPlacer {
 			return Outcome.failed("a new scar is already waiting for its chunks");
 		}
 		WorldConfig config = WorldConfig.get();
+		String rate = fake ? null : rateRefusal(WorldData.get(level.getServer()), today, config);
+		if (rate != null) {
+			return Outcome.failed(rate);
+		}
 		Predicate<ChunkPos> allowed = staleChunks(level, visits, today);
 		List<ChunkPos> stale = new ArrayList<>();
 		ChunkPos home = player.chunkPosition();
@@ -172,16 +191,13 @@ public final class NewScarPlacer {
 				}
 			}
 		}
-		// Never at the player's base: their own trees are another card's ("Your trees stripped").
-		Optional<BlockPos> base = Services.watch().base(player).filter(b -> b.dimension().equals(level.dimension())).map(GlobalPos::pos);
+		// Never at anyone's base: their own trees are another card's ("Your trees stripped").
+		List<BlockPos> bases = Bases.live(level.getServer()).all(level.dimension());
 		int baseClearance = BASE_CLEARANCE + config.newScarRadius;
-		if (base.isPresent()) {
-			stale.removeIf(c -> base.get().distToCenterSqr(c.getMiddleBlockX(), base.get().getY(), c.getMiddleBlockZ())
-					< (double) baseClearance * baseClearance);
-		}
+		stale.removeIf(c -> Bases.near(bases, new BlockPos(c.getMiddleBlockX(), 0, c.getMiddleBlockZ()), baseClearance));
 		if (stale.isEmpty()) {
-			return Outcome.failed("no chunk the player left " + ModConfig.pacing().newScarAwayDays + "+ in-game days ago within " + range
-					+ " chunks (away from the base)");
+			return Outcome.failed("no chunk everyone left " + ModConfig.pacing().newScarAwayDays + "+ in-game days ago within " + range
+					+ " chunks (away from every base)");
 		}
 		List<Candidate> candidates = fake ? trees(stale, random) : areas(level, stale, allowed, random);
 		if (candidates.isEmpty()) {
@@ -375,6 +391,7 @@ public final class NewScarPlacer {
 			}
 			BlockPos site = candidate.dead() ? siteOnGround(level, candidate.center()) : nearestTrunk(level, candidate.center(), radius);
 			WorldSites.record(candidate.dead() ? SiteType.DEAD_MOUNTAIN : SiteType.BARE_GROVE, level.dimension(), site, radius, null);
+			WorldData.get(level.getServer()).setLastNewScarDay(GameClock.day(level.getServer())); // the world-wide rate, this tick
 			String what = candidate.dead() ? "dead hill" : "bare grove";
 			A1016_02.LOGGER.info("[a1016] world: new scar ({}) at {} r={} ({} blocks)", what, site.toShortString(), radius, edits.size());
 			return Outcome.done("new scar: " + what + " at " + site.toShortString() + " radius " + radius + " (" + edits.size() + " blocks)");

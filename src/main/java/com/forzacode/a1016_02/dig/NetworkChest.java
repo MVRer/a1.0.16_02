@@ -32,7 +32,7 @@ import org.jspecify.annotations.Nullable;
 /**
  * Brings a real chest into the network's dead end. He never makes blocks, so it is moved with
  * {@code TraceService.move} from far away: first a chest at an unclaimed ABANDONED_BUILD or RUINED_HUT site,
- * otherwise a single chest nobody placed (a structure chest) in a loaded chunk far from the player and the base.
+ * otherwise a single chest nobody placed (a structure chest) in a loaded chunk far from every player and the base.
  * Nothing is loaded synchronously: a site chunk that is not loaded gets a short loading ticket (one chunk per try,
  * loaded in the background) and a later try, a few seconds on, takes its chest. Once it is in, the stacks the base's
  * chests lost before it came are moved into it from the ledger, a few per night ({@link #restoreLedgered}).
@@ -164,7 +164,7 @@ public final class NetworkChest {
 				}
 			}
 		}
-		BlockPos center = ctx.playerPos() != null ? ctx.playerPos() : net.base;
+		BlockPos center = ctx.players().isEmpty() ? net.base : ctx.players().getFirst();
 		int maxR = level.getServer().getPlayerList().getViewDistance();
 		int minR = Math.max(1, minDist >> 4);
 		for (int r = minR; r <= maxR && found.size() < 8; r++) {
@@ -205,8 +205,10 @@ public final class NetworkChest {
 
 	private static boolean farEnough(NetworkGrower.Ctx ctx, BlockPos pos, int minDist) {
 		long min = (long) minDist * minDist;
-		if (ctx.playerPos() != null && pos.distSqr(ctx.playerPos()) < min) {
-			return false;
+		for (BlockPos player : ctx.players()) {
+			if (pos.distSqr(player) < min) {
+				return false; // never from under anyone's nose
+			}
 		}
 		return pos.distSqr(ctx.net().base) >= min;
 	}

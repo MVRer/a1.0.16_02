@@ -2,6 +2,7 @@ package com.forzacode.a1016_02.world;
 
 import java.util.List;
 import java.util.Optional;
+import java.util.UUID;
 
 import com.forzacode.a1016_02.world.sig.HouseCopier;
 import com.forzacode.a1016_02.world.sig.HouseCopyState;
@@ -10,7 +11,8 @@ import net.minecraft.core.GlobalPos;
 import net.minecraft.server.MinecraftServer;
 
 /**
- * The copy of the subject's first shelter ("Your house, elsewhere", D-005), for the ending workstream. Every block
+ * The copy of one player's first shelter ("Your house, elsewhere", D-005), for the ending workstream. Whose house it
+ * is (D-061) is the {@value #OWNER_KEY} owner, chosen once by world and never changed ({@link #owner}). Every block
  * in the copy was moved there through {@code TraceService.move}: from the real house (ledger cause
  * {@value #CAUSE}) or, once {@link #finish} ran, buried blocks from the ground near the copy ({@value #CAUSE_LOCAL}).
  * Ending D's undo moves them back from the ledger; {@link #moved} lists the same moves. Server thread only.
@@ -20,6 +22,8 @@ public final class HouseCopyApi {
 	public static final String CAUSE = HouseCopier.CAUSE;
 	/** Ledger cause of the buried blocks the finish moved from near the copy. */
 	public static final String CAUSE_LOCAL = HouseCopier.CAUSE_LOCAL;
+	/** The stored-owner key (D-061) of the house the copy copies; read it with {@code PlayerWatch.owner}. */
+	public static final String OWNER_KEY = HouseCopier.OWNER_KEY;
 
 	private HouseCopyApi() {
 	}
@@ -55,6 +59,23 @@ public final class HouseCopyApi {
 	/** The middle of the copy (where Ending B's final death happens), once its site is picked. */
 	public static Optional<GlobalPos> site(MinecraftServer server) {
 		return HouseCopier.site(server);
+	}
+
+	/**
+	 * The house the copy copies: a cell inside the real house (its lowest floor cell nearest the middle), in its
+	 * dimension, from the moment the house is captured (before the copy site is picked). Empty while there is no copy.
+	 * The house stays where it was captured, even after its owner leaves or moves their base.
+	 */
+	public static Optional<GlobalPos> realHouse(MinecraftServer server) {
+		return HouseCopier.realHouse(server);
+	}
+
+	/**
+	 * Whose house the copy copies: the stored {@value #OWNER_KEY} owner, else (a copy from before multiplayer, whose
+	 * owner is stored once that player is the only one online) its first known player. Empty before anything is chosen.
+	 */
+	public static Optional<UUID> owner(MinecraftServer server) {
+		return HouseCopier.owner(server);
 	}
 
 	/** Every block moved into the copy so far, oldest first: from, to, the block, and whether it came from near the copy. */

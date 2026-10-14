@@ -15,6 +15,7 @@ import com.forzacode.a1016_02.core.SiteType;
 import com.forzacode.a1016_02.core.Stage;
 import com.forzacode.a1016_02.core.Tier;
 import com.forzacode.a1016_02.core.TraceBatch;
+import com.forzacode.a1016_02.world.Bases;
 import com.forzacode.a1016_02.world.WorldConfig;
 import com.forzacode.a1016_02.world.WorldData;
 import com.forzacode.a1016_02.world.WorldSites;
@@ -27,8 +28,8 @@ import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.levelgen.structure.BoundingBox;
 
 /**
- * "Emptied house" (MAJOR, Proximity): an abandoned build the player has visited is cleared inside while they are
- * away. Walls, roof and door stay; every block inside goes (the chest with its contents too, kept in the ledger).
+ * "Emptied house" (MAJOR, Proximity): an abandoned build anyone has visited is cleared inside while every
+ * participant is away from it. Walls, roof and door stay; every block inside goes (the chest with its contents too, kept in the ledger).
  * The build becomes an EMPTIED_HOUSE site, and its ABANDONED_BUILD site is claimed as {@value #CLAIM} so no
  * fragment is put in a chest that is gone.
  */
@@ -79,7 +80,7 @@ public final class EmptiedHouseCard implements EventCard {
 		return emptyNearest(ctx.player()).isPresent() ? FireResult.FIRED : FireResult.NO_SPOT;
 	}
 
-	/** Empties the nearest visited, unclaimed abandoned build the player is away from. Returns its site. */
+	/** Empties the nearest visited, unclaimed abandoned build every participant is away from. Returns its site. */
 	public static Optional<BlockPos> emptyNearest(ServerPlayer player) {
 		ServerLevel level = player.level();
 		WorldConfig config = WorldConfig.get();
@@ -94,10 +95,8 @@ public final class EmptiedHouseCard implements EventCard {
 			if (Services.watch().lastVisitDay(level, ChunkPos.containing(site.pos())) < 0) {
 				continue; // never visited
 			}
-			double dx = player.getX() - site.pos().getX();
-			double dz = player.getZ() - site.pos().getZ();
-			if (dx * dx + dz * dz < (double) config.emptiedHouseAwayBlocks * config.emptiedHouseAwayBlocks) {
-				continue; // only while the player is away
+			if (Bases.near(Bases.live(level.getServer()).positionsIn(level), site.pos(), config.emptiedHouseAwayBlocks)) {
+				continue; // only while everyone is away (the player and any friend)
 			}
 			int removed = empty(level, interior.get());
 			if (removed == 0) {

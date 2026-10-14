@@ -1,6 +1,8 @@
 package com.forzacode.a1016_02.dig;
 
 import com.forzacode.a1016_02.core.Director;
+import com.forzacode.a1016_02.core.HerobrineEvents;
+import com.forzacode.a1016_02.core.Services;
 
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
@@ -24,6 +26,13 @@ public final class DigInit {
 		Director.register(new UnderYouStackCard());
 		DigCommands.register();
 		ServerTickEvents.END_SERVER_TICK.register(DigTicker.INSTANCE::tick);
+		// Sessions (D-062.4, D-062.5): a start remembers the player's base; a stop ends what ran for that player only.
+		HerobrineEvents.PARTICIPATION.register((server, player, participating) -> {
+			Services.watch().participant(server, player).ifPresent(Bases.live(server)::remember);
+			if (!participating) {
+				DigTicker.INSTANCE.onStop(player);
+			}
+		});
 		ServerLifecycleEvents.SERVER_STOPPED.register(server -> DigTicker.INSTANCE.clear());
 	}
 }

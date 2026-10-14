@@ -14,8 +14,9 @@ import org.jspecify.annotations.Nullable;
 
 /**
  * The world's signature moments and the lone redstone torches, kept in {@link WorldData}: what already happened
- * (each signature happens at most once per world), the house copy as it grows, and the cave spots the subject
- * explored. Server thread only; every change marks {@link WorldData} dirty.
+ * (each signature happens at most once per world), the house copy as it grows, and the cave spots any participant
+ * explored (they are about places, not players, so a save from before multiplayer needs nothing new). Server thread
+ * only; every change marks {@link WorldData} dirty.
  */
 public final class SignatureData {
 	/**
@@ -40,7 +41,7 @@ public final class SignatureData {
 		).apply(i, CrossRow::new));
 	}
 
-	/** One lone redstone torch (D-033) or one cave spot the subject stood in, with the in-game day. */
+	/** One lone redstone torch (D-033) or one cave spot a participant stood in, with the in-game day. */
 	public record Spot(GlobalPos pos, long day) {
 		static final Codec<Spot> CODEC = RecordCodecBuilder.create(i -> i.group(
 				GlobalPos.CODEC.fieldOf("pos").forGetter(Spot::pos),
@@ -147,7 +148,7 @@ public final class SignatureData {
 	}
 
 	/**
-	 * Remembers that the subject stood at a cave spot today: a spot within {@code merge} blocks is moved to today,
+	 * Remembers that a participant stood at a cave spot today: a spot within {@code merge} blocks is moved to today,
 	 * otherwise a new one is added and the oldest go past {@code max}.
 	 */
 	public void visitCave(GlobalPos pos, long day, int merge, int max) {

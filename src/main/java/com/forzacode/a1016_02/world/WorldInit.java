@@ -2,6 +2,8 @@ package com.forzacode.a1016_02.world;
 
 import com.forzacode.a1016_02.A1016_02;
 import com.forzacode.a1016_02.core.Director;
+import com.forzacode.a1016_02.core.HerobrineEvents;
+import com.forzacode.a1016_02.core.Services;
 import com.forzacode.a1016_02.world.gen.ScarContext;
 import com.forzacode.a1016_02.world.gen.ScarFeature;
 import com.forzacode.a1016_02.world.live.EmptiedHouseCard;
@@ -45,6 +47,11 @@ public final class WorldInit {
 		BiomeModifications.addFeature(BiomeSelectors.foundInOverworld(), GenerationStep.Decoration.VEGETAL_DECORATION, SCARS);
 
 		WorldCommands.register();
+		// Sessions (D-062.4): remember a player's base when they start or stop taking part (a leave is still listed here).
+		HerobrineEvents.PARTICIPATION.register((server, player, participating) -> {
+			Bases bases = Bases.live(server);
+			Services.watch().participant(server, player).ifPresent(bases::remember);
+		});
 		Director.register(new NewScarCard());
 		Director.register(new LightOnMountainCard());
 		Director.register(new LoneLightNearBaseCard());

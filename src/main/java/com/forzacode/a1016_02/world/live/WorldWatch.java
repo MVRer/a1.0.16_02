@@ -1,7 +1,9 @@
 package com.forzacode.a1016_02.world.live;
 
+import java.util.HashSet;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 
 import com.forzacode.a1016_02.A1016_02;
 import com.forzacode.a1016_02.core.Attention;
@@ -10,6 +12,7 @@ import com.forzacode.a1016_02.core.GameClock;
 import com.forzacode.a1016_02.core.Services;
 import com.forzacode.a1016_02.core.SiteRegistry;
 import com.forzacode.a1016_02.core.SiteType;
+import com.forzacode.a1016_02.world.Bases;
 import com.forzacode.a1016_02.world.WorldConfig;
 import com.forzacode.a1016_02.world.WorldData;
 
@@ -22,17 +25,18 @@ import net.minecraft.tags.BlockTags;
 import net.minecraft.world.level.block.state.BlockState;
 
 /**
- * The attention triggers world owns (D-017) and the light on the mountain's clock:
+ * The attention triggers world owns (D-017), the light on the mountain's clock, and the bases world remembers:
  * <ul>
  * <li>{@code DUG_INTO_PYRAMID}: a player breaks a block of a recorded ocean pyramid (once per pyramid).</li>
- * <li>{@code REPLANTED_GROVE}: the subject places leaves or saplings in a bare grove (at most once per grove per day).</li>
- * <li>{@code LEFT_GROVES_ALONE}: the subject stood in a bare grove and did not replant it for
- * {@code leftGrovesDays} in-game days (once per grove).</li>
+ * <li>{@code REPLANTED_GROVE}: anyone places leaves or saplings in a bare grove (at most once per grove per day).</li>
+ * <li>{@code LEFT_GROVES_ALONE}: someone stood in a bare grove and nobody replanted it for {@code leftGrovesDays}
+ * in-game days (once per grove).</li>
  * </ul>
- * Server thread only.
+ * Attention is one value for the world (D-058), so each grove is looked at once a pass however many participants
+ * stand near it. Every pass also remembers each participant's base ({@link Bases#rememberAll}). Server thread only.
  */
 public final class WorldWatch {
-	/** How far from the subject bare groves are watched. */
+	/** How far from a participant bare groves are watched. */
 	private static final int GROVE_SEARCH = 256;
 	/** Replanting is looked for this far around the grove's center at most (placedNear is a cube). */
 	private static final int GROVE_REACH = 64;
@@ -47,6 +51,7 @@ public final class WorldWatch {
 			LightOnMountainCard.tick(server);
 		}
 		if (server.getTickCount() % every == 0) {
+			Bases.live(server).rememberAll();
 			watchGroves(server);
 		}
 	}
@@ -81,16 +86,16 @@ public final class WorldWatch {
 		WorldData data = WorldData.get(server);
 		long today = GameClock.day(server);
 		int leftDays = WorldConfig.get().leftGrovesDays;
-		Optional<ServerPlayer> subject = Services.watch().subject(server);
-		if (subject.isPresent()) {
-			ServerPlayer player = subject.get();
+		Set<GlobalPos> looked = new HashSet<>();
+		for (ServerPlayer player : Services.watch().participants(server)) {
 			ServerLevel level = player.level();
 			List<SiteRegistry.Site> groves = Services.sites().find(SiteType.BARE_GROVE, GlobalPos.of(level.dimension(), player.blockPosition()), GROVE_SEARCH);
 			for (SiteRegistry.Site site : groves) {
+				if (!looked.add(site.globalPos())) {
+					continue; // a nearer participant already looked at it this pass
+				}
 				int reach = Math.min(site.size(), GROVE_REACH);
-				double dx = player.getX() - site.pos().getX();
-				double dz = player.getZ() - site.pos().getZ();
-				double dist = Math.sqrt(dx * dx + dz * dz);
+				double dist = nearest(server, level, site.pos());
 				Optional<WorldData.Grove> known = data.grove(site.globalPos());
 				if (known.isEmpty()) {
 					if (dist <= site.size()) {
@@ -121,6 +126,19 @@ public final class WorldWatch {
 				A1016_02.LOGGER.debug("[a1016] world: the bare grove at {} was left alone", grove.site().pos().toShortString());
 			}
 		}
+	}
+
+	/** The horizontal distance from {@code pos} to the nearest participant in this level. */
+	private static double nearest(MinecraftServer server, ServerLevel level, BlockPos pos) {
+		double best = Double.MAX_VALUE;
+		for (ServerPlayer player : Services.watch().participants(server)) {
+			if (player.level() == level) {
+				double dx = player.getX() - pos.getX();
+				double dz = player.getZ() - pos.getZ();
+				best = Math.min(best, Math.sqrt(dx * dx + dz * dz));
+			}
+		}
+		return best;
 	}
 
 	/** Player-placed leaves and saplings still standing around the grove's center. */

@@ -5,6 +5,7 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
+import java.util.UUID;
 import java.util.function.Consumer;
 
 import com.forzacode.a1016_02.A1016_02;
@@ -17,6 +18,7 @@ import com.forzacode.a1016_02.core.SiteType;
 import com.forzacode.a1016_02.core.TraceBatch;
 import com.forzacode.a1016_02.core.TraceService;
 import com.forzacode.a1016_02.core.WorldProfile;
+import com.forzacode.a1016_02.world.Bases;
 import com.forzacode.a1016_02.world.SignatureData;
 import com.forzacode.a1016_02.world.WorldConfig;
 import com.forzacode.a1016_02.world.WorldData;
@@ -52,13 +54,18 @@ import net.minecraft.world.level.levelgen.structure.BoundingBox;
 import org.jspecify.annotations.Nullable;
 
 /**
- * "Still burning" (SIGNATURE, D-004): an abandoned build about 2000 blocks from the subject, in chunks nobody has
- * visited or loaded, with a lit furnace smelting something ordinary. Furnaces only tick while their chunk ticks,
- * so it carries fuel and input for {@code stillBurningLitTicks} of burning: still lit when the player walks up.
+ * "Still burning" (SIGNATURE, D-004): an abandoned build about 2000 blocks from the player the card fired for (any
+ * participant from the debug command), and at least that far from every participant in the overworld, in chunks
+ * nobody has visited or loaded, with a lit furnace smelting something ordinary. Furnaces only tick while their chunk
+ * ticks, so it carries fuel and input for {@code stillBurningLitTicks} of burning: still lit when the player walks up.
  * When the profile rolled F21 the emptied house is built beside it, recorded as EMPTIED_HOUSE with the furnace in
  * reach of lore's F21 placement, and {@value #LORE_FLAG} is set. Everything is "left by others" (one
- * {@link TraceBatch}, the furnace with its block entity data). At most once per world, whatever triggers it: never
- * again once it stands, nor once lore left F21's furnace itself. Server thread only.
+ * {@link TraceBatch}, the furnace with its block entity data). With F21 the camp is measured from the story's home
+ * (the {@code story:first_blocks} owner's base, where lore measures F21 from). At most once per world, whatever
+ * triggers it: never again once it stands, nor once lore left F21's furnace itself. One search runs at a time and
+ * {@code stillBurningPending} is stored the tick it starts, so a second player's card in the same tick is refused;
+ * the camp is recorded in the same tick its batch commits. The search keeps the player's UUID, never the player
+ * (D-062.1): if they leave, it goes on from any participant, and waits while nobody takes part. Server thread only.
  */
 public final class StillBurning {
 	public static final String ID = "signature_still_burning";
@@ -96,13 +103,15 @@ public final class StillBurning {
 	private static final class Search {
 		final List<Candidate> candidates;
 		final boolean f21;
+		final @Nullable UUID target;
 		final @Nullable Consumer<String> report;
 		int index;
 		long candidateStarted;
 
-		Search(List<Candidate> candidates, boolean f21, @Nullable Consumer<String> report, long now) {
+		Search(List<Candidate> candidates, boolean f21, @Nullable UUID target, @Nullable Consumer<String> report, long now) {
 			this.candidates = candidates;
 			this.f21 = f21;
+			this.target = target;
 			this.report = report;
 			this.candidateStarted = now;
 		}
@@ -110,6 +119,8 @@ public final class StillBurning {
 
 	private static @Nullable Search search;
 	private static long retryAt;
+	/** Whose card the search that found no spot was for: the retry measures from them again while they take part. */
+	private static @Nullable UUID retryFor;
 
 	private StillBurning() {
 	}
@@ -229,10 +240,11 @@ public final class StillBurning {
 	// --- live ---
 
 	/**
-	 * Starts the camp: checks once-per-world and (unless {@code forced}) the profile, then looks for the spot in
-	 * the background. {@code report} hears where it was built.
+	 * Starts the camp for {@code target} (the player the card fired for; null: any participant): checks once-per-world
+	 * and (unless {@code forced}) the profile, then looks for the spot in the background. {@code report} hears where
+	 * it was built.
 	 */
-	public static Outcome start(MinecraftServer server, boolean forced, @Nullable Consumer<String> report) {
+	public static Outcome start(MinecraftServer server, @Nullable UUID target, boolean forced, @Nullable Consumer<String> report) {
 		SignatureData data = WorldData.get(server).signatures();
 		HerobrineState state = HerobrineState.get(server);
 		String no = refusal(data, state.hasFlag(LORE_FLAG));
@@ -246,10 +258,10 @@ public final class StillBurning {
 			return Outcome.failed("the camp is already being placed");
 		}
 		data.setStillBurningPending(true);
-		search = newSearch(server, report);
+		search = newSearch(server, target, report);
 		retryAt = 0;
 		if (search == null) {
-			return Outcome.scheduled("the camp waits for the subject to be online");
+			return Outcome.scheduled("the camp waits for someone to take part");
 		}
 		return Outcome.scheduled(String.format(Locale.ROOT, "looking at %d unvisited spot(s) %s out%s", search.candidates.size(),
 				search.f21 ? "within " + WorldConfig.get().stillBurningF21MaxFromBase + " of the base" : "about " + WorldConfig.get().stillBurningMinBlocks
@@ -273,7 +285,7 @@ public final class StillBurning {
 			if (now < retryAt) {
 				return;
 			}
-			search = newSearch(server, null);
+			search = newSearch(server, retryFor, null);
 			if (search == null) {
 				retryAt = now + ModConfig.realTicks(WorldConfig.get().stillBurningRetryMinutes * 60);
 				return;
@@ -282,6 +294,7 @@ public final class StillBurning {
 		Search s = search;
 		ServerLevel level = server.overworld();
 		if (s.index >= s.candidates.size()) {
+			retryFor = s.target;
 			finish(s, "no spot for the camp among " + s.candidates.size() + " candidate(s); trying again later");
 			retryAt = now + ModConfig.realTicks(WorldConfig.get().stillBurningRetryMinutes * 60);
 			return;
@@ -293,7 +306,7 @@ public final class StillBurning {
 			}
 			return;
 		}
-		Camp camp = tryCandidate(level, c, s.f21);
+		Camp camp = tryCandidate(level, c, s.f21, Bases.live(server).positionsIn(level));
 		if (camp == null) {
 			next(s, now);
 			return;
@@ -325,11 +338,15 @@ public final class StillBurning {
 	public static void clear() {
 		search = null;
 		retryAt = 0;
+		retryFor = null;
 	}
 
-	/** Checks a loaded candidate against the real ground and builds there. */
-	private static @Nullable Camp tryCandidate(ServerLevel level, Candidate c, boolean f21) {
+	/** Checks a loaded candidate against the real ground and where everyone is now, and builds there. */
+	private static @Nullable Camp tryCandidate(ServerLevel level, Candidate c, boolean f21, List<BlockPos> everyone) {
 		WorldConfig config = WorldConfig.get();
+		if (!Bases.farFromAll(everyone, new BlockPos(c.x(), 0, c.z()), awayFromEveryone(f21, config))) {
+			return null; // somebody walked toward it while it loaded: nobody for 2000 blocks
+		}
 		LiveTerrain terrain = new LiveTerrain(level);
 		Frame f = new Frame(c.x(), 0, c.z(), c.facing());
 		int floor = terrain.ground(c.x(), c.z());
@@ -360,29 +377,41 @@ public final class StillBurning {
 		return build(level, plan, Services.traces(), SiteSink.LIVE);
 	}
 
-	/** The candidate camps for the subject now, best first, or null if the subject is not online. */
-	private static @Nullable Search newSearch(MinecraftServer server, @Nullable Consumer<String> report) {
-		Optional<ServerPlayer> subject = Services.watch().subject(server);
-		if (subject.isEmpty()) {
+	/**
+	 * The candidate camps now, best first, measured from {@code target} (fresh lookup; if they are gone, the first
+	 * participant), or null while nobody takes part. With F21 they are also within reach of the story's home.
+	 */
+	private static @Nullable Search newSearch(MinecraftServer server, @Nullable UUID target, @Nullable Consumer<String> report) {
+		Bases bases = Bases.live(server);
+		ServerPlayer player = target == null ? null : bases.watch().participant(server, target).orElse(null);
+		if (player == null) {
+			player = bases.participants().stream().findFirst().orElse(null);
+		}
+		if (player == null) {
 			return null;
 		}
 		ServerLevel level = server.overworld();
-		ServerPlayer player = subject.get();
 		BlockPos from = player.level() == level ? player.blockPosition() : level.getRespawnData().pos();
-		BlockPos base = Services.watch().base(player).filter(b -> b.dimension().equals(level.dimension())).map(GlobalPos::pos).orElse(from);
-		boolean f21 = withF21(HerobrineState.get(server).profile());
-		List<Candidate> candidates = candidates(level, from, base, f21, WorldConfig.get(), RandomSource.create(), Services.watch()::lastVisitDay);
-		return new Search(candidates, f21, report, server.getTickCount());
+		boolean f21 = withF21(bases.state().profile());
+		BlockPos base = f21 ? bases.storyHome(level.dimension()).orElse(from) : from;
+		List<Candidate> candidates = candidates(level, from, base, bases.positionsIn(level), f21, WorldConfig.get(), RandomSource.create(),
+				bases.watch()::lastVisitDay);
+		return new Search(candidates, f21, player.getUUID(), report, server.getTickCount());
+	}
+
+	/** How far every participant stays from a camp: the band's near edge ("nobody for 2000 blocks"). */
+	static int awayFromEveryone(boolean f21, WorldConfig config) {
+		return f21 ? config.stillBurningF21MinBlocks : config.stillBurningMinBlocks;
 	}
 
 	/**
 	 * Spots for the camp from the noise (nothing is loaded): dry, flat, not dense woods, in chunks never visited
 	 * and not loaded now. Without F21 they are {@code stillBurningMin..MaxBlocks} from {@code from}; with F21 within
 	 * {@code stillBurningF21MaxFromBase} of the base and at least {@code stillBurningF21MinBlocks} from {@code from},
-	 * farthest first.
+	 * farthest first. Every one of them is at least that near edge from each of {@code everyone} too.
 	 */
-	static List<Candidate> candidates(ServerLevel level, BlockPos from, BlockPos base, boolean f21, WorldConfig config, RandomSource random,
-			NewScarPlacer.VisitLookup visits) {
+	static List<Candidate> candidates(ServerLevel level, BlockPos from, BlockPos base, List<BlockPos> everyone, boolean f21, WorldConfig config,
+			RandomSource random, NewScarPlacer.VisitLookup visits) {
 		Terrain terrain = noise(level);
 		List<Candidate> found = new ArrayList<>();
 		int wanted = Math.max(1, config.stillBurningCandidates);
@@ -399,6 +428,9 @@ public final class StillBurning {
 			} else {
 				d = Mth.nextInt(random, config.stillBurningMinBlocks, Math.max(config.stillBurningMinBlocks, config.stillBurningMaxBlocks));
 				center = from.offset(Mth.floor(Math.cos(angle) * d), 0, Mth.floor(Math.sin(angle) * d));
+			}
+			if (!Bases.farFromAll(everyone, center, awayFromEveryone(f21, config))) {
+				continue;
 			}
 			Direction facing = Direction.from2DDataValue(random.nextInt(4));
 			Frame f = new Frame(center.getX(), 0, center.getZ(), facing);
