@@ -16,7 +16,8 @@
 			"com.forzacode.a1016_02.accident.AccidentGameTests",
 			"com.forzacode.a1016_02.ending.EndingGameTests",
 			"com.forzacode.a1016_02.debug.DebugGameTests",
-			"com.forzacode.a1016_02.atmosphere.R2FogReviewTests"
+			"com.forzacode.a1016_02.atmosphere.R2FogReviewTests",
+			"com.forzacode.a1016_02.entity.R2SightingReviewTests"
 		]
 	},
 	"depends": {

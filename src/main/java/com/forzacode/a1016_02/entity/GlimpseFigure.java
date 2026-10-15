@@ -16,7 +16,6 @@ import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.entity.EntityDimensions;
-import net.minecraft.world.level.LightLayer;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
 
@@ -30,7 +29,9 @@ import net.minecraft.world.phys.Vec3;
  * <li>the spot is loaded and entity-ticking, with room around it ({@link HimEntity#EDGE_TICK_MARGIN}), so he never
  * freezes or goes on his first tick;</li>
  * <li>two cells of air on a solid floor, room for his body;</li>
- * <li>block light at his feet and at his eyes at most {@code glimpseMaxLight} (3): past the last torch;</li>
+ * <li>the raw brightness at his feet and at his eyes at most {@code glimpseMaxLight} (3): block light, and sky light
+ * less the level's sky darkening (vanilla's {@code getMaxLocalRawBrightness}), so past the last torch and never in the
+ * daylight at the foot of a shaft or a hillside mouth;</li>
  * <li>at least {@code glimpseMinDistance} (14) from every player in the level (from their eyes to his feet, in 3D;
  * the surface sighting's minimum distance does not apply underground);</li>
  * <li>out of every player's view by the same rule as every spawn ({@link Watchers#sees}), spectators included.</li>
@@ -173,12 +174,25 @@ public final class GlimpseFigure implements Figure {
 		return level.noCollision(body);
 	}
 
-	/** Block light at his feet and at his eyes at most {@code max} ({@link GlimpseRules#darkEnough}). */
+	/**
+	 * The raw brightness at his feet and at his eyes at most {@code max} ({@link GlimpseRules#darkEnough}): the larger of
+	 * block light and sky light less the level's sky darkening ({@link #light}). A torch lights him, and so does the
+	 * sun down a shaft or at a tunnel's mouth (sky light 15 at noon; even at midnight the open sky gives 4).
+	 */
 	static boolean dark(ServerLevel level, Vec3 feet, int max) {
 		EntityDimensions size = ModEntities.HIM.getDimensions();
-		int atFeet = level.getBrightness(LightLayer.BLOCK, BlockPos.containing(feet.x, feet.y + 1.0E-4, feet.z));
-		int atEyes = level.getBrightness(LightLayer.BLOCK, BlockPos.containing(feet.x, feet.y + size.eyeHeight(), feet.z));
+		int atFeet = light(level, BlockPos.containing(feet.x, feet.y + 1.0E-4, feet.z));
+		int atEyes = light(level, BlockPos.containing(feet.x, feet.y + size.eyeHeight(), feet.z));
 		return GlimpseRules.darkEnough(atFeet, atEyes, max);
+	}
+
+	/**
+	 * The light he would stand in there, 0 to 15: vanilla's raw brightness ({@code getMaxLocalRawBrightness}), the
+	 * larger of block light and sky light less the level's sky darkening ({@code getSkyDarken}, 0 at noon, up to 11 at
+	 * night).
+	 */
+	static int light(ServerLevel level, BlockPos pos) {
+		return level.getMaxLocalRawBrightness(pos);
 	}
 
 	/** True if every watcher's eyes are at least {@code min} from his feet, in 3D (D-073: 14 blocks from every player). */
