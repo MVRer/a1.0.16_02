@@ -45,7 +45,7 @@ import net.minecraft.world.phys.Vec3;
  * {@link DirectorSim#runGroup}), or players of its own that never join the server. Nothing here touches the live
  * director's memory or the world's state. {@link DirectorGameTests} extends this.
  */
-public class DirectorMultiplayerTests {
+public class DirectorMultiplayerTests extends DirectorV12Tests {
 	private static final UUID ANA = new UUID(0xA1L, 1L);
 	private static final UUID BEN = new UUID(0xBEL, 2L);
 	private static final List<Long> SEEDS = DirectorApi.tuningSeeds();
@@ -533,7 +533,10 @@ public class DirectorMultiplayerTests {
 		helper.succeed();
 	}
 
-	/** Every limit held, and the felt Proximity minors per hour from {@code meet} on are at least 0.7 times solo. */
+	/**
+	 * Every limit held, and the felt Proximity minors per hour from {@code meet} on are at least 0.7 times solo (the deck
+	 * never deadlocks), never past the group factor's 1.7.
+	 */
 	private static void apartThenTogether(GameTestHelper helper, String what, List<CardInfo> deck, DirectorSim.Rates solo, List<DirectorSim.Group> groups,
 			long meet) {
 		String at = what + ", apart then together: ";
@@ -558,7 +561,7 @@ public class DirectorMultiplayerTests {
 		double together = ticks <= 0 ? 0 : minors / (ticks / (double) hour);
 		A1016_02.LOGGER.info("[a1016] director {}, apart then together: {} minors/h together (solo {})", what, String.format(Locale.ROOT, "%.3f", together),
 				String.format(Locale.ROOT, "%.3f", solo.minorsPerHour()));
-		assertNear(helper, at + "felt minors/h together", together, solo.minorsPerHour(), 0.7, 1.25);
+		assertNear(helper, at + "felt minors/h together", together, solo.minorsPerHour(), 0.7, 1.7);
 	}
 
 	/**
@@ -629,10 +632,13 @@ public class DirectorMultiplayerTests {
 
 	/**
 	 * Two players always together: both feel exactly the same moments, each one's felt timeline keeps every solo
-	 * hard limit, and the pair together feels about what one player alone does (never far above it).
+	 * hard limit, and the pair rolls {@code groupRateFactor} (1.5) solo rates between them (D-074): Traces' ambients,
+	 * which no hard gap holds back, come 1.2 to 1.7 times as often as alone. The minors stay near one player's (at least
+	 * it, never past the factor): each one's 15-minute minor gap and tension quiets hold for everything they feel
+	 * (D-060.3), and those bind before the factor does. Majors are scheduled, not rolled, so they stay about one player's.
 	 */
 	@GameTest(maxTicks = 2000)
-	public void twoPlayersTogetherNeverFeelMoreThanOne(GameTestHelper helper) {
+	public void twoPlayersTogetherShareOneAndAHalfRates(GameTestHelper helper) {
 		List<CardInfo> deck = DirectorTestSupport.registryDeck();
 		long shared = 0;
 		for (Tempo tempo : Tempo.values()) {
@@ -653,9 +659,9 @@ public class DirectorMultiplayerTests {
 					helper.assertTrue(hard.isEmpty(), at + "seed " + player.params.seed + ": " + hard);
 				}
 			}
-			assertNear(helper, at + "felt minors/h", felt.minorsPerHour(), solo.minorsPerHour(), 0.7, 1.25);
+			assertNear(helper, at + "felt minors/h", felt.minorsPerHour(), solo.minorsPerHour(), 0.95, 1.7);
 			assertNear(helper, at + "felt majors/h", felt.majorsPerHour(), solo.majorsPerHour(), 0.7, 1.25);
-			assertNear(helper, at + "felt Traces ambients/h", felt.tracesAmbientsPerHour(), solo.tracesAmbientsPerHour(), 0.7, 1.25);
+			assertNear(helper, at + "felt Traces ambients/h", felt.tracesAmbientsPerHour(), solo.tracesAmbientsPerHour(), 1.2, 1.7);
 		}
 		helper.assertTrue(shared > 1000, "only " + shared + " shared moments: the test proved nothing");
 		helper.succeed();

@@ -24,8 +24,14 @@ import net.minecraft.nbt.ListTag;
  * lives in {@code HerobrineState.tension(uuid)}. A moment felt from someone else's card (D-060.3) is recorded here too.
  * Fixed in size whatever happens (the history is capped), and nothing in it grows or runs while the player is away.
  * Plain data; {@link DirectorBrain} changes it, {@link DirectorMemory} stores it.
+ *
+ * <p>Rules versions (D-075): {@link #rulesVersion} is the director's rules ({@link WorldMemory#RULES_VERSION}) this
+ * pacing's session minor rate and major slot were rolled under. One saved before v1.2 reads as 0 and rolls both again
+ * at its next session ({@link DirectorBrain#onJoin}).
  */
 public final class PacingMemory {
+	/** The rules this pacing was last rolled under; 0 for one saved before v1.2. */
+	int rulesVersion = WorldMemory.RULES_VERSION;
 	/** Day ticks when this player first took part: their own first in-game day (D-011's "no major on day 0"). */
 	long firstDayTicks;
 	/** This player's clock at their last time step (tension decay). */
@@ -49,6 +55,8 @@ public final class PacingMemory {
 	final Map<CardTag, Long> lastTag = new EnumMap<>(CardTag.class);
 	long lastMajorOrSignature = DirectorMemory.NEVER;
 	int aloneAmbientCount;
+	/** Moments (own and felt, never forced) in this player's own first hour of play (D-070's cap). */
+	int firstHourFires;
 	long sightingDay = -1;
 	int sightingsThatDay;
 
@@ -107,6 +115,20 @@ public final class PacingMemory {
 		return firstDayTicks;
 	}
 
+	public int rulesVersion() {
+		return rulesVersion;
+	}
+
+	/** This player's clock at which their next major slot is due, or -1 if none is scheduled. */
+	public long nextMajorDue() {
+		return nextMajorDue;
+	}
+
+	/** Minors per hour rolled for this session (Proximity on), or -1 before the first session. */
+	public double sessionMinorRate() {
+		return sessionMinorRate;
+	}
+
 	/** This player's clock when a card with this tag last fired for them or was felt by them, or {@link DirectorMemory#NEVER}. */
 	public long lastTagFire(CardTag tag) {
 		return lastTag.getOrDefault(tag, DirectorMemory.NEVER);
@@ -136,6 +158,7 @@ public final class PacingMemory {
 
 	public CompoundTag toTag() {
 		CompoundTag tag = new CompoundTag();
+		tag.putInt("rulesVersion", rulesVersion);
 		tag.putLong("firstDayTicks", firstDayTicks);
 		tag.putLong("lastStepPlay", lastStepPlay);
 		tag.putLong("nextMajorDue", nextMajorDue);
@@ -154,6 +177,7 @@ public final class PacingMemory {
 		tag.put("lastTag", DirectorMemory.longs(lastTag));
 		tag.putLong("lastMajorOrSignature", lastMajorOrSignature);
 		tag.putInt("aloneAmbientCount", aloneAmbientCount);
+		tag.putInt("firstHourFires", firstHourFires);
 		tag.putLong("sightingDay", sightingDay);
 		tag.putInt("sightingsThatDay", sightingsThatDay);
 
@@ -194,10 +218,12 @@ public final class PacingMemory {
 
 	/**
 	 * Reads one player's part, or the pacing fields at the top level of a v1 {@code director.dat} (whose subject had
-	 * been there since day 0, so a missing {@code firstDayTicks} is 0).
+	 * been there since day 0, so a missing {@code firstDayTicks} is 0). One saved before v1.2 has no
+	 * {@code rulesVersion} (0): its next session rolls its minor rate and major slot again.
 	 */
 	public static PacingMemory fromTag(CompoundTag tag) {
 		PacingMemory m = new PacingMemory(tag.getLongOr("firstDayTicks", 0));
+		m.rulesVersion = tag.getIntOr("rulesVersion", 0);
 		m.lastStepPlay = tag.getLongOr("lastStepPlay", -1);
 		m.nextMajorDue = tag.getLongOr("nextMajorDue", -1);
 
@@ -217,6 +243,7 @@ public final class PacingMemory {
 		DirectorMemory.readLongs(tag.getCompoundOrEmpty("lastTag"), m.lastTag, CardTag::valueOf);
 		m.lastMajorOrSignature = tag.getLongOr("lastMajorOrSignature", DirectorMemory.NEVER);
 		m.aloneAmbientCount = tag.getIntOr("aloneAmbientCount", 0);
+		m.firstHourFires = tag.getIntOr("firstHourFires", 0);
 		m.sightingDay = tag.getLongOr("sightingDay", -1);
 		m.sightingsThatDay = tag.getIntOr("sightingsThatDay", 0);
 

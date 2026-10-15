@@ -8,12 +8,15 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.function.Predicate;
 
 import com.forzacode.a1016_02.core.CardTag;
 import com.forzacode.a1016_02.core.FireResult;
+import com.forzacode.a1016_02.core.FogSpell;
+import com.forzacode.a1016_02.core.FogWeatherRules;
 import com.forzacode.a1016_02.core.Stage;
 import com.forzacode.a1016_02.core.Tier;
 
@@ -32,10 +35,22 @@ import org.jspecify.annotations.Nullable;
  * from their own join hour on, and a {@link Sharing} rule for who is close to whom. Each player gets a {@link Result}
  * of their own, on their own clock: their own fires, the moments they felt from someone else's cards
  * ({@link Kind#FELT}), their sessions and quiets, and the world's stage changes.
+ * <p>
+ * Fog weather (D-071): one sky for the table, rolled with core's {@link FogWeatherRules} on its own dice (so the
+ * weather never shifts the director's), as atmosphere's live weather rolls it: tonight's fog night at
+ * {@link #NIGHT_ROLL} and a fog day at {@link #DAY_ROLL} of the day before, joined with {@code handOver}. The run's day
+ * clock stands in for the overworld clock. Each {@link Result} books its time and fires under each {@link Sky}.
  */
 public final class DirectorSim {
 	/** The player of a one-player dry run. */
 	public static final UUID SOLO = new UUID(0L, 0xA1016L);
+	/** Time of day tonight's fog night is rolled (atmosphere's live weather rolls it then too). */
+	public static final long NIGHT_ROLL = 11000L;
+	/** Time of day the next day's fog day is rolled. */
+	public static final long DAY_ROLL = 23000L;
+
+	/** The sky over a stretch of a run (D-071): no spell on, a quiet spell (no boost), or a fog spell that boosts. */
+	public enum Sky { CLEAR, QUIET, FOG }
 
 	/**
 	 * {@code TELLING}: someone named him (a dry run's {@link Params#tellingAtHour}). {@code FELT}: someone else's card,
@@ -106,6 +121,14 @@ public final class DirectorSim {
 		public double tellingAtHour = -1;
 		/** Whose pacing a one-player run plays ({@link #run}); {@link #SOLO} by default. */
 		public UUID player = SOLO;
+		/** Roll fog weather (D-071); off, the sky stays as {@link #fogSpell} leaves it. */
+		public boolean fogWeather = true;
+		/** The weather's numbers: D-071's by default (the live dry runs use the installed ones). */
+		public FogWeatherRules.Settings fogSettings = FogWeatherRules.Settings.DEFAULT;
+		/** The spell already stored when the run starts, on the run's day clock. */
+		public Optional<FogSpell> fogSpell = Optional.empty();
+		/** The weather's history when the run starts (a fresh world's by default). */
+		public FogWeatherRules.History fogHistory = FogWeatherRules.History.START;
 
 		public static Params from(DirectorConfig config, DirectorRules rules) {
 			Params p = new Params();
@@ -153,8 +176,14 @@ public final class DirectorSim {
 		public Stage stage;
 		public double tension;
 		public List<String> violations = List.of();
+		/** Every fog spell the table stored while this player took part, in order (a hand-over stores the joined spell). */
+		public final List<FogSpell> fogSpells = new ArrayList<>();
 		/** Per stage: play ticks [all, active], sampled at every director tick after its decision. */
 		private final Map<Stage, long[]> stageTime = new EnumMap<>(Stage.class);
+		/** Per sky: play ticks [all, active], sampled like {@link #stageTime}. */
+		private final Map<Sky, long[]> skyTime = new EnumMap<>(Sky.class);
+		/** Per sky: this player's own fires (fakes included) under it. */
+		private final Map<Sky, Integer> skyFires = new EnumMap<>(Sky.class);
 
 		Result(DirectorRules rules, Params params, UUID player, WorldMemory world, PacingMemory pacing, long startPlay, long startDayTicks) {
 			this.rules = rules;
@@ -196,6 +225,23 @@ public final class DirectorSim {
 		public long activeTicks(Stage stage) {
 			long[] time = stageTime.get(stage);
 			return time == null ? 0 : time[1];
+		}
+
+		/** Play ticks the run spent under this sky (D-071). */
+		public long skyTicks(Sky sky) {
+			long[] time = skyTime.get(sky);
+			return time == null ? 0 : time[0];
+		}
+
+		/** Play ticks the run spent under this sky outside quiets and empty sessions. */
+		public long skyActiveTicks(Sky sky) {
+			long[] time = skyTime.get(sky);
+			return time == null ? 0 : time[1];
+		}
+
+		/** This player's own fires (fakes included) under this sky. */
+		public int skyFires(Sky sky) {
+			return skyFires.getOrDefault(sky, 0);
 		}
 
 		/** Play tick at which the run first entered this stage, or -1. */
@@ -244,9 +290,10 @@ public final class DirectorSim {
 				}
 			}
 			List<long[]> empties = emptySessions();
-			lines.add(String.format(Locale.ROOT, "stage %s -> %s%s | quiets %d | sessions %d, empty %d | tension %.1f",
+			lines.add(String.format(Locale.ROOT, "stage %s -> %s%s | quiets %d | sessions %d, empty %d | tension %.1f | fog spells %d (%d quiet), %.1fh boosted",
 					startStage, stage, stages.length() == 0 ? "" : " (" + stages.toString().trim() + ")", count(Kind.QUIET),
-					count(Kind.SESSION_START), empties.size(), tension));
+					count(Kind.SESSION_START), empties.size(), tension, fogSpells.size(), fogSpells.stream().filter(FogSpell::quiet).count(),
+					skyTicks(Sky.FOG) / (double) rules.hourTicks));
 			lines.add(violations.isEmpty() ? "limits: all respected" : "LIMITS BROKEN (" + violations.size() + "): " + violations.getFirst());
 			return lines;
 		}
@@ -267,6 +314,16 @@ public final class DirectorSim {
 					continue;
 				}
 				lines.add(String.format(Locale.ROOT, "%s day %d  %-13s %s", time(e.play(), rules), e.day(), e.kind(), describe(e, rules)));
+			}
+			lines.add("");
+			for (FogSpell spell : fogSpells) {
+				lines.add(String.format(Locale.ROOT, "fog spell day %d %05d to day %d %05d, level %.2f%s", Math.floorDiv(spell.fromClock(), DirectorBrain.DAY_TICKS),
+						Math.floorMod(spell.fromClock(), DirectorBrain.DAY_TICKS), Math.floorDiv(spell.untilClock(), DirectorBrain.DAY_TICKS),
+						Math.floorMod(spell.untilClock(), DirectorBrain.DAY_TICKS), spell.level(), spell.quiet() ? " (quiet)" : ""));
+			}
+			for (Sky sky : Sky.values()) {
+				double hours = skyTicks(sky) / (double) rules.hourTicks;
+				lines.add(String.format(Locale.ROOT, "sky %-5s %.1fh, %d fires (%.2f/h)", sky, hours, skyFires(sky), hours <= 0 ? 0 : skyFires(sky) / hours));
 			}
 			lines.add("");
 			if (violations.isEmpty()) {
@@ -531,6 +588,7 @@ public final class DirectorSim {
 		long lastMajor = start.lastMajorOrSignature;
 		long firstDayEnd = start.firstDayTicks + (long) rules.noMajorBeforeDay * DirectorBrain.DAY_TICKS;
 		int aloneAmbients = start.aloneAmbientCount;
+		int firstHour = start.firstHourFires;
 		Map<Tier, Set<String>> cycle = new EnumMap<>(Tier.class);
 		Map<Tier, String> last = new EnumMap<>(Tier.class);
 		for (Tier tier : Tier.values()) {
@@ -564,7 +622,7 @@ public final class DirectorSim {
 				case SESSION_START -> {
 					sessionStart = e.play();
 					emptyUntil = e.flag() ? e.until() : -1;
-					if (e.flag() && !e.stage().atLeast(Stage.TRACES)) {
+					if (e.flag() && !e.stage().atLeast(rules.emptySessionMinStage)) {
 						broken.add(at + "empty session rolled in " + e.stage());
 					}
 				}
@@ -632,6 +690,9 @@ public final class DirectorSim {
 					}
 					if (tier == Tier.AMBIENT && e.stage() == Stage.ALONE && ++aloneAmbients > rules.aloneMaxAmbient) {
 						broken.add(at + "ambient number " + aloneAmbients + " in Alone");
+					}
+					if (rules.firstHourMaxFires >= 0 && now < rules.hourTicks && !"forced".equals(e.note()) && ++firstHour > rules.firstHourMaxFires) {
+						broken.add(at + "moment number " + firstHour + " in their first hour");
 					}
 					if (card != null) {
 						if (card.has(CardTag.ACCIDENT) && now < rules.firstAccident) {
@@ -746,6 +807,11 @@ public final class DirectorSim {
 		Stage stage;
 		long worldTicks;
 		long dayTicks;
+		/** The sky (D-071): its own dice, the stored spell, the rules' history and the day clock it was last rolled up to. */
+		final RandomSource weather;
+		Optional<FogSpell> fogSpell;
+		FogWeatherRules.History fogHistory;
+		long weatherClock;
 
 		Table(DirectorRules rules, Collection<CardInfo> cards, int historySize, WorldMemory world, Stage stage, long worldTicks, long dayTicks,
 				Sharing sharing, Params params) {
@@ -753,12 +819,65 @@ public final class DirectorSim {
 			this.params = params;
 			this.brain = new DirectorBrain(rules, cards, historySize);
 			this.random = RandomSource.create(mix(params.seed));
+			this.weather = RandomSource.create(mix(params.seed ^ 0xF065_9E11L));
 			this.world = world;
 			this.stage = stage;
 			this.worldStart = worldTicks;
 			this.worldTicks = worldTicks;
 			this.dayTicks = dayTicks;
 			this.sharing = sharing;
+			this.fogSpell = params.fogSpell == null ? Optional.empty() : params.fogSpell;
+			this.fogHistory = params.fogHistory == null ? FogWeatherRules.History.START : params.fogHistory;
+			this.weatherClock = dayTicks;
+		}
+
+		/** The spell on right now, or empty. */
+		Optional<FogSpell> spellNow() {
+			return fogSpell.filter(spell -> spell.activeAt(dayTicks));
+		}
+
+		Sky sky() {
+			Optional<FogSpell> on = spellNow();
+			return on.isEmpty() ? Sky.CLEAR : on.get().quiet() ? Sky.QUIET : Sky.FOG;
+		}
+
+		/**
+		 * Rolls the fog weather due since the last call, as atmosphere's live weather does (D-071): at
+		 * {@link #NIGHT_ROLL} tonight's fog night (or a clear night), at {@link #DAY_ROLL} the next day's fog day (never
+		 * when a morning carry-over already runs into it); a spell rolled while another still gives fog is joined to it
+		 * ({@code handOver}). The stage is the world's at the roll.
+		 */
+		void rollWeather() {
+			if (!params.fogWeather) {
+				return;
+			}
+			FogWeatherRules.Settings settings = params.fogSettings == null ? FogWeatherRules.Settings.DEFAULT : params.fogSettings;
+			while (true) {
+				long base = Math.floorDiv(weatherClock, DirectorBrain.DAY_TICKS) * DirectorBrain.DAY_TICKS;
+				long night = base + NIGHT_ROLL > weatherClock ? base + NIGHT_ROLL : base + DirectorBrain.DAY_TICKS + NIGHT_ROLL;
+				long day = base + DAY_ROLL > weatherClock ? base + DAY_ROLL : base + DirectorBrain.DAY_TICKS + DAY_ROLL;
+				long next = Math.min(night, day);
+				if (next > dayTicks) {
+					return;
+				}
+				weatherClock = next;
+				long clockDay = Math.floorDiv(next, DirectorBrain.DAY_TICKS);
+				Optional<FogSpell> rolled;
+				if (next == night) {
+					rolled = FogWeatherRules.night(weather, clockDay, stage, fogHistory, settings);
+					fogHistory = fogHistory.afterNight(rolled.isPresent());
+				} else {
+					rolled = FogWeatherRules.day(weather, clockDay + 1, stage, fogHistory, fogSpell, settings);
+					fogHistory = fogHistory.afterDay(rolled.isPresent());
+				}
+				if (rolled.isPresent()) {
+					FogSpell stored = FogWeatherRules.handOver(fogSpell, rolled.get(), next, settings);
+					fogSpell = Optional.of(stored);
+					for (SeatRun seat : online()) {
+						seat.result.fogSpells.add(stored);
+					}
+				}
+			}
 		}
 
 		List<SeatRun> online() {
@@ -790,6 +909,7 @@ public final class DirectorSim {
 				if (!online.isEmpty()) {
 					worldTicks += interval;
 					dayTicks += interval;
+					rollWeather();
 				}
 				online.forEach(seat -> seat.play += interval);
 				if (worldTicks >= sessionEnd) {
@@ -891,6 +1011,7 @@ public final class DirectorSim {
 			}
 			result = new Result(table.rules, table.params, player, table.world, pacing, play, table.dayTicks);
 			result.startStage = table.stage;
+			table.fogSpell.filter(spell -> !spell.endedBy(table.dayTicks)).ifPresent(result.fogSpells::add);
 			rec.ensureRow(play);
 			if (!keepSession || pacing.sessionStart < 0) {
 				table.brain.onJoin(table.world, pacing, clock(), env, table.random, rec);
@@ -920,6 +1041,11 @@ public final class DirectorSim {
 			time[0] += rules.tickInterval;
 			if (!quiet && !empty) {
 				time[1] += rules.tickInterval;
+			}
+			long[] sky = result.skyTime.computeIfAbsent(table.sky(), s -> new long[2]);
+			sky[0] += rules.tickInterval;
+			if (!quiet && !empty) {
+				sky[1] += rules.tickInterval;
 			}
 		}
 	}
@@ -974,6 +1100,11 @@ public final class DirectorSim {
 		@Override
 		public List<DirectorBrain.Sharer> sharers() {
 			return table.sharers(seat);
+		}
+
+		@Override
+		public Optional<FogSpell> fogSpell() {
+			return table.spellNow();
 		}
 	}
 
@@ -1035,6 +1166,9 @@ public final class DirectorSim {
 		@Override
 		public void fired(DirectorBrain.Clock c, CardInfo card, boolean fake, boolean forced, Stage stage, double tensionAfter) {
 			seat.add(Kind.FIRE, c, stage, card.tier(), card.id(), fake, tensionAfter, -1, card.hasFake(), forced ? "forced" : "");
+			if (!forced) {
+				seat.result.skyFires.merge(seat.table.sky(), 1, Integer::sum);
+			}
 			HourRow row = ensureRow(c.playTicks());
 			row.fires.merge(card.tier(), 1, Integer::sum);
 			if (fake) {

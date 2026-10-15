@@ -2,10 +2,12 @@ package com.forzacode.a1016_02.director;
 
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.EnumMap;
 import java.util.EnumSet;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.function.Function;
 import java.util.function.Predicate;
@@ -13,6 +15,7 @@ import java.util.function.Predicate;
 import com.forzacode.a1016_02.core.CardTag;
 import com.forzacode.a1016_02.core.Density;
 import com.forzacode.a1016_02.core.FireResult;
+import com.forzacode.a1016_02.core.FogSpell;
 import com.forzacode.a1016_02.core.Habit;
 import com.forzacode.a1016_02.core.Pacing;
 import com.forzacode.a1016_02.core.Signature;
@@ -47,31 +50,6 @@ class DirectorTestSupport {
 		return DirectorRules.from(new Pacing(), new DirectorConfig(), profile(tempo, signature, WorldProfile.FIXED_FRAGMENTS));
 	}
 
-	/**
-	 * v1.1's pacing, before D-070 (core's C-1 changed the defaults). Only for the tuning tests that still assert v1.1's
-	 * 4b; W-DIR retargets them to v1.2's numbers and drops this.
-	 */
-	static Pacing v11Pacing() {
-		Pacing p = new Pacing();
-		p.tracesStartMinHours = 1;
-		p.tracesStartMaxHours = 3;
-		p.proximityStartMinHours = 5;
-		p.proximityStartMaxHours = 6;
-		p.tempoShift = 0.4;
-		p.aloneMaxAmbient = 1;
-		p.tracesAmbientPerHour = 1;
-		p.proximityMinorsPerHourMin = 1;
-		p.proximityMinorsPerHourMax = 2;
-		p.proximityMajorEveryHoursMin = 2;
-		p.proximityMajorEveryHoursMax = 4;
-		p.firstAccidentMinHours = 6;
-		p.emptySessionChance = 0.2;
-		p.pityStartHours = 1;
-		p.fogDriftMinSeconds = 3;
-		p.fogDriftMaxSeconds = 8;
-		return p;
-	}
-
 	static DirectorSim.Params params(DirectorRules rules, long seed, double attention, double hours) {
 		DirectorSim.Params params = DirectorSim.Params.from(new DirectorConfig(), rules);
 		params.hours = hours;
@@ -90,19 +68,20 @@ class DirectorTestSupport {
 	 * The scripted playthrough's dry runs on the code defaults: the registered deck (without the debug ping card,
 	 * whose moment never fits), the seed's rolled profile with this tempo, {@link DirectorApi#tuningSeeds()}, 20 h
 	 * each from a fresh state at neutral attention. Unlike {@code DirectorApi.dryRuns}, a stale config file cannot
-	 * change the numbers.
+	 * change the numbers. Computed once per tempo (the runs are deterministic; callers only read them).
 	 */
-	static List<DirectorSim.Result> registryRuns(Tempo tempo) {
-		return registryRuns(tempo, new Pacing());
+	static synchronized List<DirectorSim.Result> registryRuns(Tempo tempo) {
+		return REGISTRY_RUNS.computeIfAbsent(tempo, t -> registryRuns(t, new DirectorConfig()));
 	}
 
-	/** {@link #registryRuns(Tempo)} on this pacing. */
-	static List<DirectorSim.Result> registryRuns(Tempo tempo, Pacing pacing) {
-		List<CardInfo> deck = DirectorApi.registeredCards().stream().filter(card -> !DebugPingCard.ID.equals(card.id())).toList();
+	private static final Map<Tempo, List<DirectorSim.Result>> REGISTRY_RUNS = new EnumMap<>(Tempo.class);
+
+	/** {@link #registryRuns(Tempo)} with this director section (a tuning variant), never cached. */
+	static List<DirectorSim.Result> registryRuns(Tempo tempo, DirectorConfig config) {
+		List<CardInfo> deck = registryDeck();
 		List<DirectorSim.Result> out = new ArrayList<>();
 		for (long seed : DirectorApi.tuningSeeds()) {
-			DirectorConfig config = new DirectorConfig();
-			DirectorRules rules = DirectorRules.from(pacing, config, com.forzacode.a1016_02.debug.Playthrough.profile(seed, tempo));
+			DirectorRules rules = DirectorRules.from(new Pacing(), config, com.forzacode.a1016_02.debug.Playthrough.profile(seed, tempo));
 			DirectorSim.Params params = DirectorSim.Params.from(config, rules);
 			params.hours = HOURS;
 			params.seed = seed;
@@ -111,6 +90,140 @@ class DirectorTestSupport {
 					new DirectorBrain.Clock(0, 0), params));
 		}
 		return out;
+	}
+
+	/**
+	 * D-070's first hour over these runs (fakes count, each run's own fires): how many runs fired first within 30 and
+	 * 45 minutes, how many had 2 or more fires in the first 60, and the most any run had in it.
+	 */
+	record FirstHour(int runs, int by30, int by45, int twoOrMore, int most, double medianFirstMinutes) {
+		static FirstHour of(List<DirectorSim.Result> results) {
+			int by30 = 0;
+			int by45 = 0;
+			int two = 0;
+			int most = 0;
+			List<Double> firsts = new ArrayList<>();
+			for (DirectorSim.Result r : results) {
+				long hour = r.rules.hourTicks;
+				List<DirectorSim.Event> fires = r.fires();
+				long first = fires.isEmpty() ? Long.MAX_VALUE : fires.getFirst().play() - r.startPlay;
+				by30 += first <= hour / 2 ? 1 : 0;
+				by45 += first <= hour * 3 / 4 ? 1 : 0;
+				int inHour = (int) fires.stream().filter(e -> e.play() - r.startPlay < hour).count();
+				two += inHour >= 2 ? 1 : 0;
+				most = Math.max(most, inHour);
+				firsts.add(first == Long.MAX_VALUE ? Double.POSITIVE_INFINITY : first * 60.0 / hour);
+			}
+			firsts.sort(null);
+			return new FirstHour(results.size(), by30, by45, two, most, firsts.isEmpty() ? 0 : firsts.get(firsts.size() / 2));
+		}
+
+		String summary() {
+			return String.format(java.util.Locale.ROOT, "%d runs: first fire by 30 min %.1f%%, by 45 min %.1f%% (median %.1f min), 2+ in the first hour %.1f%%, "
+					+ "at most %d in it", runs, 100.0 * by30 / runs, 100.0 * by45 / runs, medianFirstMinutes, 100.0 * twoOrMore / runs, most);
+		}
+	}
+
+	/**
+	 * DESIGN.md 4b as the dry runs show it, pooled over runs (each run's own fires, time summed): Alone's length, the
+	 * ambients per hour in each stage, Traces' and Proximity's minors per hour, Proximity's hours per major, and the
+	 * first accident card's hour.
+	 */
+	record FourB(int runs, double aloneHours, double aloneAmbientsPerHour, double tracesAmbientsPerHour, double tracesMinorsPerHour,
+			double proximityAmbientsPerHour, double proximityMinorsPerHour, double proximityMinorsPerActiveHour, double hoursPerMajor,
+			double activeHoursPerMajor, double firstAccidentMedianHours, double firstAccidentMinHours, int runsWithAnAccident) {
+		static FourB of(List<DirectorSim.Result> results, Collection<CardInfo> deck) {
+			Map<String, CardInfo> byId = new HashMap<>();
+			deck.forEach(card -> byId.put(card.id(), card));
+			long hour = results.isEmpty() ? 1 : results.getFirst().rules.hourTicks;
+			Map<Stage, Long> ambients = new EnumMap<>(Stage.class);
+			Map<Stage, Long> minors = new EnumMap<>(Stage.class);
+			long majors = 0;
+			List<Double> accidents = new ArrayList<>();
+			for (DirectorSim.Result r : results) {
+				boolean accident = false;
+				for (DirectorSim.Event e : r.fires()) {
+					if (e.tier() == Tier.AMBIENT) {
+						ambients.merge(e.stage(), 1L, Long::sum);
+					} else if (e.tier() == Tier.MINOR) {
+						minors.merge(e.stage(), 1L, Long::sum);
+					} else if (e.tier() == Tier.MAJOR && e.stage() == Stage.PROXIMITY) {
+						majors++;
+					}
+					CardInfo card = byId.get(e.cardId());
+					if (!accident && card != null && card.has(CardTag.ACCIDENT)) {
+						accident = true;
+						accidents.add((e.play() - r.startPlay) / (double) hour);
+					}
+				}
+			}
+			long aloneTicks = sum(results, Stage.ALONE, false);
+			long traces = sum(results, Stage.TRACES, false);
+			long proximity = sum(results, Stage.PROXIMITY, false);
+			long proximityActive = sum(results, Stage.PROXIMITY, true);
+			accidents.sort(null);
+			return new FourB(results.size(), aloneTicks / (double) hour / Math.max(1, results.size()), per(ambients.get(Stage.ALONE), aloneTicks, hour),
+					per(ambients.get(Stage.TRACES), traces, hour), per(minors.get(Stage.TRACES), traces, hour), per(ambients.get(Stage.PROXIMITY), proximity, hour),
+					per(minors.get(Stage.PROXIMITY), proximity, hour), per(minors.get(Stage.PROXIMITY), proximityActive, hour),
+					majors == 0 ? Double.POSITIVE_INFINITY : proximity / (double) hour / majors,
+					majors == 0 ? Double.POSITIVE_INFINITY : proximityActive / (double) hour / majors,
+					accidents.isEmpty() ? Double.NaN : accidents.get(accidents.size() / 2), accidents.isEmpty() ? Double.NaN : accidents.getFirst(),
+					accidents.size());
+		}
+
+		private static long sum(List<DirectorSim.Result> results, Stage stage, boolean active) {
+			long total = 0;
+			for (DirectorSim.Result r : results) {
+				total += active ? r.activeTicks(stage) : r.stageTicks(stage);
+			}
+			return total;
+		}
+
+		private static double per(Long count, long ticks, long hour) {
+			return ticks <= 0 ? 0 : (count == null ? 0 : count) / (ticks / (double) hour);
+		}
+
+		String summary() {
+			return String.format(java.util.Locale.ROOT, "%d runs | Alone %.2fh, %.2f amb/h | Traces %.2f amb/h, %.2f minors/h | Proximity %.2f amb/h, "
+					+ "%.2f minors/h (%.2f active), a major every %.2fh (%.2fh active) | first accident median %.2fh, earliest %.2fh (%d runs)", runs,
+					aloneHours, aloneAmbientsPerHour, tracesAmbientsPerHour, tracesMinorsPerHour, proximityAmbientsPerHour, proximityMinorsPerHour,
+					proximityMinorsPerActiveHour, hoursPerMajor, activeHoursPerMajor, firstAccidentMedianHours, firstAccidentMinHours, runsWithAnAccident);
+		}
+	}
+
+	/**
+	 * Fires per hour under each sky (D-071), pooled over runs: [all time, active time] for a fog spell that boosts, a
+	 * quiet spell and no spell.
+	 */
+	record SkyRates(double fog, double fogActive, double quiet, double quietActive, double clear, double clearActive, double fogHours,
+			double quietHours) {
+		static SkyRates of(List<DirectorSim.Result> results) {
+			long hour = results.isEmpty() ? 1 : results.getFirst().rules.hourTicks;
+			double[] rate = new double[6];
+			double[] hours = new double[2];
+			DirectorSim.Sky[] skies = {DirectorSim.Sky.FOG, DirectorSim.Sky.QUIET, DirectorSim.Sky.CLEAR};
+			for (int i = 0; i < skies.length; i++) {
+				long fires = 0;
+				long ticks = 0;
+				long active = 0;
+				for (DirectorSim.Result r : results) {
+					fires += r.skyFires(skies[i]);
+					ticks += r.skyTicks(skies[i]);
+					active += r.skyActiveTicks(skies[i]);
+				}
+				rate[2 * i] = ticks <= 0 ? 0 : fires / (ticks / (double) hour);
+				rate[2 * i + 1] = active <= 0 ? 0 : fires / (active / (double) hour);
+				if (i < 2) {
+					hours[i] = ticks / (double) hour;
+				}
+			}
+			return new SkyRates(rate[0], rate[1], rate[2], rate[3], rate[4], rate[5], hours[0], hours[1]);
+		}
+
+		String summary() {
+			return String.format(java.util.Locale.ROOT, "fires/h: fog %.2f (%.2f active, %.0fh), quiet fog %.2f (%.2f active, %.0fh), clear %.2f (%.2f active)", fog,
+					fogActive, fogHours, quiet, quietActive, quietHours, clear, clearActive);
+		}
 	}
 
 	/**
@@ -143,8 +256,8 @@ class DirectorTestSupport {
 	 * DESIGN.md 4b's "never" rules replayed on what one player went through (their own fires and what they felt from
 	 * others, on their own clock), independently of {@link DirectorSim#check}: nothing in the first minutes after
 	 * joining, at least the minor gap between minors, no two majors (or signatures) within a real hour, no major in
-	 * their own first in-game day, at most the Alone ambient cap and nothing else in Alone, no accident card before
-	 * their own first-accident time. One line per breach.
+	 * their own first in-game day, at most the Alone ambient cap and nothing else in Alone, at most five moments in
+	 * their own first hour (D-070), no accident card before their own first-accident time. One line per breach.
 	 */
 	static List<String> feltHardLimits(DirectorSim.Result r, Collection<CardInfo> cards) {
 		DirectorRules rules = r.rules;
@@ -156,6 +269,7 @@ class DirectorTestSupport {
 		DirectorSim.Event lastMinor = null;
 		DirectorSim.Event lastMajor = null;
 		int alone = 0;
+		int firstHour = r.startPacing.firstHourFires;
 		for (DirectorSim.Event e : r.events) {
 			if (e.kind() == DirectorSim.Kind.SESSION_START) {
 				session = e.play();
@@ -186,6 +300,9 @@ class DirectorTestSupport {
 			if (e.stage() == Stage.ALONE && (e.tier() != Tier.AMBIENT || ++alone > rules.aloneMaxAmbient)) {
 				out.add(at + "too much in Alone");
 			}
+			if (e.play() < rules.hourTicks && ++firstHour > rules.firstHourMaxFires) {
+				out.add(at + "moment number " + firstHour + " in their first hour");
+			}
 			CardInfo card = byId.get(e.cardId());
 			if (card != null && card.has(CardTag.ACCIDENT) && e.play() < rules.firstAccident) {
 				out.add(at + "an accident before " + rules.firstAccident);
@@ -215,10 +332,16 @@ class DirectorTestSupport {
 		double tension;
 		Predicate<CardInfo> fits = card -> true;
 		List<DirectorBrain.Sharer> sharers = List.of();
+		Optional<FogSpell> fog = Optional.empty();
 		final List<String> fired = new ArrayList<>();
 
 		PlayerEnv(SharedStage world) {
 			this.world = world;
+		}
+
+		@Override
+		public Optional<FogSpell> fogSpell() {
+			return fog;
 		}
 
 		@Override
@@ -380,6 +503,7 @@ class DirectorTestSupport {
 		double attention;
 		Predicate<CardInfo> fits = card -> true;
 		Function<CardInfo, FireResult> result = card -> FireResult.FIRED;
+		Optional<FogSpell> fog = Optional.empty();
 		final List<String> fired = new ArrayList<>();
 		int fireCalls;
 
@@ -387,6 +511,11 @@ class DirectorTestSupport {
 			this.stage = stage;
 			this.tension = tension;
 			this.attention = attention;
+		}
+
+		@Override
+		public Optional<FogSpell> fogSpell() {
+			return fog;
 		}
 
 		@Override
