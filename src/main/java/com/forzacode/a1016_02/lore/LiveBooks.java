@@ -31,8 +31,9 @@ import net.minecraft.world.level.block.entity.LecternBlockEntity;
 /**
  * Fragment books whose text names someone, brought up to date when they are opened (in a hand or on a lectern), so
  * they never change on camera (D-047). The list (F06) and its second copy (F23) are one shared list (D-063): their
- * {@code [PLAYER NAME] .} line becomes one line for every known player, in first-join order, each with that
- * player's own latest marked-death cause ("Alex . lava"); nobody who never took part is on it (D-061). In Ending B
+ * {@code [PLAYER NAME] .} line becomes one line for every known player, in first-join order; nobody who never took
+ * part is on it (D-061). Only F23 gives each player's own latest marked-death cause ("Alex . lava"): F06 is who saw
+ * him, and F23's reveal is that every "gone" was an accident (D-067), so F06 keeps the bare names. In Ending B
  * the changelog (F10) gains its last line from its data, "* removed [PLAYER NAME]", once for every player whose line
  * the ending finished, in the order they were finished; never a living friend. Any other {@code [PLAYER NAME]} names
  * the reader. Every word is the fragment's own; only the cause is
@@ -42,6 +43,8 @@ public final class LiveBooks {
 	/** Set when F10 gained its last line (Ending B). */
 	public static final String F10_FINISHED = "lore:f10_finished";
 	private static final String NAME_LINE = Fragment.PLAYER_NAME + " .";
+	/** The first list (F06): who saw him. Its player lines are bare names; the causes are F23's (D-067). */
+	private static final String SIGHTINGS_LIST = "F06";
 
 	/** One player's line on the list: their name and their latest marked death's cause, if any. */
 	public record Line(String name, Optional<String> cause) {
@@ -112,9 +115,10 @@ public final class LiveBooks {
 	 * page goes on to the next, and so do F10's lines.
 	 */
 	public static List<String> pages(Fragment fragment, String reader, List<Line> list, List<String> removed) {
+		List<Line> shown = fragment.id().equals(SIGHTINGS_LIST) ? list.stream().map(line -> new Line(line.name(), Optional.empty())).toList() : list;
 		List<String> pages = new ArrayList<>();
 		for (String page : fragment.pages()) {
-			String withList = withList(page, list);
+			String withList = withList(page, shown);
 			// Only a page the list grew may go on to the next; every other page stays exactly as the data has it.
 			pages.addAll(withList.equals(page) ? List.of(page) : fit(withList));
 		}

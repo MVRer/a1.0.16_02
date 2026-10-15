@@ -246,7 +246,7 @@ public class LoreMultiplayerTests extends LoreTellingTests {
 
 	// --- the list ---
 
-	/** F23 (and F06, the same list) has a line for every known player, in join order, each with their own cause. */
+	/** F23 has a line for every known player, in join order, each with their own cause; F06, the same list, the bare names (D-067). */
 	@GameTest
 	public void theListNamesEveryPlayerWithTheirOwnCause(GameTestHelper helper) {
 		Known ann = new Known("Ann", 10);
@@ -274,7 +274,7 @@ public class LoreMultiplayerTests extends LoreTellingTests {
 		ItemStack f06 = FragmentItems.book(fragment("F06"), NAME);
 		LiveBooks.refreshForReading(f06, "Ben", state, data);
 		List<String> f06Expected = new ArrayList<>(DESIGN_TEXT.get("F06").subList(0, 6));
-		f06Expected.addAll(lines);
+		f06Expected.addAll(List.of("Ann .", "Ben .", "Cat ."));
 		helper.assertTrue(lines(pages(f06)).equals(f06Expected), "F06 reads " + pages(f06));
 		helper.assertFalse(LiveBooks.refreshForReading(f23, "Ann", state, data), "the list changed with its reader");
 

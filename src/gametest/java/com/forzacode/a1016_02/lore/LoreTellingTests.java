@@ -530,10 +530,10 @@ public class LoreTellingTests extends LorePlacementTests {
 		helper.assertTrue(lines(pages(list)).equals(f23Lines) && !String.join("\n", pages(list)).contains(player.getName().getString()),
 				"F23 reads " + pages(list));
 		helper.assertFalse(LiveBooks.refreshForReading(list, player), "an up-to-date F23 changed again");
-		// F06 is the same shared list now (D-063): it follows the known players too.
+		// F06 is the same shared list now (D-063): it follows the known players too, by bare name (D-067).
 		ItemStack first = FragmentItems.book(fragment("F06"), NAME);
 		List<String> f06Lines = new ArrayList<>(DESIGN_TEXT.get("F06").subList(0, 6));
-		f06Lines.addAll(known);
+		f06Lines.addAll(LiveBooks.lines(HerobrineState.get(server), TellingData.get(server)).stream().map(line -> line.name() + " .").toList());
 		helper.assertTrue(LiveBooks.refreshForReading(first, player) && lines(pages(first)).equals(f06Lines), "F06 reads " + pages(first));
 		helper.succeed();
 	}
