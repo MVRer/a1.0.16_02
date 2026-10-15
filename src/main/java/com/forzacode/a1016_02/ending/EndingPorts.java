@@ -78,6 +78,18 @@ public interface EndingPorts {
 	/** The middle of the copy, once its site is picked. */
 	Optional<GlobalPos> copySite(MinecraftServer server);
 
+	/**
+	 * The house the copy copies ({@code HouseCopyApi.realHouse}): a cell inside it, fixed from the moment it was
+	 * captured, even after its owner moves their base. Empty while there is no copy.
+	 */
+	Optional<GlobalPos> copiedHouse(MinecraftServer server);
+
+	/**
+	 * Whose house the copy copies ({@code HouseCopyApi.owner}): the stored {@code world:house_copy} owner, else an old
+	 * copy's first known player. Empty before world chose anyone.
+	 */
+	Optional<UUID> copyOwner(MinecraftServer server);
+
 	/** The box around every block moved into the copy (its shell, and so its inside), once it has any. */
 	Optional<Bounds> copyBounds(MinecraftServer server);
 

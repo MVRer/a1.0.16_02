@@ -522,15 +522,20 @@ public final class EndingEngine {
 	}
 
 	/**
-	 * "Your house" for B (D-061, never flips once B stored it): the house the copy elsewhere copies, the house copy
-	 * owner's ({@code world:house_copy}, world's choice) base while they are online, else their first crafting table,
-	 * chest or block; with no house copy owner (or the same player as the home's), the group's home
-	 * ({@code ending:home}, see {@link EndingWatch#sampleHome}); else the first one in it's base. Once world offers
-	 * {@code HouseCopyApi.realHouse(server)} (MP-6), the copied house should come from it first (a port call).
+	 * "Your house" for B (D-061, never flips once B stored it): the house the copy elsewhere copies, fixed since world
+	 * captured it ({@code HouseCopyApi.realHouse}), even if its owner moved their base since; for a copy whose house
+	 * cannot be read, the house copy owner's ({@code HouseCopyApi.owner}: world's {@code world:house_copy} choice,
+	 * else an old copy's first known player) base while they are online, else their first crafting table, chest or
+	 * block. With no copy (whoever world may have chosen), or a copy owner who is the home's, the group's home
+	 * ({@code ending:home}, see {@link EndingWatch#sampleHome}); else the base of the first player still in it.
 	 */
 	Optional<GlobalPos> bHouse(Ctx c) {
+		Optional<GlobalPos> copied = ports.copiedHouse(c.server());
+		if (copied.isPresent()) {
+			return copied;
+		}
 		PlayerWatch watch = ports.watch();
-		Optional<UUID> copyOwner = watch.owner(c.server(), EndingApi.HOUSE_COPY_OWNER);
+		Optional<UUID> copyOwner = ports.copyExists(c.server()) ? ports.copyOwner(c.server()) : Optional.empty();
 		if (copyOwner.isPresent() && (c.data().home().isEmpty() || !copyOwner.equals(watch.owner(c.server(), EndingApi.HOME_OWNER)))) {
 			Optional<GlobalPos> base = watch.participant(c.server(), copyOwner.get()).flatMap(watch::base);
 			if (base.isPresent()) {

@@ -5,7 +5,9 @@ import java.util.Optional;
 import java.util.Set;
 
 import com.forzacode.a1016_02.core.GameClock;
+import com.forzacode.a1016_02.core.HerobrineState;
 import com.forzacode.a1016_02.core.MarkedDeath;
+import com.forzacode.a1016_02.core.PlacedBlock;
 import com.forzacode.a1016_02.core.Stage;
 import com.forzacode.a1016_02.ending.EndingBeats.B;
 import com.forzacode.a1016_02.ending.EndingTestSupport.Run;
@@ -15,7 +17,9 @@ import net.fabricmc.fabric.api.gametest.v1.GameTest;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.GlobalPos;
 import net.minecraft.gametest.framework.GameTestHelper;
+import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.storage.LevelData;
 import net.minecraft.world.phys.Vec3;
 
@@ -203,10 +207,11 @@ public class EndingGroupTests extends EndingWorldTests {
 		ServerPlayer b = r.friend();
 		BlockPos bBed = r.at(5, 1, 40).pos();
 		b.setRespawnPosition(new ServerPlayer.RespawnConfig(LevelData.RespawnData.of(helper.getLevel().dimension(), bBed, 0.0F, 0.0F), true), false);
-		// Only B online when world chose: B's house is copied.
+		// Only B online when world chose: B's house is copied (a copy whose captured house cannot be read: its owner's).
 		r.online.remove(a);
 		helper.assertTrue(r.watch.ownerFor(r.server, EndingApi.HOUSE_COPY_OWNER).equals(Optional.of(b.getUUID())), "the owner was not stored");
 		r.online.addFirst(a);
+		r.ports.copyExists = true;
 		r.data.setHome(r.at(0, 1, 0));
 		r.commit(EndingPath.B);
 		helper.assertTrue(r.data.house().equals(Optional.of(GlobalPos.of(helper.getLevel().dimension(), bBed))),
@@ -218,6 +223,101 @@ public class EndingGroupTests extends EndingWorldTests {
 		home.data.setHome(home.at(3, 1, 3));
 		home.commit(EndingPath.B);
 		helper.assertTrue(home.data.house().equals(Optional.of(home.at(3, 1, 3))), "without a copy owner B did not take the group's home");
+		helper.succeed();
+	}
+
+	/**
+	 * MP-7 A, D-064: Ben played ten minutes alone and put a crafting table down at spawn, so the group's home is his;
+	 * he never comes back. Alex plays the whole story in his own house far away: the home moves to Alex's house, never
+	 * frozen on the table of a friend who is away. And someone with no base is never the home's owner.
+	 */
+	@GameTest(structure = YARD, maxTicks = 40)
+	public void theGroupsHomeIsNeverHeldByAFriendWhoIsAway(GameTestHelper helper) {
+		ServerLevel level = helper.getLevel();
+		Run r = new Run(helper);
+		r.cfg.cHouseRadius = 3;
+		ServerPlayer ben = r.player;
+		BlockPos table = helper.absolutePos(new BlockPos(2, 1, 2));
+		helper.setBlock(new BlockPos(2, 1, 2), Blocks.CRAFTING_TABLE);
+		r.watch.onPlaced(ben, level, table, Blocks.CRAFTING_TABLE.defaultBlockState());
+		PlacedBlock placed = new PlacedBlock(GlobalPos.of(level.dimension(), table), Blocks.CRAFTING_TABLE.defaultBlockState());
+		r.state.addKnownPlayer(ben.getUUID(), "Ben", new HerobrineState.FirstBlocks(placed, placed, null));
+		EndingWatch.sampleHome(r.server, r.inIt(), r.state, r.data, r.cfg, r.watch);
+		helper.assertTrue(r.data.home().equals(Optional.of(GlobalPos.of(level.dimension(), table)))
+				&& r.watch.owner(r.server, EndingApi.HOME_OWNER).equals(Optional.of(ben.getUUID())), "Ben's table is not the home: " + r.data.home());
+
+		r.online.remove(ben);
+		ServerPlayer alex = r.friend();
+		r.state.addKnownPlayer(alex.getUUID(), "Alex");
+		BlockPos bed = helper.absolutePos(new BlockPos(17, 1, 17));
+		alex.setRespawnPosition(new ServerPlayer.RespawnConfig(LevelData.RespawnData.of(level.dimension(), bed, 0.0F, 0.0F), true), false);
+		int built = 0;
+		for (BlockPos rel : BlockPos.betweenClosed(14, 1, 14, 20, 2, 20)) {
+			if (built < 40 && !rel.equals(new BlockPos(17, 1, 17))) {
+				helper.setBlock(rel, Blocks.OAK_PLANKS);
+				r.watch.onPlaced(alex, level, helper.absolutePos(rel), Blocks.OAK_PLANKS.defaultBlockState());
+				built++;
+			}
+		}
+		for (int n = 0; n < 3; n++) {
+			EndingWatch.sampleHome(r.server, r.inIt(), r.state, r.data, r.cfg, r.watch);
+		}
+		helper.assertTrue(r.data.home().equals(Optional.of(GlobalPos.of(level.dimension(), bed))), "the home stayed at " + r.data.home()
+				+ ", not Alex's house");
+
+		// Nobody with a base online: nobody is the home's owner yet.
+		Run fresh = new Run(helper);
+		EndingWatch.sampleHome(fresh.server, fresh.inIt(), fresh.state, fresh.data, fresh.cfg, fresh.watch);
+		helper.assertTrue(fresh.watch.owner(fresh.server, EndingApi.HOME_OWNER).isEmpty(), "a player without a base owns the home");
+		helper.succeed();
+	}
+
+	/**
+	 * B's house is the house the copy copies once world captured it ({@code HouseCopyApi.realHouse}), even after its
+	 * owner moved their bed; for a copy whose house cannot be read, world's owner ({@code HouseCopyApi.owner}, an old
+	 * copy's first known player included) and their base; with no copy at all, the group's home, whoever world stored.
+	 */
+	@GameTest
+	public void bTakesTheCopiedHouseFirst(GameTestHelper helper) {
+		Run r = new Run(helper);
+		ServerPlayer a = r.player;
+		ServerPlayer b = r.friend();
+		BlockPos newBed = r.at(9, 1, 60).pos();
+		b.setRespawnPosition(new ServerPlayer.RespawnConfig(LevelData.RespawnData.of(helper.getLevel().dimension(), newBed, 0.0F, 0.0F), true), false);
+		r.online.remove(a);
+		helper.assertTrue(r.watch.ownerFor(r.server, EndingApi.HOUSE_COPY_OWNER).equals(Optional.of(b.getUUID())), "the owner was not stored");
+		r.online.addFirst(a);
+		r.ports.copyExists = true;
+		r.ports.copiedHouse = r.at(5, 1, 40);
+		r.data.setHome(r.at(0, 1, 0));
+		r.commit(EndingPath.B);
+		helper.assertTrue(r.data.house().equals(Optional.of(r.at(5, 1, 40))), "B empties " + r.data.house() + ", not the copied house");
+
+		// An old copy whose owner world has not stored: its first known player's base.
+		Run old = new Run(helper);
+		ServerPlayer first = old.player;
+		BlockPos firstBed = old.at(2, 1, 30).pos();
+		first.setRespawnPosition(new ServerPlayer.RespawnConfig(LevelData.RespawnData.of(helper.getLevel().dimension(), firstBed, 0.0F, 0.0F), true),
+				false);
+		old.friend();
+		old.ports.copyExists = true;
+		old.ports.copyOwner = first.getUUID();
+		old.data.setHome(old.at(0, 1, 0));
+		old.commit(EndingPath.B);
+		helper.assertTrue(old.watch.owner(old.server, EndingApi.HOUSE_COPY_OWNER).isEmpty()
+				&& old.data.house().equals(Optional.of(GlobalPos.of(helper.getLevel().dimension(), firstBed))), "B empties " + old.data.house()
+				+ ", not the old copy's owner's house");
+
+		// No copy, though world stored an owner (MP-7 B): the group's home, never that player's bed.
+		Run none = new Run(helper);
+		ServerPlayer stored = none.player;
+		stored.setRespawnPosition(new ServerPlayer.RespawnConfig(LevelData.RespawnData.of(helper.getLevel().dimension(), none.at(7, 1, 50).pos(), 0.0F,
+				0.0F), true), false);
+		helper.assertTrue(none.watch.ownerFor(none.server, EndingApi.HOUSE_COPY_OWNER).equals(Optional.of(stored.getUUID())), "no owner stored");
+		none.friend();
+		none.data.setHome(none.at(1, 1, 1));
+		none.commit(EndingPath.B);
+		helper.assertTrue(none.data.house().equals(Optional.of(none.at(1, 1, 1))), "with no copy B empties " + none.data.house());
 		helper.succeed();
 	}
 

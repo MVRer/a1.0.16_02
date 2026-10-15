@@ -62,6 +62,10 @@ final class EndingTestSupport {
 		boolean copyFinishPending;
 		int copyCancels;
 		@Nullable GlobalPos copySite;
+		/** {@code HouseCopyApi.realHouse}: the captured house, once there is one. */
+		@Nullable GlobalPos copiedHouse;
+		/** {@code HouseCopyApi.owner} when it is not the stored choice (an old copy's first known player); null reads the watch. */
+		@Nullable UUID copyOwner;
 		boolean stopSign = true;
 		boolean signMoves = true;
 		final List<GlobalPos> signMovedTo = new ArrayList<>();
@@ -178,6 +182,17 @@ final class EndingTestSupport {
 		@Override
 		public Optional<Bounds> copyBounds(MinecraftServer server) {
 			return Optional.ofNullable(copyBounds);
+		}
+
+		@Override
+		public Optional<GlobalPos> copiedHouse(MinecraftServer server) {
+			return Optional.ofNullable(copiedHouse);
+		}
+
+		/** World's choice as the run's own watch stores it (an old copy's fallback is world's, tested there). */
+		@Override
+		public Optional<UUID> copyOwner(MinecraftServer server) {
+			return copyOwner != null ? Optional.of(copyOwner) : watch.owner(server, EndingApi.HOUSE_COPY_OWNER);
 		}
 
 		@Override

@@ -166,25 +166,30 @@ public final class EndingWatch {
 	}
 
 	/**
-	 * The group's home, "your house" for C and (without a house copy owner) for B: the base of the home's owner
-	 * ({@code ending:home}, D-061: chosen once, among those online, and never flips). While the owner is online, a base
-	 * far from the old home with more blocks around it is a new home. With no home yet and the owner away (or without a
-	 * base), the owner's first block stands in, else the base of the first one in it, so a friend who left early never
-	 * keeps the group from having a house to take apart (D-064).
+	 * The group's home, "your house" for C and (without a house copy) for B: the base of the home's owner
+	 * ({@code ending:home}, D-061: chosen once, among the participants who have a base, and never flips). While the
+	 * owner is online with a base, a base of theirs far from the old home with more blocks around it is a new home.
+	 * While the owner is away (or has no base now), the home is never theirs to hold (D-064): with no home yet their
+	 * first block stands in, and the base of anyone in it that is far from the home with more blocks around it is the
+	 * new home, so a friend who played ten minutes at spawn never keeps the group's house there.
 	 */
 	static void sampleHome(MinecraftServer server, List<ServerPlayer> players, HerobrineState state, EndingState data, EndingConfig cfg,
 			PlayerWatch watch) {
-		Optional<UUID> owner = watch.ownerFor(server, EndingApi.HOME_OWNER);
+		Optional<UUID> owner = watch.ownerFor(server, EndingApi.HOME_OWNER, uuid -> watch.participant(server, uuid).flatMap(watch::base).isPresent());
 		Optional<GlobalPos> base = owner.flatMap(uuid -> watch.participant(server, uuid)).flatMap(watch::base);
-		if (base.isEmpty() && data.home().isEmpty()) {
-			base = owner.map(uuid -> state.firstBlocks(uuid).block()).map(PlacedBlock::pos);
-			for (ServerPlayer player : players) {
-				if (base.isEmpty()) {
-					base = watch.base(player);
-				}
-			}
+		if (base.isPresent()) {
+			sampleHome(server, base, data, cfg, watch);
+			return;
 		}
-		sampleHome(server, base, data, cfg, watch);
+		if (data.home().isEmpty()) {
+			sampleHome(server, owner.map(uuid -> state.firstBlocks(uuid).block()).map(PlacedBlock::pos), data, cfg, watch);
+		}
+		for (ServerPlayer player : players) {
+			sampleHome(server, watch.base(player), data, cfg, watch);
+		}
+		if (players.isEmpty()) {
+			sampleHome(server, Optional.empty(), data, cfg, watch);
+		}
 	}
 
 	/** The home is this base; a base far from the old home with more blocks around it is a new home. */

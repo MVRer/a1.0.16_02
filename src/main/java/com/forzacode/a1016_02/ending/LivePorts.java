@@ -168,6 +168,16 @@ final class LivePorts implements EndingPorts {
 	}
 
 	@Override
+	public Optional<GlobalPos> copiedHouse(MinecraftServer server) {
+		return HouseCopyApi.realHouse(server);
+	}
+
+	@Override
+	public Optional<UUID> copyOwner(MinecraftServer server) {
+		return HouseCopyApi.owner(server);
+	}
+
+	@Override
 	public Optional<Bounds> copyBounds(MinecraftServer server) {
 		Optional<GlobalPos> site = HouseCopyApi.site(server);
 		if (site.isEmpty()) {
