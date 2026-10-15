@@ -18,7 +18,9 @@ import org.jspecify.annotations.Nullable;
 /**
  * The entity workstream's own memory, {@code data/a1016_02/entity.dat}: where and when the last sighting was,
  * which variant it was, and how many there were that day. Fakes count for the place and the day (to the player
- * they were sightings too) but not for the variant rule.
+ * they were sightings too) but not for the variant rule. The glimpse (D-073) keeps its own record, the in-game day of
+ * the last one and how many there were: it is underground at the caller's spot, so it never counts for the surface
+ * sightings' place, day or variant rules (the director's one-sighting-a-day limit covers it through its card's tag).
  */
 public final class EntityData extends SavedData {
 	public static final Codec<EntityData> CODEC = RecordCodecBuilder.create(i -> i.group(
@@ -29,7 +31,9 @@ public final class EntityData extends SavedData {
 			Codec.INT.optionalFieldOf("sightings", 0).forGetter(d -> d.sightings),
 			Codec.INT.optionalFieldOf("fakes", 0).forGetter(d -> d.fakes),
 			Codec.INT.optionalFieldOf("stared", 0).forGetter(d -> d.stared),
-			PendingDig.CODEC.listOf().optionalFieldOf("pendingDigs", List.of()).forGetter(d -> List.copyOf(d.pendingDigs))
+			PendingDig.CODEC.listOf().optionalFieldOf("pendingDigs", List.of()).forGetter(d -> List.copyOf(d.pendingDigs)),
+			Codec.LONG.optionalFieldOf("lastGlimpseDay", -1L).forGetter(d -> d.lastGlimpseDay),
+			Codec.INT.optionalFieldOf("glimpses", 0).forGetter(d -> d.glimpses)
 	).apply(i, EntityData::new));
 
 	public static final SavedDataType<EntityData> TYPE = new SavedDataType<>(A1016_02.id("entity"), EntityData::new, CODEC, null);
@@ -43,12 +47,15 @@ public final class EntityData extends SavedData {
 	private int stared;
 	/** Goes-under shafts dug but not covered or put back yet (D-030). */
 	private final List<PendingDig> pendingDigs = new ArrayList<>();
+	/** The in-game day of the last glimpse (D-073), -1 if none yet, and how many there were. */
+	private long lastGlimpseDay = -1;
+	private int glimpses;
 
 	public EntityData() {
 	}
 
 	private EntityData(Optional<GlobalPos> lastPos, long lastDay, int countOnLastDay, String lastVariant, int sightings, int fakes, int stared,
-			List<PendingDig> pendingDigs) {
+			List<PendingDig> pendingDigs, long lastGlimpseDay, int glimpses) {
 		this.lastPos = lastPos.orElse(null);
 		this.lastDay = lastDay;
 		this.countOnLastDay = countOnLastDay;
@@ -57,6 +64,8 @@ public final class EntityData extends SavedData {
 		this.fakes = fakes;
 		this.stared = stared;
 		this.pendingDigs.addAll(pendingDigs);
+		this.lastGlimpseDay = lastGlimpseDay;
+		this.glimpses = glimpses;
 	}
 
 	/** Records (or updates, by dig id) a shaft that is open. */
@@ -94,6 +103,13 @@ public final class EntityData extends SavedData {
 	public void recordFake(GlobalPos pos, long day) {
 		recordPlaceAndDay(pos, day);
 		fakes++;
+		setDirty();
+	}
+
+	/** A glimpse on in-game day {@code day} (D-073). Never the surface sightings' place, day or variant. */
+	public void recordGlimpse(long day) {
+		lastGlimpseDay = day;
+		glimpses++;
 		setDirty();
 	}
 
@@ -150,5 +166,14 @@ public final class EntityData extends SavedData {
 
 	public int stared() {
 		return stared;
+	}
+
+	/** The in-game day of the last glimpse, -1 if there was none. */
+	public long lastGlimpseDay() {
+		return lastGlimpseDay;
+	}
+
+	public int glimpses() {
+		return glimpses;
 	}
 }

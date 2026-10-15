@@ -21,7 +21,7 @@ import net.minecraft.world.phys.Vec3;
  * (D-036). {@link EntityGameTests} extends this (through {@link SightingRuleGameTests}) so they run under its
  * registered entrypoint.
  */
-public class FogAndRunGameTests extends TwoPlayerFigureGameTests {
+public class FogAndRunGameTests extends GlimpseGameTests {
 	private static boolean close(double a, double b, double tolerance) {
 		return Math.abs(a - b) <= tolerance;
 	}
