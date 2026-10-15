@@ -2,7 +2,9 @@ package com.forzacode.a1016_02.core;
 
 import java.util.Arrays;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
+import java.util.function.Consumer;
 
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
@@ -16,7 +18,7 @@ import net.minecraft.gametest.framework.GameTestHelper;
  * {@link ModConfig.Upgrades} and {@link ModConfig.Versioned} sections. Pure: nothing here reads or writes the live
  * config file. {@link FogWeatherTests} extends this.
  */
-public class ConfigVersionTests {
+public class ConfigVersionTests extends R1ReviewCoreTests {
 	/** A section with a version, as a workstream would write one: v0's defaults were radius 48, {0.15, 0.3}, "A", false. */
 	public static final class VersionedSection implements ModConfig.Versioned {
 		public int version = 0;
@@ -98,8 +100,11 @@ public class ConfigVersionTests {
 		Pacing d = new Pacing();
 		helper.assertTrue(loaded.configVersion == ModConfig.CONFIG_VERSION && ModConfig.CONFIG_VERSION == 1, "version " + loaded.configVersion);
 		helper.assertTrue(p.tracesStartMaxHours == 2.5, "the hand-changed value was replaced: " + p.tracesStartMaxHours);
-		helper.assertTrue(p.tracesStartMinHours == d.tracesStartMinHours && p.proximityStartMinHours == d.proximityStartMinHours
-				&& p.proximityStartMaxHours == d.proximityStartMaxHours && p.tempoShift == d.tempoShift && p.aloneMaxAmbient == d.aloneMaxAmbient
+		// The hand-slowed Traces window (to 2.5 h) passes v1.2's Proximity start (1.75 h): Proximity keeps the player's
+		// old window, 5 to 6 h, so it never starts inside Traces (FIX-CORE, R1#2).
+		helper.assertTrue(p.proximityStartMinHours == 5 && p.proximityStartMaxHours == 6, "Proximity moved inside the slowed Traces window: "
+				+ p.proximityStartMinHours + " to " + p.proximityStartMaxHours);
+		helper.assertTrue(p.tracesStartMinHours == d.tracesStartMinHours && p.tempoShift == d.tempoShift && p.aloneMaxAmbient == d.aloneMaxAmbient
 				&& p.tracesAmbientPerHour == d.tracesAmbientPerHour && p.proximityMinorsPerHourMin == d.proximityMinorsPerHourMin
 				&& p.proximityMinorsPerHourMax == d.proximityMinorsPerHourMax && p.proximityMajorEveryHoursMin == d.proximityMajorEveryHoursMin
 				&& p.proximityMajorEveryHoursMax == d.proximityMajorEveryHoursMax && p.firstAccidentMinHours == d.firstAccidentMinHours
@@ -118,6 +123,80 @@ public class ConfigVersionTests {
 		ModConfig again = ModConfig.read(loaded.toJson());
 		helper.assertTrue(again.toJson().equals(loaded.toJson()), "a second load changed the file");
 		helper.succeed();
+	}
+
+	/**
+	 * FIX-CORE (R1#2): the 0 to 1 step keeps the stage windows in order. Half a window set by hand keeps the whole
+	 * window the player had (no minimum past its maximum); a Traces window slowed past v1.2's Proximity start keeps the
+	 * old Proximity window; an untouched v1.1 file takes both new windows.
+	 */
+	@GameTest
+	public void theUpgradeKeepsTheStageWindowsInOrder(GameTestHelper helper) {
+		Pacing slowStart = upgraded(p -> p.tracesStartMinHours = 2.0);
+		helper.assertTrue(slowStart.tracesStartMinHours == 2.0 && slowStart.tracesStartMaxHours == 3.0 && slowStart.proximityStartMinHours == 5.0
+				&& slowStart.proximityStartMaxHours == 6.0, "a hand-set Traces minimum: " + windows(slowStart));
+		Pacing lateProximity = upgraded(p -> p.proximityStartMinHours = 5.5);
+		helper.assertTrue(lateProximity.tracesStartMinHours == 0.4 && lateProximity.tracesStartMaxHours == 0.9 && lateProximity.proximityStartMinHours == 5.5
+				&& lateProximity.proximityStartMaxHours == 6.0, "a hand-set Proximity minimum: " + windows(lateProximity));
+		Pacing fasterTraces = upgraded(p -> p.tracesStartMaxHours = 1.5);
+		helper.assertTrue(fasterTraces.tracesStartMinHours == 0.4 && fasterTraces.tracesStartMaxHours == 1.5 && fasterTraces.proximityStartMinHours == 1.75
+				&& fasterTraces.proximityStartMaxHours == 2.75, "a Traces maximum inside the new windows: " + windows(fasterTraces));
+		Pacing untouched = upgraded(p -> {
+		});
+		helper.assertTrue(untouched.tracesStartMinHours == 0.4 && untouched.tracesStartMaxHours == 0.9 && untouched.proximityStartMinHours == 1.75
+				&& untouched.proximityStartMaxHours == 2.75, "an untouched file: " + windows(untouched));
+		for (Pacing p : List.of(slowStart, lateProximity, fasterTraces, untouched)) {
+			helper.assertTrue(p.tracesStartMinHours <= p.tracesStartMaxHours && p.tracesStartMaxHours <= p.proximityStartMinHours
+					&& p.proximityStartMinHours <= p.proximityStartMaxHours, "out of order: " + windows(p));
+		}
+		helper.succeed();
+	}
+
+	/**
+	 * FIX-CORE (R1#3): reading is lenient value by value. A value that cannot be read keeps its own default (a string in
+	 * a double, a fraction in an int, a list in a number, null), everything else read from the same file or section is
+	 * kept, unknown keys are skipped, a non-object part reads as its defaults, and a file that is no object is none.
+	 */
+	@GameTest
+	public void aWrongValueCostsOnlyThatValue(GameTestHelper helper) {
+		Pacing d = new Pacing();
+		ModConfig root = ModConfig.parse("{\"devFastDivisor\": 30, \"devFastMode\": 7, \"unknown\": 4, \"pacing\": {\"tracesStartMaxHours\": \"2h\", "
+				+ "\"aloneMaxAmbient\": 1.5, \"minorGapMinutes\": [20], \"majorGapMinutes\": null, \"sightingMinSpacing\": 250, \"tempoShift\": 0.3}}");
+		Pacing p = root.pacing;
+		helper.assertTrue(root.devFastDivisor == 30 && !root.devFastMode && root.configVersion == 0, "the root around a bad value");
+		helper.assertTrue(p.tracesStartMaxHours == d.tracesStartMaxHours && p.aloneMaxAmbient == d.aloneMaxAmbient && p.minorGapMinutes == d.minorGapMinutes
+				&& p.majorGapMinutes == d.majorGapMinutes, "a bad value did not keep its default: " + root.toJson());
+		helper.assertTrue(p.sightingMinSpacing == 250 && p.tempoShift == 0.3, "a good value next to bad ones was lost");
+		ModConfig noPacing = ModConfig.parse("{\"devFastDivisor\": 30, \"pacing\": \"fast\"}");
+		helper.assertTrue(noPacing.devFastDivisor == 30 && noPacing.pacing.tracesStartMinHours == d.tracesStartMinHours, "a pacing that is no object");
+		helper.assertTrue(ModConfig.parse("[1, 2]") == null && ModConfig.read("[1, 2]").configVersion == ModConfig.CONFIG_VERSION, "a file that is no object");
+
+		JsonObject sections = JsonParser.parseString("{\"s\": {\"radius\": 30, \"byStage\": [0.5, \"x\"], \"mode\": \"C\", \"loud\": 3, \"periodTicks\": 4.5}, "
+				+ "\"t\": 7}").getAsJsonObject();
+		VersionedSection s = ModConfig.readSection(sections, "s", VersionedSection.class, VersionedSection::new);
+		VersionedSection fresh = new VersionedSection();
+		fresh.upgrade();
+		helper.assertTrue(s.radius == 30 && "C".equals(s.mode) && s.version == 1, "a good value in a section with bad ones was lost: radius " + s.radius
+				+ ", mode " + s.mode);
+		helper.assertTrue(Arrays.equals(s.byStage, fresh.byStage) && s.loud == fresh.loud && s.periodTicks == fresh.periodTicks,
+				"a bad value in a section did not keep its default: " + Arrays.toString(s.byStage) + ", loud " + s.loud + ", period " + s.periodTicks);
+		VersionedSection notAnObject = ModConfig.readSection(sections, "t", VersionedSection.class, VersionedSection::new);
+		helper.assertTrue(notAnObject.radius == fresh.radius && notAnObject.version == fresh.version, "a section that is no object");
+		helper.succeed();
+	}
+
+	private static Pacing upgraded(Consumer<Pacing> handEdit) {
+		ModConfig old = new ModConfig();
+		old.pacing = v11Pacing();
+		handEdit.accept(old.pacing);
+		JsonObject file = JsonParser.parseString(old.toJson()).getAsJsonObject();
+		file.remove("configVersion");
+		return ModConfig.read(file.toString()).pacing;
+	}
+
+	private static String windows(Pacing p) {
+		return "Traces " + p.tracesStartMinHours + " to " + p.tracesStartMaxHours + " h, Proximity " + p.proximityStartMinHours + " to "
+				+ p.proximityStartMaxHours + " h";
 	}
 
 	/** A file already at version 1 is never stepped again, even where it holds v1.1's numbers; a partial file fills in. */

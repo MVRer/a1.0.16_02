@@ -9,6 +9,7 @@ import io.netty.buffer.Unpooled;
 
 import net.fabricmc.fabric.api.gametest.v1.GameTest;
 
+import net.minecraft.core.BlockPos;
 import net.minecraft.gametest.framework.GameTestHelper;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.nbt.NbtOps;
@@ -16,9 +17,13 @@ import net.minecraft.nbt.Tag;
 import net.minecraft.network.codec.StreamCodec;
 import net.minecraft.resources.RegistryOps;
 import net.minecraft.server.MinecraftServer;
+import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.util.RandomSource;
 import net.minecraft.world.level.GameType;
+import net.minecraft.world.level.LightLayer;
+import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.phys.Vec3;
 
 /**
  * Fog weather (D-071): {@link FogSpell} and its codecs, the spell in {@link HerobrineState.Effects} and
@@ -70,6 +75,149 @@ public class FogWeatherTests extends ConfigVersionTests {
 		helper.assertTrue(clamped.equals(new FogSpell(100L, 100L, 1.0F, false)), "quiet defaults to false, until never before from, level 0..1: " + clamped);
 		helper.assertTrue(new FogSpell(0L, 10L, Float.NaN, false).level() == 0.0F, "NaN level");
 		helper.succeed();
+	}
+
+	/**
+	 * FIX-CORE (R2#5): a spell carries the ease it was made with. Made with a server's numbers it keeps them through the
+	 * save codec, the stream codec and the payload; its amount is its own ease whatever settings a caller passes (so a
+	 * client on other numbers draws the server's fog); a spell saved without them (v1.2.0) takes the installed settings
+	 * when it loads; the rolls and the hand-over stamp the settings they run on.
+	 */
+	@GameTest
+	public void aFogSpellCarriesItsOwnEase(GameTestHelper helper) {
+		RegistryOps<Tag> ops = helper.getLevel().registryAccess().createSerializationContext(NbtOps.INSTANCE);
+		FogWeatherRules.Settings server = new FogWeatherRules.Settings(D.nightChanceByStage(), D.secondNightChance(), D.clearNightsBeforeFog(),
+				D.morningCarryChance(), D.dayChanceByStage(), D.nightLevelByStage(), D.dayLevelByStage(), D.quietShare(), 5_000L, 800L, 2.0);
+		FogSpell spell = new FogSpell(DAY + 11_500, DAY + 23_500, 0.7F, false, server);
+		helper.assertTrue(spell.rampTicks() == 5_000L && spell.fadeTicks() == 800L && spell.exponent() == 2.0, "the settings' ease " + spell);
+		FogSpell installed = new FogSpell(DAY + 11_500, DAY + 23_500, 0.7F, false);
+		FogWeatherRules.Settings now = FogWeatherRules.settings();
+		helper.assertTrue(installed.rampTicks() == now.rampTicks() && installed.fadeTicks() == now.fadeTicks() && installed.exponent() == now.easeExponent(),
+				"the four-number spell does not take the installed ease " + installed);
+		Tag saved = FogSpell.CODEC.encodeStart(ops, spell).getOrThrow();
+		helper.assertTrue(FogSpell.CODEC.parse(ops, saved).getOrThrow().equals(spell) && roundTrip(FogSpell.STREAM_CODEC, spell).equals(spell)
+				&& roundTrip(ClientEffects.FogSpell.CODEC, new ClientEffects.FogSpell(Optional.of(spell))).spell().equals(Optional.of(spell)),
+				"a codec lost the ease: " + saved);
+		CompoundTag old = ((CompoundTag) saved).copy();
+		old.remove("ramp");
+		old.remove("fade");
+		old.remove("exponent");
+		FogSpell loaded = FogSpell.CODEC.parse(ops, old).getOrThrow();
+		helper.assertTrue(loaded.equals(new FogSpell(spell.fromClock(), spell.untilClock(), spell.level(), spell.quiet(), now)),
+				"a v1.2.0 spell did not take the installed ease at load: " + loaded);
+		for (long t = spell.fromClock() - 100; t <= spell.untilClock() + 100; t += 37) {
+			double own = spell.amount(t, 5_000, 800, 2.0);
+			helper.assertTrue(spell.amount(t) == own && spell.amount(t, D) == own && FogLimits.spellAmount(Optional.of(spell), t, D) == own
+					&& FogLimits.spellAmount(Optional.of(spell), t) == own, "not the spell's own ease at " + t);
+		}
+		helper.assertTrue(FogLimits.of(12, 12, 0.3F, DAY + 12_000, Optional.of(spell), FogLimits.Shape.DEFAULT, D)
+				.equals(FogLimits.of(12, 12, 0.3F, DAY + 12_000, Optional.of(spell), FogLimits.Shape.DEFAULT, server)), "FogLimits read the settings");
+
+		FogWeatherRules.History history = new FogWeatherRules.History(9, 4, false, false);
+		FogSpell night = FogWeatherRules.night(RandomSource.create(1), 9, Stage.PROXIMITY, history, server).orElseThrow();
+		FogSpell day = FogWeatherRules.day(RandomSource.create(1), 9, Stage.REMOVAL, history, Optional.empty(), alwaysDays(server)).orElseThrow();
+		FogSpell joined = FogWeatherRules.handOver(Optional.of(day), night, 9 * DAY + 10_000, server);
+		for (FogSpell s : List.of(night, day, joined)) {
+			helper.assertTrue(s.rampTicks() == 5_000L && s.fadeTicks() == 800L && s.exponent() == 2.0, "a rolled spell without the settings' ease " + s);
+		}
+		FogSpell clamped = new FogSpell(0L, 10L, 0.5F, false, -5L, -5L, Double.NaN);
+		helper.assertTrue(clamped.rampTicks() == 0L && clamped.fadeTicks() == 0L && clamped.exponent() == 3.0
+				&& new FogSpell(0L, 10L, 0.5F, false, 1L, 1L, 20.0).exponent() == 8.0, "the ease is not clamped: " + clamped);
+		helper.assertTrue(spell.withClocks(5L, 9L).equals(new FogSpell(5L, 9L, 0.7F, false, server)), "withClocks");
+		helper.succeed();
+	}
+
+	/** {@code settings} with a fog day every day not already covered. */
+	private static FogWeatherRules.Settings alwaysDays(FogWeatherRules.Settings settings) {
+		return new FogWeatherRules.Settings(settings.nightChanceByStage(), settings.secondNightChance(), settings.clearNightsBeforeFog(),
+				settings.morningCarryChance(), FogWeatherRules.perStage(1.0), settings.nightLevelByStage(), settings.dayLevelByStage(),
+				settings.quietShare(), settings.rampTicks(), settings.fadeTicks(), settings.easeExponent(), settings.fogGateShare());
+	}
+
+	/**
+	 * FIX-CORE (R2#1): {@link FogSpell#counts} is the one "is there fog now" rule: from half the spell's level
+	 * ({@code fogGateShare}, 0.5) on the way in to half on the way out, never outside, never for a spell of level 0, and
+	 * the share is the settings' (installed like the rest, clamped, NaN is the default).
+	 */
+	@GameTest
+	public void aFogSpellCountsFromHalfItsLevel(GameTestHelper helper) {
+		FogSpell spell = new FogSpell(DAY + 11_500, DAY + 23_500, 0.6F, false, D);
+		helper.assertTrue(D.fogGateShare() == 0.5 && FogWeatherRules.DEFAULT_GATE_SHARE == 0.5, "the default gate share");
+		helper.assertTrue(!spell.counts(DAY + 11_499) && !spell.counts(DAY + 11_500) && !spell.counts(DAY + 11_600) && !spell.counts(DAY + 23_500)
+				&& !spell.counts(DAY + 23_400), "a spell's edges count as fog");
+		helper.assertTrue(spell.counts(DAY + 14_000) && spell.counts(DAY + 20_000), "a spell at full does not count");
+		long firstIn = -1;
+		long lastOut = -1;
+		for (long t = spell.fromClock(); t < spell.untilClock(); t++) {
+			boolean counts = spell.counts(t);
+			helper.assertTrue(counts == spell.counts(t, 0.5) && counts == spell.amount(t) >= 0.5 * spell.level(), "counts at " + t);
+			if (counts && firstIn < 0) {
+				firstIn = t;
+			}
+			if (counts) {
+				lastOut = t;
+			}
+		}
+		helper.assertTrue(firstIn > spell.fromClock() + 1000 && firstIn < spell.fromClock() + D.rampTicks() && lastOut > spell.untilClock() - D.fadeTicks()
+				&& lastOut < spell.untilClock() - 500, "the gate opens at " + firstIn + " and closes at " + lastOut);
+		helper.assertTrue(spell.counts(DAY + 11_501, 0.0) && !spell.counts(DAY + 11_500, 0.0) && spell.counts(DAY + 14_000, 1.5)
+				&& !spell.counts(DAY + 12_000, 1.5), "share 0 counts any fog, a share over 1 is 1");
+		helper.assertTrue(!new FogSpell(DAY, 2 * DAY, 0.0F, false, D).counts(DAY + 6_000), "a spell of level 0 counts");
+		FogWeatherRules.Settings strict = new FogWeatherRules.Settings(D.nightChanceByStage(), D.secondNightChance(), D.clearNightsBeforeFog(),
+				D.morningCarryChance(), D.dayChanceByStage(), D.nightLevelByStage(), D.dayLevelByStage(), D.quietShare(), D.rampTicks(), D.fadeTicks(),
+				D.easeExponent(), 7.0);
+		FogWeatherRules.Settings nan = new FogWeatherRules.Settings(D.nightChanceByStage(), D.secondNightChance(), D.clearNightsBeforeFog(),
+				D.morningCarryChance(), D.dayChanceByStage(), D.nightLevelByStage(), D.dayLevelByStage(), D.quietShare(), D.rampTicks(), D.fadeTicks(),
+				D.easeExponent(), Double.NaN);
+		helper.assertTrue(strict.fogGateShare() == 1.0 && nan.fogGateShare() == 0.5, "the gate share is not clamped: " + strict.fogGateShare());
+		helper.succeed();
+	}
+
+	/**
+	 * FIX-CORE (R2#2): the spell is weather, outside. {@link FogLimits#skyFactor} is 1 from sky light 10, 0 to 4,
+	 * linear between; {@code FogLimits.of(player)} weights the spell by it at the player's eyes, so a player sealed in
+	 * stone has no spell fog (the dusk fog stays).
+	 */
+	@GameTest(maxTicks = 200)
+	public void aFogSpellStaysOutside(GameTestHelper helper) {
+		helper.assertTrue(FogLimits.skyFactor(15) == 1.0 && FogLimits.skyFactor(10) == 1.0 && FogLimits.skyFactor(4) == 0.0 && FogLimits.skyFactor(0) == 0.0
+				&& FogLimits.skyFactor(-3) == 0.0 && FogLimits.skyFactor(7) == 0.5 && Math.abs(FogLimits.skyFactor(9) - 5.0 / 6.0) < 1.0E-12,
+				"sky factors");
+		for (int light = 0; light < 15; light++) {
+			helper.assertTrue(FogLimits.skyFactor(light) <= FogLimits.skyFactor(light + 1), "the sky factor falls at " + light);
+		}
+		ServerLevel level = helper.getLevel();
+		for (int x = 0; x <= 4; x++) {
+			for (int y = 1; y <= 5; y++) {
+				for (int z = 0; z <= 4; z++) {
+					boolean inside = x >= 1 && x <= 3 && y >= 2 && y <= 4 && z >= 1 && z <= 3;
+					helper.setBlock(x, y, z, inside ? Blocks.AIR : Blocks.STONE);
+				}
+			}
+		}
+		ServerPlayer player = (ServerPlayer) helper.makeMockServerPlayer(GameType.SURVIVAL);
+		Vec3 feet = helper.absoluteVec(new Vec3(2.5, 2.0, 2.5));
+		player.snapTo(feet.x, feet.y, feet.z, 0.0F, 0.0F);
+		BlockPos eyes = BlockPos.containing(player.getEyePosition());
+		MinecraftServer server = level.getServer();
+		helper.succeedWhen(() -> {
+			helper.assertTrue(level.getBrightness(LightLayer.SKY, eyes) <= FogLimits.SKY_NONE, "sky light in the box " + level.getBrightness(LightLayer.SKY, eyes));
+			HerobrineState state = HerobrineState.get(server);
+			HerobrineState.Effects before = state.effects();
+			try {
+				long clock = level.getDefaultClockTime();
+				FogSpell spell = new FogSpell(clock - 3_000, clock + 6_000, 0.8F, false);
+				ClientEffects.setFogSpell(server, Optional.of(spell));
+				FogLimits.Result inside = FogLimits.of(player);
+				FogLimits.Result noSpell = FogLimits.of(player.requestedViewDistance(), server.getPlayerList().getViewDistance(), before.duskFogLevel(), clock,
+						FogLimits.shape(), 0.0);
+				FogLimits.Result outside = FogLimits.of(player.requestedViewDistance(), server.getPlayerList().getViewDistance(), before.duskFogLevel(), clock,
+						Optional.of(spell));
+				helper.assertTrue(inside.equals(noSpell) && outside.fogEnd() < inside.fogEnd(), "the spell reached into sealed stone: " + inside + " vs " + outside);
+			} finally {
+				ClientEffects.setFogSpell(server, before.fogSpell());
+			}
+		});
 	}
 
 	/** D-071: a v1.1 state (effects without fogSpell, or no effects at all) loads with no spell; a spell round-trips. */
@@ -246,12 +394,19 @@ public class FogWeatherTests extends ConfigVersionTests {
 		helper.assertTrue(D.secondNightChance() == 0.5 && D.clearNightsBeforeFog() == 4 && D.morningCarryChance() == 0.35 && D.quietShare() == 0.25
 				&& D.rampTicks() == 2500 && D.fadeTicks() == 1500 && D.easeExponent() == 3.0, "D-071 settings " + D);
 		// The roll times atmosphere's live weather and the director's dry runs share: tonight at 10000 (a fog day still at
-		// full then), a fog day at 23000 of the day before; a fade longer than the default rolls tonight before it thins.
+		// full then), a fog day at 21500 of the day before (a fog night still at full then); a fade longer than the default
+		// rolls each before the spell it follows thins.
 		FogWeatherRules.Settings longFade = new FogWeatherRules.Settings(D.nightChanceByStage(), D.secondNightChance(), D.clearNightsBeforeFog(),
 				D.morningCarryChance(), D.dayChanceByStage(), D.nightLevelByStage(), D.dayLevelByStage(), D.quietShare(), D.rampTicks(), 3000L,
 				D.easeExponent());
-		helper.assertTrue(FogWeatherRules.NIGHT_ROLL == 10_000L && FogWeatherRules.DAY_ROLL == 23_000L && FogWeatherRules.nightRollTime(D) == 10_000L
+		FogWeatherRules.Settings endless = new FogWeatherRules.Settings(D.nightChanceByStage(), D.secondNightChance(), D.clearNightsBeforeFog(),
+				D.morningCarryChance(), D.dayChanceByStage(), D.nightLevelByStage(), D.dayLevelByStage(), D.quietShare(), D.rampTicks(), 30_000L,
+				D.easeExponent());
+		helper.assertTrue(FogWeatherRules.NIGHT_ROLL == 10_000L && FogWeatherRules.DAY_ROLL == 21_500L && FogWeatherRules.nightRollTime(D) == 10_000L
 				&& FogWeatherRules.nightRollTime(longFade) == 8_500L, "roll times " + FogWeatherRules.nightRollTime(D) + ", " + FogWeatherRules.nightRollTime(longFade));
+		helper.assertTrue(FogWeatherRules.dayRollTime(D) == FogWeatherRules.NIGHT_UNTIL - D.fadeTicks() - 500 && FogWeatherRules.dayRollTime(longFade) == 20_000L
+				&& FogWeatherRules.dayRollTime(endless) == FogWeatherRules.NIGHT_FROM, "day roll times " + FogWeatherRules.dayRollTime(D) + ", "
+						+ FogWeatherRules.dayRollTime(longFade) + ", " + FogWeatherRules.dayRollTime(endless));
 		helper.succeed();
 	}
 
@@ -357,22 +512,26 @@ public class FogWeatherTests extends ConfigVersionTests {
 			}
 		}
 
-		// The server form reads the stored spell on the player's level clock (set and restored within this tick).
+		// The server form reads the stored spell on the player's level clock (set and restored within one tick), in the
+		// open: once the light engine has lit the fresh test area, the sky at the player's eyes lets the whole spell in.
 		MinecraftServer server = helper.getLevel().getServer();
 		ServerPlayer player = (ServerPlayer) helper.makeMockServerPlayer(GameType.SURVIVAL);
-		HerobrineState state = HerobrineState.get(server);
-		HerobrineState.Effects before = state.effects();
-		try {
-			long now = helper.getLevel().getDefaultClockTime();
-			FogSpell current = new FogSpell(now - 5000, now + 5000, 0.8F, false);
-			state.setEffects(new HerobrineState.Effects(before.musicOff(), 0.2F, Optional.of(current)));
-			FogLimits.Result live = FogLimits.of(player);
-			FogLimits.Result pure = FogLimits.of(player.requestedViewDistance(), server.getPlayerList().getViewDistance(), 0.2F, now, Optional.of(current));
-			FogLimits.Result clear = FogLimits.of(player.requestedViewDistance(), server.getPlayerList().getViewDistance(), 0.2F, now);
-			helper.assertTrue(live.equals(pure) && live.fogEnd() < clear.fogEnd(), "server form " + live + " vs " + pure + " / clear " + clear);
-		} finally {
-			state.setEffects(before);
-		}
-		helper.succeed();
+		BlockPos eyes = BlockPos.containing(player.getEyePosition());
+		helper.succeedWhen(() -> {
+			helper.assertTrue(helper.getLevel().getBrightness(LightLayer.SKY, eyes) >= FogLimits.SKY_FULL, "no sky at the player's eyes yet");
+			HerobrineState state = HerobrineState.get(server);
+			HerobrineState.Effects before = state.effects();
+			try {
+				long now = helper.getLevel().getDefaultClockTime();
+				FogSpell current = new FogSpell(now - 5000, now + 5000, 0.8F, false);
+				state.setEffects(new HerobrineState.Effects(before.musicOff(), 0.2F, Optional.of(current)));
+				FogLimits.Result live = FogLimits.of(player);
+				FogLimits.Result pure = FogLimits.of(player.requestedViewDistance(), server.getPlayerList().getViewDistance(), 0.2F, now, Optional.of(current));
+				FogLimits.Result clear = FogLimits.of(player.requestedViewDistance(), server.getPlayerList().getViewDistance(), 0.2F, now);
+				helper.assertTrue(live.equals(pure) && live.fogEnd() < clear.fogEnd(), "server form " + live + " vs " + pure + " / clear " + clear);
+			} finally {
+				state.setEffects(before);
+			}
+		});
 	}
 }

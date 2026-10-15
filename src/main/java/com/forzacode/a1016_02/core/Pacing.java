@@ -142,15 +142,36 @@ public final class Pacing {
 	 * Step 0 to 1 (v1.2, D-070): Traces at 0.4 to 0.9 h (was 1 to 3), Proximity at 1.75 to 2.75 h (5 to 6), tempo shift
 	 * 0.25 (0.4), up to 3 ambients in Alone (1), 2 ambients an hour in Traces (1), 1.5 to 2.5 minors an hour in
 	 * Proximity (1 to 2), a major every 1.5 to 3 h (2 to 4), the first accident from 3.5 h (6), empty sessions 0.1
-	 * (0.2), pity from 0.5 h (1), fog drifts of 4 to 10 s (3 to 8).
+	 * (0.2), pity from 0.5 h (1), fog drifts of 4 to 10 s (3 to 8). The stage windows stay in order: a window whose new
+	 * minimum would pass its kept maximum (or the other way round) keeps both its old values, and a Traces window the
+	 * player slowed by hand past the new Proximity start keeps the player's old Proximity window, so Proximity never
+	 * starts inside Traces (a v1.1 file whose own values overlapped is left as the player wrote it).
 	 */
 	void upgrade(int from) {
 		Pacing d = new Pacing();
 		if (from < 1) {
+			double oldTracesMin = tracesStartMinHours;
+			double oldTracesMax = tracesStartMaxHours;
+			double oldProximityMin = proximityStartMinHours;
+			double oldProximityMax = proximityStartMaxHours;
 			tracesStartMinHours = ModConfig.Upgrades.keepOrNew(tracesStartMinHours, 1, d.tracesStartMinHours);
 			tracesStartMaxHours = ModConfig.Upgrades.keepOrNew(tracesStartMaxHours, 3, d.tracesStartMaxHours);
 			proximityStartMinHours = ModConfig.Upgrades.keepOrNew(proximityStartMinHours, 5, d.proximityStartMinHours);
 			proximityStartMaxHours = ModConfig.Upgrades.keepOrNew(proximityStartMaxHours, 6, d.proximityStartMaxHours);
+			// Half a window moved (the other half hand-set): keep the window the player had.
+			if (tracesStartMinHours > tracesStartMaxHours && oldTracesMin <= oldTracesMax) {
+				tracesStartMinHours = oldTracesMin;
+				tracesStartMaxHours = oldTracesMax;
+			}
+			if (proximityStartMinHours > proximityStartMaxHours && oldProximityMin <= oldProximityMax) {
+				proximityStartMinHours = oldProximityMin;
+				proximityStartMaxHours = oldProximityMax;
+			}
+			// A Traces window slowed by hand past the new Proximity start: Proximity keeps the player's old window.
+			if (tracesStartMaxHours > proximityStartMinHours && oldTracesMax <= oldProximityMin) {
+				proximityStartMinHours = oldProximityMin;
+				proximityStartMaxHours = oldProximityMax;
+			}
 			tempoShift = ModConfig.Upgrades.keepOrNew(tempoShift, 0.4, d.tempoShift);
 			aloneMaxAmbient = ModConfig.Upgrades.keepOrNew(aloneMaxAmbient, 1, d.aloneMaxAmbient);
 			tracesAmbientPerHour = ModConfig.Upgrades.keepOrNew(tracesAmbientPerHour, 1, d.tracesAmbientPerHour);

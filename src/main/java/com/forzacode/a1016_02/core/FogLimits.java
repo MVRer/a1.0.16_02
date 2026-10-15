@@ -4,9 +4,11 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.function.Supplier;
 
+import net.minecraft.core.BlockPos;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.level.Level;
+import net.minecraft.world.level.LightLayer;
 
 /**
  * Where the world fog ends for one player, computed the same way on both sides so the server (where he may stand)
@@ -19,11 +21,14 @@ import net.minecraft.world.level.Level;
  * {@code duskNightWeight} for the night, faded before sunrise), then geometric toward {@code duskMinFogBlocks}
  * ({@link #fogEnd}). A fog spell (D-071, {@link FogSpell}, the world's fog weather) adds its amount on the same clock:
  * the two combine as {@code 1 - (1 - dusk)(1 - spell)} ({@link #combine}) before the same pull, so the figure's band
- * follows a fog night even without a fresh client report. Fog surges (short, per player) and the client's easing
- * between dusk levels (at most {@code duskLevelChangeSeconds} after a change; the client's own fog report covers it)
- * are not included. Fixed-time dimensions get neither. Atmosphere owns the shape and the spell's ease: it installs its
- * config with {@link #installShape} and {@link FogWeatherRules#install}; until then {@link Shape#DEFAULT} and
- * {@link FogWeatherRules.Settings#DEFAULT} match atmosphere's defaults.
+ * follows a fog night even without a fresh client report. The spell's amount is always its own ease
+ * ({@link FogSpell#amount(double)}: the ease it was made with travels with it), so both sides get the same number
+ * whatever their configs; for a player the server weights it by the sky light at their eyes ({@link #skyFactor}). Fog
+ * surges (short, per player) and the client's easing between dusk levels (at most {@code duskLevelChangeSeconds} after
+ * a change; the client's own fog report covers it) are not included. Fixed-time dimensions get neither. Atmosphere owns
+ * the shape and the weather numbers: it installs its config with {@link #installShape} and
+ * {@link FogWeatherRules#install}; until then {@link Shape#DEFAULT} and {@link FogWeatherRules.Settings#DEFAULT} match
+ * atmosphere's defaults.
  */
 public final class FogLimits {
 	/**
@@ -62,6 +67,10 @@ public final class FogLimits {
 	}
 
 	public static final long DAY = 24000L;
+	/** Sky light at or above this gives a fog spell in full ({@link #skyFactor}). */
+	public static final int SKY_FULL = 10;
+	/** Sky light at or below this gives no fog spell ({@link #skyFactor}). */
+	public static final int SKY_NONE = 4;
 
 	private static volatile Supplier<Shape> shape = () -> Shape.DEFAULT;
 
@@ -96,18 +105,21 @@ public final class FogLimits {
 	}
 
 	/**
-	 * The fog for these view distances, dusk fog level (0 to 1), clock time and fog spell, with the installed shape and
-	 * fog weather settings. {@code clockTime} is the absolute clock ({@code getDefaultClockTime()}): its time of day
+	 * The fog for these view distances, dusk fog level (0 to 1), clock time and fog spell (its own ease), with the installed
+	 * shape. {@code clockTime} is the absolute clock ({@code getDefaultClockTime()}): its time of day
 	 * weights the dusk fog, the whole of it places the spell.
 	 */
 	public static Result of(int clientChunks, int serverChunks, float duskFogLevel, long clockTime, Optional<FogSpell> spell) {
 		return of(clientChunks, serverChunks, duskFogLevel, clockTime, spell, shape(), FogWeatherRules.settings());
 	}
 
-	/** {@link #of(int, int, float, long, Optional)} with this shape and these fog weather settings. */
+	/**
+	 * {@link #of(int, int, float, long, Optional)} with this shape. The weather settings are not read (the spell's own
+	 * ease counts, {@link #spellAmount(Optional, double)}); the form is kept so older calls compile.
+	 */
 	public static Result of(int clientChunks, int serverChunks, float duskFogLevel, long clockTime, Optional<FogSpell> spell, Shape shape,
 			FogWeatherRules.Settings weather) {
-		return of(clientChunks, serverChunks, duskFogLevel, clockTime, shape, spellAmount(spell, clockTime, weather));
+		return of(clientChunks, serverChunks, duskFogLevel, clockTime, shape, spellAmount(spell, clockTime));
 	}
 
 	/**
@@ -124,7 +136,9 @@ public final class FogLimits {
 
 	/**
 	 * The fog one player sees now: their requested view distance, the server's, the world's dusk fog level and fog
-	 * spell, and their level's clock (neither where time is fixed). Server thread.
+	 * spell, and their level's clock (neither where time is fixed). The spell is weather, outside: its amount is
+	 * weighted by the sky light at the player's eyes ({@link #skyFactor}), as vanilla gates its rain fog on the sky, so
+	 * a fog night gives no fog in a cave or a closed house (the dusk fog is not weighted). Server thread.
 	 */
 	public static Result of(ServerPlayer player) {
 		MinecraftServer server = player.level().getServer();
@@ -132,13 +146,42 @@ public final class FogLimits {
 		boolean fixed = level.dimensionType().hasFixedTime();
 		HerobrineState.Effects effects = HerobrineState.get(server).effects();
 		float dusk = fixed ? 0.0F : effects.duskFogLevel();
-		Optional<FogSpell> spell = fixed ? Optional.empty() : effects.fogSpell();
-		return of(player.requestedViewDistance(), server.getPlayerList().getViewDistance(), dusk, level.getDefaultClockTime(), spell);
+		long clock = level.getDefaultClockTime();
+		double spell = fixed ? 0.0 : spellAmount(effects.fogSpell(), clock);
+		if (spell > 0.0) {
+			spell *= skyFactor(level.getBrightness(LightLayer.SKY, BlockPos.containing(player.getEyePosition())));
+		}
+		return of(player.requestedViewDistance(), server.getPlayerList().getViewDistance(), dusk, clock, shape(), spell);
 	}
 
-	/** A fog spell's amount at this clock time with these settings ({@link FogSpell#amount}); 0 for none. */
+	/**
+	 * How much of a fog spell reaches a place with this sky light (0 to 15, the raw sky light, not darkened by the time
+	 * of day), 0 to 1: 1 at {@link #SKY_FULL} (10) or more (the open sky, under a tree, a doorway), 0 at {@link #SKY_NONE}
+	 * (4) or less (a cave, a closed house), linear between, so walking out of a tunnel brings the fog in over six light
+	 * levels. The spell's fog is weather, outside; the server applies it in {@link #of(ServerPlayer)} at the player's
+	 * eyes, the client the same factor, smoothed.
+	 */
+	public static double skyFactor(int skyLight) {
+		if (skyLight >= SKY_FULL) {
+			return 1.0;
+		}
+		if (skyLight <= SKY_NONE) {
+			return 0.0;
+		}
+		return (double) (skyLight - SKY_NONE) / (SKY_FULL - SKY_NONE);
+	}
+
+	/** A fog spell's amount at this clock time with its own ease ({@link FogSpell#amount(double)}); 0 for none. */
+	public static double spellAmount(Optional<FogSpell> spell, double clockTime) {
+		return spell.map(s -> s.amount(clockTime)).orElse(0.0);
+	}
+
+	/**
+	 * {@link #spellAmount(Optional, double)}: the spell's own ease, the settings are not read (kept so older calls
+	 * compile; client and server get the same number from the same spell whatever their configs).
+	 */
 	public static double spellAmount(Optional<FogSpell> spell, double clockTime, FogWeatherRules.Settings weather) {
-		return spell.map(s -> s.amount(clockTime, weather)).orElse(0.0);
+		return spellAmount(spell, clockTime);
 	}
 
 	/**
