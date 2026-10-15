@@ -72,7 +72,7 @@ public class FogWeatherGameTests extends SharedMomentGameTests {
 
 	/**
 	 * The live schedule over 40 days (eight per stage) for 24 worlds, checked every second as the server does: tonight
-	 * rolls at 10000, a fog day at 23000 of the day before (day 0 at once); core's rules hold (the first night clear,
+	 * rolls at 10000, a fog day at 21500 of the day before (day 0 at once); core's rules hold (the first night clear,
 	 * one of the first three foggy, never two fog nights in a row in Alone or Traces, never five clear in a row, no fog
 	 * day in Alone, never two in a row, never over a morning carry-over); the fog is there exactly when the rolls say;
 	 * and no check ever moves the fog amount (every new spell is joined to the one before).
@@ -102,7 +102,7 @@ public class FogWeatherGameTests extends SharedMomentGameTests {
 				}
 				if (out.memory().dayRolled() != memory.dayRolled()) {
 					long rolled = out.memory().dayRolled();
-					helper.assertTrue((now == 0 && rolled == 0 || time == 23_000L && rolled == day + 1) && days.size() == rolled, "a day rolled " + where);
+					helper.assertTrue((now == 0 && rolled == 0 || time == FogWeatherRules.dayRollTime(D) && rolled == day + 1) && days.size() == rolled, "a day rolled " + where);
 					days.add(out.memory().dayRoll());
 					dayStages.add(stageOn(day));
 				}
@@ -118,7 +118,7 @@ public class FogWeatherGameTests extends SharedMomentGameTests {
 					helper.assertTrue(fog(spell, now) > 0.0 == days.get((int) day).isPresent(), "fog at noon " + where);
 				}
 			}
-			// Day 40's daylight is rolled at 23000 of the last day.
+			// Day 40's daylight is rolled at 21500 of the last day.
 			helper.assertTrue(nights.size() == DAYS && days.size() == DAYS + 1 && memory.history().nights() == DAYS,
 					"not every night and day rolled once: " + nights.size() + " nights, " + days.size() + " days");
 			helper.assertTrue(nights.getFirst().isEmpty(), "the first night was foggy (seed " + seed + ")");

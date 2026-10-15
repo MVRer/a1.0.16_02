@@ -623,4 +623,30 @@ public class LadderGameTests {
 		helper.assertTrue(before.ladderOf(alex).isEmpty(), "an old save has a ladder");
 		helper.succeed();
 	}
+
+	// --- review R3 (v1.2 bug hunt) ---
+
+	/**
+	 * R3: TunnelRun's contract is that "a cell a player placed something see-through in (a torch, a rail) still belongs
+	 * to" the tunnel. A torch the player puts in their tunnel and later picks up leaves the cell dug again (before the
+	 * fix {@code PlayerWatch.onPlaced} dropped the dug mark and {@code onBroken} only removed the placed one, so the dug
+	 * air there counted as natural and the run was cut at that cell: a 29-cell tunnel with one moved torch 11 back was a
+	 * 10-cell run, too short for any rung).
+	 */
+	@GameTest(maxTicks = 100)
+	public void r3APickedUpTorchDoesNotCutTheTunnel(GameTestHelper helper) {
+		DigGround g = DigGround.of(helper, 40, 40, 8, 9, Blocks.STONE);
+		LadderRig rig = new LadderRig(helper, g, "Alex");
+		rig.tunnelX(2, 31, 3, 4);
+		BlockPos torch = g.at(20, 3, 4);
+		g.place(torch, Blocks.TORCH.defaultBlockState());
+		Optional<TunnelRun> lit = TunnelRun.detect(g.level, rig.crew.watch, g.at(31, 3, 4), Direction.EAST, rig.config.ladderMinRun, rig.config.ladderMinSealedShare);
+		helper.assertTrue(lit.map(TunnelRun::length).orElse(0) == 29, "with the torch in it: " + lit.map(TunnelRun::length));
+		helper.assertTrue(g.mock.gameMode.destroyBlock(torch) && g.level.getBlockState(torch).isAir(), "the player could not pick the torch up");
+		Optional<TunnelRun> after = TunnelRun.detect(g.level, rig.crew.watch, g.at(31, 3, 4), Direction.EAST, rig.config.ladderMinRun,
+				rig.config.ladderMinSealedShare);
+		helper.assertTrue(after.map(TunnelRun::length).orElse(0) == 29, "picking the torch up cut the tunnel: run " + after.map(TunnelRun::length)
+				+ ", the cell is dug " + Services.watch().wasDugByPlayer(g.level, torch) + ", placed " + Services.watch().wasPlacedByPlayer(g.level, torch));
+		helper.succeed();
+	}
 }

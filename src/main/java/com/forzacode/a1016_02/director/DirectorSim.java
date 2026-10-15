@@ -39,8 +39,8 @@ import org.jspecify.annotations.Nullable;
  * Fog weather (D-071): one sky for the table, rolled with core's {@link FogWeatherRules} on its own dice (so the
  * weather never shifts the director's), at the times atmosphere's live weather rolls it: tonight's fog night at
  * {@link FogWeatherRules#nightRollTime} ({@link FogWeatherRules#NIGHT_ROLL}, 10000) and a fog day at
- * {@link FogWeatherRules#DAY_ROLL} (23000) of the day before, joined with {@code handOver}. The run's day clock stands in
- * for the overworld clock. Each {@link Result} books its time and fires under each {@link Sky}.
+ * {@link FogWeatherRules#dayRollTime} ({@link FogWeatherRules#DAY_ROLL}, 21500) of the day before, joined with
+ * {@code handOver}. The run's day clock stands in for the overworld clock. Each {@link Result} books its time and fires under each {@link Sky}.
  */
 public final class DirectorSim {
 	/** The player of a one-player dry run. */
@@ -841,7 +841,7 @@ public final class DirectorSim {
 		/**
 		 * Rolls the fog weather due since the last call, as atmosphere's live weather does (D-071): at
 		 * {@link FogWeatherRules#nightRollTime} (10000) tonight's fog night (or a clear night), at
-		 * {@link FogWeatherRules#DAY_ROLL} the next day's fog day (never when a morning carry-over already runs into it);
+		 * {@link FogWeatherRules#dayRollTime} (21500) the next day's fog day (never when a morning carry-over already runs into it);
 		 * a spell rolled while another still gives fog is joined to it ({@code handOver}). The stage is the world's at the
 		 * roll.
 		 */
@@ -851,7 +851,7 @@ public final class DirectorSim {
 			}
 			FogWeatherRules.Settings settings = params.fogSettings == null ? FogWeatherRules.Settings.DEFAULT : params.fogSettings;
 			long nightRoll = FogWeatherRules.nightRollTime(settings);
-			long dayRoll = FogWeatherRules.DAY_ROLL;
+			long dayRoll = FogWeatherRules.dayRollTime(settings);
 			while (true) {
 				long base = Math.floorDiv(weatherClock, DirectorBrain.DAY_TICKS) * DirectorBrain.DAY_TICKS;
 				long night = base + nightRoll > weatherClock ? base + nightRoll : base + DirectorBrain.DAY_TICKS + nightRoll;
