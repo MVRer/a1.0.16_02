@@ -1,6 +1,7 @@
 package com.forzacode.a1016_02.core;
 
 import java.util.Objects;
+import java.util.Optional;
 import java.util.function.Supplier;
 
 import net.minecraft.server.MinecraftServer;
@@ -16,10 +17,13 @@ import net.minecraft.world.level.Level;
  * ({@code HerobrineState.Effects.duskFogLevel}) pulls it in with atmosphere's client curve: weighted by the time of
  * day ({@link #duskWeight}: none by day, easing in slowly from the shape's start to full at its peak, easing to
  * {@code duskNightWeight} for the night, faded before sunrise), then geometric toward {@code duskMinFogBlocks}
- * ({@link #fogEnd}). Fog surges (short, per player) and the client's easing between dusk levels (at most
- * {@code duskLevelChangeSeconds} after a change; the client's own fog report covers it) are not included. Fixed-time
- * dimensions get no dusk fog. Atmosphere owns the shape: it installs its config with {@link #installShape}; until then
- * {@link Shape#DEFAULT} matches atmosphere's defaults.
+ * ({@link #fogEnd}). A fog spell (D-071, {@link FogSpell}, the world's fog weather) adds its amount on the same clock:
+ * the two combine as {@code 1 - (1 - dusk)(1 - spell)} ({@link #combine}) before the same pull, so the figure's band
+ * follows a fog night even without a fresh client report. Fog surges (short, per player) and the client's easing
+ * between dusk levels (at most {@code duskLevelChangeSeconds} after a change; the client's own fog report covers it)
+ * are not included. Fixed-time dimensions get neither. Atmosphere owns the shape and the spell's ease: it installs its
+ * config with {@link #installShape} and {@link FogWeatherRules#install}; until then {@link Shape#DEFAULT} and
+ * {@link FogWeatherRules.Settings#DEFAULT} match atmosphere's defaults.
  */
 public final class FogLimits {
 	/**
@@ -81,29 +85,76 @@ public final class FogLimits {
 		return Math.max(chunks, 2);
 	}
 
-	/** The fog for these view distances, dusk fog level (0 to 1) and day time, with the installed shape. */
+	/** The fog for these view distances, dusk fog level (0 to 1) and day time, with the installed shape and no fog spell. */
 	public static Result of(int clientChunks, int serverChunks, float duskFogLevel, long dayTime) {
 		return of(clientChunks, serverChunks, duskFogLevel, dayTime, shape());
 	}
 
-	/** The fog for these view distances, dusk fog level (0 to 1), day time (0 is sunrise) and shape. */
+	/** The fog for these view distances, dusk fog level (0 to 1), day time (0 is sunrise) and shape, with no fog spell. */
 	public static Result of(int clientChunks, int serverChunks, float duskFogLevel, long dayTime, Shape shape) {
+		return of(clientChunks, serverChunks, duskFogLevel, dayTime, shape, 0.0);
+	}
+
+	/**
+	 * The fog for these view distances, dusk fog level (0 to 1), clock time and fog spell, with the installed shape and
+	 * fog weather settings. {@code clockTime} is the absolute clock ({@code getDefaultClockTime()}): its time of day
+	 * weights the dusk fog, the whole of it places the spell.
+	 */
+	public static Result of(int clientChunks, int serverChunks, float duskFogLevel, long clockTime, Optional<FogSpell> spell) {
+		return of(clientChunks, serverChunks, duskFogLevel, clockTime, spell, shape(), FogWeatherRules.settings());
+	}
+
+	/** {@link #of(int, int, float, long, Optional)} with this shape and these fog weather settings. */
+	public static Result of(int clientChunks, int serverChunks, float duskFogLevel, long clockTime, Optional<FogSpell> spell, Shape shape,
+			FogWeatherRules.Settings weather) {
+		return of(clientChunks, serverChunks, duskFogLevel, clockTime, shape, spellAmount(spell, clockTime, weather));
+	}
+
+	/**
+	 * The pure form: the fog for these view distances, dusk fog level (0 to 1), day time (0 is sunrise), shape and a fog
+	 * spell's amount now (0 to 1, {@link FogSpell#amount}). The dusk amount ({@code level * duskWeight}) and the spell's
+	 * {@link #combine}, and the result pulls the render limit in ({@link #fogEnd} toward {@code duskMinFogBlocks}).
+	 */
+	public static Result of(int clientChunks, int serverChunks, float duskFogLevel, long dayTime, Shape shape, double spellAmount) {
 		int chunks = effectiveChunks(clientChunks, serverChunks);
 		double renderLimit = chunks * 16.0;
-		double amount = clamp01(duskFogLevel) * duskWeight(dayTime, shape);
+		double amount = combine(clamp01(duskFogLevel) * duskWeight(dayTime, shape), spellAmount);
 		return new Result(chunks, renderLimit, fogEnd(renderLimit, shape.duskMinFogBlocks(), amount));
 	}
 
 	/**
-	 * The fog one player sees now: their requested view distance, the server's, the world's dusk fog level and their
-	 * level's time of day (no dusk fog where time is fixed). Server thread.
+	 * The fog one player sees now: their requested view distance, the server's, the world's dusk fog level and fog
+	 * spell, and their level's clock (neither where time is fixed). Server thread.
 	 */
 	public static Result of(ServerPlayer player) {
 		MinecraftServer server = player.level().getServer();
 		Level level = player.level();
 		boolean fixed = level.dimensionType().hasFixedTime();
-		float dusk = fixed ? 0.0F : HerobrineState.get(server).effects().duskFogLevel();
-		return of(player.requestedViewDistance(), server.getPlayerList().getViewDistance(), dusk, level.getDefaultClockTime());
+		HerobrineState.Effects effects = HerobrineState.get(server).effects();
+		float dusk = fixed ? 0.0F : effects.duskFogLevel();
+		Optional<FogSpell> spell = fixed ? Optional.empty() : effects.fogSpell();
+		return of(player.requestedViewDistance(), server.getPlayerList().getViewDistance(), dusk, level.getDefaultClockTime(), spell);
+	}
+
+	/** A fog spell's amount at this clock time with these settings ({@link FogSpell#amount}); 0 for none. */
+	public static double spellAmount(Optional<FogSpell> spell, double clockTime, FogWeatherRules.Settings weather) {
+		return spell.map(s -> s.amount(clockTime, weather)).orElse(0.0);
+	}
+
+	/**
+	 * Two fog amounts (each 0 to 1) together: {@code 1 - (1 - a)(1 - b)}. Never less than either, never over 1, and
+	 * either at 0 gives the other exactly, so a spell never changes a clear evening's dusk fog and vice versa.
+	 */
+	public static double combine(double a, double b) {
+		double x = clamp01(a);
+		double y = clamp01(b);
+		if (y <= 0.0) {
+			return x; // exactly, so the fog without a spell is bit for bit what it was
+		}
+		if (x <= 0.0) {
+			return y;
+		}
+		return 1.0 - (1.0 - x) * (1.0 - y);
 	}
 
 	/** {@link #duskWeight(long, Shape)} with the default timing and this night weight. */

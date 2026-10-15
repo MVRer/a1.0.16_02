@@ -25,6 +25,10 @@ public final class ClientEffectsClient {
 		default void duskFog(ClientEffects.DuskFog effect) {
 		}
 
+		/** The world's fog spell changed (D-071): a new one, or none. Also carried by {@link #sync} on join. */
+		default void fogSpell(ClientEffects.FogSpell effect) {
+		}
+
 		/** Sent on join with every persistent effect. */
 		default void sync(ClientEffects.Sync effect) {
 		}
@@ -49,6 +53,7 @@ public final class ClientEffectsClient {
 		ClientPlayNetworking.registerGlobalReceiver(ClientEffects.Silence.TYPE, (payload, context) -> handler.silence(payload));
 		ClientPlayNetworking.registerGlobalReceiver(ClientEffects.MusicOff.TYPE, (payload, context) -> handler.musicOff(payload));
 		ClientPlayNetworking.registerGlobalReceiver(ClientEffects.DuskFog.TYPE, (payload, context) -> handler.duskFog(payload));
+		ClientPlayNetworking.registerGlobalReceiver(ClientEffects.FogSpell.TYPE, (payload, context) -> handler.fogSpell(payload));
 		ClientPlayNetworking.registerGlobalReceiver(ClientEffects.Sync.TYPE, (payload, context) -> handler.sync(payload));
 	}
 }

@@ -11,5 +11,12 @@ public enum CardTag {
 	ITEM,
 	LIGHT,
 	TEXT,
-	DIG
+	DIG,
+	/**
+	 * A card for one player alone (D-074; the tunnel ladder, D-072): it only works while nobody can confirm it. The
+	 * director never draws it while the player has sharers ({@link PlayerWatch#sharingWith} lists anyone besides them),
+	 * and a held PERSONAL card goes back into its deck as soon as a sharer comes close, so it never blocks its tier while
+	 * friends stand together. The card's own alone check still runs when it fires.
+	 */
+	PERSONAL
 }
