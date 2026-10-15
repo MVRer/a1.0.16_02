@@ -47,7 +47,7 @@ import net.minecraft.world.level.storage.LevelData;
  * player, and a v1.0 single-trap save. Every test uses its own {@link Group}: mock players are never on the test
  * server's player list, so nobody else's tests see them.
  */
-public class GroupGameTests {
+public class GroupGameTests extends GroupTrapGameTests {
 	/** Whose marked deaths fired {@code MARKED_DEATH}, in order. */
 	private static final List<UUID> MARKED = Collections.synchronizedList(new ArrayList<>());
 

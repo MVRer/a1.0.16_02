@@ -86,11 +86,14 @@ public final class FallingDripstoneTrap extends BaseTrap {
 		if (armed.isSet()) {
 			return armed;
 		}
-		// Whoever walks under it, not only the player it was set for.
+		// Whoever walks under it, not only the player it was set for, and only on the path: the zone's floor is the block
+		// under the path, so feet from one under that floor (dug out: the head in its cell, the column still open) up to
+		// one over the path (a jump). Someone in a mine far under the path is out of its reach, through the rock (MP-7).
 		boolean anyoneUnder = false;
 		for (ServerPlayer player : here(ctx)) {
 			BlockPos feet = player.blockPosition();
-			anyoneUnder |= feet.getX() == holder.getX() && feet.getZ() == holder.getZ() && feet.getY() <= armed.zoneMin().getY() + 2;
+			anyoneUnder |= feet.getX() == holder.getX() && feet.getZ() == holder.getZ() && feet.getY() <= armed.zoneMin().getY() + 2
+					&& feet.getY() >= armed.zoneMin().getY() - 1;
 		}
 		if (!anyoneUnder) {
 			return armed;
