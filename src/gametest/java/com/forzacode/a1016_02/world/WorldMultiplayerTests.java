@@ -10,6 +10,7 @@ import com.forzacode.a1016_02.core.Services;
 import com.forzacode.a1016_02.core.SiteRegistry;
 import com.forzacode.a1016_02.core.SiteType;
 import com.forzacode.a1016_02.world.gen.Builds;
+import com.forzacode.a1016_02.world.sig.ChunkLoads;
 import com.forzacode.a1016_02.world.sig.HouseCopier;
 import com.forzacode.a1016_02.world.sig.HouseCopyState;
 import com.forzacode.a1016_02.world.sig.HouseShell;
@@ -413,7 +414,7 @@ public class WorldMultiplayerTests {
 
 	/**
 	 * D-061 (MP-7 B): the house copy's owner is chosen only when the copy starts, among the participants whose first
-	 * shelter can be captured. Sam, who played far longer but only ever placed one block 300 blocks away, is never
+	 * shelter can be captured. Sam, who played far longer but only ever placed one block, across the yard, is never
 	 * stored: not by the card's context check ({@code ready}), not by a start while he is alone online. With Alex
 	 * online too, the start captures Alex's walls.
 	 */
@@ -423,8 +424,8 @@ public class WorldMultiplayerTests {
 		house(helper, (ServerPlayer) helper.makeMockServerPlayer(GameType.SURVIVAL));
 		BoundingBox walls = BoundingBox.fromCorners(helper.absolutePos(new BlockPos(2, 2, 2)), helper.absolutePos(new BlockPos(4, 5, 5)));
 		Friends.Known alex = new Friends.Known("Alex", 100, Friends.at(helper, new BlockPos(3, 2, 3)));
-		Friends.Known sam = new Friends.Known("Sam", 50_000, Friends.at(helper, new BlockPos(300, 2, 300)));
-		BlockPos samBlock = helper.absolutePos(new BlockPos(300, 2, 300));
+		Friends.Known sam = new Friends.Known("Sam", 50_000, Friends.at(helper, new BlockPos(21, 2, 21)));
+		helper.setBlock(new BlockPos(21, 2, 21), Blocks.COBBLESTONE);
 		Friends f = new Friends(helper, Friends.state(helper, alex, sam));
 		Bases bases = f.bases();
 		f.join(sam, new Vec3(20, 2, 20));
@@ -437,9 +438,9 @@ public class WorldMultiplayerTests {
 				Outcome alone = HouseCopier.start(bases, true);
 				helper.assertTrue(!alone.ok() && f.state.owner(HouseCopier.OWNER_KEY).isEmpty() && f.data.signatures().houseCopy().isEmpty(),
 						"Sam's lone block was taken for a house: " + alone.message() + ", owner " + f.state.owner(HouseCopier.OWNER_KEY));
-				// Once Sam's far chunk is there the rule has seen everyone's ground; until then, try again.
-				helper.assertTrue(level.getChunkSource().getChunkNow(samBlock.getX() >> 4, samBlock.getZ() >> 4) != null, "Sam's chunk is loading");
-				helper.assertTrue(!HouseCopier.start(bases, true).ok() && f.state.owner(HouseCopier.OWNER_KEY).isEmpty(), "Sam was stored");
+				// Only once the ground around Sam's block was there to look at does that say anything; until then, again.
+				BoundingBox samGround = new BoundingBox(helper.absolutePos(new BlockPos(21, 2, 21))).inflatedBy(WorldConfig.get().houseCopyCaptureRadius + 2);
+				helper.assertTrue(ChunkLoads.ready(level, ChunkLoads.around(samGround, 0)), "the ground around Sam's block is loading");
 				f.join(alex, new Vec3(22, 2, 20));
 				alexOnline[0] = true;
 			}
