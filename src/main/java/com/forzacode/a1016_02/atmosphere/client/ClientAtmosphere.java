@@ -11,7 +11,6 @@ import com.forzacode.a1016_02.atmosphere.DuskLevel;
 import com.forzacode.a1016_02.atmosphere.WeatherFog;
 import com.forzacode.a1016_02.core.ClientEffects;
 import com.forzacode.a1016_02.core.FogLimits;
-import com.forzacode.a1016_02.core.FogWeatherRules;
 import com.forzacode.a1016_02.core.client.ClientEffectsClient;
 
 import net.minecraft.client.Camera;
@@ -22,12 +21,13 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.core.GlobalPos;
 import net.minecraft.resources.ResourceKey;
 import net.minecraft.sounds.SoundSource;
-import net.minecraft.world.effect.MobEffects;
 import net.minecraft.world.entity.ItemOwner;
-import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.level.Level;
+import net.minecraft.world.level.LightLayer;
 import net.minecraft.world.level.material.FogType;
 
+import org.joml.Vector3f;
+import org.joml.Vector3fc;
 import org.jspecify.annotations.Nullable;
 
 /**
@@ -65,6 +65,14 @@ public final class ClientAtmosphere implements ClientEffectsClient.Handler {
 	private final Curves.Fog frame = new Curves.Fog();
 	/** The fog color being shaped this frame. */
 	private final float[] rgb = new float[3];
+	/** The tinted base fog color handed back to vanilla this frame (read at once, before the next frame). */
+	private final Vector3f tinted = new Vector3f();
+	/** The spell's fog this frame at the camera: its amount times the smoothed sky weight ({@link #beginFog}). */
+	private double frameSpell;
+	/** The level clock this frame (the tint's time of day). */
+	private long frameClock;
+	/** The level the sky weight was last stepped in: a new one takes its weight at once. */
+	private @Nullable ResourceKey<Level> skyDimension;
 
 	private ClientEffects.@Nullable FogSurge surge;
 	private long surgeStart;
@@ -150,6 +158,8 @@ public final class ClientAtmosphere implements ClientEffectsClient.Handler {
 		musicOff = false;
 		dusk.reset();
 		weather.reset();
+		frameSpell = 0.0;
+		skyDimension = null;
 		surge = null;
 		silence = null;
 		compass = null;
@@ -282,12 +292,55 @@ public final class ClientAtmosphere implements ClientEffectsClient.Handler {
 	}
 
 	/**
-	 * Pulls the world fog in for the dusk level, the world's fog spell and any fog surge, and tints its color for the
-	 * spell. Atmospheric fog only (not water, lava, snow). The dusk fog and the spell grow continuously out of vanilla's
-	 * ({@link Curves#applyDusk}, their amounts combined as core's {@code FogLimits} does, so the server's fog end is
-	 * this one: game test serverFogMatchesClientFogWithASpell); surges keep their v0.4 shape on top. The color tint
-	 * ({@link WeatherFog#color}) goes on vanilla's {@code FogData.color}, which is both the color every world shader
-	 * fades into (terrain, sky, clouds) and the frame's clear color, so the whole far view goes pale together.
+	 * The start of {@code FogRenderer.setupFog}, before vanilla computes the fog color: this frame's spell fog at the
+	 * camera. The spell's amount (its own ease, on the level's clock; none where time is fixed) times the sky weight at
+	 * the camera's block ({@link WeatherFog#sky}: core's {@code FogLimits.skyFactor} of the sky light there, smoothed as
+	 * vanilla smooths its rain fog), stepped every frame so it is right when a spell comes. A spell is outside weather:
+	 * a tunnel, a cave or a closed house gets none of it. The tint and the fog shape of the same frame use it.
+	 */
+	public static void beginFog(Camera camera, @Nullable ClientLevel level, float partialTick) {
+		ClientAtmosphere self = INSTANCE;
+		self.frameSpell = 0.0;
+		if (level == null) {
+			return;
+		}
+		if (!level.dimension().equals(self.skyDimension)) {
+			self.skyDimension = level.dimension();
+			self.weather.resetSky();
+		}
+		self.frameClock = level.getDefaultClockTime();
+		self.frameSpell = self.weather.frame(self.frameClock, level.dimensionType().hasFixedTime(),
+				level.getBrightness(LightLayer.SKY, camera.blockPosition()), self.ticks + partialTick);
+	}
+
+	/**
+	 * Tints vanilla's base fog color for the frame's spell fog ({@link WeatherFog#color}) in
+	 * {@code FogRenderer.computeFogColor}, where the color source hands it over and before vanilla darkens it: the void
+	 * near the bottom of the world ({@code (1 - darkness)^2}), the Blindness and Darkness blends, a boss's darkening and
+	 * night vision all apply over the tint with vanilla's own values, so the bottom of the world stays black and the
+	 * effects come and go as smoothly as without a spell. Atmospheric fog only (not water, lava, snow).
+	 * {@code FogData.color} is both the color every world shader fades into (terrain, sky, clouds) and the frame's clear
+	 * color, so the whole far view goes pale together.
+	 */
+	public static Vector3fc tintFogColor(Vector3fc base, Camera camera) {
+		ClientAtmosphere self = INSTANCE;
+		if (!(self.frameSpell > 0.0) || camera.getFluidInCamera() != FogType.NONE) {
+			return base;
+		}
+		float[] rgb = self.rgb;
+		rgb[0] = base.x();
+		rgb[1] = base.y();
+		rgb[2] = base.z();
+		WeatherFog.color(rgb, self.frameSpell, Math.floorMod(self.frameClock, Curves.DAY), AtmosphereConfig.get());
+		return self.tinted.set(rgb[0], rgb[1], rgb[2]);
+	}
+
+	/**
+	 * Pulls the world fog in for the dusk level, the frame's spell fog ({@link #beginFog}) and any fog surge, after
+	 * vanilla sets it up. Atmospheric fog only (not water, lava, snow). The dusk fog and the spell grow continuously out
+	 * of vanilla's ({@link Curves#applyDusk}, their amounts combined as core's {@code FogLimits} does, so the server's
+	 * fog end is this one under open sky: game test serverFogMatchesClientFogWithASpell); surges keep their v0.4 shape
+	 * on top. The color was tinted before vanilla darkened it ({@link #tintFogColor}).
 	 */
 	public static void applyFog(FogData fog, Camera camera, @Nullable ClientLevel level, float partialTick) {
 		if (level == null || camera.getFluidInCamera() != FogType.NONE) {
@@ -307,7 +360,7 @@ public final class ClientAtmosphere implements ClientEffectsClient.Handler {
 			dusk = Curves.duskAmount(duskLevel, time, shape);
 			haze = Curves.duskHaze(time, shape) * self.dusk.haze(now);
 		}
-		double spell = self.weather.amount(time, fixedTime, FogWeatherRules.settings());
+		double spell = self.frameSpell;
 		double surgeAmount = 0.0;
 		ClientEffects.FogSurge s = self.surge;
 		if (s != null) {
@@ -325,19 +378,6 @@ public final class ClientAtmosphere implements ClientEffectsClient.Handler {
 		fog.renderDistanceEnd = (float) f.renderDistanceEnd;
 		fog.skyEnd = (float) f.skyEnd;
 		fog.cloudEnd = (float) f.cloudEnd;
-		if (spell > 0.0 && !blinded(camera)) {
-			float[] rgb = self.rgb;
-			rgb[0] = fog.color.x;
-			rgb[1] = fog.color.y;
-			rgb[2] = fog.color.z;
-			WeatherFog.color(rgb, spell, Math.floorMod(time, Curves.DAY), cfg);
-			fog.color.set(rgb[0], rgb[1], rgb[2], fog.color.w);
-		}
-	}
-
-	/** Blindness and darkness keep their own black: the spell never tints them. */
-	private static boolean blinded(Camera camera) {
-		return camera.entity() instanceof LivingEntity living && (living.hasEffect(MobEffects.BLINDNESS) || living.hasEffect(MobEffects.DARKNESS));
 	}
 
 	/** Where the local player's spawn compass points: the drift target while a drift runs. */
