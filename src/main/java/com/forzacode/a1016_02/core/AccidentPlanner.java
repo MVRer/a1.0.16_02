@@ -13,7 +13,8 @@ import net.minecraft.world.damagesource.DamageSource;
  * trap is armed for one player, on their own routes, base and level, and kills whoever sets it off; the death, its
  * cross and its cause are the victim's (D-063), and a trap that has just killed still claims a friend's death a moment
  * later (one accident, two marked deaths). A personal trap (a player's own bed) only ever counts its own player's
- * death. Traps stay armed and deniable when their player leaves (D-062.5); a personal one is dropped when its player
+ * death, and is armed, stepped, expired and claimed on that player's own clock ({@link GameClock#playTicks(
+ * net.minecraft.server.MinecraftServer, UUID)}); every other trap runs on the world clock. Traps stay armed and deniable when their player leaves (D-062.5); a personal one is dropped when its player
  * turns spectator. Every accident is deniable and leaves exactly one clue. The accident workstream installs the real
  * one.
  */
