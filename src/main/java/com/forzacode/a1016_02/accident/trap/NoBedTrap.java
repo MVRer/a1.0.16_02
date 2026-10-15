@@ -56,7 +56,11 @@ public final class NoBedTrap extends BaseTrap {
 		return true;
 	}
 
-	/** Their bed and their sleepless nights: a friend killed by one of these phantoms died an ordinary death. */
+	/**
+	 * Their bed and their sleepless nights: a friend killed by one of these phantoms died an ordinary death. So it runs
+	 * on their own play clock: when the bed was taken and its window both count only their own play, the time the
+	 * TIME_SINCE_REST stat counts too, so friends playing while they are away never use up their nights (MP-7).
+	 */
 	@Override
 	public boolean personal() {
 		return true;
@@ -76,7 +80,11 @@ public final class NoBedTrap extends BaseTrap {
 		return armed.blame(entity.getUUID());
 	}
 
-	/** True if the player's sleepless streak began before the bed was taken (they have not slept since). */
+	/**
+	 * True if the player's sleepless streak began before the bed was taken (they have not slept since).
+	 *
+	 * @param now the player's own play ticks, the clock the trap was set on ({@link #personal})
+	 */
 	public static boolean sleeplessSinceTaken(ServerPlayer player, ArmedTrap armed, long now) {
 		return armed.setAt() >= 0 && sinceRest(player) + STAT_SLACK >= now - armed.setAt();
 	}

@@ -230,8 +230,10 @@ public final class DarkCornerTrap extends BaseTrap {
 	}
 
 	/**
-	 * Puts the torches back when the morning comes on the game clock (or someone in the level sleeps through the night),
-	 * whether or not the player it was set for is still around.
+	 * Puts the torches back when the morning comes on the game clock, whether or not the player it was set for is still
+	 * around. A night slept through is the same: the skip moves the clock to the morning, so it is seen on the next
+	 * step. Someone merely lying in a bed is not the morning (MP-7): with friends the night goes on until enough of them
+	 * sleep, by the game's own rule, and only the clock says whether it did.
 	 */
 	@Override
 	public @Nullable ArmedTrap tick(TrapContext ctx, ArmedTrap armed) {
@@ -239,7 +241,7 @@ public final class DarkCornerTrap extends BaseTrap {
 			return armed;
 		}
 		long clock = ctx.level().getServer().overworld().getOverworldClockTime();
-		boolean morning = armed.hasClock() && clock >= armed.clockUntil() || here(ctx).stream().anyMatch(ServerPlayer::isSleeping);
+		boolean morning = armed.hasClock() && clock >= armed.clockUntil();
 		ArmedTrap back = morning ? restore(ctx.level(), ctx.view(), armed) : null;
 		if (back == null) {
 			return armed;

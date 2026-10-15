@@ -18,7 +18,7 @@ import com.forzacode.a1016_02.core.CardTag;
 import com.forzacode.a1016_02.core.FireContext;
 import com.forzacode.a1016_02.core.FireResult;
 import com.forzacode.a1016_02.core.Habit;
-import com.forzacode.a1016_02.core.Services;
+import com.forzacode.a1016_02.core.PlayerWatch;
 import com.forzacode.a1016_02.core.Stage;
 import com.forzacode.a1016_02.core.Tier;
 
@@ -35,7 +35,7 @@ import net.minecraft.world.phys.Vec3;
 /**
  * Animals facing the fog: every cow, sheep and pig nearby stops and turns to the same point in the fog. Nothing is
  * there. They stay like that until the player, or anyone who shared the moment, walks toward the point (or a few
- * minutes pass, or the player is gone). The false positive is a
+ * minutes pass, or everyone who shared it is gone; then they are let go out of view). The false positive is a
  * single animal looking off into the distance for a moment.
  */
 public final class AnimalsFaceFogCard extends AtmosphereCard {
@@ -76,15 +76,19 @@ public final class AnimalsFaceFogCard extends AtmosphereCard {
 			Animal one = animals.get(random.nextInt(animals.size()));
 			int min = AtmosphereConfig.ticks(cfg.animalsFakeMinSeconds);
 			mobs().face(one, point, min + random.nextInt(Math.max(1, AtmosphereConfig.ticks(cfg.animalsFakeMaxSeconds) - min)));
-			forTarget(one, player);
+			forSharers(one, player);
 			return FireResult.FIRED;
 		}
-		// Everyone sharing the moment sees the animals turn (D-060); any of them walking toward the point ends it.
+		// Everyone sharing the moment sees the animals turn (D-060); any of them walking toward the point ends it, and it
+		// goes on while any of them is here (D-062.5).
+		PlayerWatch who = watch.get();
+		List<UUID> sharers = new ArrayList<>();
 		Map<UUID, Double> startDistances = new HashMap<>();
-		for (ServerPlayer sharer : Services.watch().sharingWith(player)) {
+		for (ServerPlayer sharer : who.sharingWith(player)) {
+			sharers.add(sharer.getUUID());
 			startDistances.put(sharer.getUUID(), horizontalDistance(sharer.position(), point));
 		}
-		Tasks.start(new Facing(player.getUUID(), startDistances, level, point, animals, random, cfg));
+		episodes.accept(new Facing(who, sharers, startDistances, level, point, animals, random, cfg));
 		return FireResult.FIRED;
 	}
 
@@ -110,15 +114,19 @@ public final class AnimalsFaceFogCard extends AtmosphereCard {
 
 	/**
 	 * The whole effect, from the staggered start to the staggered release. Each animal starts turning on its own
-	 * tick; when the player or anyone who shared the moment walks toward the point (or time runs out, or the player
-	 * leaves, dies, turns spectator or changes dimension) the episode stops starting animals and releases every one it
-	 * started, so a late starter can never be left frozen. Players are kept by UUID and looked up again every tick.
+	 * tick; when the player or anyone who shared the moment walks toward the point (or time runs out) the episode stops
+	 * starting animals and releases every one it started, so a late starter can never be left frozen. It goes on while
+	 * anyone who shared it is here, whoever it was fired for (D-062.5); once none is (each left, died, turned spectator
+	 * or changed dimension), it ends and the tamper lets each animal go once nobody can see it (they are bound to all
+	 * of them). Players are kept by UUID and looked up again every tick.
 	 */
 	private static final class Facing implements Tasks.Episode {
 		private record Member(Animal animal, int startAge, int releaseOffset) {
 		}
 
-		private final UUID player;
+		private final PlayerWatch watch;
+		/** Everyone who shared the moment, the player it was fired for first. */
+		private final List<UUID> sharers;
 		/** Each sharer's horizontal distance to the point when it began (the player's own included). */
 		private final Map<UUID, Double> startDistances;
 		private final ServerLevel level;
@@ -131,9 +139,10 @@ public final class AnimalsFaceFogCard extends AtmosphereCard {
 		private int age;
 		private int endAge = -1;
 
-		Facing(UUID player, Map<UUID, Double> startDistances, ServerLevel level, Vec3 point, List<Animal> animals, RandomSource random,
-				AtmosphereConfig cfg) {
-			this.player = player;
+		Facing(PlayerWatch watch, List<UUID> sharers, Map<UUID, Double> startDistances, ServerLevel level, Vec3 point, List<Animal> animals,
+				RandomSource random, AtmosphereConfig cfg) {
+			this.watch = watch;
+			this.sharers = List.copyOf(sharers);
 			this.startDistances = Map.copyOf(startDistances);
 			this.level = level;
 			this.point = point;
@@ -152,8 +161,13 @@ public final class AnimalsFaceFogCard extends AtmosphereCard {
 		public boolean tick(MinecraftServer server) {
 			age++;
 			if (endAge < 0) {
-				boolean here = target(server, player, level).isPresent();
-				if (age > maxTicks || !here || anyoneWalkedToward(server)) {
+				if (firstHere(watch, server, sharers, level).isEmpty()) {
+					// Nobody it was for is left: the tamper lets each one go once nobody can see it (D-062.5).
+					started.clear();
+					unclaim();
+					return false;
+				}
+				if (age > maxTicks || anyoneWalkedToward(server)) {
 					endAge = age;
 				} else {
 					for (Member member : members) {
@@ -161,7 +175,7 @@ public final class AnimalsFaceFogCard extends AtmosphereCard {
 						if (member.startAge() == age && animal.isAlive() && mobs().freeze(animal, holdTicks)) {
 							mobs().face(animal, point, holdTicks);
 							mobs().silence(animal, holdTicks);
-							MobTamperImpl.INSTANCE.bind(animal, player);
+							MobTamperImpl.INSTANCE.bind(animal, sharers);
 							started.add(animal);
 						}
 					}
@@ -188,7 +202,7 @@ public final class AnimalsFaceFogCard extends AtmosphereCard {
 		/** True once the player or anyone who shared the moment (still here, in this level) has walked toward the point. */
 		private boolean anyoneWalkedToward(MinecraftServer server) {
 			for (Map.Entry<UUID, Double> start : startDistances.entrySet()) {
-				ServerPlayer sharer = target(server, start.getKey(), level).orElse(null);
+				ServerPlayer sharer = target(watch, server, start.getKey(), level).orElse(null);
 				if (sharer != null && start.getValue() - horizontalDistance(sharer.position(), point) >= releaseBlocks) {
 					return true;
 				}

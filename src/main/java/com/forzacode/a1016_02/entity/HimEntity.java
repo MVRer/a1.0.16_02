@@ -74,7 +74,8 @@ import org.jspecify.annotations.Nullable;
  * <p>Multiplayer (D-060.4, D-062): he is one being that everyone in his level can see. Every player in the level,
  * spectators and the dead included, counts for the view rules ({@link Watchers}); every living non-spectator counts
  * for what ends a sighting: anyone's stare (each player's own, counted once per player per sighting), anyone's
- * approach, anyone coming within the flee distance. He outruns the fastest chaser and leaves away from all of them.
+ * approach, anyone coming within the flee distance. He outruns the fastest chaser and leaves away from all of them,
+ * from the one who was nearest when he set off, never toward or through anyone else ({@link #clearance}).
  * The rush goes at the one who chased and never passes within the offset of anyone else. If the player he appeared
  * for leaves, dies, turns spectator or changes dimension before anything ended the sighting, he walks away and is
  * gone once nobody can see him (D-062.5). He keeps players by UUID only, looked up again every tick.
@@ -96,6 +97,11 @@ public class HimEntity extends PathfinderMob {
 	/** Leaving: a fresh path at least this often, and the path he follows reaches this many seconds of travel ahead. */
 	private static final int REPATH_TICKS = 40;
 	private static final double LEAVE_AHEAD_SECONDS = 2.5;
+	/** Leaving, the turns from straight away he tries, in order: up to 90 degrees alone, all the way round with others there. */
+	static final double[] TURNS = {0, 30, -30, 60, -60, 90, -90};
+	static final double[] WIDE_TURNS = {0, 30, -30, 60, -60, 90, -90, 120, -120, 150, -150, 180};
+	/** A path's nodes are block centres: it may stray this far (in blocks) toward someone and still count as clear. */
+	private static final double PATH_SLACK = 1.0;
 	/** Hiding behind the trunk, he runs instead once a player would reach him within this long. */
 	private static final double HIDE_REACH_SECONDS = 2.0;
 	/**
@@ -143,6 +149,8 @@ public class HimEntity extends PathfinderMob {
 	private @Nullable UUID triggeredBy;
 	/** The player the sighting was set up for ({@link FigureApi#spawnAtFogEdge}), or null (Ending D, /summon). */
 	private @Nullable UUID appearedFor;
+	/** Leaving: the one he leaves from, whoever was nearest when he set off (kept while they are here). */
+	private @Nullable UUID leaveFrom;
 	/** Distance each player has closed on him since he was first seen. */
 	private final Map<UUID, Approach> approaches = new HashMap<>();
 	/** Each player's recent speed and closing speed. */
@@ -396,7 +404,7 @@ public class HimEntity extends PathfinderMob {
 				double modifier = gait == Variant.Gait.RUN ? SightingRules.speedModifier(blocksPerSecond, BASE_SPEED) : speed(gait, config);
 				moveSpeed = blocksPerSecond;
 				holdSpeedInAir(gait == Variant.Gait.RUN ? blocksPerSecond : 0.0);
-				steerAway(level, players, nearest, modifier, blocksPerSecond);
+				steerAway(level, players, leaveFrom(players, nearest), modifier, blocksPerSecond);
 			}
 			default -> {
 			}
@@ -505,6 +513,11 @@ public class HimEntity extends PathfinderMob {
 	 */
 	protected boolean tickingAroundHim(ServerLevel level) {
 		return tickingAround(level, position(), EDGE_TICK_MARGIN);
+	}
+
+	/** {@link #tickingAround} a leave target with {@link #LEAVE_TICK_MARGIN}. Game tests override it, as {@link #tickingAroundHim}. */
+	protected boolean leaveTargetTicking(ServerLevel level, Vec3 target) {
+		return tickingAround(level, target, LEAVE_TICK_MARGIN);
 	}
 
 	// --- goes under (D-030) ---
@@ -832,7 +845,7 @@ public class HimEntity extends PathfinderMob {
 
 	/**
 	 * The three ways a sighting ends ({@link SightingRules#endCause}), for anyone there: someone coming within the
-	 * flee distance (any time), and once he has been seen for {@code minSeenSeconds}, someone staring at him for
+	 * flee distance (any time; {@link #fleeDistanceTo}), and once he has been seen for {@code minSeenSeconds}, someone staring at him for
 	 * {@code stareSeconds} (each player's own stare, never two players' added up) or closing {@code approachBlocks} on
 	 * him since he was first seen. A single step, strafing or turning never counts. The flee and approach distances
 	 * shrink for a figure that appeared close ({@link #fleeDistance}). Each player's finished stare counts once per
@@ -851,7 +864,7 @@ public class HimEntity extends PathfinderMob {
 			UUID uuid = player.getUUID();
 			double d = SpotFinder.horizontal(player.position(), position());
 			chases.computeIfAbsent(uuid, k -> new Chase()).update(player.getX(), player.getZ(), d);
-			if (d < flee && near == null) {
+			if (fleeDistanceTo(player, d) < flee && near == null) {
 				near = player;
 			}
 			if (everSeen && approaches.computeIfAbsent(uuid, k -> new Approach()).update(d, config.approachStepBlocks) >= approach && approacher == null) {
@@ -888,6 +901,15 @@ public class HimEntity extends PathfinderMob {
 			case NONE -> {
 			}
 		}
+	}
+
+	/**
+	 * How far this player is from him for the flee rule: sideways ({@code horizontal}) for the one he appeared for (or
+	 * anyone, when he appeared for nobody), as alone; in 3D for everyone else (MP-7), so a friend mining far under him
+	 * (or high over him) never makes him bolt in the middle of someone else's sighting.
+	 */
+	private double fleeDistanceTo(ServerPlayer player, double horizontal) {
+		return appearedFor == null || appearedFor.equals(player.getUUID()) ? horizontal : player.position().distanceTo(position());
 	}
 
 	/** STARED_AT_HIM for this player: attention, the record, {@code entity:stared}, {@link FigureApi#STARED}. Once per player. */
@@ -1058,11 +1080,28 @@ public class HimEntity extends PathfinderMob {
 	}
 
 	/**
+	 * The one he leaves from: whoever was nearest when he set off, kept for the whole leave while they are here (looked
+	 * up again by UUID), so the way he goes never flips between players; the nearest once they are gone.
+	 */
+	private @Nullable ServerPlayer leaveFrom(List<ServerPlayer> players, @Nullable ServerPlayer nearest) {
+		if (leaveFrom != null) {
+			for (ServerPlayer player : players) {
+				if (player.getUUID().equals(leaveFrom)) {
+					return player;
+				}
+			}
+		}
+		leaveFrom = nearest == null ? null : nearest.getUUID();
+		return nearest;
+	}
+
+	/**
 	 * Walks (or runs) away from the players (the nearest weighs most, {@link #awayFrom}) toward a point that is inside
-	 * the entity-ticking range and no farther than just past the nearest player's fog edge (where he is gone). Tries
-	 * straight away first, then turns up to 90 degrees. The path reaches {@link #LEAVE_AHEAD_SECONDS} of travel ahead
-	 * and is renewed before he gets to its end, so he never slows down at a path's last node; the speed follows
-	 * {@code modifier} every tick without a new path.
+	 * the entity-ticking range and no farther than just past the fog edge of the one he leaves from (where he is gone).
+	 * Tries straight away first, then turns up to 90 degrees; with others there, all the way round, and never toward
+	 * anyone ({@link #repath}). The path reaches {@link #LEAVE_AHEAD_SECONDS} of travel ahead and is renewed before he
+	 * gets to its end, so he never slows down at a path's last node; the speed follows {@code modifier} every tick
+	 * without a new path.
 	 */
 	private void steerAway(ServerLevel level, List<ServerPlayer> players, @Nullable ServerPlayer from, double modifier, double blocksPerSecond) {
 		PathNavigation navigation = getNavigation();
@@ -1086,41 +1125,77 @@ public class HimEntity extends PathfinderMob {
 	/**
 	 * Paths {@code ahead} blocks away from the players, straight away first. False if no direction works. A direction
 	 * that fails leaves the current path alone, so he never stops while looking for the next one.
+	 *
+	 * <p>With others there (MP-7) the push away from everyone can point straight at someone (A close behind him, B
+	 * farther on the same line), so every way out is checked against everyone ({@link #clearance}): none may take him
+	 * within the flee distance of anyone, nor any nearer to someone already that close. He tries turns all the way round
+	 * ({@link #WIDE_TURNS}), the clear ones first in order ({@link #clearestFirst}), and takes the first path that stays
+	 * clear; if none does, the path with the most clearance.
 	 */
 	private boolean repath(ServerLevel level, List<ServerPlayer> players, @Nullable ServerPlayer from, double modifier, double ahead) {
 		Vec3 origin = from != null ? from.position() : position().subtract(Entity.calculateViewVector(0.0F, holdYaw));
 		Vec3 away = position().subtract(origin).horizontal();
+		boolean others = players.size() > 1;
+		List<Vec3> everyone = players.stream().map(ServerPlayer::position).toList();
 		if (away.lengthSqr() < 1.0) {
 			// The player is (nearly) on top of him: keep running the way he is going rather than turning on the spot.
 			away = Entity.calculateViewVector(0.0F, phase == Phase.LEAVING && getDeltaMovement().horizontalDistanceSqr() > 1.0E-4 ? getYRot() : holdYaw)
 					.horizontal();
-		} else if (players.size() > 1) {
-			away = awayFrom(position(), players.stream().map(ServerPlayer::position).toList(), away);
+		} else if (others) {
+			away = awayFrom(position(), everyone, away);
 		}
 		away = away.normalize();
 		double reach = from != null ? FogEdge.of(from, false).renderLimit() + 2.0 : Double.MAX_VALUE;
-		for (double turn : new double[] {0, 30, -30, 60, -60, 90, -90}) {
-			double r = Math.toRadians(turn);
-			Vec3 dir = new Vec3(away.x * Math.cos(r) - away.z * Math.sin(r), 0.0, away.x * Math.sin(r) + away.z * Math.cos(r));
-			Vec3 target = position().add(dir.scale(ahead));
+		List<Vec3> targets = new ArrayList<>();
+		for (double turn : others ? WIDE_TURNS : TURNS) {
+			Vec3 target = position().add(turned(away, turn).scale(ahead));
 			Vec3 rel = target.subtract(origin).horizontal();
 			if (rel.length() > reach) {
 				target = origin.add(rel.normalize().scale(reach));
 			}
-			if (!tickingAround(level, target, LEAVE_TICK_MARGIN)) {
-				continue;
+			if (leaveTargetTicking(level, target)) {
+				targets.add(target);
 			}
+		}
+		double keep = fleeDistance(EntityConfig.get());
+		if (others) {
+			targets = clearestFirst(position(), targets, everyone, keep);
+		}
+		Path best = null;
+		double bestClearance = Double.NEGATIVE_INFINITY;
+		for (Vec3 target : targets) {
 			int x = Mth.floor(target.x);
 			int z = Mth.floor(target.z);
 			// Under a ceiling (the Nether) the heightmap is the roof: aim at his own height instead.
 			int y = level.dimensionType().hasCeiling() ? Mth.floor(getY()) : level.getHeight(Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, x, z);
 			Path path = getNavigation().createPath(x + 0.5, y, z + 0.5, 1);
 			Node end = path == null ? null : path.getEndNode();
-			if (end != null && path.getNodeCount() > 1 && horizontalTo(end) >= 2.0 && getNavigation().moveTo(path, modifier)) {
-				return true;
+			if (end == null || path.getNodeCount() <= 1 || horizontalTo(end) < 2.0) {
+				continue;
+			}
+			double clearance = others ? clearance(route(path), everyone, keep) : 0.0;
+			if (clearance >= -PATH_SLACK) {
+				if (getNavigation().moveTo(path, modifier)) {
+					return true;
+				}
+			} else if (clearance > bestClearance) {
+				best = path;
+				bestClearance = clearance;
 			}
 		}
-		return false;
+		// Hemmed in: no way out keeps clear of everyone; the one that keeps clearest.
+		return best != null && getNavigation().moveTo(best, modifier);
+	}
+
+	/** Where he is, then every node of the path, for {@link #clearance}. */
+	private List<Vec3> route(Path path) {
+		List<Vec3> route = new ArrayList<>(path.getNodeCount() + 1);
+		route.add(position());
+		for (int i = 0; i < path.getNodeCount(); i++) {
+			Node node = path.getNode(i);
+			route.add(new Vec3(node.x + 0.5, node.y, node.z + 0.5));
+		}
+		return route;
 	}
 
 	private double horizontalTo(Node node) {
@@ -1173,6 +1248,61 @@ public class HimEntity extends PathfinderMob {
 			}
 		}
 		return sum.lengthSqr() > 1.0E-8 ? sum.normalize() : fallback;
+	}
+
+	/** {@code dir} (horizontal) turned by {@code degrees} about the vertical. */
+	static Vec3 turned(Vec3 dir, double degrees) {
+		double r = Math.toRadians(degrees);
+		return new Vec3(dir.x * Math.cos(r) - dir.z * Math.sin(r), 0.0, dir.x * Math.sin(r) + dir.z * Math.cos(r));
+	}
+
+	/**
+	 * How well a route keeps clear of everyone at {@code players}, horizontally: the least, over them, of how near it
+	 * comes to them minus how near it may ({@code keep}, or where they are now if that is nearer). 0 or more: it never
+	 * takes him within {@code keep} of anyone, nor any nearer to someone already that close. {@code route} starts where
+	 * he is; {@link Double#MAX_VALUE} with nobody there.
+	 */
+	static double clearance(List<Vec3> route, List<Vec3> players, double keep) {
+		double worst = Double.MAX_VALUE;
+		Vec3 start = route.getFirst();
+		for (Vec3 player : players) {
+			double now = SpotFinder.horizontal(start, player);
+			double nearest = now;
+			for (int i = 1; i < route.size(); i++) {
+				nearest = Math.min(nearest, segmentDistance(route.get(i - 1), route.get(i), player));
+			}
+			worst = Math.min(worst, nearest - Math.min(keep, now));
+		}
+		return worst;
+	}
+
+	/** Horizontal distance from {@code p} to the segment from {@code a} to {@code b}. */
+	private static double segmentDistance(Vec3 a, Vec3 b, Vec3 p) {
+		double dx = b.x - a.x;
+		double dz = b.z - a.z;
+		double length2 = dx * dx + dz * dz;
+		double t = length2 < 1.0E-9 ? 0.0 : Mth.clamp(((p.x - a.x) * dx + (p.z - a.z) * dz) / length2, 0.0, 1.0);
+		double cx = a.x + t * dx - p.x;
+		double cz = a.z + t * dz - p.z;
+		return Math.sqrt(cx * cx + cz * cz);
+	}
+
+	/**
+	 * The leave targets best first: those whose straight leg from {@code him} keeps clear of everyone
+	 * ({@link #clearance} 0 or more) in their own order, then the rest, the most clearance first.
+	 */
+	static List<Vec3> clearestFirst(Vec3 him, List<Vec3> targets, List<Vec3> players, double keep) {
+		List<Vec3> clear = new ArrayList<>();
+		List<Vec3> rest = new ArrayList<>();
+		Map<Vec3, Double> clearances = new HashMap<>();
+		for (Vec3 target : targets) {
+			double c = clearance(List.of(him, target), players, keep);
+			clearances.put(target, c);
+			(c >= -1.0E-6 ? clear : rest).add(target);
+		}
+		rest.sort((p, q) -> Double.compare(clearances.get(q), clearances.get(p)));
+		clear.addAll(rest);
+		return clear;
 	}
 
 	private @Nullable ServerPlayer nearest(List<ServerPlayer> players) {

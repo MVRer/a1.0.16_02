@@ -66,6 +66,8 @@ public record ArmedTrap(String type, ResourceKey<Level> dimension, BlockPos pos,
 	}
 
 	/**
+	 * Play ticks are on the world clock, or on its player's own for a {@linkplain TrapKind#personal() personal} trap.
+	 *
 	 * @param armedAt    play tick it was armed
 	 * @param setAt      play tick the world changed, or -1 while watching
 	 * @param until      play tick it ends: the end of the watch, or of the window in which a death counts

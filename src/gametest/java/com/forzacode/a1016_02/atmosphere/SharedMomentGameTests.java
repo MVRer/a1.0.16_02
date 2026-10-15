@@ -4,7 +4,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 
-import com.forzacode.a1016_02.atmosphere.card.CardSoundGameTests;
+import com.forzacode.a1016_02.atmosphere.card.SharedMobGameTests;
 import com.forzacode.a1016_02.atmosphere.card.ZombieAtDuskCard;
 import com.forzacode.a1016_02.atmosphere.mob.MobTamperImpl;
 import com.forzacode.a1016_02.atmosphere.mob.TamperState;
@@ -38,7 +38,7 @@ import net.minecraft.world.phys.Vec3;
  * test never depends on who else is on the shared game test server. {@link AtmosphereGameTests} extends this
  * (through {@link DuskFogGameTests}).
  */
-public class SharedMomentGameTests extends CardSoundGameTests {
+public class SharedMomentGameTests extends SharedMobGameTests {
 	/** A test's own online players and state; nobody's participation is reported anywhere. */
 	static final class Roster implements PlayerWatch.Source {
 		final List<ServerPlayer> online = new ArrayList<>();
@@ -118,8 +118,9 @@ public class SharedMomentGameTests extends CardSoundGameTests {
 	}
 
 	/**
-	 * Mob tricks bound to a player end the moment that player is gone: released when they leave (or turn spectator),
-	 * when the look-up no longer finds them, or when they die; a trick for someone else is kept.
+	 * Mob tricks bound to one player end once that player is gone (nobody here can see them): released when they leave
+	 * (or turn spectator), when the look-up no longer finds them, or when they die; a trick for someone else is kept.
+	 * Tricks bound to friends sharing a moment: {@link com.forzacode.a1016_02.atmosphere.card.SharedMobGameTests}.
 	 */
 	@GameTest
 	public void tamperedMobsAreReleasedWhenTheirPlayerGoes(GameTestHelper helper) {
@@ -143,7 +144,8 @@ public class SharedMomentGameTests extends CardSoundGameTests {
 			tamper.bind(forC, c.getUUID());
 			helper.assertTrue(tamper.releaseOrphans(server, roster.watch) == 0 && tamper.isFrozen(forA) && tamper.isFrozen(forB), "released with everyone here");
 
-			helper.assertTrue(tamper.releaseFor(b.getUUID()) == 1 && !tamper.isTampered(forB), "B left, yet B's cow is still held");
+			// B leaves (still on the list at that moment, as when the disconnect is reported): B's cow goes.
+			helper.assertTrue(tamper.releaseFor(server, b.getUUID(), roster.watch) == 1 && !tamper.isTampered(forB), "B left, yet B's cow is still held");
 			helper.assertTrue(tamper.isFrozen(forA) && tamper.isFrozen(forC) && tamper.isFrozen(unbound), "B leaving released someone else's");
 
 			roster.online.remove(a);

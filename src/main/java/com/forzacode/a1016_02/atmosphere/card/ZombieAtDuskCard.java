@@ -48,16 +48,17 @@ public final class ZombieAtDuskCard extends AtmosphereCard {
 		if (zombie == null) {
 			return FireResult.NO_SPOT;
 		}
-		// It faces the player the card is for (everyone sees it); the moment they are gone it is a zombie again.
+		// It faces the player the card is for (everyone sees it); once nobody who shared it is here, it is a zombie again,
+		// out of view.
 		int ticks = AtmosphereConfig.ticks(cfg().zombieStillSeconds);
 		if (ctx.fake()) {
 			int look = Math.max(AtmosphereConfig.ticks(cfg().zombieFakeMinSeconds), ticks / 4);
 			boolean looked = mobs().face(zombie, player.getEyePosition(), look);
-			forTarget(zombie, player);
+			forSharers(zombie, player);
 			return looked ? FireResult.FIRED : FireResult.SKIPPED;
 		}
 		boolean ok = mobs().freeze(zombie, ticks) && mobs().face(zombie, player.getEyePosition(), ticks) && mobs().silence(zombie, ticks);
-		forTarget(zombie, player);
+		forSharers(zombie, player);
 		return ok ? FireResult.FIRED : FireResult.SKIPPED;
 	}
 }

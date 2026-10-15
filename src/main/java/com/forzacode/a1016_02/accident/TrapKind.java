@@ -111,7 +111,9 @@ public interface TrapKind {
 	/**
 	 * True if only its own player can set it off (the bed: their bed, their sleepless nights). Every other trap kills
 	 * whoever sets it off (D-062.6) and stays armed and deniable when its player leaves or dies (D-062.5). A personal trap
-	 * never claims a friend's death, and is dropped when its player turns spectator (it could never count again).
+	 * never claims a friend's death, and is dropped when its player turns spectator (it could never count again). Its
+	 * window, and the time it was set, run on its own player's play clock, not the world's (D-059): their nights pass
+	 * only while they play.
 	 */
 	default boolean personal() {
 		return false;

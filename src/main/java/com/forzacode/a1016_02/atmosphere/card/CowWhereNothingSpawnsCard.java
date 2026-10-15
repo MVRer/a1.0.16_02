@@ -70,7 +70,7 @@ public final class CowWhereNothingSpawnsCard extends AtmosphereCard {
 					int ticks = AtmosphereConfig.ticks(cfg.cowStandSeconds);
 					mobs().freeze(cow, ticks);
 					mobs().silence(cow, ticks);
-					forTarget(cow, player);
+					forSharers(cow, player);
 					return FireResult.FIRED;
 				}
 			}

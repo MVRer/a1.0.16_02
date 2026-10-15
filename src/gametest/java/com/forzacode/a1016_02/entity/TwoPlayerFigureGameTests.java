@@ -31,6 +31,7 @@ import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.util.Mth;
 import net.minecraft.util.RandomSource;
 import net.minecraft.world.entity.EntityTypes;
+import net.minecraft.world.entity.Mob;
 import net.minecraft.world.entity.animal.cow.Cow;
 import net.minecraft.world.level.GameType;
 import net.minecraft.world.level.Level;
@@ -89,8 +90,21 @@ public class TwoPlayerFigureGameTests {
 	 * the level, where {@code observers} and {@code watchers} read {@code level.players()}.
 	 */
 	static HimEntity watchedBy(GameTestHelper helper, Variant variant, Vec3 relativeFeet, float yaw, List<ServerPlayer> everyone) {
+		return watchedBy(helper, variant, relativeFeet, yaw, everyone, false);
+	}
+
+	/**
+	 * {@link #watchedBy}, and with {@code leaves} his leave targets count as ticking too, so he really walks or runs off
+	 * here (in a world the players keep the chunks around him ticking).
+	 */
+	static HimEntity watchedBy(GameTestHelper helper, Variant variant, Vec3 relativeFeet, float yaw, List<ServerPlayer> everyone, boolean leaves) {
 		ServerLevel level = helper.getLevel();
 		HimEntity him = new HimEntity(ModEntities.HIM, level) {
+			@Override
+			protected boolean leaveTargetTicking(ServerLevel serverLevel, Vec3 target) {
+				return leaves ? serverLevel.isLoaded(BlockPos.containing(target)) : super.leaveTargetTicking(serverLevel, target);
+			}
+
 			@Override
 			protected List<ServerPlayer> observers(ServerLevel serverLevel) {
 				return everyone.stream().filter(p -> p.isAlive() && !p.isSpectator()).toList();
@@ -300,6 +314,94 @@ public class TwoPlayerFigureGameTests {
 				.thenSucceed();
 	}
 
+	// --- a friend near the spot (MP-7) ---
+
+	/**
+	 * A sighting for A never stands within the flee distance of B: B, 15 blocks under A's band, is out of view and
+	 * farther than the minimum distance from every spot, yet a spot over B would make him flee B, so end A's sighting,
+	 * on his first tick. The rule is horizontal, so a spot right over B's tunnel is refused too. Sky access: no barrier
+	 * roof to stand on, so the spots are on the yard's floor, 15 blocks over B.
+	 */
+	@GameTest(structure = YARD, skyAccess = true)
+	public void aSpotForANeverStandsWithinTheFleeDistanceOfB(GameTestHelper helper) {
+		yard(helper, 0, 23);
+		ServerLevel level = helper.getLevel();
+		ServerPlayer a = player(helper, GameType.SURVIVAL, helper.absoluteVec(new Vec3(1.5, 1.0, 1.5)), 135.0F); // looking away from the yard
+		Vec3 bFeet = helper.absoluteVec(new Vec3(12.5, -14.0, 12.5));
+		ServerPlayer b = player(helper, GameType.SURVIVAL, bFeet, 0.0F);
+		EntityConfig config = EntityConfig.get();
+		ReportedFog.set(a, 24.0);
+		try {
+			FogEdge edge = FogEdge.of(a);
+			double toB = SpotFinder.horizontal(a.position(), bFeet);
+			helper.assertTrue(edge.seeable() && edge.inner() <= toB && toB <= edge.outer(), "B is not under A's band: " + edge + ", B " + toB);
+			int found = 0;
+			int overB = 0;
+			for (long seed = 1; seed <= 64; seed++) {
+				// Spread seeds: the first draw (the ring's start angle) of nearby small seeds is nearly the same.
+				Optional<SpotFinder.Spot> spot = FigureApi.findSpot(a, Variant.WALKS_AWAY, edge, RandomSource.create(seed * 0x9E3779B97F4A7C15L), true,
+						watchers(helper, a, b), pos -> level.isLoaded(pos));
+				if (spot.isEmpty()) {
+					continue;
+				}
+				found++;
+				double flee = SightingRules.fleeDistance(config.fleeDistance, config.fleeSpawnFraction, spot.get().distance());
+				double fromB = SpotFinder.horizontal(spot.get().pos(), bFeet);
+				if (fromB < 14.0) {
+					overB++;
+				}
+				helper.assertTrue(fromB >= flee, String.format(java.util.Locale.ROOT, "a spot %.1f blocks (sideways) from B, who he would flee within %.1f", fromB, flee));
+			}
+			helper.assertTrue(found > 0, "no spot at all in A's band: nothing was checked");
+			helper.assertTrue(overB > 0, "no spot over the yard, near B: the case is not checked");
+		} finally {
+			ReportedFog.forget(a.getUUID());
+		}
+		helper.succeed();
+	}
+
+	/**
+	 * A friend far below him never ends A's sighting: B mines 20 blocks under him, out of view, within the flee distance
+	 * only sideways. For anyone but the one he appeared for the flee distance counts in 3D, so B never makes him bolt,
+	 * on his first tick or once A has seen him. Someone 6 blocks under him is within it, and he flees.
+	 */
+	@GameTest(structure = YARD, maxTicks = 60)
+	public void aFriendFarBelowNeverEndsTheSighting(GameTestHelper helper) {
+		yard(helper, 0, 23);
+		// Each A 15 blocks from its figure (inside the test server's short view distance), looking at him: flee 9.
+		Vec3 himRel = new Vec3(2.5, 1.0, 1.5);
+		Vec3 himFeet = helper.absoluteVec(himRel);
+		Vec3 aFeet = helper.absoluteVec(new Vec3(14.5, 1.0, 10.5));
+		ServerPlayer a = player(helper, GameType.SURVIVAL, aFeet, yawAt(aFeet, himFeet, 25.0F));
+		ServerPlayer deep = player(helper, GameType.SURVIVAL, himFeet.add(0.0, -20.0, 0.0), 0.0F);
+		HimEntity him = watchedBy(helper, Variant.RIDGE, himRel, 0.0F, new CopyOnWriteArrayList<>(List.of(a, deep)));
+		him.setSpawnDistance(SpotFinder.horizontal(aFeet, himFeet)); // as the fog-edge spawn sets it for A
+		him.appearFor(a.getUUID());
+		Vec3 otherRel = new Vec3(2.5, 1.0, 21.5);
+		Vec3 otherFeet = helper.absoluteVec(otherRel);
+		Vec3 a2Feet = helper.absoluteVec(new Vec3(14.5, 1.0, 12.5));
+		ServerPlayer a2 = player(helper, GameType.SURVIVAL, a2Feet, yawAt(a2Feet, otherFeet, 25.0F));
+		ServerPlayer under = player(helper, GameType.SURVIVAL, otherFeet.add(0.0, -6.0, 0.0), 0.0F);
+		HimEntity close = watchedBy(helper, Variant.RIDGE, otherRel, 0.0F, new CopyOnWriteArrayList<>(List.of(a2, under)));
+		close.setSpawnDistance(SpotFinder.horizontal(a2Feet, otherFeet));
+		close.appearFor(a2.getUUID());
+		double flee = him.fleeDistance(EntityConfig.get());
+		helper.assertTrue(flee > 6.0 && flee < 20.0, "the flee distance is not between the two friends below: " + flee);
+		helper.startSequence()
+				.thenWaitUntil(() -> helper.assertTrue(him.age() >= 1 && close.age() >= 1, "they did not tick"))
+				.thenExecute(() -> {
+					helper.assertFalse(him.fled() || him.triggered(), "B, 20 blocks under him (flee " + flee + "), ended A's sighting on its first tick");
+					helper.assertTrue(close.fled(), "someone 6 blocks under him, within the flee distance, did not make him flee");
+				})
+				.thenExecuteAfter(30, () -> {
+					helper.assertTrue(him.everSeen(), "A never saw him, so this checks nothing mid-sighting");
+					helper.assertFalse(him.fled() || him.triggered(), "B, 20 blocks under him, ended A's sighting once A had seen him");
+					discard(him);
+					discard(close);
+				})
+				.thenSucceed();
+	}
+
 	// --- one him ---
 
 	/**
@@ -455,6 +557,100 @@ public class TwoPlayerFigureGameTests {
 		helper.succeed();
 	}
 
+	// --- leaving with someone ahead (MP-7) ---
+
+	/**
+	 * Leaving at a run with A 5 blocks north of him and B 20 blocks south, both watching: the push away from them points
+	 * straight at B (A is nearer), yet he never runs at B or through B, and never turns back toward A. He goes off
+	 * sideways, clear of both.
+	 */
+	@GameTest(structure = YARD, maxTicks = 160)
+	public void leavingHeNeverRunsAtSomeoneElseOrTurnsBack(GameTestHelper helper) {
+		yard(helper, 0, 23);
+		Vec3 himRel = new Vec3(21.5, 1.0, 6.5);
+		Vec3 himFeet = helper.absoluteVec(himRel);
+		Vec3 aFeet = himFeet.add(0.0, 0.0, -5.0);
+		Vec3 bFeet = himFeet.add(0.0, 0.0, 20.0);
+		// Both look at him, off the crosshair (in view, never a stare); B keeps him in view whichever way he goes west.
+		ServerPlayer a = player(helper, GameType.SURVIVAL, aFeet, yawAt(aFeet, himFeet, 25.0F));
+		ServerPlayer b = player(helper, GameType.SURVIVAL, bFeet, yawAt(bFeet, himFeet, 10.0F));
+		HimEntity him = watchedBy(helper, Variant.RIDGE, himRel, 0.0F, new CopyOnWriteArrayList<>(List.of(a, b)), true);
+		him.setSpawnDistance(40.0); // as a fog-edge sighting sets it: the flee distance is the full one
+		him.walkAway(Variant.Gait.RUN);
+		List<Vec3> trail = new CopyOnWriteArrayList<>();
+		helper.onEachTick(() -> {
+			if (!him.isRemoved()) {
+				trail.add(him.position());
+			}
+		});
+		helper.startSequence()
+				.thenExecuteAfter(100, () -> {
+					helper.assertTrue(trail.size() > 20, "he did not tick: " + trail.size());
+					double nearestB = Double.MAX_VALUE;
+					double farthest = 0.0;
+					for (Vec3 at : trail) {
+						nearestB = Math.min(nearestB, SpotFinder.horizontal(at, bFeet));
+						double out = SpotFinder.horizontal(at, himFeet);
+						helper.assertTrue(farthest < 3.0 || out >= farthest - 1.5,
+								String.format(java.util.Locale.ROOT, "he turned back: %.1f blocks out after %.1f (%s)", out, farthest, trace(trail, himFeet)));
+						farthest = Math.max(farthest, out);
+					}
+					helper.assertTrue(farthest >= 6.0, "he never left: " + trace(trail, himFeet));
+					helper.assertTrue(nearestB >= 16.0, String.format(java.util.Locale.ROOT, "he ran at B: %.1f blocks from B (%s)", nearestB, trace(trail, himFeet)));
+					discard(him);
+				})
+				.thenSucceed();
+	}
+
+	/**
+	 * The way out with A at (0, -5) and B at (0, 20): the push away from both points straight at B, so the way he takes
+	 * is not the push but the first that keeps clear of everyone: never toward B, never back toward A.
+	 */
+	@GameTest
+	public void theWayOutNeverPointsAtSomeoneElse(GameTestHelper helper) {
+		Vec3 him = Vec3.ZERO;
+		Vec3 a = new Vec3(0.0, 0.0, -5.0);
+		Vec3 b = new Vec3(0.0, 0.0, 20.0);
+		List<Vec3> both = List.of(a, b);
+		Vec3 toA = a.subtract(him).normalize();
+		Vec3 toB = b.subtract(him).normalize();
+		Vec3 push = HimEntity.awayFrom(him, both, new Vec3(1.0, 0.0, 0.0));
+		helper.assertTrue(push.dot(toB) > 0.99, "the push no longer points at B, so this checks nothing: " + push);
+		double ahead = 14.5;
+		double keep = 18.0;
+		List<Vec3> targets = new ArrayList<>();
+		for (double turn : HimEntity.WIDE_TURNS) {
+			targets.add(him.add(HimEntity.turned(push, turn).scale(ahead)));
+		}
+		Vec3 first = HimEntity.clearestFirst(him, targets, both, keep).getFirst();
+		Vec3 way = first.subtract(him).normalize();
+		helper.assertTrue(way.dot(toB) <= 1.0E-6 && way.dot(toA) <= 1.0E-6, "he leaves toward someone: " + way);
+		helper.assertTrue(HimEntity.clearance(List.of(him, first), both, keep) >= -1.0E-6, "the way out is not clear: " + way);
+		// A leg through B, or one ending 10 blocks short of B, is refused; for A, 5 blocks off, any step closer is.
+		helper.assertTrue(HimEntity.clearance(List.of(him, new Vec3(0.0, 0.0, 25.0)), both, keep) < -17.0, "a leg through B counts as clear");
+		helper.assertTrue(HimEntity.clearance(List.of(him, new Vec3(0.0, 0.0, 10.0)), both, keep) < 0.0, "a leg toward B counts as clear");
+		helper.assertTrue(HimEntity.clearance(List.of(him, new Vec3(1.0, 0.0, -1.0)), List.of(a), keep) < 0.0, "a step toward A counts as clear");
+		helper.assertTrue(HimEntity.clearance(List.of(him, new Vec3(14.5, 0.0, 0.0)), List.of(a), keep) >= -1.0E-6, "a step across from A refused");
+		// Hemmed in (someone on every side, all close): the way out is still the one that keeps clearest.
+		List<Vec3> around = List.of(new Vec3(0.0, 0.0, -5.0), new Vec3(0.0, 0.0, 6.0), new Vec3(-7.0, 0.0, 0.0), new Vec3(8.0, 0.0, 0.0));
+		List<Vec3> ordered = HimEntity.clearestFirst(him, targets, around, keep);
+		for (Vec3 other : ordered) {
+			helper.assertTrue(HimEntity.clearance(List.of(him, ordered.getFirst()), around, keep) >= HimEntity.clearance(List.of(him, other), around, keep) - 1.0E-9,
+					"a clearer way out comes later: " + other);
+		}
+		helper.succeed();
+	}
+
+	/** Every fifth position relative to {@code from}, for failure messages. */
+	private static String trace(List<Vec3> trail, Vec3 from) {
+		StringBuilder out = new StringBuilder();
+		for (int i = 0; i < trail.size(); i += 5) {
+			Vec3 at = trail.get(i).subtract(from);
+			out.append(String.format(java.util.Locale.ROOT, " (%.1f %.1f)", at.x, at.z));
+		}
+		return out.toString();
+	}
+
 	// --- fog per player (D-035) ---
 
 	/** Each player's client fog is theirs: kept by UUID, used for their own band, forgotten when only they leave. */
@@ -553,6 +749,35 @@ public class TwoPlayerFigureGameTests {
 			helper.assertFalse(Fakes.hold(new MobTamper.Stub(), cow, a, 1200) || tamper.isTampered(cow), "the stub held a mob");
 		} finally {
 			tamper.release(cow);
+			cow.discard();
+		}
+		helper.succeed();
+	}
+
+	/**
+	 * A fake sighting for B never takes a mob that is held for someone else (MP-7): the cow at B's fog edge, held for
+	 * A (bound to A, as another card or A's own fake holds it), is not B's cow; once let go it is. In the End, where no
+	 * other test keeps cows; the cow stands at the far end of B's range, so no other cow would be the one picked.
+	 */
+	@GameTest(dimension = "minecraft:the_end", structure = YARD)
+	public void aFakeNeverTakesAMobHeldForSomeoneElse(GameTestHelper helper) {
+		yard(helper, 0, 23);
+		ServerPlayer a = player(helper, GameType.SURVIVAL, helper.absoluteVec(new Vec3(12.5, 1.0, 1.5)), 0.0F);
+		ServerPlayer b = player(helper, GameType.SURVIVAL, helper.absoluteVec(new Vec3(1.5, 1.0, 1.5)), 0.0F);
+		helper.assertTrue(Services.mobs() instanceof MobTamperImpl, "the real MobTamper is not installed");
+		Cow cow = helper.spawn(EntityTypes.COW, new BlockPos(13, 1, 13));
+		ReportedFog.set(b, 24.0);
+		try {
+			Optional<Mob> free = Fakes.find(b, Variant.Fake.COW);
+			helper.assertTrue(free.isPresent() && free.get() == cow, "the cow at B's fog edge is not B's fake when nobody holds it: " + free);
+			helper.assertTrue(Fakes.hold(Services.mobs(), cow, a, 1200) && Services.mobs().isTampered(cow), "the cow was not held for A");
+			Optional<Mob> held = Fakes.find(b, Variant.Fake.COW);
+			helper.assertTrue(held.isEmpty() || held.get() != cow, "B's fake took the cow held for A");
+			Services.mobs().release(cow);
+			helper.assertTrue(Fakes.find(b, Variant.Fake.COW).filter(found -> found == cow).isPresent(), "the cow, let go, is not B's fake again");
+		} finally {
+			ReportedFog.forget(b.getUUID());
+			Services.mobs().release(cow);
 			cow.discard();
 		}
 		helper.succeed();

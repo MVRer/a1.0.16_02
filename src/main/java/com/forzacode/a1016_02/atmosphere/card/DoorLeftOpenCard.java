@@ -101,15 +101,4 @@ public final class DoorLeftOpenCard extends AtmosphereCard {
 		return state.getBlock() instanceof DoorBlock door && door.type().canOpenByHand()
 				&& state.getValue(DoorBlock.HALF) == DoubleBlockHalf.LOWER && !state.getValue(DoorBlock.OPEN);
 	}
-
-	/** Nobody in the level, spectators included, within {@code blocks} of the door: not this player, not a friend at home. */
-	private static boolean farFromEveryone(ServerLevel level, BlockPos pos, int blocks) {
-		double r2 = (double) blocks * blocks;
-		for (ServerPlayer player : level.players()) {
-			if (player.blockPosition().distSqr(pos) < r2) {
-				return false;
-			}
-		}
-		return true;
-	}
 }

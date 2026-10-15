@@ -24,7 +24,9 @@ import org.jspecify.annotations.Nullable;
  * @param target  whose routes, base and records "your" means (D-061): the trap's player, even while they are away
  * @param players everyone in this level who could set it off now (targetable participants, the trap's player first):
  *                a live trap springs for whichever of them is in place (D-062.6, dangers hit whoever acts)
- * @param now     play ticks ({@link com.forzacode.a1016_02.core.GameClock#playTicks}, the world clock)
+ * @param now     play ticks on the clock the trap's window runs on: the world clock
+ *                ({@link com.forzacode.a1016_02.core.GameClock#playTicks}), or its own player's for a
+ *                {@linkplain TrapKind#personal() personal} trap (the bed, D-059)
  * @param day     in-game day ({@link com.forzacode.a1016_02.core.GameClock#day})
  * @param watch   who takes part, and each player's base
  */
@@ -39,6 +41,11 @@ public record TrapContext(ServerLevel level, @Nullable ServerPlayer player, @Nul
 			long day) {
 		this(level, player, player == null ? null : player.getUUID(), player == null ? List.of() : List.of(player), center, data, view, cfg, now, day,
 				Services.watch());
+	}
+
+	/** The same context at {@code ticks} on another clock (a personal trap's player's own). */
+	public TrapContext at(long ticks) {
+		return new TrapContext(level, player, target, players, center, data, view, cfg, ticks, day, watch);
 	}
 
 	/** The target's learned routes (empty with no target). */
