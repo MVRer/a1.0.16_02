@@ -13,6 +13,7 @@ import com.forzacode.a1016_02.core.CardTag;
 import com.forzacode.a1016_02.core.FireContext;
 import com.forzacode.a1016_02.core.FireResult;
 import com.forzacode.a1016_02.core.Habit;
+import com.forzacode.a1016_02.core.PlayerWatch;
 import com.forzacode.a1016_02.core.Stage;
 import com.forzacode.a1016_02.core.Tier;
 
@@ -65,13 +66,13 @@ public final class CatHissesCornerCard extends AtmosphereCard {
 				mobs().release(cat);
 				continue;
 			}
-			forTarget(cat, player);
-			UUID uuid = player.getUUID();
+			List<UUID> sharers = forSharers(cat, player);
+			PlayerWatch who = watch.get();
 			MinecraftServer server = level.getServer();
 			SoundOut out = sounds;
 			for (int delay : new int[] {12, 12 + Math.max(20, ticks / 3)}) {
 				if (delay < ticks) {
-					Tasks.later(delay, () -> hiss(server, uuid, cat, out));
+					Tasks.later(delay, () -> hiss(who, server, sharers, cat, out));
 				}
 			}
 			return FireResult.FIRED;
@@ -80,13 +81,13 @@ public final class CatHissesCornerCard extends AtmosphereCard {
 	}
 
 	/**
-	 * The hiss, for everyone in hearing range of the cat. Only while the cat is still held for its owner: once they are
-	 * gone the cat was released ({@code MobTamperImpl.bind}) and there is no hiss.
+	 * The hiss, for everyone in hearing range of the cat. Only while the cat is still held and someone who shared the
+	 * moment is here: with nobody left the cat is let go out of view ({@code MobTamperImpl.bind}) and there is no hiss.
 	 */
-	private static void hiss(MinecraftServer server, UUID player, Cat cat, SoundOut out) {
+	private static void hiss(PlayerWatch watch, MinecraftServer server, List<UUID> sharers, Cat cat, SoundOut out) {
 		Holder<CatSoundVariant> variant = cat.get(DataComponents.CAT_SOUND_VARIANT);
 		if (variant == null || !cat.isAlive() || !MobTamperImpl.INSTANCE.isFrozen(cat) || !(cat.level() instanceof ServerLevel level)
-				|| target(server, player, level).isEmpty()) {
+				|| firstHere(watch, server, sharers, level).isEmpty()) {
 			return;
 		}
 		Holder<SoundEvent> hiss = cat.isBaby() ? variant.value().babySounds().hissSound() : variant.value().adultSounds().hissSound();

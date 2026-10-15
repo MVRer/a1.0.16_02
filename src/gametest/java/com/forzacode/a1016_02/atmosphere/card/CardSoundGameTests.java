@@ -35,7 +35,7 @@ import net.minecraft.world.phys.Vec3;
  * by the player the card fired for. Each test gives its own card instance a recording {@link SoundOut} that hears
  * with the rule {@code SoundCues.playAt} uses ({@link SoundCues#hearers}: same level, within {@code max(volume, 1) * 16}
  * blocks) over the test's own players. Run in the End, where no other test keeps chests or stone, so the cards can only find this test's.
- * {@code atmosphere.AtmosphereGameTests} extends this (through {@code SharedMomentGameTests}).
+ * {@code atmosphere.AtmosphereGameTests} extends this (through {@link SharedMobGameTests} and {@code SharedMomentGameTests}).
  */
 public class CardSoundGameTests {
 	private static final String YARD = "a1016_02:accident/yard";

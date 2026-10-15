@@ -4,14 +4,18 @@ import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
+import java.util.function.Consumer;
 import java.util.function.Predicate;
+import java.util.function.Supplier;
 
 import com.forzacode.a1016_02.atmosphere.AtmosphereConfig;
+import com.forzacode.a1016_02.atmosphere.Tasks;
 import com.forzacode.a1016_02.atmosphere.mob.MobTamperImpl;
 import com.forzacode.a1016_02.core.CardTag;
 import com.forzacode.a1016_02.core.EventCard;
 import com.forzacode.a1016_02.core.Habit;
 import com.forzacode.a1016_02.core.MobTamper;
+import com.forzacode.a1016_02.core.PlayerWatch;
 import com.forzacode.a1016_02.core.Services;
 import com.forzacode.a1016_02.core.Stage;
 import com.forzacode.a1016_02.core.Tier;
@@ -30,14 +34,18 @@ import net.minecraft.world.phys.Vec3;
  * <p>Multiplayer (D-058 to D-062): {@code contextFits} and {@code fire} work for the player the director picked, in
  * their own level ({@code FireContext.level()}). Anything that runs later keeps that player's UUID and looks them up
  * again ({@link #target}); if they are gone it stops cleanly. Sounds he makes go to everyone in hearing range
- * ({@link SoundOut}); mob tricks happen on the server, so everyone sees them, and are bound to the target
- * ({@link #forTarget}) so they end the moment the target leaves, dies or turns spectator.
+ * ({@link SoundOut}); mob tricks happen on the server, so everyone sees them, and are bound to everyone sharing the
+ * moment ({@link #forSharers}): they go on while any of them is here and end, out of view, once none is (D-062.5).
  */
 abstract class AtmosphereCard implements EventCard {
 	protected static final String CAUSE_PREFIX = "atmosphere:";
 
 	/** Where this card's sounds go: everyone in hearing range. A game test swaps in its own on its own card instance. */
 	SoundOut sounds = SoundOut.EVERYONE_IN_RANGE;
+	/** Who takes part (the sharers of a moment, the look-ups after fire). A game test swaps in its own, as {@link #sounds}. */
+	Supplier<PlayerWatch> watch = Services::watch;
+	/** Where this card's episodes run. A game test swaps in its own, to step them itself. */
+	Consumer<Tasks.Episode> episodes = Tasks::start;
 
 	private final String id;
 	private final Tier tier;
@@ -125,11 +133,33 @@ abstract class AtmosphereCard implements EventCard {
 	 * {@code level}. Anything that runs after {@code fire} uses this and stops cleanly when it comes back empty.
 	 */
 	protected static Optional<ServerPlayer> target(MinecraftServer server, UUID player, Level level) {
-		return Services.watch().participant(server, player).filter(p -> Services.watch().isTargetable(p) && p.level() == level);
+		return target(Services.watch(), server, player, level);
 	}
 
-	/** Binds what is being done to the mob to the card's target: released as soon as they are gone ({@link MobTamperImpl#bind}). */
-	protected static void forTarget(Mob mob, ServerPlayer target) {
-		MobTamperImpl.INSTANCE.bind(mob, target.getUUID());
+	/** {@link #target(MinecraftServer, UUID, Level)} by this {@link PlayerWatch}. */
+	protected static Optional<ServerPlayer> target(PlayerWatch watch, MinecraftServer server, UUID player, Level level) {
+		return watch.participant(server, player).filter(p -> watch.isTargetable(p) && p.level() == level);
+	}
+
+	/** The first of {@code players} still here (a living participant in {@code level}), looked up again by UUID. */
+	protected static Optional<ServerPlayer> firstHere(PlayerWatch watch, MinecraftServer server, List<UUID> players, Level level) {
+		for (UUID player : players) {
+			Optional<ServerPlayer> here = target(watch, server, player, level);
+			if (here.isPresent()) {
+				return here;
+			}
+		}
+		return Optional.empty();
+	}
+
+	/**
+	 * Binds what is being done to the mob to everyone sharing the moment (D-060): the card's target, then every other
+	 * targetable participant near them. It goes on while any of them is here, and is let go once none is, out of view
+	 * ({@link MobTamperImpl#bind(Mob, java.util.Collection)}, D-062.5). Returns them, target first, by UUID.
+	 */
+	protected List<UUID> forSharers(Mob mob, ServerPlayer target) {
+		List<UUID> sharers = watch.get().sharingWith(target).stream().map(ServerPlayer::getUUID).toList();
+		MobTamperImpl.INSTANCE.bind(mob, sharers);
+		return sharers;
 	}
 }

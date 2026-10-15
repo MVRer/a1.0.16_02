@@ -1,11 +1,14 @@
 package com.forzacode.a1016_02.atmosphere.mob;
 
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Collections;
 import java.util.IdentityHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.UUID;
+import java.util.function.Predicate;
 
 import com.forzacode.a1016_02.atmosphere.AtmosphereConfig;
 import com.forzacode.a1016_02.core.MobTamper;
@@ -40,10 +43,12 @@ import org.jspecify.annotations.Nullable;
  * <li>moveOutOfView: teleports only when both the mob's box and its box at the destination are out of view.</li>
  * </ul>
  * Everything happens to the mob on the server, so every player sees the same trick (D-060). Atmosphere's cards
- * {@link #bind} what they do to the player it is for: when that player leaves, dies, turns spectator or changes
- * dimension, the mob is released at once ({@link #releaseFor} on the participation event, and {@link #releaseOrphans}
- * every second), never left frozen for someone who is gone. Other workstreams bind through {@code MobTamper.bind}
- * (entity's false positives do); an effect nobody binds only expires.
+ * {@link #bind} what they do to everyone it is for: the target and whoever shared the moment. While any of them is
+ * still here the trick goes on (D-062.5: a scene keeps going if another participant is present); once none is (each
+ * left, died, turned spectator or changed dimension) the mob is released as soon as nobody can see it
+ * ({@link #releaseFor} on the participation event, and {@link #releaseOrphans} every second), never left frozen for
+ * nobody, never let go in anyone's view. Other workstreams bind through {@code MobTamper.bind} (entity's false
+ * positives do, for their one player); an effect nobody binds only expires.
  * Server thread only.
  */
 public final class MobTamperImpl implements MobTamper {
@@ -127,29 +132,50 @@ public final class MobTamperImpl implements MobTamper {
 	// --- the player an effect is for ---
 
 	/**
-	 * Ties what is being done to {@code mob} right now to {@code player} (the card's target): it is released as soon
-	 * as that player is no longer a living participant in the mob's level. Does nothing if the mob is not tampered.
-	 * The latest bind wins.
+	 * Ties what is being done to {@code mob} right now to {@code player} (the card's target): it is released once that
+	 * player is no longer a living participant in the mob's level and nobody can see it. Does nothing if the mob is not
+	 * tampered. The latest bind wins.
 	 */
 	@Override
 	public void bind(Mob mob, UUID player) {
+		bind(mob, List.of(player));
+	}
+
+	/**
+	 * Ties what is being done to {@code mob} right now to everyone in {@code players}: a card's target and everyone who
+	 * shared the moment (D-060), the target first. It goes on while any of them is a living participant in the mob's
+	 * level, and is released once none is and nobody can see it (D-062.5: a scene keeps going while another participant
+	 * is there, and stops out of view). Does nothing if the mob is not tampered. The latest bind wins.
+	 */
+	public void bind(Mob mob, Collection<UUID> players) {
 		TamperState state = ((TamperedMob) mob).a1016_02$tamper();
 		if (state != null) {
-			state.owner = player;
+			state.owners = List.copyOf(new LinkedHashSet<>(players));
 		}
 	}
 
-	/** The player the mob's effect is for, or null (unbound or not tampered). */
+	/** The first player the mob's effect is for (the card's target), or null (unbound or not tampered). */
 	public @Nullable UUID ownerOf(Mob mob) {
 		TamperState state = ((TamperedMob) mob).a1016_02$tamper();
-		return state == null ? null : state.owner;
+		return state == null ? null : state.owner();
 	}
 
-	/** That player left or turned spectator: releases every mob bound to them. Returns how many. */
-	public int releaseFor(UUID player) {
+	/** Everyone the mob's effect is for, the card's target first (empty if unbound or not tampered). */
+	public List<UUID> ownersOf(Mob mob) {
+		TamperState state = ((TamperedMob) mob).a1016_02$tamper();
+		return state == null ? List.of() : state.owners();
+	}
+
+	/**
+	 * That player left or turned spectator ({@code PARTICIPATION}): releases every mob bound to them that nobody else
+	 * it is for is still here for (by {@code watch}'s look-up; the one leaving never counts), once nobody can see it.
+	 * One still in view is let go by {@link #releaseOrphans} later. Returns how many.
+	 */
+	public int releaseFor(MinecraftServer server, UUID player, PlayerWatch watch) {
 		int released = 0;
 		for (Mob mob : new ArrayList<>(tracked)) {
-			if (player.equals(ownerOf(mob))) {
+			List<UUID> owners = ownersOf(mob);
+			if (owners.contains(player) && !anyHere(server, watch, mob, owners, player) && outOfView(mob)) {
 				release(mob);
 				released++;
 			}
@@ -158,19 +184,40 @@ public final class MobTamperImpl implements MobTamper {
 	}
 
 	/**
-	 * Releases every bound mob whose player is gone by {@code watch}'s look-up (D-062.1): offline, a spectator, dead,
-	 * or in another dimension than the mob. Returns how many.
+	 * Releases every bound mob none of whose players is here by {@code watch}'s look-up (D-062.1): offline, a
+	 * spectator, dead, or in another dimension than the mob; and only once nobody can see it (D-062.5): one still in
+	 * view is let go on a later check, or when its time runs out. Returns how many.
 	 */
 	public int releaseOrphans(MinecraftServer server, PlayerWatch watch) {
+		return releaseOrphans(server, watch, MobTamperImpl::outOfView);
+	}
+
+	/** {@link #releaseOrphans(MinecraftServer, PlayerWatch)} with {@code outOfView} as the view rule (tests). */
+	public int releaseOrphans(MinecraftServer server, PlayerWatch watch, Predicate<Mob> outOfView) {
 		int released = 0;
 		for (Mob mob : new ArrayList<>(tracked)) {
-			UUID owner = ownerOf(mob);
-			if (owner != null && !watch.participant(server, owner).filter(p -> watch.isTargetable(p) && p.level() == mob.level()).isPresent()) {
+			List<UUID> owners = ownersOf(mob);
+			if (!owners.isEmpty() && !anyHere(server, watch, mob, owners, null) && outOfView.test(mob)) {
 				release(mob);
 				released++;
 			}
 		}
 		return released;
+	}
+
+	/** True if any of {@code players} but {@code except} is a living participant in the mob's level. */
+	private static boolean anyHere(MinecraftServer server, PlayerWatch watch, Mob mob, List<UUID> players, @Nullable UUID except) {
+		for (UUID player : players) {
+			if (!player.equals(except) && watch.participant(server, player).filter(p -> watch.isTargetable(p) && p.level() == mob.level()).isPresent()) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	/** Nobody in the mob's level (spectators and the dead included) can see it. */
+	private static boolean outOfView(Mob mob) {
+		return mob.level() instanceof ServerLevel level && Services.traces().isOutOfView(level, mob.getBoundingBox());
 	}
 
 	// --- queries ---

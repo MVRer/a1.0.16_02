@@ -22,7 +22,8 @@ import net.minecraft.server.MinecraftServer;
  *
  * <p>Sessions (D-062.4): {@code HerobrineEvents.PARTICIPATION} drives per-player session work. Starting to take part
  * re-sends that player's running effects (once per connection, {@link ActiveEffects}); stopping (leaving, or turning
- * spectator) ends that player's footstep session and releases the mobs tampered for them, and nobody else's. Fabric's
+ * spectator) ends that player's footstep session and releases the mobs tampered for them and nobody still here, out of
+ * view, and nobody else's. Fabric's
  * JOIN and DISCONNECT are only used for what belongs to the client connection itself, spectators included: whether a
  * fresh client still needs its re-sync, and which dead mountains a client was told about.
  */
@@ -45,7 +46,7 @@ public final class AtmosphereServer {
 				ActiveEffects.onParticipating(server, player);
 			} else {
 				FootstepLateCard.onLeave(player);
-				MobTamperImpl.INSTANCE.releaseFor(player);
+				MobTamperImpl.INSTANCE.releaseFor(server, player, Services.watch());
 			}
 		});
 		ServerLifecycleEvents.SERVER_STOPPED.register(server -> {

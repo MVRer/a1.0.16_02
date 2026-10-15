@@ -13,6 +13,7 @@ import com.forzacode.a1016_02.core.CardTag;
 import com.forzacode.a1016_02.core.FireContext;
 import com.forzacode.a1016_02.core.FireResult;
 import com.forzacode.a1016_02.core.Habit;
+import com.forzacode.a1016_02.core.PlayerWatch;
 import com.forzacode.a1016_02.core.Services;
 import com.forzacode.a1016_02.core.Stage;
 import com.forzacode.a1016_02.core.Tier;
@@ -28,7 +29,8 @@ import net.minecraft.world.phys.Vec3;
 /**
  * The patient skeleton: at dusk, a skeleton at the fog's edge that doesn't shoot. It stands still facing the player
  * and keeps the same distance (it is only moved while both it and its new spot are out of view), then is gone: moved
- * far off out of view. If that never works out, it is simply released and is an ordinary skeleton again.
+ * far off out of view. If that never works out, it is simply released and is an ordinary skeleton again. With the
+ * player gone it watches whoever shared the moment; with nobody left it is let go out of view.
  */
 public final class PatientSkeletonCard extends AtmosphereCard {
 	public static final String ID = "patient_skeleton";
@@ -66,9 +68,9 @@ public final class PatientSkeletonCard extends AtmosphereCard {
 		if (!hold(skeleton, player)) {
 			return FireResult.SKIPPED;
 		}
-		forTarget(skeleton, player);
+		List<UUID> sharers = forSharers(skeleton, player);
 		AtmosphereConfig cfg = cfg();
-		Tasks.start(new Follow(player.getUUID(), skeleton, keep, AtmosphereConfig.ticks(cfg.skeletonFollowSeconds),
+		episodes.accept(new Follow(watch.get(), sharers, skeleton, keep, AtmosphereConfig.ticks(cfg.skeletonFollowSeconds),
 				AtmosphereConfig.ticks(cfg.skeletonGoneTriesSeconds)));
 		return FireResult.FIRED;
 	}
@@ -79,15 +81,18 @@ public final class PatientSkeletonCard extends AtmosphereCard {
 	}
 
 	private static final class Follow implements Tasks.Episode {
-		private final UUID player;
+		private final PlayerWatch watch;
+		/** Everyone who shared the moment, the player it was fired for first. */
+		private final List<UUID> sharers;
 		private final Skeleton skeleton;
 		private final double keep;
 		private final int length;
 		private final int goneTries;
 		private int age;
 
-		Follow(UUID player, Skeleton skeleton, double keep, int length, int goneTries) {
-			this.player = player;
+		Follow(PlayerWatch watch, List<UUID> sharers, Skeleton skeleton, double keep, int length, int goneTries) {
+			this.watch = watch;
+			this.sharers = List.copyOf(sharers);
 			this.skeleton = skeleton;
 			this.keep = keep;
 			this.length = length;
@@ -97,10 +102,14 @@ public final class PatientSkeletonCard extends AtmosphereCard {
 		@Override
 		public boolean tick(MinecraftServer server) {
 			age++;
-			// The one it watches, looked up again (D-062.1): gone, dead, spectating or elsewhere, and it is just a skeleton.
-			ServerPlayer watched = target(server, player, skeleton.level()).orElse(null);
-			if (watched == null || !skeleton.isAlive() || skeleton.hurtTime > 0 || anyoneClose(skeleton)) {
+			if (!skeleton.isAlive() || skeleton.hurtTime > 0 || anyoneClose(skeleton)) {
 				mobs().release(skeleton);
+				return false;
+			}
+			// The one it watches, looked up again (D-062.1): the player it was fired for, else anyone who shared it
+			// (D-062.5). Nobody left (gone, dead, spectating or elsewhere): the tamper lets it go once nobody can see it.
+			ServerPlayer watched = firstHere(watch, server, sharers, skeleton.level()).orElse(null);
+			if (watched == null) {
 				return false;
 			}
 			ServerLevel level = (ServerLevel) skeleton.level();
