@@ -225,6 +225,12 @@ public final class AtmosphereConfig implements ModConfig.Versioned {
 	 */
 	public long fogSpellFadeTicks = 1500;
 	/**
+	 * A spell counts as "fog now" for every gate on it (the director's boost, daytime sightings: core's
+	 * {@code FogSpell.counts}) while its amount is at least this share of its level, so its first and last ticks and a
+	 * carry-over's tail do not count.
+	 */
+	public double fogGateShare = FogWeatherRules.DEFAULT_GATE_SHARE;
+	/**
 	 * The spell amount from which the close-in haze (vanilla's faint far haze, pulled in to the fog end) is whole; less
 	 * gets that share of it, so the haze comes and goes over the spell's ease (lower brings it in and takes it away
 	 * faster). Only noticeable by day, where the day levels (0.4 to 0.65) get two thirds to all of it: at night the
@@ -273,13 +279,14 @@ public final class AtmosphereConfig implements ModConfig.Versioned {
 	/**
 	 * The fog weather numbers for core's {@link FogWeatherRules} (rolls, levels, the spell's ease), installed live by
 	 * {@code AtmosphereInit} ({@code FogWeatherRules.install(() -> get().fogWeather())}): the server's {@code FogLimits},
-	 * the director's sims, the live weather and the client fog all use this config. The ease exponent is the dusk
-	 * fog's ({@link #duskFogEaseExponent}).
+	 * the director's sims and the live weather use this config, and every spell made carries its ramp, fade and exponent
+	 * (a client draws a spell with the spell's own ease, never its own config). The ease exponent is the dusk fog's
+	 * ({@link #duskFogEaseExponent}); {@link #fogGateShare} is core's gate on "fog now".
 	 */
 	public FogWeatherRules.Settings fogWeather() {
 		return new FogWeatherRules.Settings(perStage(fogNightChanceByStage), fogSecondNightChance, fogClearNightsBeforeFog, fogMorningCarryChance,
 				perStage(fogDayChanceByStage), perStage(fogNightLevelByStage), perStage(fogDayLevelByStage), fogSpellQuietShare, fogSpellRampTicks,
-				fogSpellFadeTicks, duskFogEaseExponent);
+				fogSpellFadeTicks, duskFogEaseExponent, fogGateShare);
 	}
 
 	private static List<Double> perStage(double @Nullable [] values) {

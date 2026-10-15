@@ -260,11 +260,79 @@ public class WeatherFogGameTests extends DuskFogGameTests {
 	}
 
 	/**
+	 * The client's sky gate (the spell is weather, outside): the sky weight at the camera is core's
+	 * {@code FogLimits.skyFactor}, smoothed as vanilla smooths its rain fog (a fifth of the way per tick, never past the
+	 * target, landing on it); at a sky light of 4 or less there is no spell fog at all (the frame is vanilla's, or the dusk
+	 * fog's, bit for bit, and the color is untouched), from 10 the whole spell, linear between; the first frame on a level
+	 * takes its weight at once.
+	 */
+	@GameTest
+	public void theSkyGatesTheSpellOnTheClient(GameTestHelper helper) {
+		AtmosphereConfig cfg = new AtmosphereConfig();
+		helper.assertTrue(Math.abs(WeatherFog.skyStep(1.0, 0.0, 1.0) - 0.8) < 1.0E-12 && WeatherFog.skyStep(0.8, 0.0, 0.0) == 0.8
+				&& WeatherFog.skyStep(0.5, 1.0, 10.0) == 1.0
+				&& WeatherFog.skyStep(0.9995, 1.0, 0.01) == 1.0 && WeatherFog.skyStep(0.3, 0.3, 1.0) == 0.3, "the pure smoothing");
+		// Into a tunnel at 60 frames a second, then out again: a fifth of the way per tick at most, never past, there within 2 s.
+		WeatherFog walker = new WeatherFog();
+		helper.assertTrue(walker.sky(15, 0.0) == 1.0, "the first frame does not take the open sky at once");
+		double now = 0.0;
+		for (int[] leg : new int[][] {{0, 0}, {15, 1}}) {
+			double target = leg[1];
+			double last = walker.sky();
+			int frames = 0;
+			while (walker.sky() != target && frames < 120) {
+				now += 1.0 / 3.0;
+				double s = walker.sky(leg[0], now);
+				double step = Math.abs(s - last);
+				helper.assertTrue(Math.abs(target - s) <= Math.abs(target - last) && step <= Math.abs(target - last) * WeatherFog.SKY_EASE_PER_TICK / 3.0 + 1.0E-12
+						|| s == target && Math.abs(target - last) < 2 * WeatherFog.SKY_SNAP, String.format(Locale.ROOT, "the sky weight %.5f -> %.5f (to %.0f)", last, s,
+								target));
+				last = s;
+				frames++;
+			}
+			helper.assertTrue(walker.sky() == target && frames > 20, "the sky weight did not settle smoothly on " + target + " in 2 s: " + frames + " frames");
+		}
+
+		long clock = 5 * DAY + 18_000;
+		FogSpell night = new FogSpell(FogWeatherRules.nightFrom(5), FogWeatherRules.nightUntil(5, false), 0.8F, false);
+		for (int light = 0; light <= 15; light++) {
+			WeatherFog client = new WeatherFog();
+			client.receive(new ClientEffects.FogSpell(Optional.of(night)));
+			double spell = client.frame(clock, false, light, 0.0);
+			double open = client.amount(clock, false);
+			helper.assertTrue(spell == open * FogLimits.skyFactor(light), "sky light " + light + ": " + spell);
+			if (light <= FogLimits.SKY_NONE) {
+				Curves.Fog fog = vanilla(192.0, false);
+				float[] rgb = vanillaColor(18_000);
+				float[] copy = rgb.clone();
+				WeatherFog.color(rgb, spell, 18_000, cfg);
+				helper.assertTrue(spell == 0.0 && !WeatherFog.shape(fog, 0.0, 0.0, spell, 0.0, cfg) && java.util.Arrays.equals(rgb, copy),
+						"spell fog at sky light " + light);
+			} else if (light >= FogLimits.SKY_FULL) {
+				helper.assertTrue(spell == open && open > 0.7, "not the whole spell at sky light " + light);
+			}
+			helper.assertTrue(client.frame(clock, true, light, 1.0) == 0.0, "spell fog where time is fixed");
+		}
+		// Walked from the open sky into a tunnel (sky light 2): the frames get there and then have exactly no spell fog.
+		WeatherFog client = new WeatherFog();
+		client.receive(new ClientEffects.FogSpell(Optional.of(night)));
+		client.frame(clock, false, 15, 0.0);
+		double fog = 1.0;
+		for (int tick = 1; tick <= 60; tick++) {
+			fog = client.frame(clock, false, 2, tick);
+		}
+		helper.assertTrue(fog == 0.0, "spell fog left in a tunnel after 3 s: " + fog);
+		client.resetSky();
+		helper.assertTrue(client.frame(clock, false, 15, 61.0) == client.amount(clock, false), "a new level does not take the open sky at once");
+		helper.succeed();
+	}
+
+	/**
 	 * Core's server-side fog ({@code FogLimits.of} with the spell, where he may stand) lands exactly where the client's
 	 * fog with the same spell ends, for every stage's dusk level, every spell above, across two days and four view
 	 * distances, with atmosphere's live settings; the server form reads the stored spell on the level's clock.
 	 */
-	@GameTest
+	@GameTest(maxTicks = SKY_WAIT_TICKS + 50)
 	public void serverFogMatchesClientFogWithASpell(GameTestHelper helper) {
 		AtmosphereConfig cfg = AtmosphereConfig.get();
 		FogWeatherRules.Settings settings = FogWeatherRules.settings();
@@ -289,13 +357,17 @@ public class WeatherFogGameTests extends DuskFogGameTests {
 				}
 			}
 		}
-		// The server form: the stored spell, the player's level clock and view distance, in the open (core weights the
-		// spell by the sky at the player's eyes: wait for the light engine to light the fresh test area).
+		// The server form: the stored spell, the player's level clock and view distance, the spell weighted by the sky at
+		// the player's eyes (core's skyFactor). The light engine lights the fresh test area late under load: wait for the
+		// open sky a while, but the check holds for whatever sky light there is (the pure factor), so it never times out
+		// on a slow light engine; a light that changes while it reads tries again on the next tick.
 		MinecraftServer server = helper.getLevel().getServer();
 		ServerPlayer player = (ServerPlayer) helper.makeMockServerPlayer(GameType.SURVIVAL);
 		BlockPos eyes = BlockPos.containing(player.getEyePosition());
+		int[] waited = {0};
 		helper.succeedWhen(() -> {
-			helper.assertTrue(helper.getLevel().getBrightness(LightLayer.SKY, eyes) >= FogLimits.SKY_FULL, "no sky at the player's eyes yet");
+			int sky = helper.getLevel().getBrightness(LightLayer.SKY, eyes);
+			helper.assertTrue(sky >= FogLimits.SKY_FULL || ++waited[0] > SKY_WAIT_TICKS, "no sky at the player's eyes yet");
 			HerobrineState state = HerobrineState.get(server);
 			HerobrineState.Effects before = state.effects();
 			try {
@@ -303,14 +375,22 @@ public class WeatherFogGameTests extends DuskFogGameTests {
 				FogSpell spell = new FogSpell(now - 3_000, now + 6_000, 0.7F, false);
 				ClientEffects.setFogSpell(server, Optional.of(spell));
 				FogLimits.Result live = FogLimits.of(player);
+				helper.assertTrue(helper.getLevel().getBrightness(LightLayer.SKY, eyes) == sky, "the sky light changed while the fog was read");
 				FogLimits.Result pure = FogLimits.of(player.requestedViewDistance(), server.getPlayerList().getViewDistance(), before.duskFogLevel(), now,
-						Optional.of(spell));
-				helper.assertTrue(live.equals(pure) && live.fogEnd() < live.renderLimit(), "the server form: " + live + " vs " + pure);
+						FogLimits.shape(), spell.amount(now) * FogLimits.skyFactor(sky));
+				helper.assertTrue(live.equals(pure), "the server form at sky light " + sky + ": " + live + " vs " + pure);
+				if (sky >= FogLimits.SKY_FULL) {
+					helper.assertTrue(live.equals(FogLimits.of(player.requestedViewDistance(), server.getPlayerList().getViewDistance(), before.duskFogLevel(),
+							now, Optional.of(spell))) && live.fogEnd() < live.renderLimit(), "the server form under open sky: " + live);
+				}
 			} finally {
 				ClientEffects.setFogSpell(server, before.fogSpell());
 			}
 		});
 	}
+
+	/** How long the server-form fog tests wait for the fresh test area's open sky before checking at whatever light there is. */
+	static final int SKY_WAIT_TICKS = 150;
 
 	/** Vanilla's overworld fog color, modeled: the plains fog color (#c0d8ff) times the day timeline's multiplier (to #0f0f16 at night). */
 	static float[] vanillaColor(long time) {

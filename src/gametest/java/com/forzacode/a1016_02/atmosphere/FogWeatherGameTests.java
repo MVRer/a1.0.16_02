@@ -63,6 +63,10 @@ public class FogWeatherGameTests extends SharedMomentGameTests {
 		helper.assertTrue(FogWeather.nightRollTime(D) == 10_000L && FogWeather.dayRollUntil(5, D) == 5 * DAY + 10_000L
 				&& FogWeather.nightRollUntil(5, D) == 5 * DAY + 22_000L, "tonight is not rolled at 10000, before a fog day thins");
 		helper.assertTrue(fresh.fogNightRgb() == 0x3b4048 && fresh.fogDayRgb() == 0xb9bec4 && fresh.fogNightColorLift == 0.6, "D-071's colors and lift");
+		helper.assertTrue(fresh.fogGateShare == 0.5 && fresh.fogWeather().fogGateShare() == FogWeatherRules.DEFAULT_GATE_SHARE, "the gate share");
+		fresh.fogGateShare = 0.7;
+		helper.assertTrue(fresh.fogWeather().fogGateShare() == 0.7, "a changed gate share is not installed");
+		fresh.fogGateShare = 0.5;
 		helper.assertTrue(AtmosphereConfig.rgb("3B4048", 0) == 0x3b4048 && AtmosphereConfig.rgb("#12345", 7) == 7 && AtmosphereConfig.rgb("#zzzzzz", 7) == 7
 				&& AtmosphereConfig.rgb(null, 7) == 7, "color parsing");
 		fresh.fogNightColor = "#ffffff";
@@ -202,11 +206,12 @@ public class FogWeatherGameTests extends SharedMomentGameTests {
 		FogWeather.Outcome tooLate = FogWeather.step(memory, Optional.empty(), night * DAY + 22_000, Stage.PROXIMITY, RandomSource.create(1), true, false, always);
 		helper.assertTrue(tooLate.memory().nightRolled() == 4, "a night rolled after its window");
 		// The clock set back two days: those nights and days roll again when they come; the spell now far ahead is dropped.
+		// Night 5's roll is undone (the history before it is back); what was rolled before it goes on counting.
 		FogWeather.Memory ahead = late.memory();
 		long back = 3 * DAY + 2_000;
 		FogWeather.Outcome reset = FogWeather.step(ahead, late.spell(), back, Stage.PROXIMITY, RandomSource.create(2), false, false, always);
 		helper.assertTrue(reset.memory().nightRolled() == 1 && reset.memory().dayRolled() == 2 && reset.spell().isEmpty()
-				&& reset.memory().history().equals(ahead.history()), "a clock set back: " + reset);
+				&& reset.memory().history().equals(memory.history()) && reset.memory().undoNight().isEmpty(), "a clock set back: " + reset);
 		FogWeather.Outcome again = FogWeather.step(reset.memory(), reset.spell(), 3 * DAY + 10_000, Stage.PROXIMITY, RandomSource.create(2), true, false,
 				always);
 		helper.assertTrue(again.memory().nightRolled() == 3 && again.spell().isPresent(), "night 3 did not roll again after the clock went back");
@@ -214,6 +219,112 @@ public class FogWeatherGameTests extends SharedMomentGameTests {
 		FogSpell over = new FogSpell(0, 10_000, 0.5F, false);
 		helper.assertTrue(FogWeather.step(FogWeather.Memory.START, Optional.of(over), 10_000, Stage.ALONE, RandomSource.create(3), false, false, D).spell().isEmpty(),
 				"an ended spell was kept");
+		helper.succeed();
+	}
+
+	/**
+	 * R2#3: a clock set back past a roll undoes it, and the re-roll replaces it. Night 1 rolls foggy at 34000 while a fog
+	 * day still gives fog (joined to it); the clock goes back to 33000 (before the roll, inside the fog day): the history
+	 * and the fog day are back exactly as before the roll. The night rolls again at 34000 under settings that make it
+	 * clear: no fog of the first roll is left (the fog day fades out at 11500 as it would have), and the night counts in
+	 * the history once. Set back the same way after the next day's roll too, both rolls are undone, the later first. A
+	 * foggy re-roll is joined to the fog day without a pop.
+	 */
+	@GameTest
+	public void aRerollReplacesTheRollTheClockWentBackPast(GameTestHelper helper) {
+		FogWeatherRules.Settings always = new FogWeatherRules.Settings(FogWeatherRules.perStage(1.0), 1.0, 4, 0.0, FogWeatherRules.perStage(1.0),
+				D.nightLevelByStage(), D.dayLevelByStage(), 0.0, D.rampTicks(), D.fadeTicks(), D.easeExponent());
+		FogWeatherRules.Settings never = new FogWeatherRules.Settings(FogWeatherRules.perStage(0.0), 0.0, 4, 0.0, FogWeatherRules.perStage(0.0),
+				D.nightLevelByStage(), D.dayLevelByStage(), 0.0, D.rampTicks(), D.fadeTicks(), D.easeExponent());
+		Stage stage = Stage.PROXIMITY;
+		FogWeatherRules.History before = new FogWeatherRules.History(5, 0, false, false);
+		FogSpell fogDay = new FogSpell(FogWeatherRules.dayFrom(1), FogWeatherRules.dayUntil(1), (float) always.dayLevel(stage), false, always);
+		FogWeather.Memory memory = new FogWeather.Memory(before, 0, 1, Optional.empty(), Optional.of(fogDay));
+		Optional<FogSpell> spell = Optional.of(fogDay);
+		// Up to just after tonight's roll: foggy, joined to the fog day.
+		for (long now = DAY + 9_000; now <= DAY + 10_500; now += CHECK) {
+			FogWeather.Outcome out = FogWeather.step(memory, spell, now, stage, RandomSource.create(now), true, false, always);
+			memory = out.memory();
+			spell = out.spell();
+		}
+		helper.assertTrue(memory.nightRolled() == 1 && memory.nightRoll().isPresent() && memory.history().equals(before.afterNight(true))
+				&& memory.undoNight().isPresent() && !spell.equals(Optional.of(fogDay)), "night 1 did not roll foggy: " + memory);
+		// Back to 33000: the roll is undone.
+		long back = DAY + 9_000;
+		FogWeather.Outcome undone = FogWeather.step(memory, spell, back, stage, RandomSource.create(1), true, false, never);
+		helper.assertTrue(undone.memory().nightRolled() == 0 && undone.memory().history().equals(before) && undone.spell().equals(Optional.of(fogDay))
+				&& undone.memory().undoNight().isEmpty() && undone.memory().dayRolled() == 1, "the roll was not undone: " + undone);
+		// The clear re-roll at 34000: the fog day fades as it would have, no fog night, the night counted once.
+		memory = undone.memory();
+		spell = undone.spell();
+		double nightFog = -1;
+		for (long now = back + CHECK; now <= DAY + 18_000; now += CHECK) {
+			FogWeather.Outcome out = FogWeather.step(memory, spell, now, stage, RandomSource.create(now), true, false, never);
+			memory = out.memory();
+			spell = out.spell();
+			helper.assertTrue(fog(spell, now) == fog(Optional.of(fogDay), now), "the fog is not the fog day's at " + now);
+			nightFog = fog(spell, now);
+		}
+		helper.assertTrue(memory.nightRolled() == 1 && memory.nightRoll().isEmpty() && nightFog == 0.0 && memory.history().equals(before.afterNight(false)),
+				"the clear re-roll: " + memory + ", fog " + nightFog);
+
+		// Both rolls undone: night 1 (foggy), then day 2 at 21500 (foggy, joined), then back to 30000.
+		memory = new FogWeather.Memory(before, 0, 1, Optional.empty(), Optional.of(fogDay));
+		spell = Optional.of(fogDay);
+		for (long now = DAY + 9_000; now <= DAY + 22_000; now += CHECK) {
+			FogWeather.Outcome out = FogWeather.step(memory, spell, now, stage, RandomSource.create(now), true, false, always);
+			memory = out.memory();
+			spell = out.spell();
+		}
+		helper.assertTrue(memory.dayRolled() == 2 && memory.undoDay().isPresent() && memory.undoNight().isPresent()
+				&& memory.history().equals(before.afterNight(true).afterDay(true)), "night 1 and day 2 did not both roll: " + memory);
+		FogWeather.Outcome both = FogWeather.step(memory, spell, DAY + 6_000, stage, RandomSource.create(2), true, false, never);
+		helper.assertTrue(both.memory().history().equals(before) && both.memory().nightRolled() == 0 && both.memory().dayRolled() == 1
+				&& both.memory().dayRoll().equals(Optional.of(fogDay)) && both.spell().equals(Optional.of(fogDay)), "both rolls were not undone: " + both);
+		// Only the day's undone (back to 21000, after night 1's roll): the history keeps the night.
+		FogWeather.Outcome dayOnly = FogWeather.step(memory, spell, DAY + 21_000, stage, RandomSource.create(3), false, false, always);
+		helper.assertTrue(dayOnly.memory().history().equals(before.afterNight(true)) && dayOnly.memory().nightRolled() == 1
+				&& dayOnly.memory().dayRolled() == 1 && dayOnly.memory().undoNight().isPresent() && dayOnly.memory().undoDay().isEmpty(),
+				"the day roll alone was not undone: " + dayOnly);
+
+		// A foggy re-roll after the undo is joined to the fog day there is: no pop.
+		FogWeather.Outcome again = FogWeather.step(undone.memory(), undone.spell(), DAY + 10_000, stage, RandomSource.create(4), true, false, always);
+		helper.assertTrue(again.memory().history().equals(before.afterNight(true)) && Math.abs(fog(again.spell(), DAY + 10_000)
+				- fog(Optional.of(fogDay), DAY + 10_000)) < HAND_OVER, "the foggy re-roll: " + again);
+		helper.succeed();
+	}
+
+	/** A spell keeps its own ease through a late roll, a fade out and a command, whatever the settings now. */
+	@GameTest
+	public void spellsKeepTheirOwnEase(GameTestHelper helper) {
+		FogWeatherRules.Settings slow = new FogWeatherRules.Settings(FogWeatherRules.perStage(1.0), 1.0, 4, 0.0, D.dayChanceByStage(), D.nightLevelByStage(),
+				D.dayLevelByStage(), 0.0, 5_000L, 3_000L, 2.0);
+		long night = 6;
+		// A late roll under the slow settings eases in from now with their ease.
+		FogWeather.Outcome late = FogWeather.step(new FogWeather.Memory(new FogWeatherRules.History(6, 0, false, false), 5, 6, Optional.empty(),
+				Optional.empty()), Optional.empty(), night * DAY + 14_000, Stage.PROXIMITY, RandomSource.create(5), true, false, slow);
+		FogSpell rolled = late.spell().orElseThrow();
+		helper.assertTrue(rolled.fromClock() == night * DAY + 14_000 && rolled.rampTicks() == 5_000L && rolled.fadeTicks() == 3_000L
+				&& rolled.exponent() == 2.0, "the late roll's ease: " + rolled);
+		// Faded out under the default settings: the spell's own fade, from exactly where it is.
+		long now = night * DAY + 17_000;
+		FogSpell faded = FogWeather.fadeOut(Optional.of(rolled), now, D).orElseThrow();
+		helper.assertTrue(faded.untilClock() == now + 3_000L && faded.fadeTicks() == 3_000L && faded.exponent() == 2.0
+				&& Math.abs(faded.amount(now) - rolled.amount(now)) < 1.0E-6, "the fade out's ease: " + faded);
+		// Commands take the settings they are given.
+		for (FogWeather.Kind kind : FogWeather.Kind.values()) {
+			FogSpell command = FogWeather.commandSpell(kind, night * DAY + 1_000, Stage.TRACES, false, slow);
+			helper.assertTrue(command.rampTicks() == 5_000L && command.fadeTicks() == 3_000L && command.exponent() == 2.0, kind + ": " + command);
+		}
+		// A short spell still easing in when the fog must go is not "easing out" yet: it fades from where it is, never growing.
+		FogSpell shortOne = new FogSpell(now - 100, now + 1_400, 0.6F, false, D);
+		FogSpell gone = FogWeather.fadeOut(Optional.of(shortOne), now, D).orElseThrow();
+		double last = gone.amount(now);
+		helper.assertTrue(!gone.equals(shortOne) && Math.abs(last - shortOne.amount(now)) < 1.0E-6, "the short spell's fade: " + gone);
+		for (long t = now; t <= gone.untilClock(); t += CHECK) {
+			helper.assertTrue(gone.amount(t) <= last + 1.0E-12, "the fog grew while easing out at " + t);
+			last = gone.amount(t);
+		}
 		helper.succeed();
 	}
 
@@ -356,6 +467,16 @@ public class FogWeatherGameTests extends SharedMomentGameTests {
 		old.setFogWeather(memory);
 		Tag saved = AtmosphereData.CODEC.encodeStart(ops, old).getOrThrow();
 		helper.assertTrue(AtmosphereData.CODEC.parse(ops, saved).getOrThrow().fogWeather().equals(memory), "the memory did not round-trip: " + saved);
+		// With what the last two rolls changed (R2#3), the spells keeping their own ease.
+		FogSpell slow = new FogSpell(7 * DAY + 11_500, 8 * DAY + 5_500, 0.72F, false, 4_000L, 2_000L, 2.5);
+		FogWeather.Memory undoable = new FogWeather.Memory(new FogWeatherRules.History(8, 0, true, true), 7, 7, Optional.of(slow), Optional.empty(),
+				Optional.of(new FogWeather.Undo(7 * DAY + 10_000, new FogWeatherRules.History(7, 2, false, true), 6, Optional.empty(),
+						Optional.of(new FogSpell(6 * DAY + 23_000, 7 * DAY + 11_500, 0.45F, true)))),
+				Optional.of(new FogWeather.Undo(6 * DAY + 21_500, new FogWeatherRules.History(7, 2, false, false), FogWeather.NEVER, Optional.empty(),
+						Optional.empty())));
+		old.setFogWeather(undoable);
+		Tag withUndo = AtmosphereData.CODEC.encodeStart(ops, old).getOrThrow();
+		helper.assertTrue(AtmosphereData.CODEC.parse(ops, withUndo).getOrThrow().fogWeather().equals(undoable), "the undo did not round-trip: " + withUndo);
 		helper.succeed();
 	}
 
@@ -376,8 +497,8 @@ public class FogWeatherGameTests extends SharedMomentGameTests {
 		for (String added : List.of("version", "rockSoundAloneRadius", "rockSoundMinDistance", "rockSoundMaxDistance", "rockSoundMaxAbove",
 				"rockSoundMaxBelow", "rockSoundVolume", "rockSoundPitchMin", "rockSoundPitchMax", "rockSoundHitShare", "fogNightChanceByStage",
 				"fogSecondNightChance", "fogClearNightsBeforeFog", "fogMorningCarryChance", "fogDayChanceByStage", "fogNightLevelByStage",
-				"fogDayLevelByStage", "fogSpellQuietShare", "fogSpellRampTicks", "fogSpellFadeTicks", "fogSpellHazeFullAmount", "fogNightColor",
-				"fogNightColorLift", "fogDayColor")) {
+				"fogDayLevelByStage", "fogSpellQuietShare", "fogSpellRampTicks", "fogSpellFadeTicks", "fogGateShare", "fogSpellHazeFullAmount",
+				"fogNightColor", "fogNightColorLift", "fogDayColor")) {
 			helper.assertTrue(tree.remove(added) != null, "not a field: " + added);
 		}
 		JsonObject sections = new JsonObject();

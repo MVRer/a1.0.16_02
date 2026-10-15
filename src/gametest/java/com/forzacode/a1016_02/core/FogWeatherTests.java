@@ -489,7 +489,7 @@ public class FogWeatherTests extends ConfigVersionTests {
 	}
 
 	/** FogLimits with a spell: the amounts combine, D-071's distances, no spell changes nothing, the server form reads the stored spell. */
-	@GameTest
+	@GameTest(maxTicks = SKY_WAIT_TICKS + 50)
 	public void fogLimitsWithASpell(GameTestHelper helper) {
 		FogLimits.Shape shape = FogLimits.Shape.DEFAULT;
 		helper.assertTrue(FogLimits.combine(0.3, 0.0) == 0.3 && FogLimits.combine(0.0, 0.45) == 0.45 && Math.abs(FogLimits.combine(0.5, 0.5) - 0.75) < 1.0E-12
@@ -512,13 +512,19 @@ public class FogWeatherTests extends ConfigVersionTests {
 			}
 		}
 
-		// The server form reads the stored spell on the player's level clock (set and restored within one tick), in the
-		// open: once the light engine has lit the fresh test area, the sky at the player's eyes lets the whole spell in.
+		// The server form reads the stored spell on the player's level clock (set and restored within one tick), weighted
+		// by the sky at the player's eyes. The light engine lights the fresh test area late under load (it once had no sky
+		// by tick 22): wait for the open sky a while, but the check holds for whatever sky light there is (the pure
+		// factor), so a slow light engine never fails it; a light that changes while it reads tries again next tick.
+		helper.assertTrue(FogLimits.skyFactor(15) == 1.0 && FogLimits.skyFactor(FogLimits.SKY_FULL) == 1.0 && FogLimits.skyFactor(7) == 0.5
+				&& FogLimits.skyFactor(FogLimits.SKY_NONE) == 0.0 && FogLimits.skyFactor(0) == 0.0, "the sky factor");
 		MinecraftServer server = helper.getLevel().getServer();
 		ServerPlayer player = (ServerPlayer) helper.makeMockServerPlayer(GameType.SURVIVAL);
 		BlockPos eyes = BlockPos.containing(player.getEyePosition());
+		int[] waited = {0};
 		helper.succeedWhen(() -> {
-			helper.assertTrue(helper.getLevel().getBrightness(LightLayer.SKY, eyes) >= FogLimits.SKY_FULL, "no sky at the player's eyes yet");
+			int sky = helper.getLevel().getBrightness(LightLayer.SKY, eyes);
+			helper.assertTrue(sky >= FogLimits.SKY_FULL || ++waited[0] > SKY_WAIT_TICKS, "no sky at the player's eyes yet");
 			HerobrineState state = HerobrineState.get(server);
 			HerobrineState.Effects before = state.effects();
 			try {
@@ -526,12 +532,22 @@ public class FogWeatherTests extends ConfigVersionTests {
 				FogSpell current = new FogSpell(now - 5000, now + 5000, 0.8F, false);
 				state.setEffects(new HerobrineState.Effects(before.musicOff(), 0.2F, Optional.of(current)));
 				FogLimits.Result live = FogLimits.of(player);
-				FogLimits.Result pure = FogLimits.of(player.requestedViewDistance(), server.getPlayerList().getViewDistance(), 0.2F, now, Optional.of(current));
-				FogLimits.Result clear = FogLimits.of(player.requestedViewDistance(), server.getPlayerList().getViewDistance(), 0.2F, now);
-				helper.assertTrue(live.equals(pure) && live.fogEnd() < clear.fogEnd(), "server form " + live + " vs " + pure + " / clear " + clear);
+				helper.assertTrue(helper.getLevel().getBrightness(LightLayer.SKY, eyes) == sky, "the sky light changed while the fog was read");
+				int view = player.requestedViewDistance();
+				int serverView = server.getPlayerList().getViewDistance();
+				FogLimits.Result pure = FogLimits.of(view, serverView, 0.2F, now, FogLimits.shape(), current.amount(now) * FogLimits.skyFactor(sky));
+				FogLimits.Result clear = FogLimits.of(view, serverView, 0.2F, now);
+				helper.assertTrue(live.equals(pure), "server form at sky light " + sky + ": " + live + " vs " + pure);
+				if (sky >= FogLimits.SKY_FULL) {
+					helper.assertTrue(live.equals(FogLimits.of(view, serverView, 0.2F, now, Optional.of(current))) && live.fogEnd() < clear.fogEnd(),
+							"server form under open sky " + live + " / clear " + clear);
+				}
 			} finally {
 				state.setEffects(before);
 			}
 		});
 	}
+
+	/** How long the server-form fog test waits for the fresh test area's open sky before checking at whatever light there is. */
+	private static final int SKY_WAIT_TICKS = 150;
 }
