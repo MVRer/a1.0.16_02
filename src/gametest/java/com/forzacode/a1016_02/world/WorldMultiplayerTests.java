@@ -7,17 +7,22 @@ import java.util.UUID;
 
 import com.forzacode.a1016_02.core.HerobrineState;
 import com.forzacode.a1016_02.core.Services;
+import com.forzacode.a1016_02.core.SiteRegistry;
+import com.forzacode.a1016_02.core.SiteType;
+import com.forzacode.a1016_02.world.gen.Builds;
 import com.forzacode.a1016_02.world.sig.HouseCopier;
 import com.forzacode.a1016_02.world.sig.HouseCopyState;
 import com.forzacode.a1016_02.world.sig.HouseShell;
 import com.forzacode.a1016_02.world.sig.LoneTorch;
 import com.forzacode.a1016_02.world.sig.Outcome;
 import com.forzacode.a1016_02.world.sig.StillBurning;
+import com.forzacode.a1016_02.world.live.EmptiedHouseCard;
 import com.forzacode.a1016_02.world.live.NewScarPlacer;
 
 import net.fabricmc.fabric.api.gametest.v1.GameTest;
 
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
 import net.minecraft.core.GlobalPos;
 import net.minecraft.gametest.framework.GameTestHelper;
 import net.minecraft.nbt.CompoundTag;
@@ -28,8 +33,10 @@ import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.util.RandomSource;
 import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.GameType;
+import net.minecraft.world.level.block.BedBlock;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.block.state.properties.BedPart;
 import net.minecraft.world.level.levelgen.Heightmap;
 import net.minecraft.world.level.levelgen.structure.BoundingBox;
 import net.minecraft.world.phys.Vec3;
@@ -232,6 +239,75 @@ public class WorldMultiplayerTests {
 			helper.assertTrue(horizontal(center, benBase) >= config.stillBurningBaseClearance, "a camp candidate at " + center.toShortString() + ", "
 					+ Math.round(horizontal(center, benBase)) + " blocks from Ben's base");
 		}
+		helper.succeed();
+	}
+
+	/**
+	 * MP-7: the emptied house never clears a build a friend lives in. Ben moved into an abandoned build (his bed and a
+	 * chest inside, his base there) and logged off; Alex's card fires 100 blocks away: Ben's things stay. His bed and
+	 * chest keep it his with his base elsewhere, and so does his base in it with nothing of his inside. Once he moved
+	 * out (his base 40 blocks away) it is an abandoned build again, and it empties.
+	 */
+	@GameTest(structure = BIG)
+	public void emptiedHouseLeavesAnOfflineFriendsHomeAlone(GameTestHelper helper) {
+		ServerLevel level = helper.getLevel();
+		for (BlockPos rel : BlockPos.betweenClosed(0, 0, 0, 23, 0, 23)) {
+			helper.setBlock(rel, Blocks.STONE);
+		}
+		BlockPos anchor = helper.absolutePos(new BlockPos(8, 1, 8));
+		Builds.Build build = Builds.abandonedBuild(anchor.getX(), anchor.getY(), anchor.getZ(), Direction.SOUTH, Builds.Wood.OAK, 42L);
+		build.blueprint().applyAll(level);
+		Friends.Known alex = new Friends.Known("Alex", 500, null);
+		Friends.Known ben = new Friends.Known("Ben", 300, null);
+		Friends f = new Friends(helper, Friends.state(helper, alex, ben));
+		f.data.putBuild(GlobalPos.of(level.dimension(), build.site()), build.interior());
+		SiteRegistry.Site site = new SiteRegistry.Site(1, SiteType.ABANDONED_BUILD, level.dimension(), build.site(), build.size(), Optional.empty());
+
+		// Ben moves in (facing south, the free floor is the front two rows): his bed and a chest, then he logs off.
+		ServerPlayer b = f.join(ben, new Vec3(8, 2, 8));
+		BlockPos foot = anchor.offset(1, 1, 1);
+		BlockPos head = foot.north();
+		BlockPos chest = anchor.offset(-1, 1, 1);
+		BlockState footState = Blocks.BED.white().defaultBlockState().setValue(BedBlock.FACING, Direction.NORTH).setValue(BedBlock.PART, BedPart.FOOT);
+		List<BlockPos> his = List.of(foot, head, chest);
+		List<BlockState> states = List.of(footState, footState.setValue(BedBlock.PART, BedPart.HEAD), Blocks.CHEST.defaultBlockState());
+		for (int i = 0; i < his.size(); i++) {
+			level.setBlock(his.get(i), states.get(i), 3);
+			f.watch.onPlaced(b, level, his.get(i), states.get(i));
+		}
+		f.leave(b);
+		f.data.setBase(ben.uuid(), GlobalPos.of(level.dimension(), head));
+		ServerPlayer a = f.join(alex, new Vec3(108, 2, 8));
+		NewScarPlacer.VisitLookup visits = (l, chunk) -> 40;
+		List<SiteRegistry.Site> recorded = new ArrayList<>();
+		Runnable stillHis = () -> {
+			for (int i = 0; i < his.size(); i++) {
+				helper.assertTrue(level.getBlockState(his.get(i)) == states.get(i), "Ben's " + states.get(i).getBlock().getName().getString() + " at "
+						+ his.get(i).toShortString() + " is gone");
+			}
+		};
+
+		Optional<BlockPos> emptied = EmptiedHouseCard.emptyNearest(f.bases(), a, List.of(site), visits, (s, box) -> recorded.add(s));
+		helper.assertTrue(emptied.isEmpty() && recorded.isEmpty(), "Ben's home was emptied");
+		stillHis.run();
+		// Ben's respawn point is elsewhere now, far away; his bed and chest are still his.
+		f.data.setBase(ben.uuid(), GlobalPos.of(level.dimension(), anchor.offset(900, 0, 0)));
+		emptied = EmptiedHouseCard.emptyNearest(f.bases(), a, List.of(site), visits, (s, box) -> recorded.add(s));
+		helper.assertTrue(emptied.isEmpty() && recorded.isEmpty(), "the build with Ben's bed and chest in it was emptied once his base moved");
+		stillHis.run();
+		// He took them, but his base is still in it (where he stands on its floor): still his home.
+		for (BlockPos pos : his) {
+			level.setBlock(pos, Blocks.AIR.defaultBlockState(), 3);
+		}
+		f.data.setBase(ben.uuid(), GlobalPos.of(level.dimension(), anchor.offset(0, 1, 0)));
+		emptied = EmptiedHouseCard.emptyNearest(f.bases(), a, List.of(site), visits, (s, box) -> recorded.add(s));
+		helper.assertTrue(emptied.isEmpty() && recorded.isEmpty() && level.getBlockState(build.site()).is(Blocks.CHEST),
+				"the build Ben's base is in was emptied");
+		// He moved out, to a base 40 blocks away: an abandoned build near a home empties while everyone is away.
+		f.data.setBase(ben.uuid(), GlobalPos.of(level.dimension(), anchor.offset(40, 0, 0)));
+		emptied = EmptiedHouseCard.emptyNearest(f.bases(), a, List.of(site), visits, (s, box) -> recorded.add(s));
+		helper.assertTrue(emptied.equals(Optional.of(build.site())) && recorded.size() == 1, "the abandoned build Ben left did not empty");
+		helper.assertTrue(level.getBlockState(build.site()).isAir(), "the build's own chest is still there");
 		helper.succeed();
 	}
 
