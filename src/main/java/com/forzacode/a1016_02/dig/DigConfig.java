@@ -6,8 +6,17 @@ import com.forzacode.a1016_02.core.ModConfig;
  * The dig workstream's tunables, stored under {@code sections.dig} in {@code config/a1016_02.json}. Shared rules
  * (dig clearance, breach distance, tunnel growth per visit, torches-behind distance) come from {@code Pacing}.
  * Real-time values are in seconds or minutes and go through {@link ModConfig#realTicks(double)}.
+ * <p>
+ * Versions (D-075, {@link ModConfig.Versioned}): 1 is v1.2, which only added the tunnel ladder's fields (D-072); a
+ * file without them reads their defaults, so step 0 to 1 changes no value.
  */
-public final class DigConfig {
+public final class DigConfig implements ModConfig.Versioned {
+	/** This section's current version. Every later default change adds a step to {@link #upgrade()} and raises it. */
+	public static final int CURRENT_VERSION = 1;
+
+	/** The version this section was last written at; missing (0) is v1.1 or older. */
+	public int version = 0;
+
 	// --- "Under you": the network under the base ---
 	/** Tunnel length (2x2 steps) the network grows per in-game night. */
 	public int networkBlocksPerNight = 6;
@@ -122,6 +131,76 @@ public final class DigConfig {
 	public int exploredSpacing = 3;
 	public int exploredMaxPerDimension = 60_000;
 	public int plantedMaxPerDimension = 4_000;
+
+	// --- someone behind you: the tunnel ladder (D-072) ---
+	/** Cells of straight player-dug 2-high tunnel the player must have behind them, along their heading. */
+	public int ladderMinRun = 16;
+	/** Share of those cells whose walls (both sides, at the feet and the head) are sealed: "most cells". */
+	public double ladderMinSealedShare = 0.6;
+	/** At most one ladder event per this many minutes of the player's own play. */
+	public double ladderGapMinutes = 25;
+	/** Never within this long of combat (seconds). */
+	public double ladderNoCombatSeconds = 30;
+	/** A tunnel run whose start is within this many blocks of one already used never fires again for that player. */
+	public int ladderUsedRunRadius = 24;
+	/** Walking cadence: ticks between two steps (vanilla walking makes a step every 7 to 8 ticks). Plain ticks. */
+	public int ladderStepTicks = 8;
+	/** The sneaking variant of the coming steps: ticks between two steps, its share of the fires, its volume factor. */
+	public int ladderSneakStepTicks = 13;
+	public double ladderSneakChance = 0.25;
+	public float ladderSneakVolumeFactor = 0.6F;
+	/**
+	 * A step's volume when it is {@link #ladderComingFrom} blocks from the player, rising to {@link #ladderVolumeNear}
+	 * at {@link #ladderComingStopMin}. Never above 1 (it is clamped), so a step's hearing range stays vanilla's 16
+	 * blocks and a friend 48 away never hears it. The client fades a sound linearly to nothing at that range, so a step
+	 * 12 back at 0.73 is about as loud as the player's own step (vanilla's 0.15 at their feet), one 4 back at 0.9 about
+	 * five times as loud.
+	 */
+	public float ladderVolumeFar = 0.7F;
+	public float ladderVolumeNear = 0.9F;
+	/** The rest of the steps stop the moment the player looks within this many degrees of the tunnel behind. */
+	public double ladderLookBackDegrees = 70;
+	/** Rung 1 ({@code steps_behind_once}): one or two steps this many blocks back, then nothing. */
+	public int ladderOnceBackMin = 10;
+	public int ladderOnceBackMax = 12;
+	public double ladderOnceTwoStepsChance = 0.5;
+	/**
+	 * Rung 2 ({@code steps_behind_coming}): steps from this far back ("about 16": a step 16 away is at the very edge of
+	 * vanilla's range and is never heard) closing to 4 to 6 blocks, then silence.
+	 */
+	public int ladderComingFrom = 15;
+	public int ladderComingStopMin = 4;
+	public int ladderComingStopMax = 6;
+	public int ladderComingStepsMin = 6;
+	public int ladderComingStepsMax = 10;
+	/** Rung 2's fake: a few steps from this far back going away, fading out. */
+	public int ladderComingFakeFrom = 12;
+	public int ladderComingFakeSteps = 4;
+	/** Rung 3 ({@code steps_behind_glimpse}): only once the last rung 2 is at least this many minutes of play old. */
+	public double ladderGlimpseAfterComingMinutes = 20;
+	/** Rung 3 at most once per in-game day, and this many hours of the player's own play apart. */
+	public double ladderGlimpseGapHours = 2;
+	/** Rung 3's spot: this many blocks back, past the torchlight (block light at his feet and eyes at most this). */
+	public int ladderGlimpseSpotMin = 14;
+	public int ladderGlimpseSpotMax = 20;
+	public int ladderGlimpseMaxBlockLight = 3;
+	/**
+	 * Rung 3's steps, coming up to the spot a step and a half apart (a slow walk). Only those within vanilla's 16-block
+	 * range are heard, so the nearest dark spot is taken first.
+	 */
+	public int ladderGlimpseStepsMin = 4;
+	public int ladderGlimpseStepsMax = 7;
+
+	/** D-075: brings an older section up to {@link #CURRENT_VERSION}; values the player changed are kept. */
+	@Override
+	public boolean upgrade() {
+		if (version >= CURRENT_VERSION) {
+			return false;
+		}
+		// 0 to 1 (v1.2): new fields only (the tunnel ladder, D-072), read as their defaults; no old default changed.
+		version = CURRENT_VERSION;
+		return true;
+	}
 
 	public static DigConfig get() {
 		return ModConfig.section("dig", DigConfig.class, DigConfig::new);

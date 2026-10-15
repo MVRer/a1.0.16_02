@@ -33,7 +33,8 @@ import org.jspecify.annotations.Nullable;
  * The dig workstream's world state ({@code data/a1016_02/dig.dat}): the "Under you" networks (one per distinct base,
  * each with the players whose base it is under), the base each player was last seen with and since which night,
  * the last base dig saw for each player, the tunnel that grows, the card tunnels, the caves the players explored,
- * the saplings they planted and once-only flags. Everything per player is keyed by UUID (D-062.2).
+ * the saplings they planted, once-only flags and each player's tunnel ladder ({@link LadderMemory}, D-072).
+ * Everything per player is keyed by UUID (D-062.2).
  * <p>
  * Old saves (D-062.8): a {@code dig.dat} from before multiplayer has one top-level {@code baseSeen} and networks
  * without owners. They load as is and become the first known player's on the first tick that knows one
@@ -66,6 +67,8 @@ public final class DigData extends SavedData {
 	final Map<UUID, BaseSeen> baseSeen = new LinkedHashMap<>();
 	/** The last base dig saw for each player (their live base while they take part; kept for when they are away). */
 	final Map<UUID, GlobalPos> bases = new LinkedHashMap<>();
+	/** Each player's tunnel ladder (D-072). A save from before v1.2 has none and loads with every player at rung 0. */
+	final Map<UUID, LadderMemory> ladder = new LinkedHashMap<>();
 	/** A save from before multiplayer: the one base the network waited for, until a first known player adopts it. */
 	@Nullable GlobalPos legacyBaseSeen;
 	long legacyBaseSeenNight = Long.MIN_VALUE;
@@ -125,6 +128,22 @@ public final class DigData extends SavedData {
 		if (!base.equals(bases.put(player, base))) {
 			setDirty();
 		}
+	}
+
+	/** The highest tunnel ladder rung this player heard (0 to 3; 0 if never), for the debug overlay (D-072). */
+	public int ladderRung(UUID player) {
+		LadderMemory memory = ladder.get(player);
+		return memory == null ? 0 : memory.rung;
+	}
+
+	/** This player's tunnel ladder, if they ever had one. */
+	Optional<LadderMemory> ladderOf(UUID player) {
+		return Optional.ofNullable(ladder.get(player));
+	}
+
+	/** This player's tunnel ladder, made empty (rung 0, never) if they had none; mark dirty after changing it. */
+	LadderMemory ladder(UUID player) {
+		return ladder.computeIfAbsent(player, k -> new LadderMemory());
 	}
 
 	public Optional<GrowingTunnel> growing() {
@@ -256,6 +275,13 @@ public final class DigData extends SavedData {
 			lastList.add(b);
 		});
 		tag.put("lastBases", lastList);
+		ListTag ladderList = new ListTag();
+		ladder.forEach((player, memory) -> {
+			CompoundTag l = memory.save();
+			l.putString("player", player.toString());
+			ladderList.add(l);
+		});
+		tag.put("ladder", ladderList);
 		if (legacyBaseSeen != null) {
 			tag.putString("baseSeenDimension", legacyBaseSeen.dimension().identifier().toString());
 			tag.putLong("baseSeen", legacyBaseSeen.pos().asLong());
@@ -298,6 +324,11 @@ public final class DigData extends SavedData {
 		for (int i = 0; i < lastList.size(); i++) {
 			CompoundTag b = lastList.getCompoundOrEmpty(i);
 			Network.uuid(b.getStringOr("player", "")).ifPresent(uuid -> data.bases.put(uuid, getGlobal(b)));
+		}
+		ListTag ladderList = tag.getListOrEmpty("ladder");
+		for (int i = 0; i < ladderList.size(); i++) {
+			CompoundTag l = ladderList.getCompoundOrEmpty(i);
+			Network.uuid(l.getStringOr("player", "")).ifPresent(uuid -> data.ladder.put(uuid, LadderMemory.load(l)));
 		}
 		// A save from before multiplayer: its one base waits for the first known player (adoptLegacy).
 		if (tag.contains("baseSeen")) {

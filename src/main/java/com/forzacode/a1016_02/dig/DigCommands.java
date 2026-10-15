@@ -33,7 +33,7 @@ import org.jspecify.annotations.Nullable;
 
 /**
  * {@code /a1016 dig network grow <nights> [player] | network info [player] | network reveal [player] | network chest [player]
- * | tunnel <card> [player]}. The network is the one under that player's base: the named player, else the player
+ * | tunnel <card> [player] | steps [player]}. The network is the one under that player's base: the named player, else the player
  * running the command, else (the console) the first participant (D-062.9); {@code info} lists every network. Debug
  * only: the growth and the tunnels still respect the out-of-view rule. Numbers use {@link Locale#ROOT} (D-031).
  */
@@ -57,7 +57,18 @@ final class DigCommands {
 						.then(Commands.argument("card", StringArgumentType.word())
 								.suggests((ctx, builder) -> SharedSuggestionProvider.suggest(TUNNELS, builder))
 								.executes(ctx -> tunnel(ctx, false))
-								.then(named().executes(ctx -> tunnel(ctx, true)))))));
+								.then(named().executes(ctx -> tunnel(ctx, true)))))
+				.then(Commands.literal("steps").executes(ctx -> steps(ctx, false)).then(named().executes(ctx -> steps(ctx, true))))));
+	}
+
+	/** {@code /a1016 dig steps [player]}: that player's tunnel ladder (D-072) and whether the detector sees a run now. */
+	private static int steps(CommandContext<CommandSourceStack> ctx, boolean named) throws CommandSyntaxException {
+		ServerPlayer player = player(ctx, named);
+		if (player == null) {
+			return fail(ctx, "[a1016] dig: no player");
+		}
+		Ladder.debugLines(player, Ladder.Env.live(ctx.getSource().getServer())).forEach(line -> say(ctx, line));
+		return 1;
 	}
 
 	private static com.mojang.brigadier.builder.RequiredArgumentBuilder<CommandSourceStack, ?> named() {
