@@ -2,6 +2,22 @@
 
 One entry per merge, newest first. Run the game from the main checkout (this folder, on `main`).
 
+## READY TO TRY: v1.1 multiplayer and story clues  (jar build/libs/a1016_02-1.1.0-26.3.jar)
+```
+Restart needed: full game restart. Everyone who plays needs the same jar plus Fabric API.
+See it now, the real way (no debug commands):
+  1. Make a NEW world, then Open to LAN (or run a server). A friend joins with the same jar.
+  2. Play apart for a while, then together. Each of you gets the solo pace; standing within 48 blocks you share the
+     same sounds, fog and silence, and being together never doubles it (D-059, D-060).
+  3. The story is one for both: anyone's reading, naming or telling counts; F06 lists both names, F23 each one's cause.
+  4. Ending D's chamber now has six name plates, a blank seventh and the team's note; a group stuck on a step for a few
+     in-game days finds a plainer clue where it has already been (D-066).
+What to look for: anything that happens to the wrong player, or nothing happening while you're together.
+  Debug: /a1016 state shows every player's pacing; /a1016 debug overlay on shows your own.
+Known rough edges: tiers of two cards or fewer can still stall a pair (the real decks are much larger); a friend's
+  forced quiet still holds a shared moment (D-069).
+```
+
 ## READY TO TRY: v1.0  (main 1d6cb3a; jar build/libs/a1016_02-1.0.0-26.3.jar)
 ```
 Restart needed: full game restart.
