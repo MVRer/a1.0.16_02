@@ -233,8 +233,8 @@ public class DirectorMultiplayerTests {
 
 	/**
 	 * A shared moment must be one each of them could have had on their own: Ana's card waits while Ben, close by, is in
-	 * his join grace, in a quiet, or has already had the card she was holding from before he came close; it fires once
-	 * nothing of his holds it back. (A card he already had is never drawn beside him: see the next test.)
+	 * his join grace, in a quiet or his own first day; it fires once nothing of his holds it back. (A card he already
+	 * had is never drawn beside him, and one held from before he came goes back at once: see the next tests.)
 	 */
 	@GameTest
 	public void aSharedMomentWaitsForEveryonesOwnGates(GameTestHelper helper) {
@@ -248,7 +248,7 @@ public class DirectorMultiplayerTests {
 		long w = 6 * rules.hourTicks;
 		List<String> reasons = new ArrayList<>();
 
-		for (String case_ : List.of("join grace", "quiet", "already had it", "first day", "none")) {
+		for (String case_ : List.of("join grace", "quiet", "first day", "none")) {
 			PacingMemory ana = playing();
 			ana.nextMajorDue = 0;
 			PacingMemory ben = playing();
@@ -256,11 +256,6 @@ public class DirectorMultiplayerTests {
 			switch (case_) {
 				case "join grace" -> ben.sessionStart = benClock.playTicks() - 1;
 				case "quiet" -> ben.quietUntilDayTicks = benClock.dayTicks() + DirectorBrain.DAY_TICKS;
-				case "already had it" -> {
-					ben.cycleFired.get(Tier.MAJOR).add("major_x");
-					ana.held.put(Tier.MAJOR, "major_x");
-					ana.heldSince.put(Tier.MAJOR, w);
-				}
 				case "first day" -> ben.firstDayTicks = benClock.dayTicks() - 10;
 				default -> {
 				}
@@ -330,6 +325,87 @@ public class DirectorMultiplayerTests {
 		benEnv.sharers = List.of();
 		brain.step(world, ben, benClock.plus(rules.tickInterval), benEnv, RandomSource.create(7), DirectorBrain.Recorder.NONE);
 		helper.assertTrue(Set.of("m_b", "m_c").contains(ben.held(Tier.MINOR)), "alone again, Ben drew " + ben.held(Tier.MINOR));
+		helper.succeed();
+	}
+
+	/**
+	 * MP-7 #2: Ana was holding major_x from before Ben came close, and Ben already had it: it can never reach him while
+	 * they stay together, so it goes back into her deck at once (passed over next time) and major_y, new to both, is
+	 * drawn and fires the same tick, felt by Ben. It never waits out {@code holdGiveUp} blocking her majors.
+	 */
+	@GameTest
+	public void aHoldAFriendAlreadyHadGoesBackAtOnce(GameTestHelper helper) {
+		DirectorRules rules = rules(Tempo.SLOW_BURN, Signature.CROSS_ROW);
+		rules.minAnyGap = 0;
+		DirectorBrain brain = new DirectorBrain(rules, List.of(card("major_x", Tier.MAJOR, Stage.PROXIMITY, false),
+				card("major_y", Tier.MAJOR, Stage.PROXIMITY, false)), 50);
+		WorldMemory world = new WorldMemory();
+		DirectorTestSupport.pin(world, rules);
+		SharedStage stage = new SharedStage(Stage.PROXIMITY);
+		long w = 6 * rules.hourTicks;
+		PacingMemory ana = playing();
+		ana.nextMajorDue = 0;
+		ana.held.put(Tier.MAJOR, "major_x");
+		ana.heldSince.put(Tier.MAJOR, w);
+		PacingMemory ben = playing();
+		ben.cycleFired.get(Tier.MAJOR).add("major_x");
+		PlayerEnv anaEnv = new PlayerEnv(stage);
+		anaEnv.sharers = List.of(new DirectorBrain.Sharer(ben, clock(rules.hourTicks, w), new PlayerEnv(stage), DirectorBrain.Recorder.NONE));
+		List<String> gaveUp = new ArrayList<>();
+		DirectorBrain.Recorder rec = new DirectorBrain.Recorder() {
+			@Override
+			public void gaveUp(DirectorBrain.Clock clock, Tier tier, String cardId, String why) {
+				gaveUp.add(cardId + ": " + why);
+			}
+		};
+		String outcome = brain.step(world, ana, clock(w, w), anaEnv, RandomSource.create(3), rec);
+		helper.assertTrue(gaveUp.equals(List.of("major_x: someone close by already had it")) && !ana.cycleFired(Tier.MAJOR).contains("major_x"),
+				"the hold Ben already had did not go back into the deck at once: " + gaveUp + " (" + outcome + ")");
+		helper.assertTrue(anaEnv.fired.equals(List.of("major_y")) && ben.feltFires == 1, "major_y did not fire for both: " + outcome);
+		helper.succeed();
+	}
+
+	/**
+	 * MP-7 #3: sessions that started apart share one mood when they meet, the earlier session's. Ben rolled an empty
+	 * session far away and walks to Ana, whose session started earlier and is not empty: his takes hers, so Ana's card
+	 * fires and he feels it (it used to wait out his empty session). The other way round, Ana's earlier session is the
+	 * empty one: Ben's turns empty too, so the pair is never busier than one player.
+	 */
+	@GameTest
+	public void sessionsThatMeetShareTheEarlierOnesMood(GameTestHelper helper) {
+		DirectorRules rules = rules(Tempo.SLOW_BURN, Signature.CROSS_ROW);
+		rules.minAnyGap = 0;
+		DirectorBrain brain = new DirectorBrain(rules, List.of(card("major_x", Tier.MAJOR, Stage.PROXIMITY, false)), 50);
+		WorldMemory world = new WorldMemory();
+		DirectorTestSupport.pin(world, rules);
+		SharedStage stage = new SharedStage(Stage.PROXIMITY);
+		long w = 6 * rules.hourTicks;
+		DirectorBrain.Clock anaClock = clock(w, w);
+		DirectorBrain.Clock benClock = clock(rules.hourTicks, w);
+
+		PacingMemory ana = playing();
+		ana.nextMajorDue = 0;
+		PacingMemory ben = playing();
+		ben.sessionStart = benClock.playTicks() - rules.hourTicks / 2; // his session began half an hour ago, hers long before
+		ben.sessionEmpty = true;
+		ben.sessionEmptyUntil = benClock.playTicks() + rules.emptySessionMax;
+		PlayerEnv anaEnv = new PlayerEnv(stage);
+		anaEnv.sharers = List.of(new DirectorBrain.Sharer(ben, benClock, new PlayerEnv(stage), DirectorBrain.Recorder.NONE));
+		String outcome = brain.step(world, ana, anaClock, anaEnv, RandomSource.create(3), DirectorBrain.Recorder.NONE);
+		helper.assertTrue(!ben.sessionEmpty && anaEnv.fired.equals(List.of("major_x")) && ben.feltFires == 1,
+				"Ben's empty session rolled apart held Ana's card back: " + outcome);
+
+		PacingMemory ana2 = playing();
+		ana2.sessionEmpty = true;
+		ana2.sessionEmptyUntil = anaClock.playTicks() + rules.hourTicks;
+		PacingMemory ben2 = playing();
+		ben2.sessionStart = benClock.playTicks() - rules.hourTicks / 2;
+		ben2.nextMajorDue = 0;
+		PlayerEnv benEnv = new PlayerEnv(stage);
+		benEnv.sharers = List.of(new DirectorBrain.Sharer(ana2, anaClock, new PlayerEnv(stage), DirectorBrain.Recorder.NONE));
+		String benOutcome = brain.step(world, ben2, benClock, benEnv, RandomSource.create(3), DirectorBrain.Recorder.NONE);
+		helper.assertTrue(ben2.sessionEmpty && ben2.sessionEmptyUntil == benClock.playTicks() + rules.hourTicks && benEnv.fired.isEmpty()
+				&& benOutcome.contains("empty session"), "Ben did not take Ana's earlier empty session: " + benOutcome);
 		helper.succeed();
 	}
 
@@ -421,7 +497,9 @@ public class DirectorMultiplayerTests {
 	/**
 	 * Two players apart for the first 3 hours (their decks drift apart), then together for the rest: together they
 	 * still feel minors at least 0.7 times the solo rate (the deck never deadlocks on what each had apart), and every
-	 * hard limit holds.
+	 * hard limit holds. The registered deck, and the synthetic one, whose small tiers run through their cards fast; and
+	 * a pair who meet and part every 40 minutes, whose sessions (rolled apart) share the earlier one's mood each time
+	 * they meet (MP-7 #3).
 	 */
 	@GameTest(maxTicks = 2000)
 	public void twoPlayersApartThenTogetherKeepTheirMinors(GameTestHelper helper) {
@@ -433,6 +511,24 @@ public class DirectorMultiplayerTests {
 			DirectorSim.Sharing laterTogether = (worldTicks, a, b) -> worldTicks >= meet;
 			List<DirectorSim.Group> groups = DirectorTestSupport.groupRuns(tempo, seats, laterTogether, SEEDS);
 			apartThenTogether(helper, tempo + " registered deck", DirectorTestSupport.registryDeck(), DirectorSim.Rates.of(soloRuns), groups, meet);
+
+			long stretch = 40 * hour / 60;
+			DirectorSim.Sharing meetAndPart = (worldTicks, a, b) -> (worldTicks / stretch) % 2 == 1;
+			List<DirectorSim.Result> soloSynthetic = new ArrayList<>();
+			List<DirectorSim.Group> synthetic = new ArrayList<>();
+			List<DirectorSim.Group> meeting = new ArrayList<>();
+			// The small deck's runs vary a lot from seed to seed (a streak of empty sessions silences hours): pool 30.
+			for (int i = 0; i < 30; i++) {
+				long seed = 1000 + i;
+				DirectorRules rules = rules(tempo, Signature.values()[i % Signature.values().length]);
+				DirectorSim.Params params = DirectorTestSupport.params(rules, seed, rules.attentionNeutral, DirectorTestSupport.HOURS);
+				soloSynthetic.add(DirectorTestSupport.fresh(rules, seed, rules.attentionNeutral, DirectorTestSupport.HOURS));
+				synthetic.add(DirectorSim.runGroup(rules, SyntheticDeck.cards(), 1000, seats, laterTogether, params));
+				meeting.add(DirectorSim.runGroup(rules, SyntheticDeck.cards(), 1000, seats, meetAndPart, params));
+			}
+			DirectorSim.Rates solo = DirectorSim.Rates.of(soloSynthetic);
+			apartThenTogether(helper, tempo + " synthetic deck", SyntheticDeck.cards(), solo, synthetic, meet);
+			apartThenTogether(helper, tempo + " synthetic deck, meeting every 40 min", SyntheticDeck.cards(), solo, meeting, 0);
 		}
 		helper.succeed();
 	}

@@ -37,8 +37,11 @@ public final class DirectorSim {
 	/** The player of a one-player dry run. */
 	public static final UUID SOLO = new UUID(0L, 0xA1016L);
 
-	/** {@code TELLING}: someone named him (a dry run's {@link Params#tellingAtHour}). {@code FELT}: someone else's card, felt. */
-	public enum Kind { STAGE, SESSION_START, SESSION_END, DRAW, GIVE_UP, REFILL, FIRE, FELT, QUIET, TELLING }
+	/**
+	 * {@code TELLING}: someone named him (a dry run's {@link Params#tellingAtHour}). {@code FELT}: someone else's card,
+	 * felt. {@code MOOD}: meeting someone whose session started earlier, the session took its mood (empty or not).
+	 */
+	public enum Kind { STAGE, SESSION_START, SESSION_END, DRAW, GIVE_UP, REFILL, FIRE, FELT, QUIET, TELLING, MOOD }
 
 	/**
 	 * One recorded decision, on that player's clock.
@@ -210,11 +213,11 @@ public final class DirectorSim {
 				openUntil = startPacing.sessionEmptyUntil;
 			}
 			for (Event e : events) {
-				if (openStart >= 0 && (e.kind() == Kind.SESSION_END || e.kind() == Kind.SESSION_START)) {
+				if (openStart >= 0 && (e.kind() == Kind.SESSION_END || e.kind() == Kind.SESSION_START || e.kind() == Kind.MOOD)) {
 					out.add(new long[] {openStart, Math.min(e.play(), openUntil)});
 					openStart = -1;
 				}
-				if (e.kind() == Kind.SESSION_START && e.flag()) {
+				if ((e.kind() == Kind.SESSION_START || e.kind() == Kind.MOOD) && e.flag()) {
 					openStart = e.play();
 					openUntil = e.until();
 				}
@@ -569,6 +572,7 @@ public final class DirectorSim {
 					sessionStart = -1;
 					emptyUntil = -1;
 				}
+				case MOOD -> emptyUntil = e.flag() ? e.until() : -1;
 				case REFILL -> cycle.get(e.tier()).clear();
 				case QUIET -> {
 					if (e.value() < rules.tensionThreshold) {
@@ -715,6 +719,7 @@ public final class DirectorSim {
 			case STAGE -> "-> " + e.stage();
 			case SESSION_START -> e.flag() ? "empty (" + e.stage() + ")" : "(" + e.stage() + ")";
 			case SESSION_END -> "";
+			case MOOD -> e.flag() ? "now empty, as the session met" : "no longer empty, as the session met";
 			case DRAW -> e.tier() + " " + e.cardId();
 			case GIVE_UP -> e.tier() + " " + e.cardId() + ": " + e.note();
 			case REFILL -> e.tier() + " deck refilled";
@@ -1005,6 +1010,11 @@ public final class DirectorSim {
 		@Override
 		public void sessionEnded(DirectorBrain.Clock c) {
 			seat.add(Kind.SESSION_END, c, seat.table.stage, null, null, false, 0, -1, false, "");
+		}
+
+		@Override
+		public void sessionMood(DirectorBrain.Clock c, boolean empty, long emptyUntil) {
+			seat.add(Kind.MOOD, c, seat.table.stage, null, null, false, 0, emptyUntil, empty, "");
 		}
 
 		@Override

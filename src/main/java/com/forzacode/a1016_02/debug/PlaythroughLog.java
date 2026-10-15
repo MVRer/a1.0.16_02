@@ -176,6 +176,7 @@ final class PlaythroughLog {
 			case STAGE -> e.note() + " -> " + e.stage();
 			case SESSION_START -> e.flag() ? "empty (" + e.stage() + ")" : "(" + e.stage() + ")";
 			case SESSION_END -> "";
+			case MOOD -> e.flag() ? "the session met an empty one: empty now" : "the session met a lively one: no longer empty";
 			case DRAW -> Fmt.lower(e.tier()) + " " + e.cardId();
 			case GIVE_UP -> Fmt.lower(e.tier()) + " " + e.cardId() + " back into its deck: " + e.note();
 			case REFILL -> Fmt.lower(e.tier()) + " deck reshuffled";

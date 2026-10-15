@@ -93,8 +93,8 @@ public final class DirectorBrain {
 
 		/**
 		 * Everyone else who would feel a card fired for this player right now (D-060.3), in a fixed order. Called once
-		 * per decision that gets past the global gates, before its draws; the same list gates and records the fire.
-		 * None by default (one player).
+		 * per decision, before its gates (sessions that meet share one mood first); the same list gates and records
+		 * the fire. None by default (one player).
 		 */
 		default List<Sharer> sharers() {
 			return List.of();
@@ -120,6 +120,10 @@ public final class DirectorBrain {
 		}
 
 		default void sessionEnded(Clock clock) {
+		}
+
+		/** Meeting someone whose session started earlier, this player's session took that session's mood (D-060.3). */
+		default void sessionMood(Clock clock, boolean empty, long emptyUntil) {
 		}
 
 		default void drew(Clock clock, CardInfo card) {
@@ -343,14 +347,21 @@ public final class DirectorBrain {
 		checkQuiet(m, c, env, random, rec);
 		Stage stage = env.stage();
 		releaseStaleHolds(w, m, c, stage, rec);
+		List<Sharer> sharers = env.sharers();
+		shareMood(m, c, sharers, random, rec);
 		String blocked = globalBlock(m, c);
 		if (blocked != null) {
 			return "waiting: " + blocked;
 		}
 		List<String> notes = new ArrayList<>();
-		List<Sharer> sharers = env.sharers();
 		for (Tier tier : PRIORITY) {
 			CardInfo card = card(m.held.get(tier));
+			if (card != null && !sharers.isEmpty() && anyHad(card, sharers)) {
+				// Held from before a friend who already had it came close: it can never reach them while they stay, so it
+				// goes back now (not after holdGiveUp) and a card new to everyone here may be drawn instead.
+				giveUp(m, c, tier, card.id(), "someone close by already had it", rec);
+				card = null;
+			}
 			if (card == null) {
 				if (tierBlock(tier, m, c, stage) != null || !due(tier, m, c, stage, random, sharers.size())) {
 					continue;
@@ -773,14 +784,91 @@ public final class DirectorBrain {
 				why = staticBlock(card, w, stage);
 			}
 			if (why != null) {
-				m.held.remove(tier);
-				m.heldSince.remove(tier);
 				if (card != null) {
-					m.lastGivenUp.put(tier, id);
+					giveUp(m, c, tier, id, why, rec);
+				} else {
+					m.held.remove(tier);
+					m.heldSince.remove(tier);
+					rec.gaveUp(c, tier, id, why);
 				}
-				rec.gaveUp(c, tier, id, why);
 			}
 		}
+	}
+
+	/** A held card goes back into its deck ({@code lastGivenUp}: the next draw passes it over if it can). */
+	private static void giveUp(PacingMemory m, Clock c, Tier tier, String id, String why, Recorder rec) {
+		m.held.remove(tier);
+		m.heldSince.remove(tier);
+		m.lastGivenUp.put(tier, id);
+		rec.gaveUp(c, tier, id, why);
+	}
+
+	/**
+	 * Sessions that meet share one mood (D-060.3), as a session started next to someone takes theirs ({@link #onJoin}):
+	 * among this player and everyone close by, the session that started earliest is the moment's, and every later one
+	 * takes its mood (empty until the same moment, or not empty). Otherwise one friend's empty session, rolled far
+	 * away, would hold every card of the other's back for its whole length, and a pair would be silent far more often
+	 * than one player. Two that started together keep one of theirs, picked by the dice, only when they differ. Alone
+	 * nothing changes.
+	 */
+	private static void shareMood(PacingMemory m, Clock c, List<Sharer> sharers, RandomSource random, Recorder rec) {
+		if (sharers.isEmpty()) {
+			return;
+		}
+		List<PacingMemory> memories = new ArrayList<>();
+		List<Clock> clocks = new ArrayList<>();
+		List<Recorder> recorders = new ArrayList<>();
+		memories.add(m);
+		clocks.add(c);
+		recorders.add(rec);
+		for (Sharer sharer : sharers) {
+			memories.add(sharer.memory());
+			clocks.add(sharer.clock());
+			recorders.add(sharer.recorder());
+		}
+		long earliest = -1;
+		List<Integer> hosts = new ArrayList<>();
+		for (int i = 0; i < memories.size(); i++) {
+			PacingMemory p = memories.get(i);
+			long now = clocks.get(i).playTicks();
+			if (p.sessionStart < 0 || p.sessionStart > now) {
+				continue;
+			}
+			long since = now - p.sessionStart;
+			if (since > earliest) {
+				earliest = since;
+				hosts.clear();
+			}
+			if (since == earliest) {
+				hosts.add(i);
+			}
+		}
+		if (hosts.isEmpty()) {
+			return;
+		}
+		int host = hosts.getFirst();
+		for (int i : hosts) {
+			if (moodLeft(memories.get(i), clocks.get(i)) != moodLeft(memories.get(host), clocks.get(host))) {
+				host = hosts.get(random.nextInt(hosts.size()));
+				break;
+			}
+		}
+		long left = moodLeft(memories.get(host), clocks.get(host));
+		for (int i = 0; i < memories.size(); i++) {
+			PacingMemory p = memories.get(i);
+			long now = clocks.get(i).playTicks();
+			if (i == host || p.sessionStart < 0 || p.sessionStart > now || moodLeft(p, clocks.get(i)) == left) {
+				continue;
+			}
+			p.sessionEmpty = left > 0;
+			p.sessionEmptyUntil = left > 0 ? now + left : -1;
+			recorders.get(i).sessionMood(clocks.get(i), p.sessionEmpty, p.sessionEmptyUntil);
+		}
+	}
+
+	/** Play ticks left of this player's empty session, or 0 when it is not empty (any more). */
+	private static long moodLeft(PacingMemory m, Clock c) {
+		return m.sessionEmpty && c.playTicks() < m.sessionEmptyUntil ? m.sessionEmptyUntil - c.playTicks() : 0;
 	}
 
 	// --- fires, felt moments, tension, quiet ---

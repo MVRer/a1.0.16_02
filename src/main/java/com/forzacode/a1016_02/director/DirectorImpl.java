@@ -551,6 +551,11 @@ public final class DirectorImpl implements Director {
 		}
 
 		@Override
+		public void sessionMood(DirectorBrain.Clock clock, boolean empty, long emptyUntil) {
+			A1016_02.LOGGER.info("[a1016] director ({}): the session met an earlier one and takes its mood ({})", who, empty ? "empty" : "not empty");
+		}
+
+		@Override
 		public void gaveUp(DirectorBrain.Clock clock, Tier tier, String cardId, String why) {
 			A1016_02.LOGGER.info("[a1016] director ({}): {} card {} goes back into its deck ({})", who, tier, cardId, why);
 		}
