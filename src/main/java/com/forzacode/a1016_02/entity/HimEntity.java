@@ -845,7 +845,7 @@ public class HimEntity extends PathfinderMob {
 
 	/**
 	 * The three ways a sighting ends ({@link SightingRules#endCause}), for anyone there: someone coming within the
-	 * flee distance (any time), and once he has been seen for {@code minSeenSeconds}, someone staring at him for
+	 * flee distance (any time; {@link #fleeDistanceTo}), and once he has been seen for {@code minSeenSeconds}, someone staring at him for
 	 * {@code stareSeconds} (each player's own stare, never two players' added up) or closing {@code approachBlocks} on
 	 * him since he was first seen. A single step, strafing or turning never counts. The flee and approach distances
 	 * shrink for a figure that appeared close ({@link #fleeDistance}). Each player's finished stare counts once per
@@ -864,7 +864,7 @@ public class HimEntity extends PathfinderMob {
 			UUID uuid = player.getUUID();
 			double d = SpotFinder.horizontal(player.position(), position());
 			chases.computeIfAbsent(uuid, k -> new Chase()).update(player.getX(), player.getZ(), d);
-			if (d < flee && near == null) {
+			if (fleeDistanceTo(player, d) < flee && near == null) {
 				near = player;
 			}
 			if (everSeen && approaches.computeIfAbsent(uuid, k -> new Approach()).update(d, config.approachStepBlocks) >= approach && approacher == null) {
@@ -901,6 +901,15 @@ public class HimEntity extends PathfinderMob {
 			case NONE -> {
 			}
 		}
+	}
+
+	/**
+	 * How far this player is from him for the flee rule: sideways ({@code horizontal}) for the one he appeared for (or
+	 * anyone, when he appeared for nobody), as alone; in 3D for everyone else (MP-7), so a friend mining far under him
+	 * (or high over him) never makes him bolt in the middle of someone else's sighting.
+	 */
+	private double fleeDistanceTo(ServerPlayer player, double horizontal) {
+		return appearedFor == null || appearedFor.equals(player.getUUID()) ? horizontal : player.position().distanceTo(position());
 	}
 
 	/** STARED_AT_HIM for this player: attention, the record, {@code entity:stared}, {@link FigureApi#STARED}. Once per player. */

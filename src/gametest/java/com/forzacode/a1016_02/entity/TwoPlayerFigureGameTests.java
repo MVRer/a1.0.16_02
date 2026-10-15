@@ -313,6 +313,94 @@ public class TwoPlayerFigureGameTests {
 				.thenSucceed();
 	}
 
+	// --- a friend near the spot (MP-7) ---
+
+	/**
+	 * A sighting for A never stands within the flee distance of B: B, 15 blocks under A's band, is out of view and
+	 * farther than the minimum distance from every spot, yet a spot over B would make him flee B, so end A's sighting,
+	 * on his first tick. The rule is horizontal, so a spot right over B's tunnel is refused too. Sky access: no barrier
+	 * roof to stand on, so the spots are on the yard's floor, 15 blocks over B.
+	 */
+	@GameTest(structure = YARD, skyAccess = true)
+	public void aSpotForANeverStandsWithinTheFleeDistanceOfB(GameTestHelper helper) {
+		yard(helper, 0, 23);
+		ServerLevel level = helper.getLevel();
+		ServerPlayer a = player(helper, GameType.SURVIVAL, helper.absoluteVec(new Vec3(1.5, 1.0, 1.5)), 135.0F); // looking away from the yard
+		Vec3 bFeet = helper.absoluteVec(new Vec3(12.5, -14.0, 12.5));
+		ServerPlayer b = player(helper, GameType.SURVIVAL, bFeet, 0.0F);
+		EntityConfig config = EntityConfig.get();
+		ReportedFog.set(a, 24.0);
+		try {
+			FogEdge edge = FogEdge.of(a);
+			double toB = SpotFinder.horizontal(a.position(), bFeet);
+			helper.assertTrue(edge.seeable() && edge.inner() <= toB && toB <= edge.outer(), "B is not under A's band: " + edge + ", B " + toB);
+			int found = 0;
+			int overB = 0;
+			for (long seed = 1; seed <= 64; seed++) {
+				// Spread seeds: the first draw (the ring's start angle) of nearby small seeds is nearly the same.
+				Optional<SpotFinder.Spot> spot = FigureApi.findSpot(a, Variant.WALKS_AWAY, edge, RandomSource.create(seed * 0x9E3779B97F4A7C15L), true,
+						watchers(helper, a, b), pos -> level.isLoaded(pos));
+				if (spot.isEmpty()) {
+					continue;
+				}
+				found++;
+				double flee = SightingRules.fleeDistance(config.fleeDistance, config.fleeSpawnFraction, spot.get().distance());
+				double fromB = SpotFinder.horizontal(spot.get().pos(), bFeet);
+				if (fromB < 14.0) {
+					overB++;
+				}
+				helper.assertTrue(fromB >= flee, String.format(java.util.Locale.ROOT, "a spot %.1f blocks (sideways) from B, who he would flee within %.1f", fromB, flee));
+			}
+			helper.assertTrue(found > 0, "no spot at all in A's band: nothing was checked");
+			helper.assertTrue(overB > 0, "no spot over the yard, near B: the case is not checked");
+		} finally {
+			ReportedFog.forget(a.getUUID());
+		}
+		helper.succeed();
+	}
+
+	/**
+	 * A friend far below him never ends A's sighting: B mines 20 blocks under him, out of view, within the flee distance
+	 * only sideways. For anyone but the one he appeared for the flee distance counts in 3D, so B never makes him bolt,
+	 * on his first tick or once A has seen him. Someone 6 blocks under him is within it, and he flees.
+	 */
+	@GameTest(structure = YARD, maxTicks = 60)
+	public void aFriendFarBelowNeverEndsTheSighting(GameTestHelper helper) {
+		yard(helper, 0, 23);
+		// Each A 15 blocks from its figure (inside the test server's short view distance), looking at him: flee 9.
+		Vec3 himRel = new Vec3(2.5, 1.0, 1.5);
+		Vec3 himFeet = helper.absoluteVec(himRel);
+		Vec3 aFeet = helper.absoluteVec(new Vec3(14.5, 1.0, 10.5));
+		ServerPlayer a = player(helper, GameType.SURVIVAL, aFeet, yawAt(aFeet, himFeet, 25.0F));
+		ServerPlayer deep = player(helper, GameType.SURVIVAL, himFeet.add(0.0, -20.0, 0.0), 0.0F);
+		HimEntity him = watchedBy(helper, Variant.RIDGE, himRel, 0.0F, new CopyOnWriteArrayList<>(List.of(a, deep)));
+		him.setSpawnDistance(SpotFinder.horizontal(aFeet, himFeet)); // as the fog-edge spawn sets it for A
+		him.appearFor(a.getUUID());
+		Vec3 otherRel = new Vec3(2.5, 1.0, 21.5);
+		Vec3 otherFeet = helper.absoluteVec(otherRel);
+		Vec3 a2Feet = helper.absoluteVec(new Vec3(14.5, 1.0, 12.5));
+		ServerPlayer a2 = player(helper, GameType.SURVIVAL, a2Feet, yawAt(a2Feet, otherFeet, 25.0F));
+		ServerPlayer under = player(helper, GameType.SURVIVAL, otherFeet.add(0.0, -6.0, 0.0), 0.0F);
+		HimEntity close = watchedBy(helper, Variant.RIDGE, otherRel, 0.0F, new CopyOnWriteArrayList<>(List.of(a2, under)));
+		close.setSpawnDistance(SpotFinder.horizontal(a2Feet, otherFeet));
+		close.appearFor(a2.getUUID());
+		double flee = him.fleeDistance(EntityConfig.get());
+		helper.assertTrue(flee > 6.0 && flee < 20.0, "the flee distance is not between the two friends below: " + flee);
+		helper.startSequence()
+				.thenWaitUntil(() -> helper.assertTrue(him.age() >= 1 && close.age() >= 1, "they did not tick"))
+				.thenExecute(() -> {
+					helper.assertFalse(him.fled() || him.triggered(), "B, 20 blocks under him (flee " + flee + "), ended A's sighting on its first tick");
+					helper.assertTrue(close.fled(), "someone 6 blocks under him, within the flee distance, did not make him flee");
+				})
+				.thenExecuteAfter(30, () -> {
+					helper.assertTrue(him.everSeen(), "A never saw him, so this checks nothing mid-sighting");
+					helper.assertFalse(him.fled() || him.triggered(), "B, 20 blocks under him, ended A's sighting once A had seen him");
+					discard(him);
+					discard(close);
+				})
+				.thenSucceed();
+	}
+
 	// --- one him ---
 
 	/**

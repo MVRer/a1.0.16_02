@@ -26,8 +26,12 @@ public record Watchers(List<Watcher> all) {
 	/**
 	 * @param renderLimit the client's full render distance in blocks (the smaller of its requested view distance and
 	 *                    the server's), where vanilla fog is complete. Never the dusk-pulled value.
+	 * @param takesPart   alive and not spectating: one of those his rules watch (whom he flees), not only a viewer
 	 */
-	public record Watcher(TraceService.Viewer viewer, double renderLimit) {
+	public record Watcher(TraceService.Viewer viewer, double renderLimit, boolean takesPart) {
+		public Watcher(TraceService.Viewer viewer, double renderLimit) {
+			this(viewer, renderLimit, true);
+		}
 	}
 
 	/** Every player in the level, spectators and the dead included. */
@@ -39,7 +43,7 @@ public record Watchers(List<Watcher> all) {
 	public static Watchers of(List<? extends ServerPlayer> players, int serverChunks) {
 		List<Watcher> list = new ArrayList<>();
 		for (ServerPlayer player : players) {
-			list.add(new Watcher(TraceService.Viewer.of(player, serverChunks), FogEdge.of(player, false).renderLimit()));
+			list.add(new Watcher(TraceService.Viewer.of(player, serverChunks), FogEdge.of(player, false).renderLimit(), player.isAlive() && !player.isSpectator()));
 		}
 		return new Watchers(list);
 	}
@@ -77,6 +81,16 @@ public record Watchers(List<Watcher> all) {
 	/** Every watcher's eyes. */
 	public List<Vec3> eyes() {
 		return all.stream().map(w -> w.viewer().eye()).toList();
+	}
+
+	/** True if nobody who takes part (alive, not spectating) is within {@code distance} of {@code feet}, horizontally. */
+	public boolean nobodyWithin(Vec3 feet, double distance) {
+		for (Watcher watcher : all) {
+			if (watcher.takesPart() && SpotFinder.horizontal(watcher.viewer().eye(), feet) < distance) {
+				return false;
+			}
+		}
+		return true;
 	}
 
 	/**

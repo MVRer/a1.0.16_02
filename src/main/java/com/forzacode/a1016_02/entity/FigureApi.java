@@ -171,7 +171,8 @@ public final class FigureApi {
 
 	/**
 	 * Finds a place for the variant at this player's fog edge (their own fog, D-035) and spawns him there for them.
-	 * The place is out of view of every player in that level and at least the minimum distance from each of them.
+	 * The place is out of view of every player in that level, at least the minimum distance from each of them, and past
+	 * his flee distance from everyone else who takes part (so nobody makes him flee the moment he appears).
 	 * {@link FireResult#NO_SPOT} while he is already out for anyone (one him; the director keeps the card). With
 	 * {@code forced} (debug), the gates and the 300-block rule are skipped, and a figure already out is told to walk
 	 * away so a later try can spawn; the fog edge, one him and the out-of-view rule always apply. Records the sighting.
@@ -279,10 +280,22 @@ public final class FigureApi {
 
 	/**
 	 * Where he would stand right now in this player's band, without spawning him: hidden from every one of
-	 * {@code watchers} and at least the minimum distance from each, never near any participant's base. Nowhere if
-	 * the fog is too thick to see him past the minimum distance ({@link FogEdge#seeable}).
+	 * {@code watchers} and at least the minimum distance from each, past his flee distance (sideways) from every one of
+	 * them who takes part, never near any participant's base. Nowhere if the fog is too thick to see him past the
+	 * minimum distance ({@link FogEdge#seeable}).
 	 */
 	static Optional<SpotFinder.Spot> findSpot(ServerPlayer player, Variant variant, FogEdge edge, RandomSource random, boolean forced, Watchers watchers) {
+		ServerLevel level = player.level();
+		return findSpot(player, variant, edge, random, forced, watchers,
+				pos -> HimEntity.tickingAround(level, Vec3.atBottomCenterOf(pos), HimEntity.SPAWN_TICK_MARGIN));
+	}
+
+	/**
+	 * {@link #findSpot(ServerPlayer, Variant, FogEdge, RandomSource, boolean, Watchers)} with {@code ticking} as the
+	 * rule that a feet block is far enough inside the entity-ticking range (game tests: only their own chunks tick).
+	 */
+	static Optional<SpotFinder.Spot> findSpot(ServerPlayer player, Variant variant, FogEdge edge, RandomSource random, boolean forced, Watchers watchers,
+			Predicate<BlockPos> ticking) {
 		if (!edge.seeable()) {
 			return Optional.empty();
 		}
@@ -295,12 +308,19 @@ public final class FigureApi {
 		boolean spacing = !forced && variant != Variant.LAST_ONE;
 		// Never at anyone's base: the player's own, or any other participant's in this dimension.
 		List<BlockPos> bases = SightingGates.basesIn(level, player);
-		Predicate<BlockPos> allowed = pos -> HimEntity.tickingAround(level, Vec3.atBottomCenterOf(pos), HimEntity.SPAWN_TICK_MARGIN)
+		Predicate<BlockPos> allowed = pos -> ticking.test(pos)
 				&& !SightingGates.near(bases, pos, config.baseRadius)
 				&& (!spacing || data.farEnough(GlobalPos.of(level.dimension(), pos), pacing.sightingMinSpacing));
-		// Out of view of every player in the level and never close to any of them, not only the one he is for.
+		// Out of view of every player in the level and never close to any of them, not only the one he is for. Nobody who
+		// takes part within his flee distance there either, sideways (MP-7): a friend 15 blocks under the spot, out of
+		// view and past the minimum distance, would make him flee, so end this sighting, the moment he appears. The flee
+		// distance is the one he will have there (D-035, from his distance to this player); this player is always past it.
 		double minDistance = config.minDistance();
-		Predicate<AABB> hidden = box -> watchers.hides(level, box, minDistance);
+		Predicate<AABB> hidden = box -> {
+			Vec3 center = box.getCenter();
+			double flee = SightingRules.fleeDistance(config.fleeDistance, config.fleeSpawnFraction, SpotFinder.horizontal(player.position(), center));
+			return watchers.hides(level, box, minDistance) && watchers.nobodyWithin(center, flee);
+		};
 		SpotFinder.Query q = new SpotFinder.Query(level, player.position(), player.getEyePosition(), band.inner(), band.outer(),
 				minDistance, ModEntities.HIM.getDimensions(), hidden, allowed, random, config.spotSamples);
 		return switch (variant.spot()) {
