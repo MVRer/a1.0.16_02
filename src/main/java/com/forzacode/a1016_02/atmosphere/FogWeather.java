@@ -28,8 +28,9 @@ import net.minecraft.util.RandomSource;
  *
  * <p>When: tonight (the night starting on this clock day, with its morning carry-over) is rolled at
  * {@link #nightRollTime} (core's {@link FogWeatherRules#NIGHT_ROLL}, 10000: before a fog day starts thinning, so a fog
- * day hands over to a fog night without a dip), a fog day at {@link FogWeatherRules#DAY_ROLL} (23000 of the day before;
- * never when a morning carry-over already covers it). The director's dry runs roll at the same times. A new spell is joined to the one still giving fog
+ * day hands over to a fog night without a dip), a fog day at {@link FogWeatherRules#dayRollTime} (core's
+ * {@link FogWeatherRules#DAY_ROLL}, 21500 of the day before: before a fog night starts thinning, so a fog night hands
+ * over to a fog day without a dip; never when a morning carry-over already covers it). The director's dry runs roll at the same times. A new spell is joined to the one still giving fog
  * ({@link FogWeatherRules#handOver}), so the fog never pops. Each night and each day is rolled once, only while
  * someone takes part (the first nights rules count the nights a player was there for), and only inside its window;
  * one rolled late (the first participant joined mid-night) eases in from that moment. A clock set back rolls the
@@ -108,9 +109,12 @@ public final class FogWeather {
 		return night * DAY + Math.max(FogWeatherRules.NIGHT_FROM, FogWeatherRules.NIGHT_UNTIL - settings.fadeTicks());
 	}
 
-	/** The day whose daylight roll window this clock tick is in or after: from {@link FogWeatherRules#DAY_ROLL} of the day before. */
-	public static long dayIndex(long clock) {
-		return Math.floorDiv(clock - FogWeatherRules.DAY_ROLL, DAY) + 1;
+	/**
+	 * The day whose daylight roll window this clock tick is in or after: from {@link FogWeatherRules#dayRollTime} (21500)
+	 * of the day before.
+	 */
+	public static long dayIndex(long clock, FogWeatherRules.Settings settings) {
+		return Math.floorDiv(clock - FogWeatherRules.dayRollTime(settings), DAY) + 1;
 	}
 
 	/** When day {@code day}'s roll window closes: where tonight's opens ({@link #nightRollTime}, 10000). */
@@ -128,7 +132,7 @@ public final class FogWeather {
 		// A spell that is over, or one far ahead of a clock set back, gives no fog now: drop it.
 		Optional<FogSpell> spell = current.filter(s -> !s.endedBy(now) && s.fromClock() <= now + DAY);
 		long night = nightIndex(now, settings);
-		long day = dayIndex(now);
+		long day = dayIndex(now, settings);
 		Memory m = memory;
 		// The clock went back (a /time set): what was rolled ahead of it rolls again when it comes.
 		if (m.nightRolled() > night) {
@@ -258,9 +262,9 @@ public final class FogWeather {
 		String tonight = memory.nightRolled() == today ? memory.nightRoll().map(s -> "fog night " + level(s)).orElse("clear")
 				: memory.nightRolled() > today ? "rolled ahead" : "rolls at " + nightRollTime(settings);
 		lines.add(String.format(Locale.ROOT, "tonight (night of day %d): %s", today, tonight));
-		long day = dayIndex(now);
+		long day = dayIndex(now, settings);
 		String daylight = memory.dayRolled() == day ? memory.dayRoll().map(s -> "fog day " + level(s)).orElse("no fog day")
-				: memory.dayRolled() > day ? "rolled ahead" : "rolls at " + FogWeatherRules.DAY_ROLL + " of day " + (day - 1);
+				: memory.dayRolled() > day ? "rolled ahead" : "rolls at " + FogWeatherRules.dayRollTime(settings) + " of day " + (day - 1);
 		lines.add(String.format(Locale.ROOT, "daylight of day %d: %s", day, daylight));
 		FogWeatherRules.History h = memory.history();
 		lines.add(String.format(Locale.ROOT, "history: %d nights rolled, %d clear in a row, last night %s, last day %s", h.nights(), h.clearNights(),
