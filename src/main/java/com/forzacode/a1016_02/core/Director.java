@@ -31,17 +31,6 @@ public interface Director {
 	FireResult fire(MinecraftServer server, ServerPlayer player, String cardId, boolean fake);
 
 	/**
-	 * Debug: fires a card for the first participant (in join order) now. {@link FireResult#SKIPPED} if nobody takes part.
-	 *
-	 * @deprecated fire for a player: {@link #fire(MinecraftServer, ServerPlayer, String, boolean)}. Removed in MP-8.
-	 */
-	@Deprecated(forRemoval = true)
-	default FireResult fire(MinecraftServer server, String cardId, boolean fake) {
-		List<ServerPlayer> participants = Services.watch().participants(server);
-		return participants.isEmpty() ? FireResult.SKIPPED : fire(server, participants.getFirst(), cardId, fake);
-	}
-
-	/**
 	 * Moves time forward by whole in-game days (see {@link GameClock#warp}) and applies what time alone does.
 	 *
 	 * @return summary lines for the command output (what the skipped time would have held); never empty

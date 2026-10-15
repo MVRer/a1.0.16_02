@@ -28,8 +28,8 @@ import net.minecraft.world.phys.Vec3;
 import org.jspecify.annotations.Nullable;
 
 /**
- * Who takes part and what each player is doing and has done. Every participant is a subject (D-058): an online
- * player who is not a spectator. A dead player on the death screen still takes part (so a death does not flap
+ * Who takes part and what each player is doing and has done. Everyone takes part in the one story (D-058): a
+ * participant is an online player who is not a spectator. A dead player on the death screen still takes part (so a death does not flap
  * sessions or clocks) but is not {@linkplain #isTargetable targetable}; a hardcore death makes them a spectator,
  * and then they stop. Live values (stillness, combat, join time) are per player and per session; the footprint
  * (blocks placed and dug by players) and per-chunk visits persist; personal records live in
@@ -167,27 +167,6 @@ public final class PlayerWatch {
 			}
 		}
 		return list;
-	}
-
-	/**
-	 * The first participant in join order (in singleplayer, the same player as before multiplayer).
-	 *
-	 * @deprecated every participant is a subject (D-058): use {@link #participants}, {@link #participant} or the
-	 *     player an event or card is for. Removed in MP-8.
-	 */
-	@Deprecated(forRemoval = true)
-	public Optional<ServerPlayer> subject(MinecraftServer server) {
-		return participants(server).stream().findFirst();
-	}
-
-	/**
-	 * Same as {@link #isParticipant}.
-	 *
-	 * @deprecated use {@link #isParticipant} (or {@link #isTargetable} before doing something to the player). Removed in MP-8.
-	 */
-	@Deprecated(forRemoval = true)
-	public boolean isSubject(ServerPlayer player) {
-		return isParticipant(player);
 	}
 
 	// --- stored owners (D-061) ---

@@ -142,7 +142,6 @@ public class MultiplayerCoreTests {
 	// --- participants ---
 
 	@GameTest
-	@SuppressWarnings("removal")
 	public void participantsAreOnlineNonSpectatorsInJoinOrder(GameTestHelper helper) {
 		MinecraftServer server = helper.getLevel().getServer();
 		Roster r = new Roster();
@@ -178,10 +177,9 @@ public class MultiplayerCoreTests {
 		helper.assertTrue(uuids(w.participants(server)).equals(uuids(List.of(a, b, dead, spectator))), "order " + names(w.participants(server)));
 		helper.assertTrue(known(r.state).equals(List.of("A", "B", "D", "S")), "known players " + known(r.state));
 
-		// The deprecated bridges: the first participant in join order; isSubject is isParticipant.
-		helper.assertTrue(w.subject(server).orElse(null) == a && w.isSubject(b) && !w.isSubject(stranger), "deprecated subject");
+		// A leaves: the others keep their order.
 		r.leave(a);
-		helper.assertTrue(w.subject(server).orElse(null) == b, "the subject after A left: " + w.subject(server));
+		helper.assertTrue(uuids(w.participants(server)).equals(uuids(List.of(b, dead, spectator))), "after A left: " + names(w.participants(server)));
 		// The live server: nobody joins game tests, so nobody takes part there.
 		helper.assertFalse(Services.watch().isParticipant(stranger), "a mock player takes part on the live server");
 		helper.succeed();
@@ -260,7 +258,6 @@ public class MultiplayerCoreTests {
 	// --- personal records (D-061) ---
 
 	@GameTest
-	@SuppressWarnings("removal")
 	public void firstBlocksAndBaseArePerPlayer(GameTestHelper helper) {
 		ServerLevel level = helper.getLevel();
 		MinecraftServer server = level.getServer();
@@ -288,7 +285,6 @@ public class MultiplayerCoreTests {
 				&& firstB.craftingTable().pos().pos().equals(bTable) && firstB.chest() == null, "B's first blocks " + firstB);
 		helper.assertTrue(w.base(a).equals(Optional.of(GlobalPos.of(level.dimension(), aChest)))
 				&& w.base(b).equals(Optional.of(GlobalPos.of(level.dimension(), bPlanks))), "bases " + w.base(a) + " " + w.base(b));
-		helper.assertTrue(r.state.firstBlocks().equals(firstA), "the deprecated firstBlocks() is not the first known player's");
 
 		// Someone who first takes part later starts with nothing, never anyone else's.
 		TestPlayer late = player(helper, "L", GameType.SURVIVAL, new Vec3(3.5, 1, 5.5));
@@ -349,7 +345,6 @@ public class MultiplayerCoreTests {
 	}
 
 	@GameTest
-	@SuppressWarnings("removal")
 	public void tensionIsPerPlayer(GameTestHelper helper) {
 		MinecraftServer server = helper.getLevel().getServer();
 		HerobrineState state = new HerobrineState();
@@ -361,7 +356,7 @@ public class MultiplayerCoreTests {
 		helper.assertTrue(state.tension(a) == 30.0 && state.tension(b) == 0.0, "raising A's tension moved B's");
 		state.addTension(b, 55.0);
 		state.addTension(a, -50.0);
-		helper.assertTrue(state.tension(a) == 0.0 && state.tension(b) == 55.0 && state.tension() == 55.0, "lowering, clamps and the display max");
+		helper.assertTrue(state.tension(a) == 0.0 && state.tension(b) == 55.0, "lowering and clamps");
 		state.addTension(a, 500.0);
 		helper.assertTrue(state.tension(a) == 100.0 && state.tension(b) == 55.0, "clamped at 100");
 		UUID stranger = UUID.randomUUID();
@@ -500,7 +495,6 @@ public class MultiplayerCoreTests {
 	// --- saves ---
 
 	@GameTest
-	@SuppressWarnings("removal")
 	public void v1SaveLoadsAsOneKnownPlayer(GameTestHelper helper) {
 		RegistryOps<Tag> ops = helper.getLevel().registryAccess().createSerializationContext(NbtOps.INSTANCE);
 		UUID alex = UUID.fromString("00000000-0000-0000-0000-0000000a1016");
@@ -535,8 +529,7 @@ public class MultiplayerCoreTests {
 		helper.assertTrue(loaded.playTicks(alex) == 987_654L && loaded.playTicks() == 987_654L && loaded.warpDays() == 2, "clocks");
 		helper.assertTrue(loaded.markedDeaths().size() == 1 && alex.equals(loaded.markedDeaths().getFirst().player())
 				&& loaded.markedDeaths(alex).size() == 1, "the old death is not Alex's: " + loaded.markedDeaths());
-		helper.assertTrue(loaded.stage() == Stage.TRACES && loaded.attention() == 12.0 && loaded.subject().map(HerobrineState.Subject::uuid)
-				.equals(Optional.of(alex)), "the rest of the old save");
+		helper.assertTrue(loaded.stage() == Stage.TRACES && loaded.attention() == 12.0, "the rest of the old save");
 
 		// Saved again, it is in the new format, and it loads the same.
 		CompoundTag saved = (CompoundTag) HerobrineState.CODEC.encodeStart(ops, loaded).getOrThrow();
@@ -557,29 +550,25 @@ public class MultiplayerCoreTests {
 		nobody.remove("subject");
 		nobody.remove("firstBlocks");
 		HerobrineState empty = HerobrineState.CODEC.parse(ops, nobody).getOrThrow();
-		helper.assertTrue(empty.players().isEmpty() && empty.tension() == 0.0 && empty.markedDeaths().getFirst().player() == null, "nobody's save");
+		helper.assertTrue(empty.players().isEmpty() && empty.tension(alex) == 0.0 && empty.markedDeaths().getFirst().player() == null, "nobody's save");
 		helper.succeed();
 	}
 
 	@GameTest
-	@SuppressWarnings("removal")
 	public void markedDeathsRecordWhoseTheyWere(GameTestHelper helper) {
 		MinecraftServer server = helper.getLevel().getServer();
 		GlobalPos pos = GlobalPos.of(Level.OVERWORLD, new BlockPos(1, 2, 3));
 		HerobrineState state = new HerobrineState();
-		state.addMarkedDeath(new MarkedDeath("fell", pos, 1));
-		helper.assertTrue(state.markedDeaths().getFirst().player() == null, "a death was given to nobody's player");
 		UUID a = UUID.randomUUID();
 		UUID b = UUID.randomUUID();
 		state.recordPlayer(a, "A");
 		state.recordPlayer(b, "B");
 		state.addMarkedDeath(b, new MarkedDeath("lava", pos, 2));
 		helper.assertTrue(state.markedDeaths(b).size() == 1 && state.markedDeaths(a).isEmpty(), "B's death");
-		// The deprecated form: a death without a player is the first known player's; one with a player stays theirs.
-		state.addMarkedDeath(new MarkedDeath("drowned", pos, 3));
-		state.addMarkedDeath(new MarkedDeath("fell", pos, 4, b));
-		helper.assertTrue(state.markedDeaths(a).size() == 1 && state.markedDeaths(b).size() == 2 && state.markedDeaths().size() == 4,
-				"deaths " + state.markedDeaths());
+		// The player passed is whose it is, whatever the record carried; one shared list, oldest first.
+		state.addMarkedDeath(a, new MarkedDeath("fell", pos, 4, b));
+		helper.assertTrue(state.markedDeaths(a).size() == 1 && state.markedDeaths(b).size() == 1 && state.markedDeaths().size() == 2
+				&& state.markedDeaths().getLast().player().equals(a), "deaths " + state.markedDeaths());
 		// The per-player count reads the world's state: a player who never died there has none.
 		helper.assertTrue(Services.deaths().count(server, UUID.randomUUID()) == 0 && new DeathMarker.Stub().count(server, UUID.randomUUID()) == 0,
 				"a stranger has marked deaths");
@@ -643,15 +632,12 @@ public class MultiplayerCoreTests {
 	// --- director contract ---
 
 	@GameTest
-	@SuppressWarnings("removal")
 	public void fireSkipsPlayersThatCannotBeTargeted(GameTestHelper helper) {
 		MinecraftServer server = helper.getLevel().getServer();
 		ServerPlayer stranger = (ServerPlayer) helper.makeMockServerPlayer(GameType.SURVIVAL);
 		helper.assertTrue(Services.director().fire(server, stranger, "debug_ping", false) == FireResult.SKIPPED, "fired for a player not online");
 		helper.assertTrue(new Director.Stub().fire(server, stranger, "debug_ping", false) == FireResult.SKIPPED, "the stub fired for a player not online");
 		helper.assertTrue(new Director.Stub().fire(server, stranger, "no_such_card", false) == FireResult.SKIPPED, "an unknown card fired");
-		// The deprecated form fires for the first participant; nobody takes part in game tests.
-		helper.assertTrue(Services.director().fire(server, "debug_ping", false) == FireResult.SKIPPED, "fired with nobody online");
 		helper.succeed();
 	}
 }

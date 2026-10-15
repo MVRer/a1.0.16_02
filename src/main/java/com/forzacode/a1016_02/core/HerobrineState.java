@@ -221,7 +221,7 @@ public final class HerobrineState extends SavedData {
 		this.fragmentsRead.addAll(fragmentsRead);
 		this.fragmentsPlaced.putAll(fragmentsPlaced);
 		// Deaths saved before deaths recorded whose they were belong to the first known player (D-063).
-		markedDeaths.forEach(this::addDeath);
+		markedDeaths.forEach(this::loadDeath);
 		this.effects = effects;
 		this.flags.addAll(flags);
 	}
@@ -267,20 +267,6 @@ public final class HerobrineState extends SavedData {
 	public double tension(UUID player) {
 		PlayerRecord record = players.get(player);
 		return record == null ? 0.0 : record.tension;
-	}
-
-	/**
-	 * The highest tension among the known players, 0 if there are none. For display only.
-	 *
-	 * @deprecated tension is per player (D-059); use {@link #tension(UUID)}. Removed in MP-8.
-	 */
-	@Deprecated(forRemoval = true)
-	public double tension() {
-		double max = 0.0;
-		for (PlayerRecord record : players.values()) {
-			max = Math.max(max, record.tension);
-		}
-		return max;
 	}
 
 	void addAttention(double delta) {
@@ -357,16 +343,6 @@ public final class HerobrineState extends SavedData {
 	public Optional<Subject> player(UUID uuid) {
 		PlayerRecord record = players.get(uuid);
 		return record == null ? Optional.empty() : Optional.of(new Subject(record.uuid, record.name));
-	}
-
-	/**
-	 * The first known player.
-	 *
-	 * @deprecated every participant is a subject (D-058); use {@link #players()} or {@link #player(UUID)}. Removed in MP-8.
-	 */
-	@Deprecated(forRemoval = true)
-	public Optional<Subject> subject() {
-		return firstPlayer().map(r -> new Subject(r.uuid, r.name));
 	}
 
 	/**
@@ -627,18 +603,8 @@ public final class HerobrineState extends SavedData {
 		setDirty();
 	}
 
-	/**
-	 * Records a marked death. One that carries no player becomes the first known player's.
-	 *
-	 * @deprecated deaths record whose they were (D-063); use {@link #addMarkedDeath(UUID, MarkedDeath)}. Removed in MP-8.
-	 */
-	@Deprecated(forRemoval = true)
-	public void addMarkedDeath(MarkedDeath death) {
-		addDeath(death);
-		setDirty();
-	}
-
-	private void addDeath(MarkedDeath death) {
+	/** Loading only (D-062.8): a saved death that records no player (v1.0) is the first known player's. */
+	private void loadDeath(MarkedDeath death) {
 		Optional<PlayerRecord> first = firstPlayer();
 		markedDeaths.add(death.player() == null && first.isPresent() ? death.withPlayer(first.get().uuid) : death);
 	}
@@ -649,16 +615,6 @@ public final class HerobrineState extends SavedData {
 	public FirstBlocks firstBlocks(UUID player) {
 		PlayerRecord record = players.get(player);
 		return record == null ? FirstBlocks.NONE : record.firstBlocks;
-	}
-
-	/**
-	 * The first known player's first blocks.
-	 *
-	 * @deprecated first blocks are per player (D-061); use {@link #firstBlocks(UUID)}. Removed in MP-8.
-	 */
-	@Deprecated(forRemoval = true)
-	public FirstBlocks firstBlocks() {
-		return firstPlayer().map(r -> r.firstBlocks).orElse(FirstBlocks.NONE);
 	}
 
 	/** Records one of a known player's first blocks if that slot is still empty. Nothing for someone unknown. */
