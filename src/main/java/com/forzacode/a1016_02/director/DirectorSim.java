@@ -833,9 +833,13 @@ public final class DirectorSim {
 			this.weatherClock = dayTicks;
 		}
 
-		/** The spell on right now, or empty. */
+		/**
+		 * The spell on right now, or empty: one that counts as fog ({@link FogSpell#counts} with the run's gate share),
+		 * as the live director reads it, so a spell easing in or out below that share of its level is a clear sky here.
+		 */
 		Optional<FogSpell> spellNow() {
-			return fogSpell.filter(spell -> spell.activeAt(dayTicks));
+			double share = (params.fogSettings == null ? FogWeatherRules.Settings.DEFAULT : params.fogSettings).fogGateShare();
+			return fogSpell.filter(spell -> spell.counts(dayTicks, share));
 		}
 
 		Sky sky() {

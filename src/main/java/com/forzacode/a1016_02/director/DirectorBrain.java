@@ -129,9 +129,10 @@ public final class DirectorBrain {
 		}
 
 		/**
-		 * The fog spell on for this player right now (D-071), or empty: the world's spell while the clock is inside it
-		 * and the player's dimension shows weather (none in fixed-time dimensions, as {@code FogLimits.of} reads it).
-		 * The live director reads the stored spell on the level's clock; dry runs roll one per in-game day with
+		 * The fog spell on for this player right now (D-071), or empty: the world's spell while it counts as fog at the
+		 * clock ({@code FogSpell.counts}: its amount at least half its level, so not while it eases in or out below
+		 * that) and the player's dimension shows weather (none in fixed-time dimensions, as {@code FogLimits.of} reads
+		 * it). The live director reads the stored spell on the level's clock; dry runs roll one per in-game day with
 		 * {@code FogWeatherRules}. A quiet spell gives no boost. None by default (no weather).
 		 */
 		default Optional<FogSpell> fogSpell() {

@@ -399,25 +399,82 @@ public class DirectorV12Tests extends R1ReviewDirectorTests {
 	}
 
 	/**
-	 * The live director's sky (D-071): the stored spell counts while the level's clock is inside it, never in a
-	 * fixed-time dimension, and {@code /a1016 director} says what it does.
+	 * The live director's sky (D-071): the stored spell is on while it counts as fog on the level's clock (R2#1,
+	 * {@code FogSpell.counts}: its amount at least half its level, never while it eases in or out below that), never
+	 * outside it or in a fixed-time dimension, and {@code /a1016 director} says what it does, a thin spell included.
 	 */
 	@GameTest
 	public void theLiveDirectorReadsTheStoredSpellOnTheLevelClock(GameTestHelper helper) {
 		FogSpell night = new FogSpell(FogWeatherRules.nightFrom(4), FogWeatherRules.nightUntil(4, false), 0.65F, false);
 		Optional<FogSpell> stored = Optional.of(night);
-		helper.assertTrue(DirectorImpl.fogSpellOn(stored, night.fromClock(), false).equals(stored)
-				&& DirectorImpl.fogSpellOn(stored, night.untilClock() - 1, false).equals(stored), "inside the spell");
+		long full = night.fromClock() + night.rampTicks();
+		helper.assertTrue(DirectorImpl.fogSpellOn(stored, full, false).equals(stored), "at full the spell is on");
+		helper.assertTrue(DirectorImpl.fogSpellOn(stored, night.fromClock(), false).isEmpty() && DirectorImpl.fogSpellOn(stored, night.fromClock() + 100, false).isEmpty()
+				&& DirectorImpl.fogSpellOn(stored, night.untilClock() - 1, false).isEmpty(), "a spell easing in or out with almost no fog boosted the director");
+		int on = 0;
+		int off = 0;
+		for (long t = night.fromClock(); t < night.untilClock(); t += 50) {
+			boolean counts = night.amount(t) >= 0.5 * night.level();
+			helper.assertTrue(DirectorImpl.fogSpellOn(stored, t, false).isPresent() == counts, "at " + t + " the spell gives " + night.amount(t) + " of "
+					+ night.level() + " and is " + (counts ? "not on" : "on"));
+			if (counts) {
+				on++;
+			} else {
+				off++;
+			}
+		}
+		helper.assertTrue(on > 0 && off > 0, "the sweep never crossed half the level: " + on + " on, " + off + " off");
 		helper.assertTrue(DirectorImpl.fogSpellOn(stored, night.fromClock() - 1, false).isEmpty()
 				&& DirectorImpl.fogSpellOn(stored, night.untilClock(), false).isEmpty(), "outside the spell");
-		helper.assertTrue(DirectorImpl.fogSpellOn(stored, night.fromClock() + 100, true).isEmpty(), "a fixed-time dimension has no fog weather");
-		helper.assertTrue(DirectorImpl.fogSpellOn(Optional.empty(), night.fromClock(), false).isEmpty(), "no spell stored");
+		helper.assertTrue(DirectorImpl.fogSpellOn(stored, full, true).isEmpty(), "a fixed-time dimension has no fog weather");
+		helper.assertTrue(DirectorImpl.fogSpellOn(Optional.empty(), full, false).isEmpty(), "no spell stored");
 		DirectorRules rules = rules(Tempo.SLOW_BURN, Signature.CROSS_ROW);
 		String clear = DirectorDebug.fogLine(stored, night.fromClock() - 1, rules);
-		String on = DirectorDebug.fogLine(stored, night.fromClock() + 100, rules);
-		String quiet = DirectorDebug.fogLine(Optional.of(new FogSpell(night.fromClock(), night.untilClock(), 0.65F, true)), night.fromClock() + 100, rules);
-		helper.assertTrue(clear.startsWith("clear") && on.startsWith("a fog spell until day 4 23500") && on.contains("x3.5") && quiet.startsWith("a quiet spell")
-				&& quiet.endsWith("no boost"), "fog lines: " + clear + " / " + on + " / " + quiet);
+		String thin = DirectorDebug.fogLine(stored, night.fromClock() + 100, rules);
+		String boosting = DirectorDebug.fogLine(stored, full, rules);
+		String quiet = DirectorDebug.fogLine(Optional.of(new FogSpell(night.fromClock(), night.untilClock(), 0.65F, true)), full, rules);
+		helper.assertTrue(clear.startsWith("clear") && thin.startsWith("a spell giving") && thin.endsWith("no boost")
+				&& boosting.startsWith("a fog spell until day 4 23500") && boosting.contains("x3.5") && quiet.startsWith("a quiet spell")
+				&& quiet.endsWith("no boost"), "fog lines: " + clear + " / " + thin + " / " + boosting + " / " + quiet);
+		helper.succeed();
+	}
+
+	/**
+	 * R2#1 in the dry runs: the boost comes only while the run's spell counts as fog (its amount at least half its level),
+	 * as live. A run held in one fog spell from its first tick (no weather rolled) books the ramp's thin start as a clear
+	 * sky and the rest as fog, and a run inside the spell's last thin ticks books them clear.
+	 */
+	@GameTest
+	public void theDryRunsBoostOnlyWhileTheSpellCounts(GameTestHelper helper) {
+		DirectorRules rules = rules(Tempo.SLOW_BURN, Signature.CROSS_ROW);
+		long day = 3;
+		long start = day * DirectorBrain.DAY_TICKS + FogWeatherRules.NIGHT_FROM;
+		FogSpell spell = new FogSpell(start, FogWeatherRules.nightUntil(day, false), 0.65F, false, FogWeatherRules.Settings.DEFAULT);
+		long countsFrom = start;
+		while (!spell.counts(countsFrom, FogWeatherRules.Settings.DEFAULT.fogGateShare())) {
+			countsFrom++;
+		}
+		DirectorSim.Params params = DirectorTestSupport.params(rules, 5, rules.attentionNeutral, 0.12); // ends before the spell fades
+		params.fogWeather = false;
+		params.singleSession = true;
+		params.fogSpell = Optional.of(spell);
+		DirectorSim.Result r = DirectorSim.run(rules, SyntheticDeck.cards(), 100, new DirectorMemory(), Stage.PROXIMITY, 0,
+				new DirectorBrain.Clock(5 * rules.hourTicks, start), params);
+		long clear = r.skyTicks(DirectorSim.Sky.CLEAR);
+		long fog = r.skyTicks(DirectorSim.Sky.FOG);
+		long thin = countsFrom - start;
+		helper.assertTrue(thin > 0 && Math.abs(clear - thin) <= rules.tickInterval && fog > 0,
+				"the spell's thin start (" + thin + " ticks) booked " + clear + " clear ticks, " + fog + " fog");
+
+		long tail = spell.untilClock() - 200;
+		DirectorSim.Params late = DirectorTestSupport.params(rules, 6, rules.attentionNeutral, 0.05);
+		late.fogWeather = false;
+		late.singleSession = true;
+		late.fogSpell = Optional.of(spell);
+		DirectorSim.Result end = DirectorSim.run(rules, SyntheticDeck.cards(), 100, new DirectorMemory(), Stage.PROXIMITY, 0,
+				new DirectorBrain.Clock(5 * rules.hourTicks, tail), late);
+		helper.assertTrue(end.skyTicks(DirectorSim.Sky.FOG) == 0 && end.skyTicks(DirectorSim.Sky.CLEAR) > 0,
+				"the spell's last thin ticks boosted: " + end.skyTicks(DirectorSim.Sky.FOG) + " fog ticks");
 		helper.succeed();
 	}
 

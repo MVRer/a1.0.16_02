@@ -379,7 +379,7 @@ public final class DirectorImpl implements Director {
 		params.fogSettings = FogWeatherRules.settings();
 		long shift = c.dayTicks() - server.overworld().getDefaultClockTime();
 		params.fogSpell = HerobrineState.get(server).effects().fogSpell()
-				.map(spell -> new FogSpell(spell.fromClock() + shift, spell.untilClock() + shift, spell.level(), spell.quiet()));
+				.map(spell -> spell.withClocks(spell.fromClock() + shift, spell.untilClock() + shift));
 		long nights = c.day() + (Math.floorMod(c.dayTicks(), DirectorBrain.DAY_TICKS) >= FogWeatherRules.nightRollTime(params.fogSettings) ? 1 : 0);
 		params.fogHistory = new FogWeatherRules.History(Math.clamp(nights, 0, Integer.MAX_VALUE), 0, false, false);
 	}
@@ -551,11 +551,13 @@ public final class DirectorImpl implements Director {
 	}
 
 	/**
-	 * The world's stored fog spell if it is on at this clock (absolute {@code getDefaultClockTime()}) in a level that
-	 * shows weather (D-071): none in fixed-time dimensions, as {@code FogLimits.of(player)} reads it.
+	 * The world's stored fog spell if it counts as fog at this clock (absolute {@code getDefaultClockTime()},
+	 * {@link FogSpell#counts}: its amount at least half its level) in a level that shows weather (D-071): none in
+	 * fixed-time dimensions, as {@code FogLimits.of(player)} reads it, and none while the spell eases in or out below
+	 * half its level, so the boost never comes at a moment with almost no fog (R2#1).
 	 */
 	static Optional<FogSpell> fogSpellOn(Optional<FogSpell> stored, long clockTime, boolean fixedTime) {
-		return fixedTime ? Optional.empty() : stored.filter(spell -> spell.activeAt(clockTime));
+		return fixedTime ? Optional.empty() : stored.filter(spell -> spell.counts(clockTime));
 	}
 
 	/** Logs what the live director decides, for one player (or the world). */
