@@ -736,7 +736,33 @@ public class MultiplayerCoreTests {
 		return LIVE_PARTICIPATION.stream().filter(e -> e.startsWith(player.toString())).map(e -> e.substring(e.length() - 1)).toList();
 	}
 
-	/** Disconnects a real mock player as a client leaving does: Fabric's DISCONNECT, then the server's list drops them. */
+	/**
+	 * A player really in the server's list under a name of its own: the server's own {@code placeNewPlayer} over an
+	 * embedded connection (Fabric's JOIN runs), as vanilla's {@code makeMockServerPlayerInLevel} does (that one is marked
+	 * for removal and names every player {@code test-mock-player}).
+	 */
+	private static ServerPlayer joinRealPlayer(GameTestHelper helper, String name) {
+		MinecraftServer server = helper.getLevel().getServer();
+		net.minecraft.server.network.CommonListenerCookie cookie = net.minecraft.server.network.CommonListenerCookie.createInitial(
+				new GameProfile(UUID.randomUUID(), name), false);
+		ServerPlayer player = new ServerPlayer(server, helper.getLevel(), cookie.gameProfile(), cookie.clientInformation()) {
+			@Override
+			public GameType gameMode() {
+				return GameType.CREATIVE; // takes part (not a spectator), and nothing at the spawn point can hurt them
+			}
+
+			@Override
+			public boolean isClientAuthoritative() {
+				return false;
+			}
+		};
+		net.minecraft.network.Connection connection = new net.minecraft.network.Connection(net.minecraft.network.protocol.PacketFlow.SERVERBOUND);
+		new io.netty.channel.embedded.EmbeddedChannel(connection);
+		server.getPlayerList().placeNewPlayer(connection, player, cookie);
+		return player;
+	}
+
+	/** Disconnects a real player as a client leaving does: Fabric's DISCONNECT, then the server's list drops them. */
 	private static void disconnect(ServerPlayer player) {
 		if (!player.hasDisconnected()) {
 			player.connection.disconnect(net.minecraft.network.chat.Component.literal("a1016 test done"));
@@ -744,8 +770,8 @@ public class MultiplayerCoreTests {
 	}
 
 	/**
-	 * End to end, with two players really in the server's player list ({@code makeMockServerPlayerInLevel}: the
-	 * server's own placeNewPlayer, so Fabric's JOIN and DISCONNECT): both become participants and known players,
+	 * End to end, with two players really in the server's player list ({@link #joinRealPlayer}: the server's own
+	 * placeNewPlayer, so Fabric's JOIN and DISCONNECT): both become participants and known players,
 	 * PARTICIPATION(true) fires once for each, and the director starts a session for each; one disconnecting fires
 	 * PARTICIPATION(false) for them only, and the other's session goes on. It runs in a test environment of its own
 	 * ({@code a1016_02:real_join}), so no other test runs while real players are online, reads only its own players'
@@ -759,9 +785,9 @@ public class MultiplayerCoreTests {
 		ServerPlayer ana;
 		ServerPlayer ben;
 		try {
-			ana = helper.makeMockServerPlayerInLevel();
+			ana = joinRealPlayer(helper, "a1016_ana");
 			joined.add(ana);
-			ben = helper.makeMockServerPlayerInLevel();
+			ben = joinRealPlayer(helper, "a1016_ben");
 			joined.add(ben);
 		} catch (RuntimeException e) {
 			cleanup.run();
