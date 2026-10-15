@@ -642,8 +642,10 @@ public final class DirectorBrain {
 	 * cycle, or their last of the tier): the moment could not reach them, so it would only sit held, blocking the tier
 	 * while they stay together. Those cards are spent for this moment, so they count as fired for the run-out rule:
 	 * when every card left undrawn is ruled out or one a friend had (each had different cards apart, then every card
-	 * new to both while together), the deck refills now instead of deadlocking while they stay together; when some are
-	 * only gated, it waits for them as alone. Alone, the draw is exactly the solo one.
+	 * new to both while together), the deck refills now instead of deadlocking while they stay together, as long as
+	 * the refill gives back a card none of them had (otherwise the cycle is kept); when some are only gated, it waits
+	 * for them as alone. A deck whose own undrawn cards are all gone refills by the solo rule, so a pair's decks turn
+	 * over together. Alone, the draw is exactly the solo one.
 	 *
 	 * @param skipped filled with the cards a stage weight passed over in this draw
 	 */
@@ -654,15 +656,17 @@ public final class DirectorBrain {
 		while (true) {
 			List<CardInfo> eligible = candidates(tier, w, m, c, stage);
 			eligible.removeIf(card -> skipped.contains(card.id()));
-			if (!sharers.isEmpty()) {
+			boolean onlyTheirs = false;
+			if (!eligible.isEmpty() && !sharers.isEmpty()) {
 				eligible.removeIf(card -> anyHad(card, sharers));
+				onlyTheirs = eligible.isEmpty();
 			}
 			if (eligible.isEmpty()) {
 				if (refilled || tier == Tier.SIGNATURE || m.cycleFired.get(tier).isEmpty()) {
 					return null;
 				}
-				if (!sharers.isEmpty() && !refillHelps(tier, w, m, c, stage, sharers)) {
-					return null; // nothing that would come back is new to everyone here: keep the deck as it is
+				if (onlyTheirs && !refillHelps(tier, w, m, c, stage, sharers)) {
+					return null; // only cards a friend had are left, and nothing that would come back is new to everyone here
 				}
 				if (!runOut(tier, w, m, stage, sharers)) {
 					Long stuckSince = m.deckStuckSince.get(tier);

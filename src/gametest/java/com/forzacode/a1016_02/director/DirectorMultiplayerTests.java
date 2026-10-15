@@ -378,6 +378,47 @@ public class DirectorMultiplayerTests {
 	}
 
 	/**
+	 * Together the whole cycle: Ana's and Ben's decks are both used up on the same cards. Each one's deck refills by
+	 * the solo rule even though the other still had every card, so the pair's decks turn over and something fires
+	 * again (a refill is only kept back when the player still had undrawn cards of their own).
+	 */
+	@GameTest
+	public void usedUpDecksTurnOverTogether(GameTestHelper helper) {
+		DirectorRules rules = rules(Tempo.SLOW_BURN, Signature.CROSS_ROW);
+		rules.minorsPerHourMin = rules.minorsPerHourMax = 1_000_000;
+		rules.proximityAmbientPerHour = 0;
+		DirectorBrain brain = new DirectorBrain(rules, List.of(card("m_a", Tier.MINOR, Stage.TRACES, false), card("m_b", Tier.MINOR, Stage.TRACES, false),
+				card("m_c", Tier.MINOR, Stage.TRACES, false)), 50);
+		SharedStage stage = new SharedStage(Stage.PROXIMITY);
+		WorldMemory world = new WorldMemory();
+		DirectorTestSupport.pin(world, rules);
+		PacingMemory ana = playing();
+		ana.cycleFired.get(Tier.MINOR).addAll(List.of("m_a", "m_b", "m_c"));
+		ana.lastFired.put(Tier.MINOR, "m_c");
+		PacingMemory ben = playing();
+		ben.cycleFired.get(Tier.MINOR).addAll(List.of("m_a", "m_b", "m_c"));
+		ben.lastFired.put(Tier.MINOR, "m_c");
+		PlayerEnv anaEnv = new PlayerEnv(stage);
+		PlayerEnv benEnv = new PlayerEnv(stage);
+		RandomSource random = RandomSource.create(9);
+		long w = 6 * rules.hourTicks + rules.minorGap;
+		List<String> outcomes = new ArrayList<>();
+		for (int i = 0; i < 20 && anaEnv.fired.isEmpty() && benEnv.fired.isEmpty(); i++) {
+			long t = w + i * rules.tickInterval;
+			DirectorBrain.Clock anaClock = clock(t, t);
+			DirectorBrain.Clock benClock = clock(t - 2 * rules.hourTicks, t);
+			anaEnv.sharers = List.of(new DirectorBrain.Sharer(ben, benClock, benEnv, DirectorBrain.Recorder.NONE));
+			outcomes.add("Ana: " + brain.step(world, ana, anaClock, anaEnv, random, DirectorBrain.Recorder.NONE));
+			benEnv.sharers = List.of(new DirectorBrain.Sharer(ana, anaClock, anaEnv, DirectorBrain.Recorder.NONE));
+			outcomes.add("Ben: " + brain.step(world, ben, benClock, benEnv, random, DirectorBrain.Recorder.NONE));
+		}
+		List<String> fired = new ArrayList<>(anaEnv.fired);
+		fired.addAll(benEnv.fired);
+		helper.assertTrue(fired.size() == 1 && !fired.getFirst().equals("m_c"), "the used-up decks never turned over: " + fired + " " + outcomes);
+		helper.succeed();
+	}
+
+	/**
 	 * Two players apart for the first 3 hours (their decks drift apart), then together for the rest: together they
 	 * still feel minors at least 0.7 times the solo rate (the deck never deadlocks on what each had apart), and every
 	 * hard limit holds.
