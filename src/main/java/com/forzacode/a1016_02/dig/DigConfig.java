@@ -176,14 +176,24 @@ public final class DigConfig implements ModConfig.Versioned {
 	public int ladderComingStopMax = 6;
 	public int ladderComingStepsMin = 6;
 	public int ladderComingStepsMax = 10;
-	/** Rung 2's fake: a few steps from this far back going away, fading out. */
+	/**
+	 * Rung 2's fake: a few steps going away, fading out: the first this far back (10 to 13 is well heard), the last
+	 * {@link #ladderComingFakeTo} back (at most 14.5, so it is still inside vanilla's 16-block range, and never past
+	 * the run's end), evenly between, each quieter down to {@link #ladderComingFakeLastFactor} of a step's volume there.
+	 */
 	public int ladderComingFakeFrom = 12;
+	public int ladderComingFakeTo = 14;
 	public int ladderComingFakeSteps = 4;
+	public float ladderComingFakeLastFactor = 0.5F;
 	/** Rung 3 ({@code steps_behind_glimpse}): only once the last rung 2 is at least this many minutes of play old. */
 	public double ladderGlimpseAfterComingMinutes = 20;
 	/** Rung 3 at most once per in-game day, and this many hours of the player's own play apart. */
 	public double ladderGlimpseGapHours = 2;
-	/** Rung 3's spot: this many blocks back, past the torchlight (block light at his feet and eyes at most this). */
+	/**
+	 * Rung 3's spot: this many blocks back, in the dark: the light a player would see at his feet and at his eyes at
+	 * most this (vanilla's raw brightness: the block light, or the sky light less the sky's darkening, so neither the
+	 * torchlight nor the daylight down a shaft or in from a tunnel mouth reaches him).
+	 */
 	public int ladderGlimpseSpotMin = 14;
 	public int ladderGlimpseSpotMax = 20;
 	public int ladderGlimpseMaxBlockLight = 3;

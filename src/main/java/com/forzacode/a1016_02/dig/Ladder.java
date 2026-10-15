@@ -29,7 +29,6 @@ import net.minecraft.sounds.SoundEvent;
 import net.minecraft.sounds.SoundSource;
 import net.minecraft.util.Mth;
 import net.minecraft.util.RandomSource;
-import net.minecraft.world.level.LightLayer;
 import net.minecraft.world.phys.Vec3;
 
 import org.jspecify.annotations.Nullable;
@@ -45,13 +44,21 @@ import org.jspecify.annotations.Nullable;
  * D-073), unless the player turned first.</li>
  * </ol>
  * The gates (D-072): underground, a straight run of at least {@code ladderMinRun} dug cells behind along the heading,
- * nobody else within {@code sharedMomentRadius} (so nobody can confirm it), no combat for 30 s, not riding, swimming or
- * in fluid. Spacing per player on their own clock: one ladder event per {@code ladderGapMinutes}, rung 3 once per
- * in-game day and {@code ladderGlimpseGapHours} apart, a used run never again. A forced fire skips the rung order, the
- * spacing and the used runs (and is not counted for them), never the gates. Nothing in the world changes: no block
- * edit at all, the steps are packets ({@link SoundCues#playAt}).
+ * nobody else within {@code sharedMomentRadius} (so nobody can confirm it: no other participant, and no other player
+ * at all, spectators included, since the steps reach everyone in range, {@link #alone}), no combat for 30 s, not
+ * riding, swimming or in fluid. Spacing per player on their own clock: one ladder event per {@code ladderGapMinutes},
+ * rung 3 once per in-game day and {@code ladderGlimpseGapHours} apart, a used run never again. A forced fire skips the
+ * rung order, the spacing and the used runs (and is not counted for them), never the gates. Nothing in the world
+ * changes: no block edit at all, the steps are packets ({@link SoundCues#playAt}).
  */
 final class Ladder {
+	/**
+	 * The farthest back rung 2's fake steps go: a step at volume 1 or less is heard within vanilla's 16 blocks, and a
+	 * player following the run may be off its line by up to half a cell along it, a cell and a half across (a 2-wide
+	 * tunnel) and a block up, so a step 14.5 back is still about 15 blocks from them.
+	 */
+	static final double FAKE_FARTHEST = 14.5;
+
 	/** The three rungs, in order. */
 	enum Rung {
 		ONCE(1, "steps_behind_once"),
@@ -71,7 +78,7 @@ final class Ladder {
 	enum Why {
 		RIDING_OR_IN_FLUID("riding, swimming or in fluid"),
 		COMBAT("combat too recently"),
-		NOT_ALONE("someone else within the shared moment radius"),
+		NOT_ALONE("someone else (a spectator too) within the shared moment radius"),
 		NOT_UNDERGROUND("not underground"),
 		NO_RUN("no straight player-dug run behind"),
 		RUNG("not this rung's turn"),
@@ -93,6 +100,14 @@ final class Ladder {
 	/** Where the steps go: {@link SoundCues#playAt} live, a recorder in tests. */
 	interface Sounds {
 		void play(ServerLevel level, Holder<SoundEvent> sound, SoundSource source, Vec3 pos, float volume, float pitch);
+
+		/**
+		 * Everyone in {@code level} a step played there could reach, spectators and the dead included: live, the level's
+		 * players ({@link SoundCues#playAt} sends to each of them in range); a test's own players in tests.
+		 */
+		default List<ServerPlayer> listeners(ServerLevel level) {
+			return level.players();
+		}
 	}
 
 	/**
@@ -134,7 +149,7 @@ final class Ladder {
 		if (env.watch().ticksSinceCombat(player) <= ModConfig.realTicks(config.ladderNoCombatSeconds)) {
 			return new Check(Why.COMBAT, null, -1);
 		}
-		if (env.watch().sharingWith(player).size() > 1) {
+		if (!alone(player, env)) {
 			return new Check(Why.NOT_ALONE, null, -1);
 		}
 		if (!env.underground().test(player)) {
@@ -282,14 +297,24 @@ final class Ladder {
 		return new LadderSteps.Walk(Rung.COMING.id + (sneak ? " (sneaking)" : ""), player, run, env, steps, true, true, false, null, start);
 	}
 
-	/** Rung 2's fake: a few steps far off that go away, fading out. */
+	/**
+	 * Rung 2's fake: a few steps far off that go away, fading out. The first {@code ladderComingFakeFrom} (12) back, the
+	 * last {@code ladderComingFakeTo} (14) back, evenly between and one every {@code ladderStepTicks}, each quieter, down
+	 * to {@code ladderComingFakeLastFactor} of a step's volume there. All of them inside vanilla's 16-block range of a
+	 * step at volume 1 or less ({@link #FAKE_FARTHEST}, so even a player off their cell's centre hears the last one,
+	 * about as well as rung 2's first step), and none past the run's end.
+	 */
 	private static LadderSteps.Walk fadingAway(ServerPlayer player, TunnelRun run, Env env, long start) {
 		DigConfig config = env.config();
 		int count = Math.max(1, config.ladderComingFakeSteps);
 		int cadence = Math.max(1, config.ladderStepTicks);
+		double to = Mth.clamp(config.ladderComingFakeTo, 1.0, Math.min(run.length(), FAKE_FARTHEST));
+		double from = Mth.clamp(config.ladderComingFakeFrom, 1.0, to);
+		float last = Mth.clamp(config.ladderComingFakeLastFactor, 0.0F, 1.0F);
 		List<LadderSteps.Step> steps = new ArrayList<>();
 		for (int i = 0; i < count; i++) {
-			steps.add(new LadderSteps.Step((long) i * cadence, Math.max(1, config.ladderComingFakeFrom) + 2 * i, 1.0F - i / (float) count));
+			double t = count == 1 ? 0.0 : i / (double) (count - 1);
+			steps.add(new LadderSteps.Step((long) i * cadence, from + (to - from) * t, (float) Mth.lerp(t, 1.0, last)));
 		}
 		return new LadderSteps.Walk(Rung.COMING.id + " (fake)", player, run, env, steps, true, true, false, null, start);
 	}
@@ -321,9 +346,9 @@ final class Ladder {
 
 	/**
 	 * Rung 3's spot: the nearest cell of the run {@code ladderGlimpseSpotMin} to {@code ladderGlimpseSpotMax} back, with
-	 * at least two cells of run past it for his steps, that is past the torchlight (block light at his feet and eyes at
-	 * most {@code ladderGlimpseMaxBlockLight}) and where the figure could stand now ({@link Figure#canGlimpse}).
-	 * Cells back, or -1.
+	 * at least two cells of run past it for his steps, that is dark ({@link #dark} at his feet and his eyes: past the
+	 * torchlight and out of the daylight down a shaft or in from a hillside mouth) and where the figure could stand now
+	 * ({@link Figure#canGlimpse}, asked only for a dark cell). Cells back, or -1.
 	 */
 	static int glimpseSpot(ServerPlayer player, TunnelRun run, Env env) {
 		DigConfig config = env.config();
@@ -331,13 +356,40 @@ final class Ladder {
 		int max = Math.min(config.ladderGlimpseSpotMax, run.length() - 2);
 		for (int back = Math.max(1, config.ladderGlimpseSpotMin); back <= max; back++) {
 			BlockPos cell = run.cell(back);
-			if (level.getBrightness(LightLayer.BLOCK, cell) <= config.ladderGlimpseMaxBlockLight
-					&& level.getBrightness(LightLayer.BLOCK, cell.above()) <= config.ladderGlimpseMaxBlockLight
-					&& env.figure().canGlimpse(player, Vec3.atBottomCenterOf(cell))) {
+			if (dark(level, cell, config) && dark(level, cell.above(), config) && env.figure().canGlimpse(player, Vec3.atBottomCenterOf(cell))) {
 				return back;
 			}
 		}
 		return -1;
+	}
+
+	/**
+	 * True if the light a player would see at {@code cell} is at most {@code ladderGlimpseMaxBlockLight} (3): its raw
+	 * brightness, the block light or the sky light less the level's sky darkening, whichever is more (vanilla's
+	 * {@code getMaxLocalRawBrightness}; the figure's {@code canGlimpse} holds his spot to the same rule). So a cell
+	 * under an open shaft or near a tunnel mouth is lit by day, and the sky's last light at dusk counts too.
+	 */
+	static boolean dark(ServerLevel level, BlockPos cell, DigConfig config) {
+		return level.getMaxLocalRawBrightness(cell) <= config.ladderGlimpseMaxBlockLight;
+	}
+
+	/**
+	 * Alone (D-072, D-074): nobody shares the moment ({@link PlayerWatch#sharingWith}) and no other player at all,
+	 * spectators and the dead included, is within {@code sharedMomentRadius} of them. The steps reach everyone in range
+	 * ({@link SoundCues#playAt}), so a spectating friend beside the player would hear each one and could confirm it.
+	 */
+	static boolean alone(ServerPlayer player, Env env) {
+		if (env.watch().sharingWith(player).size() > 1) {
+			return false;
+		}
+		ServerLevel level = player.level();
+		double radius = ModConfig.pacing().sharedMomentRadius;
+		for (ServerPlayer other : env.sounds().listeners(level)) {
+			if (!other.getUUID().equals(player.getUUID()) && other.level() == level && other.distanceToSqr(player) <= radius * radius) {
+				return false;
+			}
+		}
+		return true;
 	}
 
 	/** True if the player looks (horizontally) within {@code degrees} of the tunnel behind them. Looking straight up or down is not. */
