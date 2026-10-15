@@ -50,7 +50,10 @@ public final class GlimpseRules {
 		return !Double.isNaN(startDistance) && !Double.isNaN(now) && startDistance - now >= blocks;
 	}
 
-	/** Block light at his feet and at his eyes both at most {@code max}: past the last torch. */
+	/**
+	 * The light at his feet and at his eyes both at most {@code max}: past the last torch and out of the daylight (the
+	 * caller passes the raw brightness, block light and sky light less the sky darkening, {@link GlimpseFigure#dark}).
+	 */
 	public static boolean darkEnough(int feetLight, int eyeLight, int max) {
 		return feetLight <= max && eyeLight <= max;
 	}

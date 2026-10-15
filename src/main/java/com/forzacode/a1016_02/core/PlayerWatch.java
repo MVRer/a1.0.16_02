@@ -276,7 +276,10 @@ public final class PlayerWatch {
 		return footprint(level).placed.contains(pos);
 	}
 
-	/** True if a player dug out the natural block that was at {@code pos}. */
+	/**
+	 * True if a player dug out the natural block that was at {@code pos} and no player's block stands there now. A block
+	 * a player places there takes the mark away while it stands; breaking it gives the mark back.
+	 */
 	public boolean wasDugByPlayer(ServerLevel level, BlockPos pos) {
 		return footprint(level).dug.contains(pos);
 	}
@@ -423,13 +426,17 @@ public final class PlayerWatch {
 
 	/**
 	 * Internal: called by core's block placement mixin. Every player's placement feeds the footprint; a
-	 * participant's also records their own first block, crafting table and chest.
+	 * participant's also records their own first block, crafting table and chest. A block placed in a cell a player
+	 * dug takes the dug mark away while it stands and gives it back when it is broken ({@link #onBroken}).
 	 */
 	public void onPlaced(ServerPlayer player, ServerLevel level, BlockPos pos, BlockState state) {
 		WatchData data = WatchData.get(level.getServer());
 		WatchData.Footprint footprint = data.footprint(level.dimension());
-		footprint.dug.remove(pos.asLong());
-		footprint.placed.add(pos.asLong(), ModConfig.pacing().footprintMaxPerDimension);
+		int cap = ModConfig.pacing().footprintMaxPerDimension;
+		if (footprint.dug.remove(pos.asLong())) {
+			footprint.dugUnder.add(pos.asLong(), cap);
+		}
+		footprint.placed.add(pos.asLong(), cap);
 		data.setDirty();
 
 		if (isParticipant(player)) {
@@ -448,10 +455,17 @@ public final class PlayerWatch {
 		}
 	}
 
+	/**
+	 * Internal: a player broke the block at {@code pos}. A natural block is dug now; a placed block is no longer placed,
+	 * and its cell is dug again if a player had dug it before the block went in (a torch picked up again, cobble placed
+	 * and mined: the cell stays part of the dug tunnel).
+	 */
 	void onBroken(ServerLevel level, BlockPos pos) {
 		WatchData data = WatchData.get(level.getServer());
 		WatchData.Footprint footprint = data.footprint(level.dimension());
-		if (!footprint.placed.remove(pos.asLong())) {
+		boolean wasPlaced = footprint.placed.remove(pos.asLong());
+		boolean dugBefore = footprint.dugUnder.remove(pos.asLong());
+		if (!wasPlaced || dugBefore) {
 			footprint.dug.add(pos.asLong(), ModConfig.pacing().footprintMaxPerDimension);
 		}
 		data.setDirty();

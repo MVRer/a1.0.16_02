@@ -13,10 +13,12 @@ import com.forzacode.a1016_02.core.Stage;
 
 import net.fabricmc.fabric.api.gametest.v1.GameTest;
 
+import net.minecraft.core.BlockPos;
 import net.minecraft.gametest.framework.GameTestHelper;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.level.GameType;
+import net.minecraft.world.level.LightLayer;
 
 /**
  * Fog weather on the client (D-071, {@link WeatherFog}), with the client's own math: the spell's fog combined with the
@@ -287,23 +289,27 @@ public class WeatherFogGameTests extends DuskFogGameTests {
 				}
 			}
 		}
-		// The server form: the stored spell, the player's level clock and view distance.
+		// The server form: the stored spell, the player's level clock and view distance, in the open (core weights the
+		// spell by the sky at the player's eyes: wait for the light engine to light the fresh test area).
 		MinecraftServer server = helper.getLevel().getServer();
-		HerobrineState state = HerobrineState.get(server);
-		HerobrineState.Effects before = state.effects();
-		try {
-			ServerPlayer player = (ServerPlayer) helper.makeMockServerPlayer(GameType.SURVIVAL);
-			long now = player.level().getDefaultClockTime();
-			FogSpell spell = new FogSpell(now - 3_000, now + 6_000, 0.7F, false);
-			ClientEffects.setFogSpell(server, Optional.of(spell));
-			FogLimits.Result live = FogLimits.of(player);
-			FogLimits.Result pure = FogLimits.of(player.requestedViewDistance(), server.getPlayerList().getViewDistance(), before.duskFogLevel(), now,
-					Optional.of(spell));
-			helper.assertTrue(live.equals(pure) && live.fogEnd() < live.renderLimit(), "the server form: " + live + " vs " + pure);
-		} finally {
-			ClientEffects.setFogSpell(server, before.fogSpell());
-		}
-		helper.succeed();
+		ServerPlayer player = (ServerPlayer) helper.makeMockServerPlayer(GameType.SURVIVAL);
+		BlockPos eyes = BlockPos.containing(player.getEyePosition());
+		helper.succeedWhen(() -> {
+			helper.assertTrue(helper.getLevel().getBrightness(LightLayer.SKY, eyes) >= FogLimits.SKY_FULL, "no sky at the player's eyes yet");
+			HerobrineState state = HerobrineState.get(server);
+			HerobrineState.Effects before = state.effects();
+			try {
+				long now = player.level().getDefaultClockTime();
+				FogSpell spell = new FogSpell(now - 3_000, now + 6_000, 0.7F, false);
+				ClientEffects.setFogSpell(server, Optional.of(spell));
+				FogLimits.Result live = FogLimits.of(player);
+				FogLimits.Result pure = FogLimits.of(player.requestedViewDistance(), server.getPlayerList().getViewDistance(), before.duskFogLevel(), now,
+						Optional.of(spell));
+				helper.assertTrue(live.equals(pure) && live.fogEnd() < live.renderLimit(), "the server form: " + live + " vs " + pure);
+			} finally {
+				ClientEffects.setFogSpell(server, before.fogSpell());
+			}
+		});
 	}
 
 	/** Vanilla's overworld fog color, modeled: the plains fog color (#c0d8ff) times the day timeline's multiplier (to #0f0f16 at night). */

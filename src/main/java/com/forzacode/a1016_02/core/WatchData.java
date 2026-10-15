@@ -99,6 +99,11 @@ final class WatchData extends SavedData {
 	static final class Footprint {
 		final PosIndex placed = new PosIndex();
 		final PosIndex dug = new PosIndex();
+		/**
+		 * Placed blocks that went into a cell a player had dug: breaking one gives the cell its dug mark back, so a torch
+		 * picked up again (or cobble placed and mined) never turns a dug tunnel's cell into natural air.
+		 */
+		final PosIndex dugUnder = new PosIndex();
 		final Long2IntOpenHashMap visits = new Long2IntOpenHashMap();
 
 		Footprint() {
@@ -106,14 +111,15 @@ final class WatchData extends SavedData {
 		}
 	}
 
-	private record Packed(long[] placed, long[] dug, long[] visitChunks, int[] visitDays) {
+	private record Packed(long[] placed, long[] dug, long[] visitChunks, int[] visitDays, long[] dugUnder) {
 		private static final Codec<long[]> LONGS = Codec.LONG_STREAM.xmap(LongStream::toArray, Arrays::stream);
 		private static final Codec<int[]> INTS = Codec.INT_STREAM.xmap(java.util.stream.IntStream::toArray, Arrays::stream);
 		static final Codec<Packed> CODEC = RecordCodecBuilder.create(i -> i.group(
 				LONGS.optionalFieldOf("placed", new long[0]).forGetter(Packed::placed),
 				LONGS.optionalFieldOf("dug", new long[0]).forGetter(Packed::dug),
 				LONGS.optionalFieldOf("visitChunks", new long[0]).forGetter(Packed::visitChunks),
-				INTS.optionalFieldOf("visitDays", new int[0]).forGetter(Packed::visitDays)
+				INTS.optionalFieldOf("visitDays", new int[0]).forGetter(Packed::visitDays),
+				LONGS.optionalFieldOf("dugUnder", new long[0]).forGetter(Packed::dugUnder)
 		).apply(i, Packed::new));
 	}
 
@@ -144,6 +150,9 @@ final class WatchData extends SavedData {
 			for (long pos : p.dug()) {
 				footprint.dug.add(pos, Integer.MAX_VALUE);
 			}
+			for (long pos : p.dugUnder()) {
+				footprint.dugUnder.add(pos, Integer.MAX_VALUE);
+			}
 			for (int n = 0; n < Math.min(p.visitChunks().length, p.visitDays().length); n++) {
 				footprint.visits.put(p.visitChunks()[n], p.visitDays()[n]);
 			}
@@ -154,7 +163,7 @@ final class WatchData extends SavedData {
 	private Map<ResourceKey<Level>, Packed> pack() {
 		Map<ResourceKey<Level>, Packed> packed = new HashMap<>();
 		dimensions.forEach((dimension, f) -> packed.put(dimension, new Packed(f.placed.toArray(), f.dug.toArray(),
-				f.visits.keySet().toLongArray(), f.visits.values().toIntArray())));
+				f.visits.keySet().toLongArray(), f.visits.values().toIntArray(), f.dugUnder.toArray())));
 		return packed;
 	}
 }

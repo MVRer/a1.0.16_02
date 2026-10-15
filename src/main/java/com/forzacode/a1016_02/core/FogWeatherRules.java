@@ -48,14 +48,25 @@ public final class FogWeatherRules {
 	 * ({@link #nightRollTime}).
 	 */
 	public static final long NIGHT_ROLL = 10000L;
-	/** Time of day the next day's fog day is rolled: where it starts, {@link #DAY_FROM} of the day before. */
-	public static final long DAY_ROLL = DAY_FROM;
+	/** How long before a fog night (without a carry-over) starts its fade the next day's fog day is rolled. */
+	public static final long DAY_ROLL_LEAD = 500L;
+	/**
+	 * Time of day the next day's fog day is rolled (21500 of the day before): {@link #NIGHT_UNTIL} minus the default fade
+	 * minus {@link #DAY_ROLL_LEAD}, so a fog night without a carry-over is still at full when a fog day after it rolls and
+	 * is handed over ({@link #handOver}) without thinning before dawn. Atmosphere's live weather and the director's dry
+	 * runs both roll it then ({@link #dayRollTime}).
+	 */
+	public static final long DAY_ROLL = NIGHT_UNTIL - 1500L - DAY_ROLL_LEAD;
+	/** The default {@link Settings#fogGateShare}: a spell counts as fog from half its level. */
+	public static final double DEFAULT_GATE_SHARE = 0.5;
 
 	/**
 	 * The numbers behind the rolls, D-071's by default. Every list has one entry per {@link Stage} ({@link Stage#level()}
 	 * 0 to 4): the constructor makes each exactly that long (a short list repeats its last entry, an empty or null one is
 	 * all 0) and puts every chance, level and share in 0 to 1 (NaN is 0), {@code clearNightsBeforeFog} at 1 or more,
-	 * the ramp and fade at 0 or more and the exponent in 1 to 8 (NaN is 3).
+	 * the ramp and fade at 0 or more, the exponent in 1 to 8 (NaN is 3) and the gate share in 0 to 1 (NaN is the default).
+	 * The ramp, fade and exponent go into every spell made with these settings ({@link FogSpell}'s own ease); the rest
+	 * only steer the rolls and the gate. The eleven-number constructor has the default gate share.
 	 *
 	 * @param nightChanceByStage   chance of a fog night from the fourth night on
 	 * @param secondNightChance    chance that the second night (night 1) is foggy; the first never is
@@ -68,12 +79,14 @@ public final class FogWeatherRules {
 	 * @param rampTicks            a spell eases in over this many ticks from its start
 	 * @param fadeTicks            and out over this many before its end
 	 * @param easeExponent         the ease's exponent ({@link FogLimits#ease}, the dusk fog's 3)
+	 * @param fogGateShare         a spell counts as "fog now" for every gate on it ({@link FogSpell#counts}: the director's
+	 *                             boost, daytime sightings) while its amount is at least this share of its level
 	 */
 	public record Settings(List<Double> nightChanceByStage, double secondNightChance, int clearNightsBeforeFog, double morningCarryChance,
 			List<Double> dayChanceByStage, List<Double> nightLevelByStage, List<Double> dayLevelByStage, double quietShare, long rampTicks,
-			long fadeTicks, double easeExponent) {
+			long fadeTicks, double easeExponent, double fogGateShare) {
 		public static final Settings DEFAULT = new Settings(perStage(0.25, 0.33, 0.4, 0.45, 0.5), 0.5, 4, 0.35, perStage(0, 0.06, 0.1, 0.12, 0.12),
-				perStage(0.45, 0.55, 0.65, 0.72, 0.8), perStage(0.4, 0.45, 0.55, 0.6, 0.65), 0.25, 2500L, 1500L, 3.0);
+				perStage(0.45, 0.55, 0.65, 0.72, 0.8), perStage(0.4, 0.45, 0.55, 0.6, 0.65), 0.25, 2500L, 1500L, 3.0, DEFAULT_GATE_SHARE);
 
 		public Settings {
 			nightChanceByStage = normalized(nightChanceByStage);
@@ -87,6 +100,15 @@ public final class FogWeatherRules {
 			rampTicks = Math.max(0L, rampTicks);
 			fadeTicks = Math.max(0L, fadeTicks);
 			easeExponent = Double.isNaN(easeExponent) ? 3.0 : Math.clamp(easeExponent, 1.0, 8.0);
+			fogGateShare = Double.isNaN(fogGateShare) ? DEFAULT_GATE_SHARE : unit(fogGateShare);
+		}
+
+		/** These numbers with the default gate share ({@link #DEFAULT_GATE_SHARE}). */
+		public Settings(List<Double> nightChanceByStage, double secondNightChance, int clearNightsBeforeFog, double morningCarryChance,
+				List<Double> dayChanceByStage, List<Double> nightLevelByStage, List<Double> dayLevelByStage, double quietShare, long rampTicks,
+				long fadeTicks, double easeExponent) {
+			this(nightChanceByStage, secondNightChance, clearNightsBeforeFog, morningCarryChance, dayChanceByStage, nightLevelByStage, dayLevelByStage,
+					quietShare, rampTicks, fadeTicks, easeExponent, DEFAULT_GATE_SHARE);
 		}
 
 		public double nightChance(Stage stage) {
@@ -198,6 +220,15 @@ public final class FogWeatherRules {
 		return Math.clamp(Math.min(NIGHT_ROLL, DAY_UNTIL - settings.fadeTicks()), 0L, NIGHT_FROM);
 	}
 
+	/**
+	 * Time of day the next day's fog day is rolled with these settings: {@link #DAY_ROLL} (21500), earlier only when a
+	 * fade longer than the default would start a fog night thinning before it ({@link #NIGHT_UNTIL} minus the fade minus
+	 * {@link #DAY_ROLL_LEAD}); never before {@link #NIGHT_FROM} (tonight is rolled by then) nor after {@link #DAY_FROM}.
+	 */
+	public static long dayRollTime(Settings settings) {
+		return Math.clamp(Math.min(DAY_ROLL, NIGHT_UNTIL - settings.fadeTicks() - DAY_ROLL_LEAD), NIGHT_FROM, DAY_FROM);
+	}
+
 	/** Clock tick a fog night starting on clock day {@code day} begins. */
 	public static long nightFrom(long day) {
 		return day * DAY + NIGHT_FROM;
@@ -261,7 +292,7 @@ public final class FogWeatherRules {
 		}
 		boolean carry = random.nextDouble() < settings.morningCarryChance();
 		boolean quiet = random.nextDouble() < settings.quietShare();
-		return Optional.of(new FogSpell(nightFrom(day), nightUntil(day, carry), (float) settings.nightLevel(stage), quiet));
+		return Optional.of(new FogSpell(nightFrom(day), nightUntil(day, carry), (float) settings.nightLevel(stage), quiet, settings));
 	}
 
 	/** Whether {@code spell} already runs into clock day {@code day}'s daylight (a morning carry-over, or a fog day set before). */
@@ -289,7 +320,7 @@ public final class FogWeatherRules {
 			return Optional.empty();
 		}
 		boolean quiet = random.nextDouble() < settings.quietShare();
-		return Optional.of(new FogSpell(dayFrom(day), dayUntil(day), (float) settings.dayLevel(stage), quiet));
+		return Optional.of(new FogSpell(dayFrom(day), dayUntil(day), (float) settings.dayLevel(stage), quiet, settings));
 	}
 
 	/** {@link #handOver(Optional, FogSpell, long, Settings)} with the installed settings. */
@@ -303,11 +334,13 @@ public final class FogWeatherRules {
 	 * {@code current} gives none now; otherwise one spell that goes on from exactly the fog there is now, never thins
 	 * after it, eases up to {@code next}'s level over what is left of a ramp, and ends like {@code next}. Its level is
 	 * the larger of {@code next}'s and the fog now (a lighter next spell keeps the heavier fog until it fades), its
-	 * quiet is {@code next}'s. Both sides compute the same fog from the stored result, so the hand-over never pops. A
-	 * fog day starts fading {@code fadeTicks} before {@link #DAY_UNTIL}: roll tonight before that for no thinning at all.
+	 * quiet is {@code next}'s, its ease these settings' (the fog now is {@code current}'s own amount). Both sides compute
+	 * the same fog from the stored result, so the hand-over never pops. A fog day starts fading {@code fadeTicks} before
+	 * {@link #DAY_UNTIL} and a fog night before {@link #NIGHT_UNTIL}: roll before that ({@link #nightRollTime},
+	 * {@link #dayRollTime}) for no thinning at all.
 	 */
 	public static FogSpell handOver(Optional<FogSpell> current, FogSpell next, long now, Settings settings) {
-		double fogNow = current.map(spell -> spell.amount(now, settings)).orElse(0.0);
+		double fogNow = current.map(spell -> spell.amount(now)).orElse(0.0);
 		if (fogNow <= 0.0) {
 			return next;
 		}
@@ -317,7 +350,7 @@ public final class FogWeatherRules {
 		long from = now - back;
 		// The joined spell must not start easing out before now: keep at least the fade's length ahead.
 		long until = Math.max(next.untilClock(), now + settings.fadeTicks());
-		return new FogSpell(from, until, level, next.quiet());
+		return new FogSpell(from, until, level, next.quiet(), settings);
 	}
 
 	/** The x in 0 to 1 where {@link FogLimits#ease} reaches {@code value} (it rises monotonically). */

@@ -23,9 +23,9 @@ import net.minecraft.world.phys.Vec3;
 
 /**
  * A tunnel ladder of a test's own (D-072): its own crew ({@link Crew}: its players never join the server, so nobody
- * else's is a sharer), its own memory, numbers, clock and day, and a recorder that is both the sound out and the
- * figure ({@link Figure}: it records every {@code canGlimpse} and {@code glimpse} and never spawns anything). Nothing
- * global is installed, so tests running side by side never see each other's figure.
+ * else's is a sharer or a listener), its own memory, numbers, clock and day, and a recorder that is both the sound out
+ * and the figure ({@link Figure}: it records every {@code canGlimpse} and {@code glimpse} and never spawns anything).
+ * Nothing global is installed, so tests running side by side never see each other's figure.
  */
 final class LadderRig implements Ladder.Sounds, Figure {
 	/** A step played: when (server tick), what, where, how loud. */
@@ -133,6 +133,12 @@ final class LadderRig implements Ladder.Sounds, Figure {
 	@Override
 	public void play(ServerLevel level, Holder<SoundEvent> sound, SoundSource source, Vec3 pos, float volume, float pitch) {
 		heard.add(new Heard(server.getTickCount(), sound, source, pos, volume, pitch));
+	}
+
+	/** Everyone a step could reach: this crew's own players in that level (spectators included), nobody else on the server. */
+	@Override
+	public List<ServerPlayer> listeners(ServerLevel level) {
+		return crew.online.stream().filter(player -> player.level() == level).toList();
 	}
 
 	@Override

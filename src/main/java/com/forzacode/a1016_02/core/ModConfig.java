@@ -3,8 +3,11 @@ package com.forzacode.a1016_02.core;
 import java.io.IOException;
 import java.io.Reader;
 import java.io.Writer;
+import java.lang.reflect.Field;
+import java.lang.reflect.Modifier;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
@@ -157,16 +160,14 @@ public final class ModConfig {
 	 * {@link #section}.
 	 */
 	public static <T> T readSection(JsonObject sections, String name, Class<T> type, Supplier<T> defaults) {
-		T value = null;
+		T value = defaults.get();
 		if (sections.has(name)) {
-			try {
-				value = GSON.fromJson(sections.get(name), type);
-			} catch (JsonParseException e) {
-				A1016_02.LOGGER.error("[a1016] config section '{}' is invalid, using defaults", name, e);
+			JsonElement json = sections.get(name);
+			if (json.isJsonObject()) {
+				Lenient.readInto(json.getAsJsonObject(), value, "sections." + name);
+			} else if (!json.isJsonNull()) {
+				A1016_02.LOGGER.warn("[a1016] config section '{}' is not an object, using its defaults", name);
 			}
-		}
-		if (value == null) {
-			value = defaults.get();
 		}
 		if (value instanceof Versioned versioned && versioned.upgrade()) {
 			A1016_02.LOGGER.info("[a1016] config section '{}' upgraded to new defaults (values you changed are kept)", name);
@@ -174,9 +175,22 @@ public final class ModConfig {
 		return value;
 	}
 
-	/** Parses a config file's text with the same rules as {@link #load()} (unknown keys are skipped), without upgrading. Tests only. */
-	static ModConfig parse(String json) {
-		return GSON.fromJson(json, ModConfig.class);
+	/**
+	 * Parses a config file's text with the same rules as {@link #load()} (unknown keys are skipped, a value that cannot
+	 * be read keeps its default), without upgrading; null when the text is not a JSON object. Tests only.
+	 */
+	static @Nullable ModConfig parse(String json) {
+		return parse(JsonParser.parseString(json));
+	}
+
+	/** {@link #parse(String)} from a parsed tree. */
+	private static @Nullable ModConfig parse(JsonElement json) {
+		if (!json.isJsonObject()) {
+			return null;
+		}
+		ModConfig config = new ModConfig();
+		Lenient.readInto(json.getAsJsonObject(), config, "");
+		return config;
 	}
 
 	/** A config file's text as {@link #load()} reads it: parsed, missing parts filled in and upgraded. Tests only. */
@@ -189,15 +203,26 @@ public final class ModConfig {
 		return GSON.toJson(this);
 	}
 
-	/** Loads (or creates) the config file, upgrades it (D-075) and writes it back. Called by {@code CoreInit}. */
+	/**
+	 * Loads (or creates) the config file, upgrades it (D-075) and writes it back. Called by {@code CoreInit}. Lenient
+	 * (the game always starts): a value that cannot be read (a string in a number, a fraction in a whole number) keeps
+	 * its default with one warning naming its key, and every other value in the file is kept. A file that is not JSON
+	 * at all is copied to {@code a1016_02.json.broken} before the defaults are written.
+	 */
 	public static synchronized void load() {
 		Path path = path();
 		ModConfig loaded = null;
 		if (Files.exists(path)) {
 			try (Reader reader = Files.newBufferedReader(path)) {
-				loaded = GSON.fromJson(reader, ModConfig.class);
-			} catch (IOException | JsonParseException e) {
+				loaded = parse(JsonParser.parseReader(reader));
+				if (loaded == null) {
+					A1016_02.LOGGER.error("[a1016] {} is not a JSON object, using defaults", path);
+				}
+			} catch (IOException | RuntimeException e) {
 				A1016_02.LOGGER.error("[a1016] could not read {}, using defaults", path, e);
+			}
+			if (loaded == null) {
+				keepBroken(path);
 			}
 		}
 		instance = loaded != null ? prepare(loaded) : fresh();
@@ -246,6 +271,78 @@ public final class ModConfig {
 	private static void save() {
 		Path path = path();
 		write(path, GSON.toJsonTree(instance));
+	}
+
+	/** A file that could not be read at all is kept next to the new one, so the player's edits are not lost for good. */
+	private static void keepBroken(Path path) {
+		Path copy = path.resolveSibling(FILE_NAME + ".broken");
+		try {
+			Files.copy(path, copy, StandardCopyOption.REPLACE_EXISTING);
+			A1016_02.LOGGER.warn("[a1016] the unreadable config was kept as {}", copy);
+		} catch (IOException e) {
+			A1016_02.LOGGER.error("[a1016] could not keep a copy of {}", path, e);
+		}
+	}
+
+	/**
+	 * Lenient reading (the game always starts, a typo costs one value): a JSON object read field by field into an object
+	 * that already holds its defaults, with Gson's rules for each value (unknown keys skipped, the fields Gson would
+	 * fill: not static, not transient, the class's and its superclasses'). A value that cannot be read (a string in a
+	 * number field, a fraction in an int, a list where a number goes, null) keeps that field's default and logs one
+	 * warning naming its key; a field holding one of the mod's own config objects ({@link Pacing}) is read the same way,
+	 * value by value.
+	 */
+	private static final class Lenient {
+		private Lenient() {
+		}
+
+		static void readInto(JsonObject json, Object target, String where) {
+			for (Class<?> type = target.getClass(); type != null && type != Object.class; type = type.getSuperclass()) {
+				for (Field field : type.getDeclaredFields()) {
+					int modifiers = field.getModifiers();
+					if (Modifier.isStatic(modifiers) || Modifier.isTransient(modifiers) || field.isSynthetic()) {
+						continue;
+					}
+					String key = field.getName();
+					if (!json.has(key)) {
+						continue;
+					}
+					readField(json.get(key), target, field, where.isEmpty() ? key : where + "." + key);
+				}
+			}
+		}
+
+		private static void readField(JsonElement value, Object target, Field field, String key) {
+			try {
+				field.setAccessible(true);
+				Object current = field.get(target);
+				if (value.isJsonNull()) {
+					if (current != null) {
+						A1016_02.LOGGER.warn("[a1016] config value '{}' is null, keeping its default {}", key, GSON.toJson(current));
+					}
+					return;
+				}
+				if (current != null && value.isJsonObject() && ownConfig(field.getType())) {
+					readInto(value.getAsJsonObject(), current, key);
+					return;
+				}
+				// Through the text, as the file is read: Gson's stream reader refuses a fraction in an int (its tree reader
+				// would cut 1.5 to 1 without a word).
+				Object read = GSON.fromJson(value.toString(), field.getGenericType());
+				if (read == null && current != null) {
+					A1016_02.LOGGER.warn("[a1016] config value '{}' ({}) could not be read, keeping its default {}", key, value, GSON.toJson(current));
+					return;
+				}
+				field.set(target, read);
+			} catch (RuntimeException | IllegalAccessException e) {
+				A1016_02.LOGGER.warn("[a1016] config value '{}' ({}) could not be read ({}), keeping its default", key, value, e.getMessage());
+			}
+		}
+
+		/** One of the mod's own plain config classes (read value by value), not a record, enum or library type. */
+		private static boolean ownConfig(Class<?> type) {
+			return type.getName().startsWith("com.forzacode.") && !type.isEnum() && !type.isRecord() && !type.isInterface() && !type.isArray();
+		}
 	}
 
 	private static void write(Path path, JsonElement root) {

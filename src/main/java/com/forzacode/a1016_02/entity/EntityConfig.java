@@ -159,7 +159,11 @@ public final class EntityConfig implements ModConfig.Versioned {
 	 * does not apply underground). Never under {@link #MIN_DISTANCE_FLOOR}. Tunable live.
 	 */
 	public double glimpseMinDistance = 14;
-	/** Block light at his feet and at his eyes at most this: he stands past the last torch, a dim shape. */
+	/**
+	 * The raw brightness at his feet and at his eyes at most this (block light, and sky light less the level's sky
+	 * darkening, as vanilla's {@code getMaxLocalRawBrightness}): past the last torch and out of the daylight at a shaft
+	 * or a hillside mouth, a dim shape.
+	 */
 	public int glimpseMaxLight = 3;
 	/**
 	 * Client: the renderer stops drawing him, for good, the first frame his center is within this many degrees of the
@@ -172,7 +176,10 @@ public final class EntityConfig implements ModConfig.Versioned {
 	 * who can see him too). Tunable live.
 	 */
 	public double glimpseServerDegrees = 35;
-	/** Server: he is removed once anyone steps this many blocks toward him (from the farthest they stood since he appeared). Tunable live. */
+	/**
+	 * Server: he is removed once the player he appeared for steps this many blocks toward him (from the farthest they
+	 * stood since he appeared). Anyone else ends him only through the in-view rules. Tunable live.
+	 */
 	public double glimpseApproachBlocks = 2;
 	/** Server: he is removed once he has been in view (anyone's, the out-of-view rule) this long in all. Tunable live. */
 	public double glimpseSeenSeconds = 3;

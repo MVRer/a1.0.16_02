@@ -6,6 +6,7 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.function.Supplier;
 
 import com.forzacode.a1016_02.atmosphere.mob.MobTamperImpl;
 import com.forzacode.a1016_02.core.CardRegistry;
@@ -37,6 +38,8 @@ import net.minecraft.world.level.GameType;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.phys.Vec3;
+
+import org.jspecify.annotations.Nullable;
 
 /**
  * Two players and one figure (MP-5, D-060.4, D-062). Mock players are never in the level or the player list, so
@@ -98,8 +101,22 @@ public class TwoPlayerFigureGameTests {
 	 * here (in a world the players keep the chunks around him ticking).
 	 */
 	static HimEntity watchedBy(GameTestHelper helper, Variant variant, Vec3 relativeFeet, float yaw, List<ServerPlayer> everyone, boolean leaves) {
+		return watchedBy(helper, variant, relativeFeet, yaw, everyone, leaves, null);
+	}
+
+	/**
+	 * {@link #watchedBy}, and with {@code sky} the sky over him is what it says (the daytime-fog rules, D-071), never the
+	 * shared test server's clock, rain and fog spell; null keeps the live sky.
+	 */
+	static HimEntity watchedBy(GameTestHelper helper, Variant variant, Vec3 relativeFeet, float yaw, List<ServerPlayer> everyone, boolean leaves,
+			@Nullable Supplier<SightingRules.Sky> sky) {
 		ServerLevel level = helper.getLevel();
 		HimEntity him = new HimEntity(ModEntities.HIM, level) {
+			@Override
+			protected SightingRules.Sky sky(ServerLevel serverLevel) {
+				return sky == null ? super.sky(serverLevel) : sky.get();
+			}
+
 			@Override
 			protected boolean leaveTargetTicking(ServerLevel serverLevel, Vec3 target) {
 				return leaves ? serverLevel.isLoaded(BlockPos.containing(target)) : super.leaveTargetTicking(serverLevel, target);
