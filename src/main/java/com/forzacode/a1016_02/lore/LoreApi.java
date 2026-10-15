@@ -44,10 +44,11 @@ public final class LoreApi {
 
 	/**
 	 * Who may become the {@link #FIRST_BLOCKS_OWNER}: a known player who has placed a block (so F13 never waits for
-	 * the first block of someone who has none). Pass it to {@code PlayerWatch.ownerFor(server, key, eligible)}.
+	 * the first block of someone who has none), core's one rule ({@code HerobrineState.hasPlacedBlock}, which world
+	 * uses too). Pass it to {@code PlayerWatch.ownerFor(server, key, eligible)}.
 	 */
 	public static Predicate<UUID> hasPlacedBlock(HerobrineState state) {
-		return player -> state.firstBlocks(player).block() != null;
+		return state::hasPlacedBlock;
 	}
 
 	/**

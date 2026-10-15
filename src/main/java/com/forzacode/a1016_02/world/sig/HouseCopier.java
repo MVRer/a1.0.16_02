@@ -65,8 +65,9 @@ import org.jspecify.annotations.Nullable;
  * start (another player's card in the same tick) is refused. Server thread only.
  * <p>
  * Whose house (D-061): the {@value #OWNER_KEY} owner, chosen once with {@code PlayerWatch.ownerFor} when the copy
- * first becomes due (the online participant with the most play ticks) and never again; it does not flip when the
- * owner leaves or a friend plays longer. The capture uses only that player's base and first blocks (their live base
+ * first starts (the online participant with the most play ticks among those whose first shelter in the overworld can
+ * be captured; never in a card's context check) and never again; it does not flip when the owner leaves or a friend plays longer. A copy from before
+ * multiplayer is its first known player's, stored at once ({@link #adoptOwner}). The capture uses only that player's base and first blocks (their live base
  * while they take part, else the last one world saw, else their first block): never another player's house. Once
  * captured the copy keeps growing on the stored house whether or not its owner is online, always out of view of
  * every player, so an absent owner never blocks Ending B.
@@ -453,7 +454,7 @@ public final class HouseCopier {
 		}
 		Optional<UUID> owner = chooseOwner(bases);
 		if (owner.isEmpty()) {
-			return Outcome.later("nobody takes part to choose whose house is copied");
+			return Outcome.later("nobody who takes part has a first shelter to copy yet (or one is still loading)");
 		}
 		ServerLevel level = server.overworld();
 		List<BlockPos> anchors = anchors(bases, level, owner.get());
@@ -461,11 +462,7 @@ public final class HouseCopier {
 			return Outcome.later(name(state, owner.get()) + " has no first block or base in the overworld yet");
 		}
 		WorldConfig config = WorldConfig.get();
-		List<ChunkPos> chunks = new ArrayList<>();
-		for (BlockPos anchor : anchors) {
-			chunks.addAll(ChunkLoads.around(new BoundingBox(anchor).inflatedBy(config.houseCopyCaptureRadius + HouseShell.MARGIN), 0));
-		}
-		if (!ChunkLoads.request(level, chunks)) {
+		if (!ChunkLoads.request(level, captureChunks(anchors, config))) {
 			return Outcome.later("loading the first shelter's chunks; try again in a moment");
 		}
 		HouseShell.Capture capture = HouseShell.capture(level, anchors, config);
@@ -494,8 +491,10 @@ public final class HouseCopier {
 	/**
 	 * Whose house is copied (D-061): the stored {@value #OWNER_KEY} owner; for a copy saved before multiplayer that
 	 * recorded nobody, the copy's own record, else the first known player; with no copy and nothing stored, chosen now
-	 * among the participants by core's fixed rule and stored for good. Empty only while nothing is stored and nobody
-	 * takes part.
+	 * by core's fixed rule among the participants whose first shelter in the overworld can be captured right now
+	 * (someone who never built a shelter is never picked, however long they played) and stored for good. Empty while
+	 * nothing is stored and no participant has a shelter, and while any participant's shelter is still loading (its
+	 * chunks are asked for), so the rule always sees everyone's.
 	 */
 	public static Optional<UUID> chooseOwner(Bases bases) {
 		Optional<UUID> stored = bases.watch().owner(bases.server(), OWNER_KEY);
@@ -506,7 +505,31 @@ public final class HouseCopier {
 		if (copy.isPresent()) {
 			return owner(bases.state(), copy.get());
 		}
-		return bases.watch().ownerFor(bases.server(), OWNER_KEY);
+		ServerLevel level = bases.server().overworld();
+		WorldConfig config = WorldConfig.get();
+		Set<UUID> sheltered = new HashSet<>();
+		boolean loading = false;
+		for (ServerPlayer player : bases.participants()) {
+			List<BlockPos> anchors = anchors(bases, level, player.getUUID());
+			if (anchors.isEmpty()) {
+				continue;
+			}
+			if (!ChunkLoads.request(level, captureChunks(anchors, config))) {
+				loading = true;
+			} else if (HouseShell.capture(level, anchors, config) != null) {
+				sheltered.add(player.getUUID());
+			}
+		}
+		return loading ? Optional.empty() : bases.watch().ownerFor(bases.server(), OWNER_KEY, sheltered::contains);
+	}
+
+	/** The chunks a capture around these anchors reads. */
+	private static List<ChunkPos> captureChunks(List<BlockPos> anchors, WorldConfig config) {
+		List<ChunkPos> chunks = new ArrayList<>();
+		for (BlockPos anchor : anchors) {
+			chunks.addAll(ChunkLoads.around(new BoundingBox(anchor).inflatedBy(config.houseCopyCaptureRadius + HouseShell.MARGIN), 0));
+		}
+		return chunks;
 	}
 
 	/** Whose house an existing copy is: its recorded owner, else (a copy from before multiplayer) the first known player. */
@@ -524,10 +547,9 @@ public final class HouseCopier {
 	}
 
 	/**
-	 * A copy from before multiplayer stored no {@value #OWNER_KEY} choice (the ending reads it). Core stores a choice
-	 * only through {@code ownerFor} (the most play ticks among the participants), so it is stored the first time the
-	 * copy's owner is the only participant online: then core's rule cannot pick anyone else. Never changes a stored
-	 * choice. True if it stored one now.
+	 * A copy from before multiplayer stored no {@value #OWNER_KEY} choice (the ending reads it): it is stored now as
+	 * the copy's own owner (its record, else the first known player), whoever is online or not, through core's
+	 * {@code adoptOwner}. Never changes a stored choice. True if it stored one now.
 	 */
 	public static boolean adoptOwner(Bases bases) {
 		Optional<HouseCopyState> copy = bases.data().signatures().houseCopy();
@@ -535,11 +557,7 @@ public final class HouseCopier {
 			return false;
 		}
 		Optional<UUID> owner = owner(bases.state(), copy.get());
-		List<ServerPlayer> online = bases.participants();
-		if (owner.isEmpty() || online.size() != 1 || !online.getFirst().getUUID().equals(owner.get())) {
-			return false;
-		}
-		return bases.watch().ownerFor(bases.server(), OWNER_KEY).equals(owner);
+		return owner.isPresent() && bases.watch().adoptOwner(bases.server(), OWNER_KEY, owner.get()).equals(owner);
 	}
 
 	/**
@@ -560,7 +578,8 @@ public final class HouseCopier {
 
 	/**
 	 * True if the copy could start now (the card's context): the profile has it, it is late enough, there is no copy
-	 * yet, and the owner (chosen now, for good, if nobody was) has a first block or base in the overworld.
+	 * yet, and the stored owner (or, with nobody stored, any participant) has a first block or base in the overworld.
+	 * It never chooses the owner: {@link #start} does, among those whose shelter can be captured.
 	 */
 	public static boolean ready(Bases bases) {
 		MinecraftServer server = bases.server();
@@ -568,8 +587,12 @@ public final class HouseCopier {
 				|| bases.data().signatures().houseCopy().isPresent()) {
 			return false;
 		}
-		Optional<UUID> owner = chooseOwner(bases);
-		return owner.isPresent() && !anchors(bases, server.overworld(), owner.get()).isEmpty();
+		ServerLevel level = server.overworld();
+		Optional<UUID> stored = bases.watch().owner(server, OWNER_KEY);
+		if (stored.isPresent()) {
+			return !anchors(bases, level, stored.get()).isEmpty();
+		}
+		return bases.participants().stream().anyMatch(player -> !anchors(bases, level, player.getUUID()).isEmpty());
 	}
 
 	private static String name(HerobrineState state, UUID player) {
@@ -629,7 +652,7 @@ public final class HouseCopier {
 		SignatureData data = WorldData.get(server).signatures();
 		HouseCopyState s = data.houseCopy().orElse(null);
 		if (s != null && s.owner().isEmpty()) {
-			adoptOwner(Bases.live(server)); // a copy from before multiplayer: store whose it is once that can be done exactly
+			adoptOwner(Bases.live(server)); // a copy from before multiplayer: store whose it is, at once
 		}
 		if (s == null || s.phase() == HouseCopyState.Phase.FINISHED) {
 			siteSearch = null;

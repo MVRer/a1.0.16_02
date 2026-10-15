@@ -89,18 +89,22 @@ public class WorldMultiplayerTests {
 		Friends f = new Friends(helper, Friends.state(helper, alex, sam));
 		Bases bases = f.bases();
 
-		// Only Alex takes part when the copy first becomes due: Alex is chosen, and stored.
+		// Only Alex takes part when the copy first becomes due: Alex is chosen, and stored (once the chunks around his
+		// house are there: the rule waits for everyone's shelter to load).
 		ServerPlayer a = f.join(alex, new Vec3(20, 2, 20));
-		helper.assertTrue(HouseCopier.chooseOwner(bases).equals(Optional.of(alex.uuid())), "Alex was not chosen");
-		helper.assertTrue(f.state.owner(HouseCopier.OWNER_KEY).equals(Optional.of(alex.uuid())), "the choice was not stored");
-		// Alex leaves, and Sam, who played far longer, is the one online: the choice stays.
-		f.leave(a);
-		f.join(sam, new Vec3(20, 2, 20));
-		helper.assertTrue(HouseCopier.chooseOwner(bases).equals(Optional.of(alex.uuid())), "the owner flipped to Sam");
-
-		// Sam's card starts the copy with Alex away (the house's chunks may need a tick or two to be there).
+		boolean[] chosen = {false};
 		Outcome[] second = {null};
 		helper.succeedWhen(() -> {
+			if (!chosen[0]) {
+				helper.assertTrue(HouseCopier.chooseOwner(bases).equals(Optional.of(alex.uuid())), "Alex was not chosen (yet)");
+				chosen[0] = true;
+				helper.assertTrue(f.state.owner(HouseCopier.OWNER_KEY).equals(Optional.of(alex.uuid())), "the choice was not stored");
+				// Alex leaves, and Sam, who played far longer, is the one online: the choice stays.
+				f.leave(a);
+				f.join(sam, new Vec3(20, 2, 20));
+				helper.assertTrue(HouseCopier.chooseOwner(bases).equals(Optional.of(alex.uuid())), "the owner flipped to Sam");
+			}
+			// Sam's card starts the copy with Alex away (the house's chunks may need a tick or two to be there).
 			if (second[0] == null) {
 				Outcome first = HouseCopier.start(bases, true);
 				helper.assertTrue(first.ok() || first.later(), "the copy was refused: " + first.message());
@@ -364,8 +368,8 @@ public class WorldMultiplayerTests {
 
 	/**
 	 * D-062.8: a {@code world.dat} from before multiplayer (no bases, no new-scar day, a house copy that recorded
-	 * nobody) loads; the copy is the first known player's, and core's stored choice is set for them only once they
-	 * are the one participant online (then core's rule cannot pick anyone else).
+	 * nobody) loads; the copy is the first known player's, and core's stored choice is adopted for them at once
+	 * ({@code PlayerWatch.adoptOwner}), with nobody online or with a friend who played longer, and never again.
 	 */
 	@GameTest
 	public void oldWorldSaveLoadsAsTheFirstPlayers(GameTestHelper helper) {
@@ -391,17 +395,83 @@ public class WorldMultiplayerTests {
 		helper.assertTrue(bases.all(level.dimension()).equals(List.of(helper.absolutePos(new BlockPos(1, 2, 1)))), "the subject's base is not known");
 		helper.assertTrue(HouseCopier.chooseOwner(bases).equals(Optional.of(subject.uuid())) && state.owner(HouseCopier.OWNER_KEY).isEmpty(),
 				"choosing changed or stored an owner for an old copy");
-		// With a friend online too, core's rule could pick the friend: nothing is stored.
-		ServerPlayer friend = f.join(new Friends.Known("Friend", 0, null), new Vec3(4, 2, 4));
-		ServerPlayer him = f.join(subject, new Vec3(2, 2, 2));
-		helper.assertFalse(HouseCopier.adoptOwner(bases) || state.owner(HouseCopier.OWNER_KEY).isPresent(), "stored with a friend online");
-		// The subject alone: stored, exactly them; and never again.
-		f.leave(friend);
-		helper.assertTrue(HouseCopier.adoptOwner(bases) && state.owner(HouseCopier.OWNER_KEY).equals(Optional.of(subject.uuid())), "not stored");
+		// Nobody online: the old copy's owner is adopted at once, exactly them.
+		helper.assertTrue(HouseCopier.adoptOwner(bases) && state.owner(HouseCopier.OWNER_KEY).equals(Optional.of(subject.uuid())),
+				"the old copy's owner was not stored at once: " + state.owner(HouseCopier.OWNER_KEY));
 		helper.assertFalse(HouseCopier.adoptOwner(bases), "stored twice");
-		helper.assertTrue(him.getUUID().equals(subject.uuid()), "test setup");
+		// A friend who played far longer comes online: the choice holds, for world and for the ending.
+		Friends.Known friend = new Friends.Known("Friend", 90_000, Friends.at(helper, new BlockPos(6, 2, 6)));
+		state.addKnownPlayer(friend.uuid(), friend.name());
+		f.join(friend, new Vec3(4, 2, 4));
+		helper.assertFalse(HouseCopier.adoptOwner(bases), "adopted again with a friend online");
+		helper.assertTrue(HouseCopier.chooseOwner(bases).equals(Optional.of(subject.uuid())) && f.watch.ownerFor(helper.getLevel().getServer(),
+				HouseCopier.OWNER_KEY).equals(Optional.of(subject.uuid())), "the owner flipped to the friend");
 		UUID stored = state.owner(HouseCopier.OWNER_KEY).orElseThrow();
 		helper.assertTrue(stored.equals(subject.uuid()), "stored " + stored);
+		helper.succeed();
+	}
+
+	/**
+	 * D-061 (MP-7 B): the house copy's owner is chosen only when the copy starts, among the participants whose first
+	 * shelter can be captured. Sam, who played far longer but only ever placed one block 300 blocks away, is never
+	 * stored: not by the card's context check ({@code ready}), not by a start while he is alone online. With Alex
+	 * online too, the start captures Alex's walls.
+	 */
+	@GameTest(structure = BIG, maxTicks = 400)
+	public void houseCopyOwnerIsSomeoneWithAShelterToCopy(GameTestHelper helper) {
+		ServerLevel level = helper.getLevel();
+		house(helper, (ServerPlayer) helper.makeMockServerPlayer(GameType.SURVIVAL));
+		BoundingBox walls = BoundingBox.fromCorners(helper.absolutePos(new BlockPos(2, 2, 2)), helper.absolutePos(new BlockPos(4, 5, 5)));
+		Friends.Known alex = new Friends.Known("Alex", 100, Friends.at(helper, new BlockPos(3, 2, 3)));
+		Friends.Known sam = new Friends.Known("Sam", 50_000, Friends.at(helper, new BlockPos(300, 2, 300)));
+		BlockPos samBlock = helper.absolutePos(new BlockPos(300, 2, 300));
+		Friends f = new Friends(helper, Friends.state(helper, alex, sam));
+		Bases bases = f.bases();
+		f.join(sam, new Vec3(20, 2, 20));
+		HouseCopier.ready(bases);
+		helper.assertTrue(f.state.owner(HouseCopier.OWNER_KEY).isEmpty(), "the card's context check stored an owner");
+
+		boolean[] alexOnline = {false};
+		helper.succeedWhen(() -> {
+			if (!alexOnline[0]) {
+				Outcome alone = HouseCopier.start(bases, true);
+				helper.assertTrue(!alone.ok() && f.state.owner(HouseCopier.OWNER_KEY).isEmpty() && f.data.signatures().houseCopy().isEmpty(),
+						"Sam's lone block was taken for a house: " + alone.message() + ", owner " + f.state.owner(HouseCopier.OWNER_KEY));
+				// Once Sam's far chunk is there the rule has seen everyone's ground; until then, try again.
+				helper.assertTrue(level.getChunkSource().getChunkNow(samBlock.getX() >> 4, samBlock.getZ() >> 4) != null, "Sam's chunk is loading");
+				helper.assertTrue(!HouseCopier.start(bases, true).ok() && f.state.owner(HouseCopier.OWNER_KEY).isEmpty(), "Sam was stored");
+				f.join(alex, new Vec3(22, 2, 20));
+				alexOnline[0] = true;
+			}
+			if (f.data.signatures().houseCopy().isEmpty()) {
+				Outcome started = HouseCopier.start(bases, true);
+				helper.assertTrue(started.ok(), "the copy waits: " + started.message());
+			}
+			HouseCopyState copy = f.data.signatures().houseCopy().orElseThrow();
+			helper.assertTrue(f.state.owner(HouseCopier.OWNER_KEY).equals(Optional.of(alex.uuid())) && copy.owner().equals(Optional.of(alex.uuid())),
+					"the copy is not Alex's: " + f.state.owner(HouseCopier.OWNER_KEY));
+			helper.assertTrue(copy.realBox().intersects(walls) && walls.isInside(copy.realInside()), "it captured " + copy.realBox() + ", not Alex's walls");
+		});
+	}
+
+	/**
+	 * The story's home (F21's camp is measured from it) follows the same owner rule as lore and the ending: only a
+	 * participant who has placed a block becomes {@code story:first_blocks}, so world never stores someone F13 would
+	 * wait on forever.
+	 */
+	@GameTest
+	public void theStoryHomeIsSomeoneWhoPlacedABlock(GameTestHelper helper) {
+		ServerLevel level = helper.getLevel();
+		Friends.Known wanderer = new Friends.Known("Wanderer", 50_000, null);
+		Friends.Known builder = new Friends.Known("Builder", 100, Friends.at(helper, new BlockPos(1, 2, 1)));
+		Friends f = new Friends(helper, Friends.state(helper, wanderer, builder));
+		Bases bases = f.bases();
+		f.join(wanderer, new Vec3(3, 2, 3));
+		helper.assertTrue(bases.storyHome(level.dimension()).isEmpty() && f.state.owner(Bases.STORY_OWNER).isEmpty(),
+				"the story's owner was chosen among nobody who placed a block: " + f.state.owner(Bases.STORY_OWNER));
+		f.join(builder, new Vec3(4, 2, 4));
+		helper.assertTrue(bases.storyHome(level.dimension()).equals(Optional.of(helper.absolutePos(new BlockPos(1, 2, 1))))
+				&& f.state.owner(Bases.STORY_OWNER).equals(Optional.of(builder.uuid())), "the builder is not the story's home");
 		helper.succeed();
 	}
 }

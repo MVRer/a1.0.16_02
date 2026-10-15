@@ -134,11 +134,14 @@ public final class Bases {
 	}
 
 	/**
-	 * The story's home in this dimension: the story's first-blocks owner's base (chosen now by core's fixed rule and
-	 * stored, if nobody was chosen yet), else the first known player's; empty if neither has a base there.
+	 * The story's home in this dimension: the story's first-blocks owner's base (if nobody was chosen yet, chosen now
+	 * by core's fixed rule among the participants who have placed a block, {@link HerobrineState#hasPlacedBlock}, the
+	 * one rule lore and the ending choose it by too, and stored), else the first known player's; empty if neither has a
+	 * base there.
 	 */
 	public Optional<BlockPos> storyHome(ResourceKey<Level> dimension) {
-		Optional<UUID> owner = watch.ownerFor(server, STORY_OWNER).or(() -> state.players().stream().findFirst().map(HerobrineState.Subject::uuid));
+		Optional<UUID> owner = watch.ownerFor(server, STORY_OWNER, state::hasPlacedBlock)
+				.or(() -> state.players().stream().findFirst().map(HerobrineState.Subject::uuid));
 		return owner.flatMap(this::base).filter(b -> b.dimension().equals(dimension)).map(GlobalPos::pos);
 	}
 

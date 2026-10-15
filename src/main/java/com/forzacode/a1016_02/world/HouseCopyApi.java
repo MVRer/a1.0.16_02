@@ -72,7 +72,7 @@ public final class HouseCopyApi {
 
 	/**
 	 * Whose house the copy copies: the stored {@value #OWNER_KEY} owner, else (a copy from before multiplayer, whose
-	 * owner is stored once that player is the only one online) its first known player. Empty before anything is chosen.
+	 * owner world stores at once) its first known player. Empty before anything is chosen.
 	 */
 	public static Optional<UUID> owner(MinecraftServer server) {
 		return HouseCopier.owner(server);
