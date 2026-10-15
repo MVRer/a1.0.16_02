@@ -8,6 +8,15 @@ import net.minecraft.world.level.block.state.BlockState;
 
 /** What counts as leaves, trees, plants and bare ground for the dead mountain and the bare forest. */
 public final class Vegetation {
+	/**
+	 * A fluid block that is not solid (water, lava, kelp, seagrass; not a waterlogged stair or slab), by vanilla's
+	 * legacy solid flag (deprecated there with no replacement of the same meaning).
+	 */
+	@SuppressWarnings("deprecation")
+	public static boolean isOpenFluid(BlockState state) {
+		return !state.getFluidState().isEmpty() && !state.isSolid();
+	}
+
 	private Vegetation() {
 	}
 

@@ -77,11 +77,35 @@ public final class HouseScan {
 	public static boolean covered(ServerLevel level, BlockPos pos, int scan) {
 		for (int up = 1; up <= scan; up++) {
 			BlockState above = level.getBlockState(pos.above(up));
-			if (!above.isAir() && !above.is(BlockTags.LEAVES) && above.isSolid()) {
+			if (!above.isAir() && !above.is(BlockTags.LEAVES) && solid(above)) {
 				return true;
 			}
 		}
 		return false;
+	}
+
+	/** Vanilla's legacy "solid" flag (deprecated there with no replacement of the same meaning). */
+	@SuppressWarnings("deprecation")
+	private static boolean solid(BlockState state) {
+		return state.isSolid();
+	}
+
+	/**
+	 * True if every chunk of the box from {@code from} to {@code to} is loaded and its height is inside the level, as
+	 * vanilla's deprecated {@code hasChunksAt(from, to)} answers.
+	 */
+	public static boolean loaded(ServerLevel level, BlockPos from, BlockPos to) {
+		if (to.getY() < level.getMinY() || from.getY() > level.getMaxY()) {
+			return false;
+		}
+		for (int cx = from.getX() >> 4; cx <= to.getX() >> 4; cx++) {
+			for (int cz = from.getZ() >> 4; cz <= to.getZ() >> 4; cz++) {
+				if (!level.hasChunk(cx, cz)) {
+					return false;
+				}
+			}
+		}
+		return true;
 	}
 
 	/** A container or lectern that holds a fragment item: lore's, left alone. */

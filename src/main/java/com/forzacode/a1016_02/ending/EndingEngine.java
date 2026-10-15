@@ -598,7 +598,7 @@ public final class EndingEngine {
 		}
 		BlockPos home = house.get().pos();
 		int r = cfg.houseRadius;
-		if (!level.hasChunksAt(home.offset(-r, 0, -r), home.offset(r, 0, r))) {
+		if (!HouseScan.loaded(level, home.offset(-r, 0, -r), home.offset(r, 0, r))) {
 			return;
 		}
 		List<BlockPos> inside = HouseScan.interior(level, home, cfg, ports.watch(), keep(c.state(), level));

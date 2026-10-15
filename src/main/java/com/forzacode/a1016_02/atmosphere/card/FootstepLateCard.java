@@ -18,6 +18,7 @@ import com.forzacode.a1016_02.core.Services;
 import com.forzacode.a1016_02.core.Stage;
 import com.forzacode.a1016_02.core.Tier;
 
+import net.minecraft.core.BlockPos;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
@@ -126,9 +127,15 @@ public final class FootstepLateCard extends AtmosphereCard {
 		}
 	}
 
+	/** The block a step sounds on: vanilla's legacy on-position (deprecated there with no replacement of the same meaning). */
+	@SuppressWarnings("deprecation")
+	private static BlockPos onPos(ServerPlayer player) {
+		return player.getOnPosLegacy();
+	}
+
 	/** One step on the block under the player, at their feet, for everyone in hearing range. Returns who heard it (none if on air). */
 	static List<ServerPlayer> playStep(ServerPlayer player, SoundOut out) {
-		BlockState state = player.level().getBlockState(player.getOnPosLegacy());
+		BlockState state = player.level().getBlockState(onPos(player));
 		if (state.isAir()) {
 			return List.of();
 		}

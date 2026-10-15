@@ -264,7 +264,7 @@ public final class EndingWatch {
 			BlockPos at = home.get().pos();
 			int r = cfg.cBaseContainerRadius;
 			// The base's containers can only be read while its chunks are loaded; unread counts as still held.
-			holds = !homeLevel.hasChunksAt(at.offset(-r, 0, -r), at.offset(r, 0, r))
+			holds = !HouseScan.loaded(homeLevel, at.offset(-r, 0, -r), at.offset(r, 0, r))
 					|| !FragmentHoldings.stored(homeLevel, at, r).isEmpty();
 		}
 		Set<UUID> playing = new HashSet<>();

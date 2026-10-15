@@ -416,7 +416,7 @@ final class Placers {
 				}
 				for (Direction dir : Direction.Plane.HORIZONTAL) {
 					BlockPos wall = pos.relative(dir);
-					if (level.getBlockState(wall).isSolid() && level.getBlockState(wall).isSolidRender()
+					if (Terrain.solid(level.getBlockState(wall)) && level.getBlockState(wall).isSolidRender()
 							&& Terrain.isAirOrReplaceable(level.getBlockState(pos.relative(dir.getOpposite())))) {
 						return Optional.of(Pair.of(pos.immutable(), dir.getOpposite()));
 					}

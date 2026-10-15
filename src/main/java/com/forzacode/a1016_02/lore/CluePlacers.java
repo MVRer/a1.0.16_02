@@ -182,7 +182,7 @@ final class CluePlacers {
 	static Optional<BlockPos> floor(ServerLevel level, BoundingBox box, int x, int z) {
 		for (int y = box.minY() + 1; y <= box.maxY(); y++) {
 			BlockPos pos = new BlockPos(x, y, z);
-			if (free(level, pos) && level.getBlockState(pos.below()).isSolid()) {
+			if (free(level, pos) && Terrain.solid(level.getBlockState(pos.below()))) {
 				return Optional.of(pos);
 			}
 		}

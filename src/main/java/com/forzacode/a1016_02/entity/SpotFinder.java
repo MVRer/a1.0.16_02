@@ -258,7 +258,7 @@ public final class SpotFinder {
 	public static @Nullable Vec3 standNear(ServerLevel level, double x, double z, double aroundY, int up, int down, EntityDimensions dims) {
 		int bx = Mth.floor(x);
 		int bz = Mth.floor(z);
-		if (!level.hasChunkAt(bx, bz)) {
+		if (!level.hasChunk(bx >> 4, bz >> 4)) {
 			return null;
 		}
 		int base = Mth.floor(aroundY + 1.0E-6);
@@ -291,7 +291,7 @@ public final class SpotFinder {
 	public static @Nullable Vec3 standAt(ServerLevel level, double x, double z, EntityDimensions dims) {
 		int bx = Mth.floor(x);
 		int bz = Mth.floor(z);
-		if (!level.hasChunkAt(bx, bz)) {
+		if (!level.hasChunk(bx >> 4, bz >> 4)) {
 			return null;
 		}
 		BlockPos.MutableBlockPos m = new BlockPos.MutableBlockPos(bx, level.getHeight(Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, bx, bz) - 1, bz);
@@ -322,7 +322,7 @@ public final class SpotFinder {
 
 	/** The lowest log of a trunk at least 3 logs tall standing on solid ground, or null. */
 	private static @Nullable BlockPos trunkBase(ServerLevel level, int x, int z, BlockPos.MutableBlockPos m) {
-		if (!level.hasChunkAt(x, z)) {
+		if (!level.hasChunk(x >> 4, z >> 4)) {
 			return null;
 		}
 		int top = level.getHeight(Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, x, z) - 1;
@@ -365,7 +365,7 @@ public final class SpotFinder {
 	private static double surfaceY(ServerLevel level, Vec3 at) {
 		int x = Mth.floor(at.x);
 		int z = Mth.floor(at.z);
-		return level.hasChunkAt(x, z) ? level.getHeight(Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, x, z) : Double.POSITIVE_INFINITY;
+		return level.hasChunk(x >> 4, z >> 4) ? level.getHeight(Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, x, z) : Double.POSITIVE_INFINITY;
 	}
 
 	/**
@@ -382,7 +382,7 @@ public final class SpotFinder {
 			double t = i / (double) n;
 			int x = Mth.floor(Mth.lerp(t, from.x, to.x));
 			int z = Mth.floor(Mth.lerp(t, from.z, to.z));
-			if (!level.hasChunkAt(x, z)) {
+			if (!level.hasChunk(x >> 4, z >> 4)) {
 				return 0.0;
 			}
 			m.set(x, level.getHeight(Heightmap.Types.MOTION_BLOCKING, x, z) - 1, z);

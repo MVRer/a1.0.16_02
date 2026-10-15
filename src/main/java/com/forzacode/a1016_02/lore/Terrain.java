@@ -85,8 +85,14 @@ final class Terrain {
 
 	/** A spot where something can stand: replaceable and dry, with solid ground below. */
 	static boolean isFloor(ServerLevel level, BlockPos pos) {
-		return isAirOrReplaceable(level.getBlockState(pos)) && level.getBlockState(pos.below()).isSolid()
+		return isAirOrReplaceable(level.getBlockState(pos)) && solid(level.getBlockState(pos.below()))
 				&& level.getBlockEntity(pos) == null;
+	}
+
+	/** Vanilla's legacy "solid" flag (deprecated there with no replacement of the same meaning; lore's floors use it). */
+	@SuppressWarnings("deprecation")
+	static boolean solid(BlockState state) {
+		return state.isSolid();
 	}
 
 	/** Dark: no sky light and no block light. */

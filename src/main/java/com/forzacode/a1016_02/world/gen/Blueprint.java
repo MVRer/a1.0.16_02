@@ -200,7 +200,7 @@ public final class Blueprint {
 
 	/** Air, fluid, snow layers and plants can be filled by a foundation. */
 	public static boolean fillable(BlockState state) {
-		return state.isAir() || state.canBeReplaced() || Vegetation.isPlant(state) || !state.getFluidState().isEmpty() && !state.isSolid();
+		return state.isAir() || state.canBeReplaced() || Vegetation.isPlant(state) || Vegetation.isOpenFluid(state);
 	}
 
 	/** The stone an ore sits in, or null if it is not an ore. */

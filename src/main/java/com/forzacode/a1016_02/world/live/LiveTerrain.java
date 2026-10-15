@@ -45,7 +45,7 @@ public final class LiveTerrain implements Terrain {
 		for (int y = top; y >= level.getMinY(); y--) {
 			pos.setY(y);
 			BlockState state = level.getBlockState(pos);
-			if (state.isAir() || Vegetation.isSnowLayer(state) || Vegetation.dies(state) || !state.getFluidState().isEmpty() && !state.isSolid()) {
+			if (state.isAir() || Vegetation.isSnowLayer(state) || Vegetation.dies(state) || Vegetation.isOpenFluid(state)) {
 				continue;
 			}
 			return y;
