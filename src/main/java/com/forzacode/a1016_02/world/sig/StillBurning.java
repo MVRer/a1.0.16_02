@@ -56,8 +56,9 @@ import org.jspecify.annotations.Nullable;
 /**
  * "Still burning" (SIGNATURE, D-004): an abandoned build about 2000 blocks from the player the card fired for (any
  * participant from the debug command), and at least that far from every participant in the overworld, in chunks
- * nobody has visited or loaded, with a lit furnace smelting something ordinary. Furnaces only tick while their chunk
- * ticks, so it carries fuel and input for {@code stillBurningLitTicks} of burning: still lit when the player walks up.
+ * nobody has visited or loaded, never near any known player's base (an offline friend's too), with a lit furnace
+ * smelting something ordinary. Furnaces only tick while their chunk ticks, so it carries fuel and input for
+ * {@code stillBurningLitTicks} of burning: still lit when the player walks up.
  * When the profile rolled F21 the emptied house is built beside it, recorded as EMPTIED_HOUSE with the furnace in
  * reach of lore's F21 placement, and {@value #LORE_FLAG} is set. Everything is "left by others" (one
  * {@link TraceBatch}, the furnace with its block entity data). With F21 the camp is measured from the story's home
@@ -97,7 +98,8 @@ public final class StillBurning {
 			BoundingBox box) {
 	}
 
-	private record Candidate(int x, int z, Direction facing, long seed, List<ChunkPos> chunks) {
+	/** A spot for the camp from the noise: its center, the build's facing, its seed and the chunks it stands in. */
+	public record Candidate(int x, int z, Direction facing, long seed, List<ChunkPos> chunks) {
 	}
 
 	private static final class Search {
@@ -306,7 +308,8 @@ public final class StillBurning {
 			}
 			return;
 		}
-		Camp camp = tryCandidate(level, c, s.f21, Bases.live(server).positionsIn(level));
+		Bases bases = Bases.live(server);
+		Camp camp = tryCandidate(level, c, s.f21, bases.positionsIn(level), bases.all(level.dimension()));
 		if (camp == null) {
 			next(s, now);
 			return;
@@ -341,11 +344,14 @@ public final class StillBurning {
 		retryFor = null;
 	}
 
-	/** Checks a loaded candidate against the real ground and where everyone is now, and builds there. */
-	private static @Nullable Camp tryCandidate(ServerLevel level, Candidate c, boolean f21, List<BlockPos> everyone) {
+	/** Checks a loaded candidate against the real ground, where everyone is now and every known base, and builds there. */
+	private static @Nullable Camp tryCandidate(ServerLevel level, Candidate c, boolean f21, List<BlockPos> everyone, List<BlockPos> homes) {
 		WorldConfig config = WorldConfig.get();
 		if (!Bases.farFromAll(everyone, new BlockPos(c.x(), 0, c.z()), awayFromEveryone(f21, config))) {
 			return null; // somebody walked toward it while it loaded: nobody for 2000 blocks
+		}
+		if (!Bases.farFromAll(homes, new BlockPos(c.x(), 0, c.z()), config.stillBurningBaseClearance)) {
+			return null; // a base moved here while it loaded
 		}
 		LiveTerrain terrain = new LiveTerrain(level);
 		Frame f = new Frame(c.x(), 0, c.z(), c.facing());
@@ -394,8 +400,8 @@ public final class StillBurning {
 		BlockPos from = player.level() == level ? player.blockPosition() : level.getRespawnData().pos();
 		boolean f21 = withF21(bases.state().profile());
 		BlockPos base = f21 ? bases.storyHome(level.dimension()).orElse(from) : from;
-		List<Candidate> candidates = candidates(level, from, base, bases.positionsIn(level), f21, WorldConfig.get(), RandomSource.create(),
-				bases.watch()::lastVisitDay);
+		List<Candidate> candidates = candidates(level, from, base, bases.positionsIn(level), bases.all(level.dimension()), f21, WorldConfig.get(),
+				RandomSource.create(), bases.watch()::lastVisitDay);
 		return new Search(candidates, f21, player.getUUID(), report, server.getTickCount());
 	}
 
@@ -408,10 +414,12 @@ public final class StillBurning {
 	 * Spots for the camp from the noise (nothing is loaded): dry, flat, not dense woods, in chunks never visited
 	 * and not loaded now. Without F21 they are {@code stillBurningMin..MaxBlocks} from {@code from}; with F21 within
 	 * {@code stillBurningF21MaxFromBase} of the base and at least {@code stillBurningF21MinBlocks} from {@code from},
-	 * farthest first. Every one of them is at least that near edge from each of {@code everyone} too.
+	 * farthest first. Every one of them is at least that near edge from each of {@code everyone} too, and
+	 * {@code stillBurningBaseClearance} from each of {@code homes} (every known player's base, an offline friend's too:
+	 * their visited chunks reach only a chunk or so past it).
 	 */
-	static List<Candidate> candidates(ServerLevel level, BlockPos from, BlockPos base, List<BlockPos> everyone, boolean f21, WorldConfig config,
-			RandomSource random, NewScarPlacer.VisitLookup visits) {
+	public static List<Candidate> candidates(ServerLevel level, BlockPos from, BlockPos base, List<BlockPos> everyone, List<BlockPos> homes, boolean f21,
+			WorldConfig config, RandomSource random, NewScarPlacer.VisitLookup visits) {
 		Terrain terrain = noise(level);
 		List<Candidate> found = new ArrayList<>();
 		int wanted = Math.max(1, config.stillBurningCandidates);
@@ -429,7 +437,7 @@ public final class StillBurning {
 				d = Mth.nextInt(random, config.stillBurningMinBlocks, Math.max(config.stillBurningMinBlocks, config.stillBurningMaxBlocks));
 				center = from.offset(Mth.floor(Math.cos(angle) * d), 0, Mth.floor(Math.sin(angle) * d));
 			}
-			if (!Bases.farFromAll(everyone, center, awayFromEveryone(f21, config))) {
+			if (!Bases.farFromAll(everyone, center, awayFromEveryone(f21, config)) || !Bases.farFromAll(homes, center, config.stillBurningBaseClearance)) {
 				continue;
 			}
 			Direction facing = Direction.from2DDataValue(random.nextInt(4));

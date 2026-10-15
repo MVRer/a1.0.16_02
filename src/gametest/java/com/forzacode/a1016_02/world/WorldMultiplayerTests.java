@@ -9,8 +9,10 @@ import com.forzacode.a1016_02.core.HerobrineState;
 import com.forzacode.a1016_02.core.Services;
 import com.forzacode.a1016_02.world.sig.HouseCopier;
 import com.forzacode.a1016_02.world.sig.HouseCopyState;
+import com.forzacode.a1016_02.world.sig.HouseShell;
 import com.forzacode.a1016_02.world.sig.LoneTorch;
 import com.forzacode.a1016_02.world.sig.Outcome;
+import com.forzacode.a1016_02.world.sig.StillBurning;
 import com.forzacode.a1016_02.world.live.NewScarPlacer;
 
 import net.fabricmc.fabric.api.gametest.v1.GameTest;
@@ -24,9 +26,11 @@ import net.minecraft.resources.RegistryOps;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.util.RandomSource;
+import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.GameType;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.levelgen.Heightmap;
 import net.minecraft.world.level.levelgen.structure.BoundingBox;
 import net.minecraft.world.phys.Vec3;
 
@@ -104,6 +108,137 @@ public class WorldMultiplayerTests {
 			helper.assertTrue(copy.realBox().intersects(walls) && walls.isInside(copy.realInside()), "it captured " + copy.realBox() + ", not Alex's house");
 			helper.assertTrue(f.state.owner(HouseCopier.OWNER_KEY).equals(Optional.of(alex.uuid())), "the stored owner changed");
 		});
+	}
+
+	/** {@link #house} captured as Alex's copy, still looking for its site. */
+	private static HouseCopyState capturedHouse(GameTestHelper helper, ServerPlayer builder, WorldConfig config, UUID owner) {
+		house(helper, builder);
+		HouseShell.Capture capture = HouseShell.capture(helper.getLevel(), List.of(helper.absolutePos(new BlockPos(3, 3, 3))), config);
+		helper.assertTrue(capture != null, "the house was not captured");
+		return HouseCopyState.captured(helper.getLevel().dimension(), capture, 21, 0, owner);
+	}
+
+	/**
+	 * MP-7: the house copy never grows in an offline friend's yard. Ben's base is a flat yard 300 blocks from Alex's
+	 * house, right where the search would put the copy first, and he has been away for three days (his chunks were last
+	 * visited then). The search keeps every known base clear: no candidate and no site within
+	 * {@code houseCopyBaseClearance} of Ben's base.
+	 */
+	@GameTest(structure = BIG, maxTicks = 600)
+	public void houseCopySiteKeepsAwayFromAnOfflineFriendsBase(GameTestHelper helper) {
+		ServerLevel level = helper.getLevel();
+		WorldConfig config = new WorldConfig();
+		config.houseCopyMinDistance = 300;
+		config.houseCopyMaxDistance = 300;
+		Friends.Known alex = new Friends.Known("Alex", 500, Friends.at(helper, new BlockPos(3, 2, 3)));
+		Friends.Known ben = new Friends.Known("Ben", 300, null);
+		Friends f = new Friends(helper, Friends.state(helper, alex, ben));
+		f.join(alex, new Vec3(3, 3, 3));
+		HouseCopyState copy = capturedHouse(helper, (ServerPlayer) helper.makeMockServerPlayer(GameType.SURVIVAL), config, alex.uuid());
+		long today = 50;
+
+		// Where the search would put the copy first with nobody else around: Ben's yard is there.
+		HouseCopier.SiteSearch alone = HouseCopier.siteSearch(f.bases(), level, copy, config, RandomSource.create(7), today, (l, chunk) -> -1, 0);
+		helper.assertFalse(alone.centers().isEmpty(), "no copy site candidates at all");
+		BlockPos first = alone.centers().getFirst();
+		BlockPos benBase = new BlockPos(first.getX() + 6, helper.absolutePos(BlockPos.ZERO).getY(), first.getZ() + 4);
+		f.data.setBase(ben.uuid(), GlobalPos.of(level.dimension(), benBase));
+		ChunkPos benChunk = ChunkPos.containing(benBase);
+		NewScarPlacer.VisitLookup visits = (l, chunk) -> Math.abs(chunk.x() - benChunk.x()) <= 1 && Math.abs(chunk.z() - benChunk.z()) <= 1 ? today - 3 : -1;
+
+		HouseCopier.SiteSearch search = HouseCopier.siteSearch(f.bases(), level, copy, config, RandomSource.create(7), today, visits, 0);
+		for (BlockPos center : search.centers()) {
+			helper.assertTrue(horizontal(center, benBase) >= config.houseCopyBaseClearance, "a copy site candidate at " + center.toShortString() + ", "
+					+ Math.round(horizontal(center, benBase)) + " blocks from Ben's base");
+		}
+		helper.succeedWhen(() -> {
+			helper.assertFalse(search.exhausted(), "no copy site among " + search.centers().size() + " candidates");
+			BlockPos origin = search.step(level, copy, f.bases().all(level.dimension()), config, level.getServer().getTickCount());
+			helper.assertTrue(origin != null, "no copy site picked yet");
+			helper.assertTrue(horizontal(origin, benBase) >= config.houseCopyBaseClearance, "the copy goes at " + origin.toShortString() + ", "
+					+ Math.round(horizontal(origin, benBase)) + " blocks from Ben's base");
+		});
+	}
+
+	/**
+	 * MP-7: the house copy never stands on what players built, whoever built it and wherever their base is: not on
+	 * Ben's flat roof (the roof would be its ground), not on a floor he laid. Natural flat ground next to them is a site.
+	 */
+	@GameTest(structure = BIG)
+	public void houseCopyNeverStandsOnPlayersBlocks(GameTestHelper helper) {
+		ServerLevel level = helper.getLevel();
+		ServerPlayer builder = (ServerPlayer) helper.makeMockServerPlayer(GameType.SURVIVAL);
+		HouseCopyState copy = capturedHouse(helper, builder, new WorldConfig(), UUID.randomUUID());
+		for (BlockPos rel : BlockPos.betweenClosed(12, 0, 12, 21, 0, 21)) {
+			helper.setBlock(rel, Blocks.STONE);
+		}
+		for (BlockPos rel : BlockPos.betweenClosed(12, 6, 0, 21, 6, 9)) {
+			put(helper, builder, rel.immutable(), Blocks.OAK_PLANKS.defaultBlockState());
+		}
+		// The test area's barrier ceiling would be the ground there: open it over both spots.
+		for (BlockPos rel : BlockPos.betweenClosed(12, 16, 0, 21, 16, 21)) {
+			if (helper.getBlockState(rel).is(Blocks.BARRIER)) {
+				helper.setBlock(rel, Blocks.AIR);
+			}
+		}
+		BlockPos roof = helper.absolutePos(new BlockPos(16, 6, 4));
+		BlockPos ground = helper.absolutePos(new BlockPos(16, 0, 16));
+		helper.assertTrue(level.getHeight(Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, roof.getX(), roof.getZ()) == roof.getY() + 1
+				&& level.getHeight(Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, ground.getX(), ground.getZ()) == ground.getY() + 1, "test setup: something above");
+		helper.assertTrue(HouseCopier.copyOriginAt(level, copy, ground.getX(), ground.getZ()) != null, "natural flat ground is not a copy site");
+		helper.assertTrue(HouseCopier.copyOriginAt(level, copy, roof.getX(), roof.getZ()) == null, "the copy would stand on Ben's flat roof");
+		// A cobblestone floor Ben laid on that natural ground is his too.
+		for (BlockPos rel : BlockPos.betweenClosed(14, 0, 14, 18, 0, 18)) {
+			put(helper, builder, rel.immutable(), Blocks.COBBLESTONE.defaultBlockState());
+		}
+		helper.assertTrue(HouseCopier.copyOriginAt(level, copy, ground.getX(), ground.getZ()) == null, "the copy would stand on Ben's floor");
+		helper.succeed();
+	}
+
+	/**
+	 * MP-7: the still-burning camp never sits next to an offline friend's base. Ben's base is two chunks from where
+	 * the camp's first candidate stands, so his visited chunks (3x3 around him) never touch the camp's own: the
+	 * candidates still keep {@code stillBurningBaseClearance} from it.
+	 */
+	@GameTest
+	public void stillBurningCampKeepsAwayFromAnOfflineFriendsBase(GameTestHelper helper) {
+		ServerLevel level = helper.getLevel();
+		BlockPos from = helper.absolutePos(BlockPos.ZERO);
+		WorldConfig config = new WorldConfig();
+		config.stillBurningMinBlocks = 2000;
+		config.stillBurningMaxBlocks = 2000;
+		long today = 50;
+		Friends.Known alex = new Friends.Known("Alex", 500, GlobalPos.of(level.dimension(), from));
+		Friends.Known ben = new Friends.Known("Ben", 300, null);
+		Friends f = new Friends(helper, Friends.state(helper, alex, ben));
+		f.join(alex, Vec3.ZERO);
+
+		List<StillBurning.Candidate> alone = StillBurning.candidates(level, from, from, f.bases().positionsIn(level), f.bases().all(level.dimension()), false,
+				config, RandomSource.create(11), (l, chunk) -> -1);
+		helper.assertFalse(alone.isEmpty(), "no camp candidates at all");
+		StillBurning.Candidate first = alone.getFirst();
+		int east = first.chunks().stream().mapToInt(ChunkPos::x).max().orElseThrow();
+		BlockPos benBase = new BlockPos((east + 2) * 16 + 1, from.getY(), first.z());
+		helper.assertTrue(horizontal(benBase, new BlockPos(first.x(), 0, first.z())) < config.stillBurningBaseClearance, "test setup: Ben's base is not near");
+		f.data.setBase(ben.uuid(), GlobalPos.of(level.dimension(), benBase));
+		ChunkPos benChunk = ChunkPos.containing(benBase);
+		NewScarPlacer.VisitLookup visits = (l, chunk) -> Math.abs(chunk.x() - benChunk.x()) <= 1 && Math.abs(chunk.z() - benChunk.z()) <= 1 ? today - 3 : -1;
+
+		List<StillBurning.Candidate> found = StillBurning.candidates(level, from, from, f.bases().positionsIn(level), f.bases().all(level.dimension()), false,
+				config, RandomSource.create(11), visits);
+		helper.assertFalse(found.isEmpty(), "no camp candidates once Ben is known");
+		for (StillBurning.Candidate c : found) {
+			BlockPos center = new BlockPos(c.x(), 0, c.z());
+			helper.assertTrue(horizontal(center, benBase) >= config.stillBurningBaseClearance, "a camp candidate at " + center.toShortString() + ", "
+					+ Math.round(horizontal(center, benBase)) + " blocks from Ben's base");
+		}
+		helper.succeed();
+	}
+
+	private static double horizontal(BlockPos a, BlockPos b) {
+		double dx = a.getX() - b.getX();
+		double dz = a.getZ() - b.getZ();
+		return Math.sqrt(dx * dx + dz * dz);
 	}
 
 	/** D-033: never near the base, any known player's: an offline friend's first block, or their last base world saw. */

@@ -32,6 +32,7 @@ import com.forzacode.a1016_02.world.gen.ScarContext;
 import com.forzacode.a1016_02.world.gen.ScarPlanner;
 import com.forzacode.a1016_02.world.gen.Terrain;
 import com.forzacode.a1016_02.world.live.LiveTerrain;
+import com.forzacode.a1016_02.world.live.NewScarPlacer;
 
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
@@ -106,7 +107,11 @@ public final class HouseCopier {
 	private record Candidate(int x, int z, List<ChunkPos> chunks) {
 	}
 
-	private static final class SiteSearch {
+	/**
+	 * A search for the copy site: the candidates from the noise ({@link #siteSearch}), then each in turn once its
+	 * chunks are loaded ({@link #step}). The live one runs every second; tests step their own.
+	 */
+	public static final class SiteSearch {
 		final List<Candidate> candidates;
 		int index;
 		long candidateStarted;
@@ -114,6 +119,42 @@ public final class HouseCopier {
 		SiteSearch(List<Candidate> candidates, long now) {
 			this.candidates = candidates;
 			this.candidateStarted = now;
+		}
+
+		/** The candidates' centers, in the order they are tried. */
+		public List<BlockPos> centers() {
+			return candidates.stream().map(c -> new BlockPos(c.x(), 0, c.z())).toList();
+		}
+
+		/** True once every candidate was tried (or skipped) without a site. */
+		public boolean exhausted() {
+			return index >= candidates.size();
+		}
+
+		/**
+		 * Tries the current candidate: asks for its chunks (null while they load; one that does not load in time is
+		 * skipped), then returns the copy's origin there if the site fits ({@link #siteRefusal}), else moves on to the
+		 * next candidate and returns null. {@code bases} are every known base in the level, measured again now.
+		 */
+		public @Nullable BlockPos step(ServerLevel level, HouseCopyState s, List<BlockPos> bases, WorldConfig config, long now) {
+			if (exhausted()) {
+				return null;
+			}
+			Candidate c = candidates.get(index);
+			if (!ChunkLoads.request(level, c.chunks())) {
+				if (now - candidateStarted > LOAD_TIMEOUT_TICKS) {
+					index++;
+					candidateStarted = now;
+				}
+				return null;
+			}
+			BlockPos origin = copyOriginAt(level, s, c.x(), c.z());
+			if (origin == null || siteRefusal(level, s, origin, bases, config) != null) {
+				index++;
+				candidateStarted = now;
+				return null;
+			}
+			return origin;
 		}
 	}
 
@@ -326,8 +367,9 @@ public final class HouseCopier {
 
 	/**
 	 * Where the copy's origin goes for a site centered on ({@code cx}, {@code cz}), checked on loaded blocks: dry
-	 * ground no more than 2 blocks uneven, the copy's lowest layer one block above its highest ground, and every
-	 * spot of the shell and inside free (air or plants; no trees, no water, no block entity). Null if unfit.
+	 * ground no more than 2 blocks uneven and none of it placed by players (a path, a floor, a flat roof), the copy's
+	 * lowest layer one block above its highest ground, and every spot of the shell and inside free (air or plants; no
+	 * trees, no water, no block entity). Null if unfit.
 	 */
 	public static @Nullable BlockPos copyOriginAt(ServerLevel level, HouseCopyState state, int cx, int cz) {
 		BoundingBox rel = relBox(state);
@@ -342,6 +384,9 @@ public final class HouseCopier {
 					return null;
 				}
 				int ground = terrain.ground(x, z);
+				if (Services.watch().wasPlacedByPlayer(level, new BlockPos(x, ground, z))) {
+					return null;
+				}
 				high = Math.max(high, ground);
 				low = Math.min(low, ground);
 			}
@@ -651,33 +696,19 @@ public final class HouseCopier {
 	}
 
 	private static void searchSite(MinecraftServer server, ServerLevel level, SignatureData data, HouseCopyState s, WorldConfig config, long now) {
+		Bases bases = Bases.live(server);
 		if (siteSearch == null) {
-			siteSearch = new SiteSearch(candidates(level, s, config, RandomSource.create(), GameClock.day(server)), now);
+			siteSearch = siteSearch(bases, level, s, config, RandomSource.create(), GameClock.day(server), bases.watch()::lastVisitDay, now);
 		}
 		SiteSearch search = siteSearch;
-		if (search.index >= search.candidates.size()) {
+		if (search.exhausted()) {
 			siteSearch = null;
 			retryAt = now + ModConfig.realTicks(config.houseCopyRetrySeconds * 10);
 			A1016_02.LOGGER.debug("[a1016] world: no copy site among {} candidate(s); trying again later", search.candidates.size());
 			return;
 		}
-		Candidate c = search.candidates.get(search.index);
-		if (!ChunkLoads.request(level, c.chunks())) {
-			if (now - search.candidateStarted > LOAD_TIMEOUT_TICKS) {
-				search.index++;
-				search.candidateStarted = now;
-			}
-			return;
-		}
-		BlockPos origin = copyOriginAt(level, s, c.x(), c.z());
-		GlobalPos center = GlobalPos.of(level.dimension(), new BlockPos(c.x(), origin == null ? 0 : origin.getY(), c.z()));
-		boolean crowded = false;
-		for (SiteType type : SiteType.values()) {
-			crowded |= origin != null && !Services.sites().find(type, center, SITE_CLEARANCE).isEmpty();
-		}
-		if (origin == null || crowded) {
-			search.index++;
-			search.candidateStarted = now;
+		BlockPos origin = search.step(level, s, bases.all(level.dimension()), config, now);
+		if (origin == null) {
 			return;
 		}
 		HouseCopyState placed = placeSite(level, s, origin, SiteSink.LIVE, GameClock.dayTicks(server));
@@ -686,8 +717,42 @@ public final class HouseCopier {
 		A1016_02.LOGGER.info("[a1016] world: the house copy goes at {}", origin.toShortString());
 	}
 
-	/** Copy sites from the noise, {@code houseCopyMinDistance..MaxDistance} from the real house: dry, flat, not woods. */
-	private static List<Candidate> candidates(ServerLevel level, HouseCopyState s, WorldConfig config, RandomSource random, long today) {
+	/**
+	 * Why the copy may not go at {@code origin} (from {@link #copyOriginAt}), or null: one of {@code bases} (every
+	 * known player's, an offline friend's too) is within {@code houseCopyBaseClearance} of it, or a recorded site is
+	 * within {@value #SITE_CLEARANCE} blocks.
+	 */
+	static @Nullable String siteRefusal(ServerLevel level, HouseCopyState s, BlockPos origin, List<BlockPos> bases, WorldConfig config) {
+		BoundingBox rel = relBox(s);
+		BlockPos middle = origin.offset(rel.getXSpan() / 2, 0, rel.getZSpan() / 2);
+		if (Bases.near(bases, middle, config.houseCopyBaseClearance)) {
+			return "a player's base is within " + config.houseCopyBaseClearance + " blocks";
+		}
+		GlobalPos center = GlobalPos.of(level.dimension(), middle);
+		for (SiteType type : SiteType.values()) {
+			if (!Services.sites().find(type, center, SITE_CLEARANCE).isEmpty()) {
+				return "a recorded " + type.name().toLowerCase(Locale.ROOT) + " site is within " + SITE_CLEARANCE + " blocks";
+			}
+		}
+		return null;
+	}
+
+	/**
+	 * A new search for the copy site of {@code s}: the candidates now ({@link #candidates}), with {@code today} and
+	 * {@code visits} for where the players have been these days and {@code bases} for every known player's base.
+	 */
+	public static SiteSearch siteSearch(Bases bases, ServerLevel level, HouseCopyState s, WorldConfig config, RandomSource random, long today,
+			NewScarPlacer.VisitLookup visits, long now) {
+		return new SiteSearch(candidates(level, s, bases.all(level.dimension()), config, random, today, visits), now);
+	}
+
+	/**
+	 * Copy sites from the noise, {@code houseCopyMinDistance..MaxDistance} from the real house: dry, flat, not woods,
+	 * not where a player was these days and never within {@code houseCopyBaseClearance} of any of {@code bases} (an
+	 * offline friend's base too: their chunks may not have been visited for days).
+	 */
+	private static List<Candidate> candidates(ServerLevel level, HouseCopyState s, List<BlockPos> bases, WorldConfig config, RandomSource random, long today,
+			NewScarPlacer.VisitLookup visits) {
 		ScarContext context = ScarContext.current();
 		ScarPlanner planner = context == null ? null : context.planner(level);
 		Terrain noise = planner != null ? planner.terrain() : new NoiseTerrain(level);
@@ -699,6 +764,9 @@ public final class HouseCopier {
 			int d = Mth.nextInt(random, config.houseCopyMinDistance, Math.max(config.houseCopyMinDistance, config.houseCopyMaxDistance));
 			int cx = home.getX() + Mth.floor(Math.cos(angle) * d);
 			int cz = home.getZ() + Mth.floor(Math.sin(angle) * d);
+			if (Bases.near(bases, new BlockPos(cx, 0, cz), config.houseCopyBaseClearance)) {
+				continue; // someone lives there
+			}
 			Holder<Biome> biome = noise.surfaceBiome(cx, cz);
 			if (Terrain.isWetland(biome) || Terrain.isDenseWoods(biome) || noise.ground(cx, cz) <= noise.seaLevel()) {
 				continue;
@@ -716,7 +784,7 @@ public final class HouseCopier {
 			}
 			List<ChunkPos> chunks = ChunkLoads.around(box, 0);
 			// Never where the player is these days.
-			if (chunks.stream().anyMatch(chunk -> Services.watch().lastVisitDay(level, chunk) >= today - 1)) {
+			if (chunks.stream().anyMatch(chunk -> visits.lastVisitDay(level, chunk) >= today - 1)) {
 				continue;
 			}
 			found.add(new Candidate(cx, cz, chunks));
