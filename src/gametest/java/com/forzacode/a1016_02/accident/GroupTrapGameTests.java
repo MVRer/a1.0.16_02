@@ -36,6 +36,47 @@ public class GroupTrapGameTests {
 	}
 
 	/**
+	 * The dark corner is out for the night; Sam lies down in a bed (the night is not skipped: Alex is up). The torches
+	 * stay out until the real morning comes on the game clock, which is what a skipped night jumps to.
+	 */
+	@GameTest(structure = Yard.STRUCTURE, maxTicks = 40, padding = Yard.BASE_PADDING)
+	public void theDarkCornerWaitsForTheMorningWhileAFriendLiesInBed(GameTestHelper helper) {
+		Yard y = new Yard(helper);
+		y.fill(0, 0, 0, 16, 0, 16, Blocks.STONE);
+		int[][] torches = {{1, 1}, {2, 1}, {1, 2}, {8, 8}, {12, 12}, {12, 4}, {4, 12}, {8, 3}};
+		for (int[] t : torches) {
+			y.placed(t[0], 1, t[1], Blocks.TORCH);
+		}
+		BlockPos base = y.abs(8, 1, 8);
+		List<Candidate> found = Traps.DARK_CORNER.candidates(y.ctx(Yard.NOBODY, base));
+		helper.assertFalse(found.isEmpty(), "no dark corner found");
+		Candidate spot = found.getFirst();
+		helper.assertTrue(Traps.DARK_CORNER.setup(y.ctx(Yard.NOBODY, base, y.player), spot), "the torches were not taken");
+		ArmedTrap armed = AccidentPlannerImpl.build(Traps.DARK_CORNER, y.ctx(Yard.NOBODY, base), spot, y.cfg);
+		long clock = AccidentPlannerImpl.clock(y.level.getServer());
+		helper.assertTrue(armed.hasClock() && clock < armed.clockUntil(), "the morning is already here, so this checks nothing");
+
+		ServerPlayer alex = y.player;
+		ServerPlayer sam = mock(helper);
+		y.face(alex, 14.5, 1, 14.5, 0, 0);
+		sam.snapTo(y.absVec(200.5, 1, 6.5), 0, 0);
+		sam.setSleepingPos(y.abs(200, 1, 6));
+		helper.assertTrue(sam.isSleeping(), "Sam is not lying in bed");
+		Group group = new Group(helper, alex, sam);
+		TrapContext night = new TrapContext(y.level, alex, alex.getUUID(), List.of(alex, sam), base, y.data, Yard.NOBODY, y.cfg, y.now(), y.today(), group.watch);
+		ArmedTrap still = Traps.DARK_CORNER.tick(night, armed);
+		helper.assertTrue(still != null && still.phase() == ArmedTrap.Phase.SET, "the torches came back while the night went on: " + (still == null ? null : still.phase()));
+		for (ArmedTrap.SavedBlock torch : armed.saved()) {
+			helper.assertTrue(y.level.getBlockState(torch.pos()).isAir(), "a torch came back while the night went on");
+		}
+		// The morning on the game clock (where a skipped night lands): they come back.
+		ArmedTrap back = Traps.DARK_CORNER.tick(night, armed.withClockUntil(clock));
+		helper.assertTrue(back != null && back.phase() == ArmedTrap.Phase.RESTORED, "the torches did not come back in the morning");
+		helper.assertTrue(DarkCornerTrap.restore(y.level, Yard.NOBODY, back) == back, "a torch is still out");
+		y.succeedWithoutDrops();
+	}
+
+	/**
 	 * Alex's path under a stalactite: Sam, in a mine 12 blocks under it (right under the stalactite), never sets it off,
 	 * since it could never reach him through the rock; Sam on the path does.
 	 */
