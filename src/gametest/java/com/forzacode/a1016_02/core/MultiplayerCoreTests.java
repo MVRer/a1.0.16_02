@@ -37,9 +37,10 @@ import net.minecraft.world.phys.Vec3;
  * Two-player tests for the multiplayer core (MP-0, D-058 to D-064). Game tests share one server and nobody joins
  * it, so each test brings its own {@link Roster}: its own online list, state and participation events, through
  * {@link PlayerWatch}'s package-private source. Nothing here touches the live server's players or the world's
- * state, except reads that are safe with nobody online. {@link CoreContractTests} extends this.
+ * state, except reads that are safe with nobody online. {@link CoreContractTests} extends this; it extends v1.2's
+ * {@link FogWeatherTests} and {@link ConfigVersionTests}.
  */
-public class MultiplayerCoreTests {
+public class MultiplayerCoreTests extends FogWeatherTests {
 	/** A player whose game mode a test can switch. It never joins the server; a {@link Roster} lists it. */
 	static final class TestPlayer extends ServerPlayer {
 		GameType mode;

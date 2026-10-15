@@ -22,6 +22,8 @@ import net.minecraft.nbt.Tag;
 import net.minecraft.resources.RegistryOps;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
+import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.level.GameType;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.levelgen.structure.BoundingBox;
@@ -179,6 +181,17 @@ public class CoreContractTests extends MultiplayerCoreTests {
 		helper.assertTrue(GameClock.dayTicks(server) == GameClock.day(server) * GameClock.TICKS_PER_DAY + time, "dayTicks");
 		helper.assertFalse(new Director.Stub().timewarp(server, 0).isEmpty(), "the stub's timewarp has no summary");
 		helper.assertFalse(new MobTamper.Stub().isTampered(null), "the stub tampers");
+		helper.succeed();
+	}
+
+	/** v1.2's contracts (D-073, D-074): the figure stub never shows a glimpse, PERSONAL is a tag like the others. */
+	@GameTest
+	public void figureStubNeverGlimpses(GameTestHelper helper) {
+		ServerPlayer player = (ServerPlayer) helper.makeMockServerPlayer(GameType.SURVIVAL);
+		Figure stub = new Figure.Stub();
+		helper.assertFalse(stub.canGlimpse(player, player.position()), "the stub can glimpse");
+		helper.assertTrue(stub.glimpse(player, player.position(), 0.0F) == FireResult.NO_SPOT, "the stub's glimpse is not NO_SPOT");
+		helper.assertTrue(Services.figure() != null && CardTag.valueOf("PERSONAL") == CardTag.PERSONAL, "figure service or PERSONAL tag");
 		helper.succeed();
 	}
 }

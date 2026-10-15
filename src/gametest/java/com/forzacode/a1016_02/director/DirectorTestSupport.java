@@ -47,6 +47,31 @@ class DirectorTestSupport {
 		return DirectorRules.from(new Pacing(), new DirectorConfig(), profile(tempo, signature, WorldProfile.FIXED_FRAGMENTS));
 	}
 
+	/**
+	 * v1.1's pacing, before D-070 (core's C-1 changed the defaults). Only for the tuning tests that still assert v1.1's
+	 * 4b; W-DIR retargets them to v1.2's numbers and drops this.
+	 */
+	static Pacing v11Pacing() {
+		Pacing p = new Pacing();
+		p.tracesStartMinHours = 1;
+		p.tracesStartMaxHours = 3;
+		p.proximityStartMinHours = 5;
+		p.proximityStartMaxHours = 6;
+		p.tempoShift = 0.4;
+		p.aloneMaxAmbient = 1;
+		p.tracesAmbientPerHour = 1;
+		p.proximityMinorsPerHourMin = 1;
+		p.proximityMinorsPerHourMax = 2;
+		p.proximityMajorEveryHoursMin = 2;
+		p.proximityMajorEveryHoursMax = 4;
+		p.firstAccidentMinHours = 6;
+		p.emptySessionChance = 0.2;
+		p.pityStartHours = 1;
+		p.fogDriftMinSeconds = 3;
+		p.fogDriftMaxSeconds = 8;
+		return p;
+	}
+
 	static DirectorSim.Params params(DirectorRules rules, long seed, double attention, double hours) {
 		DirectorSim.Params params = DirectorSim.Params.from(new DirectorConfig(), rules);
 		params.hours = hours;
@@ -68,11 +93,16 @@ class DirectorTestSupport {
 	 * change the numbers.
 	 */
 	static List<DirectorSim.Result> registryRuns(Tempo tempo) {
+		return registryRuns(tempo, new Pacing());
+	}
+
+	/** {@link #registryRuns(Tempo)} on this pacing. */
+	static List<DirectorSim.Result> registryRuns(Tempo tempo, Pacing pacing) {
 		List<CardInfo> deck = DirectorApi.registeredCards().stream().filter(card -> !DebugPingCard.ID.equals(card.id())).toList();
 		List<DirectorSim.Result> out = new ArrayList<>();
 		for (long seed : DirectorApi.tuningSeeds()) {
 			DirectorConfig config = new DirectorConfig();
-			DirectorRules rules = DirectorRules.from(new Pacing(), config, com.forzacode.a1016_02.debug.Playthrough.profile(seed, tempo));
+			DirectorRules rules = DirectorRules.from(pacing, config, com.forzacode.a1016_02.debug.Playthrough.profile(seed, tempo));
 			DirectorSim.Params params = DirectorSim.Params.from(config, rules);
 			params.hours = HOURS;
 			params.seed = seed;

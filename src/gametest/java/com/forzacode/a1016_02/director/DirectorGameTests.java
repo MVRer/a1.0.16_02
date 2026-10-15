@@ -25,6 +25,7 @@ import com.forzacode.a1016_02.core.CardTag;
 import com.forzacode.a1016_02.core.FireResult;
 import com.forzacode.a1016_02.core.HerobrineState;
 import com.forzacode.a1016_02.core.ModConfig;
+import com.forzacode.a1016_02.core.Pacing;
 import com.forzacode.a1016_02.core.Services;
 import com.forzacode.a1016_02.core.Signature;
 import com.forzacode.a1016_02.core.Stage;
@@ -891,7 +892,8 @@ public class DirectorGameTests extends DirectorMultiplayerTests {
 		helper.assertTrue(deck.getOrDefault(Tier.MINOR, 0L) >= 8 && deck.getOrDefault(Tier.MAJOR, 0L) >= 8,
 				"the registered deck is too small for the rates to mean anything: " + deck);
 		for (Tempo tempo : Tempo.values()) {
-			List<DirectorSim.Result> runs = DirectorTestSupport.registryRuns(tempo);
+			// Still v1.1's 4b on v1.1's pacing until W-DIR retargets it to D-070's.
+			List<DirectorSim.Result> runs = DirectorTestSupport.registryRuns(tempo, DirectorTestSupport.v11Pacing());
 			DirectorSim.Rates rates = DirectorSim.Rates.of(runs);
 			DirectorRules rules = runs.getFirst().rules;
 			double hour = rules.hourTicks;
@@ -1024,13 +1026,15 @@ public class DirectorGameTests extends DirectorMultiplayerTests {
 
 	@GameTest
 	public void paceMultiplierKeepsTheHardFloors(GameTestHelper helper) {
-		DirectorSim.Result normal = flagged(Set.of(), 30);
+		// v1.1's pacing until W-DIR retargets it to D-070's (at v1.2's rates x1.6 no longer adds minors).
+		Pacing v11 = DirectorTestSupport.v11Pacing();
+		DirectorSim.Result normal = flagged(Set.of(), 30, v11);
 		long normalMajors = fires(normal, e -> e.tier() == Tier.MAJOR).size();
 		long normalMinors = fires(normal, e -> e.tier() == Tier.MINOR).size();
 		helper.assertTrue(normalMajors > 0 && normalMinors > 0, "x1: majors " + normalMajors + ", minors " + normalMinors);
 		long hour = normal.rules.hourTicks;
 		for (String x : List.of("1.6", "4")) {
-			DirectorSim.Result fast = flagged(Set.of("director:pace_multiplier=" + x), 30);
+			DirectorSim.Result fast = flagged(Set.of("director:pace_multiplier=" + x), 30, v11);
 			String at = "pace x" + x + ": ";
 			long majors = fires(fast, e -> e.tier() == Tier.MAJOR).size();
 			long minors = fires(fast, e -> e.tier() == Tier.MINOR).size();
@@ -1085,7 +1089,13 @@ public class DirectorGameTests extends DirectorMultiplayerTests {
 
 	/** A Proximity run from tick 0, day 0 (every fit lands), with these flags on the rules. */
 	private static DirectorSim.Result flagged(Set<String> flags, double hours) {
-		DirectorRules rules = DirectorFlags.apply(rules(Tempo.SLOW_BURN, Signature.CROSS_ROW), DirectorFlags.parse(flags));
+		return flagged(flags, hours, new Pacing());
+	}
+
+	private static DirectorSim.Result flagged(Set<String> flags, double hours, Pacing pacing) {
+		DirectorRules base = DirectorRules.from(pacing, new DirectorConfig(),
+				DirectorTestSupport.profile(Tempo.SLOW_BURN, Signature.CROSS_ROW, WorldProfile.FIXED_FRAGMENTS));
+		DirectorRules rules = DirectorFlags.apply(base, DirectorFlags.parse(flags));
 		DirectorSim.Params params = DirectorTestSupport.params(rules, 5, rules.attentionNeutral, hours);
 		params.fitChance = 1;
 		params.noSpotChance = 0;

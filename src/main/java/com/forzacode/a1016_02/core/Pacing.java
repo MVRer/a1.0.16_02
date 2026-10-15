@@ -10,6 +10,10 @@ import net.minecraft.util.RandomSource;
  * under {@code pacing} in {@code config/a1016_02.json}. Fields are in natural units (seconds, minutes, hours,
  * in-game days, blocks). Read real-time values through the {@code ...Ticks()} accessors: they apply
  * {@code devFastMode}. In-game days are never divided; use {@code /a1016 timewarp} for those.
+ *
+ * <p>Versioned with the file's root ({@link ModConfig#configVersion}, D-075): a changed default gets a step in
+ * {@link #upgrade} and a higher {@link ModConfig#CONFIG_VERSION}, so files written before it take the new number unless
+ * the player changed it.
  */
 public final class Pacing {
 	/** A range of ticks. */
@@ -28,28 +32,28 @@ public final class Pacing {
 	public double majorGapMinutes = 60;
 	public double fakeChance = 1.0 / 3.0;
 
-	// --- tempo: paceFactor = 1 + tempoShift * direction (0.6 / 1.0 / 1.4) ---
-	public double tempoShift = 0.4;
+	// --- tempo: paceFactor = 1 + tempoShift * direction (0.75 / 1.0 / 1.25) ---
+	public double tempoShift = 0.25;
 
-	// --- stages by real play time (hours, before paceFactor) ---
-	public double tracesStartMinHours = 1;
-	public double tracesStartMaxHours = 3;
-	public double proximityStartMinHours = 5;
-	public double proximityStartMaxHours = 6;
-	public int aloneMaxAmbient = 1;
-	public double tracesAmbientPerHour = 1;
-	public double proximityMinorsPerHourMin = 1;
-	public double proximityMinorsPerHourMax = 2;
-	public double proximityMajorEveryHoursMin = 2;
-	public double proximityMajorEveryHoursMax = 4;
-	public double firstAccidentMinHours = 6;
-	/** From Traces on, some whole sessions contain nothing. */
+	// --- stages by real play time (hours, before paceFactor; D-070: something in the first hour) ---
+	public double tracesStartMinHours = 0.4;
+	public double tracesStartMaxHours = 0.9;
+	public double proximityStartMinHours = 1.75;
+	public double proximityStartMaxHours = 2.75;
+	public int aloneMaxAmbient = 3;
+	public double tracesAmbientPerHour = 2;
+	public double proximityMinorsPerHourMin = 1.5;
+	public double proximityMinorsPerHourMax = 2.5;
+	public double proximityMajorEveryHoursMin = 1.5;
+	public double proximityMajorEveryHoursMax = 3;
+	public double firstAccidentMinHours = 3.5;
+	/** Some whole sessions contain nothing, at least this long (from Proximity on since v1.2, D-070; the director decides). */
 	public double emptySessionMinMinutes = 45;
 	/**
-	 * Chance per session, from Traces on, that the whole session stays empty: about 1 in 5. With the forced quiets
-	 * this leaves about 40% of Proximity silent in the 20 h dry runs (it was about half at 0.25).
+	 * Chance per session that the whole session stays empty: about 1 in 10 (D-070; v1.1 had 1 in 5). Silence is still
+	 * designed, just shorter. Which stages roll it is the director's rule.
 	 */
-	public double emptySessionChance = 0.2;
+	public double emptySessionChance = 0.1;
 
 	// --- tension and quiet ---
 	public double tensionAmbient = 5;
@@ -71,7 +75,7 @@ public final class Pacing {
 	 * and minor odds rise by {@code pityBonusPerHour} per hour, up to {@code pityMaxBonus} (+100% = double), so
 	 * something always comes back after a long silence.
 	 */
-	public double pityStartHours = 1;
+	public double pityStartHours = 0.5;
 	public double pityBonusPerHour = 0.25;
 	public double pityMaxBonus = 1.0;
 
@@ -92,8 +96,8 @@ public final class Pacing {
 	public int torchesBehindDistance = 40;
 	public int mountainLightMinDistance = 100;
 	public double silenceSeconds = 60;
-	public double fogDriftMinSeconds = 3;
-	public double fogDriftMaxSeconds = 8;
+	public double fogDriftMinSeconds = 4;
+	public double fogDriftMaxSeconds = 10;
 	public int digBelow = 3;
 	public int breachWithin = 2;
 	public int tunnelGrowthPerVisit = 10;
@@ -130,6 +134,36 @@ public final class Pacing {
 
 	public Pacing() {
 		fillMissingWeights();
+	}
+
+	/**
+	 * Brings a pacing read at root version {@code from} up to {@link ModConfig#CONFIG_VERSION}, one step at a time;
+	 * each step replaces only the values that still equal that version's defaults ({@link ModConfig.Upgrades}).
+	 * Step 0 to 1 (v1.2, D-070): Traces at 0.4 to 0.9 h (was 1 to 3), Proximity at 1.75 to 2.75 h (5 to 6), tempo shift
+	 * 0.25 (0.4), up to 3 ambients in Alone (1), 2 ambients an hour in Traces (1), 1.5 to 2.5 minors an hour in
+	 * Proximity (1 to 2), a major every 1.5 to 3 h (2 to 4), the first accident from 3.5 h (6), empty sessions 0.1
+	 * (0.2), pity from 0.5 h (1), fog drifts of 4 to 10 s (3 to 8).
+	 */
+	void upgrade(int from) {
+		Pacing d = new Pacing();
+		if (from < 1) {
+			tracesStartMinHours = ModConfig.Upgrades.keepOrNew(tracesStartMinHours, 1, d.tracesStartMinHours);
+			tracesStartMaxHours = ModConfig.Upgrades.keepOrNew(tracesStartMaxHours, 3, d.tracesStartMaxHours);
+			proximityStartMinHours = ModConfig.Upgrades.keepOrNew(proximityStartMinHours, 5, d.proximityStartMinHours);
+			proximityStartMaxHours = ModConfig.Upgrades.keepOrNew(proximityStartMaxHours, 6, d.proximityStartMaxHours);
+			tempoShift = ModConfig.Upgrades.keepOrNew(tempoShift, 0.4, d.tempoShift);
+			aloneMaxAmbient = ModConfig.Upgrades.keepOrNew(aloneMaxAmbient, 1, d.aloneMaxAmbient);
+			tracesAmbientPerHour = ModConfig.Upgrades.keepOrNew(tracesAmbientPerHour, 1, d.tracesAmbientPerHour);
+			proximityMinorsPerHourMin = ModConfig.Upgrades.keepOrNew(proximityMinorsPerHourMin, 1, d.proximityMinorsPerHourMin);
+			proximityMinorsPerHourMax = ModConfig.Upgrades.keepOrNew(proximityMinorsPerHourMax, 2, d.proximityMinorsPerHourMax);
+			proximityMajorEveryHoursMin = ModConfig.Upgrades.keepOrNew(proximityMajorEveryHoursMin, 2, d.proximityMajorEveryHoursMin);
+			proximityMajorEveryHoursMax = ModConfig.Upgrades.keepOrNew(proximityMajorEveryHoursMax, 4, d.proximityMajorEveryHoursMax);
+			firstAccidentMinHours = ModConfig.Upgrades.keepOrNew(firstAccidentMinHours, 6, d.firstAccidentMinHours);
+			emptySessionChance = ModConfig.Upgrades.keepOrNew(emptySessionChance, 0.2, d.emptySessionChance);
+			pityStartHours = ModConfig.Upgrades.keepOrNew(pityStartHours, 1, d.pityStartHours);
+			fogDriftMinSeconds = ModConfig.Upgrades.keepOrNew(fogDriftMinSeconds, 3, d.fogDriftMinSeconds);
+			fogDriftMaxSeconds = ModConfig.Upgrades.keepOrNew(fogDriftMaxSeconds, 8, d.fogDriftMaxSeconds);
+		}
 	}
 
 	void fillMissingWeights() {

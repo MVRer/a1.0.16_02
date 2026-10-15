@@ -1,8 +1,8 @@
 package com.forzacode.a1016_02.core;
 
 /**
- * World profile tempo. Scales every stage time by {@link #paceFactor()}: 0.6 / 1.0 / 1.4 with the default
- * {@code Pacing.tempoShift} of 0.4.
+ * World profile tempo. Scales every stage time by {@link #paceFactor()}: 0.75 / 1.0 / 1.25 with the default
+ * {@code Pacing.tempoShift} of 0.25 (D-070; 0.6 / 1.0 / 1.4 at v1.1's 0.4).
  */
 public enum Tempo {
 	EARLY(-1),

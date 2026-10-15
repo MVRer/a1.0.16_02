@@ -48,13 +48,32 @@ public final class HerobrineState extends SavedData {
 		).apply(i, Subject::new));
 	}
 
-	/** Client effects that persist and are sent again on every join. */
-	public record Effects(boolean musicOff, float duskFogLevel) {
-		public static final Effects NONE = new Effects(false, 0.0F);
+	/**
+	 * Client effects that persist and are sent again on every join: music off, the dusk fog level and the world's fog
+	 * spell (D-071; empty when the sky is clear). A save from before fog weather has no {@code fogSpell} and loads with
+	 * none.
+	 */
+	public record Effects(boolean musicOff, float duskFogLevel, Optional<FogSpell> fogSpell) {
+		public static final Effects NONE = new Effects(false, 0.0F, Optional.empty());
 		static final Codec<Effects> CODEC = RecordCodecBuilder.create(i -> i.group(
 				Codec.BOOL.optionalFieldOf("musicOff", false).forGetter(Effects::musicOff),
-				Codec.FLOAT.optionalFieldOf("duskFogLevel", 0.0F).forGetter(Effects::duskFogLevel)
+				Codec.FLOAT.optionalFieldOf("duskFogLevel", 0.0F).forGetter(Effects::duskFogLevel),
+				FogSpell.CODEC.optionalFieldOf("fogSpell").forGetter(Effects::fogSpell)
 		).apply(i, Effects::new));
+
+		public Effects {
+			fogSpell = fogSpell != null ? fogSpell : Optional.empty();
+		}
+
+		/** Without a fog spell. */
+		public Effects(boolean musicOff, float duskFogLevel) {
+			this(musicOff, duskFogLevel, Optional.empty());
+		}
+
+		/** These effects with this fog spell (or none). */
+		public Effects withFogSpell(Optional<FogSpell> spell) {
+			return new Effects(musicOff, duskFogLevel, spell);
+		}
 	}
 
 	/** A player's first placed block, first crafting table and first chest. Each may be null. */
