@@ -4,6 +4,7 @@ import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.EnumMap;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -44,9 +45,18 @@ public final class PacingMemory {
 	final Map<Tier, String> lastFired = new EnumMap<>(Tier.class);
 	final Map<Tier, String> held = new EnumMap<>(Tier.class);
 	final Map<Tier, Long> heldSince = new EnumMap<>(Tier.class);
+	/** Looks of the current hold at which the held card's moment did not fit (a look a gate held back does not count). */
+	final Map<Tier, Long> unfitLooks = new EnumMap<>(Tier.class);
 	final Map<Tier, String> lastGivenUp = new EnumMap<>(Tier.class);
 	/** Day ticks at which a deck first found nothing to draw while only gated cards held its reshuffle back. */
 	final Map<Tier, Long> deckStuckSince = new EnumMap<>(Tier.class);
+	/**
+	 * Cards given back because their moment did not come and not fired since, by id, with this player's clock until
+	 * which each is parked: never drawn, and out of its deck for the run-out rule. Once the park is over the entry stays
+	 * until the card fires or is felt: a hold of it then goes back at its first look that does not fit. At most one
+	 * entry per registered card.
+	 */
+	final Map<String, Long> parkedUntil = new LinkedHashMap<>();
 
 	// --- pacing (own fires and felt ones) ---
 	long lastFireAny = DirectorMemory.NEVER;
@@ -142,6 +152,14 @@ public final class PacingMemory {
 		return Collections.unmodifiableSet(cycleFired.get(tier));
 	}
 
+	/**
+	 * This player's clock until which the card is (or was) parked, given back because its moment did not come and not
+	 * fired since, or -1.
+	 */
+	public long parkedUntil(String cardId) {
+		return parkedUntil.getOrDefault(cardId, -1L);
+	}
+
 	void addHistory(DirectorMemory.HistoryEntry entry, int max) {
 		history.addLast(entry);
 		while (history.size() > Math.max(1, max)) {
@@ -169,8 +187,12 @@ public final class PacingMemory {
 		tag.put("lastFired", DirectorMemory.strings(lastFired));
 		tag.put("held", DirectorMemory.strings(held));
 		tag.put("heldSince", DirectorMemory.longs(heldSince));
+		tag.put("unfitLooks", DirectorMemory.longs(unfitLooks));
 		tag.put("lastGivenUp", DirectorMemory.strings(lastGivenUp));
 		tag.put("deckStuckSince", DirectorMemory.longs(deckStuckSince));
+		CompoundTag parked = new CompoundTag();
+		parkedUntil.forEach(parked::putLong);
+		tag.put("parkedUntil", parked);
 
 		tag.putLong("lastFireAny", lastFireAny);
 		tag.put("lastFireTier", DirectorMemory.longs(lastFireTier));
@@ -234,8 +256,13 @@ public final class PacingMemory {
 		DirectorMemory.readStrings(tag.getCompoundOrEmpty("lastFired"), m.lastFired);
 		DirectorMemory.readStrings(tag.getCompoundOrEmpty("held"), m.held);
 		DirectorMemory.readLongs(tag.getCompoundOrEmpty("heldSince"), m.heldSince, Tier::valueOf);
+		DirectorMemory.readLongs(tag.getCompoundOrEmpty("unfitLooks"), m.unfitLooks, Tier::valueOf);
 		DirectorMemory.readStrings(tag.getCompoundOrEmpty("lastGivenUp"), m.lastGivenUp);
 		DirectorMemory.readLongs(tag.getCompoundOrEmpty("deckStuckSince"), m.deckStuckSince, Tier::valueOf);
+		CompoundTag parked = tag.getCompoundOrEmpty("parkedUntil");
+		for (String id : parked.keySet()) {
+			parked.getLong(id).ifPresent(until -> m.parkedUntil.put(id, until));
+		}
 
 		m.lastFireAny = tag.getLongOr("lastFireAny", DirectorMemory.NEVER);
 		DirectorMemory.readLongs(tag.getCompoundOrEmpty("lastFireTier"), m.lastFireTier, Tier::valueOf);

@@ -39,7 +39,7 @@ import net.minecraft.util.RandomSource;
  * logic and dry runs with their own memories; nothing here touches the live director or the world's state.
  * {@link DirectorMultiplayerTests} extends this.
  */
-public class DirectorV12Tests {
+public class DirectorV12Tests extends R1ReviewDirectorTests {
 	private static final UUID ANA = new UUID(0xA1L, 1L);
 	private static final UUID BEN = new UUID(0xBEL, 2L);
 
@@ -127,19 +127,23 @@ public class DirectorV12Tests {
 
 	/**
 	 * A held ambient (or minor) card whose moment does not fit, as the tunnel ladder's first step drawn on the surface,
-	 * goes back into its deck after {@code heldUnfitGiveBack} (5 minutes) instead of freezing its tier for the whole
-	 * hold: the next draw passes it over and another ambient fires; once its moment comes (underground) it is drawn again
-	 * and fires. A major whose moment never fits keeps the long hold.
+	 * goes back into its deck after {@code heldUnfitGiveBack} (5 minutes) of looks instead of freezing its tier for the
+	 * whole hold. Looked at all along, it is parked for {@code unfitPark} (30 minutes) and hands the roll that drew it to
+	 * the next card, which fires in the same tick; never drawn while parked, while the other ambients fire. Drawn again
+	 * after its park and still not fitting, it goes back at its one look, again with its roll handed on. Once its moment
+	 * comes (underground) and its park is over it is drawn again and fires. Looks the gap after a fire held back do not
+	 * count: such a hold waits for its five minutes of looks. A major whose moment never fits keeps the long hold.
 	 */
 	@GameTest
 	public void aCardWhoseMomentNeverFitsNeverFreezesItsTier(GameTestHelper helper) {
 		DirectorRules rules = rules(Tempo.SLOW_BURN, Signature.CROSS_ROW);
 		rules.proximityAmbientPerHour = 1_000_000;
 		rules.minAnyGap = 0;
-		helper.assertTrue(rules.heldUnfitGiveBack == rules.hourTicks / 12 && rules.holdGiveUp == rules.hourTicks, "the holds: " + rules.heldUnfitGiveBack
-				+ " and " + rules.holdGiveUp + " ticks");
-		DirectorBrain brain = new DirectorBrain(rules, List.of(card("steps_behind", Tier.AMBIENT, Stage.ALONE, true, CardTag.SOUND, CardTag.PERSONAL),
-				card("plain_a", Tier.AMBIENT, Stage.ALONE, false), card("plain_b", Tier.AMBIENT, Stage.ALONE, false)), 50);
+		helper.assertTrue(rules.heldUnfitGiveBack == rules.hourTicks / 12 && rules.holdGiveUp == rules.hourTicks && rules.unfitPark == rules.hourTicks / 2,
+				"the holds: " + rules.heldUnfitGiveBack + ", " + rules.holdGiveUp + " and the park " + rules.unfitPark + " ticks");
+		List<CardInfo> deck = List.of(card("steps_behind", Tier.AMBIENT, Stage.ALONE, true, CardTag.SOUND, CardTag.PERSONAL),
+				card("plain_a", Tier.AMBIENT, Stage.ALONE, false), card("plain_b", Tier.AMBIENT, Stage.ALONE, false));
+		DirectorBrain brain = new DirectorBrain(rules, deck, 50);
 		Solo solo = DirectorTestSupport.pinned(rules);
 		boolean[] underground = {false};
 		ScriptEnv env = new ScriptEnv(Stage.PROXIMITY, 0, rules.attentionNeutral);
@@ -148,7 +152,7 @@ public class DirectorV12Tests {
 		DirectorBrain.Recorder rec = new DirectorBrain.Recorder() {
 			@Override
 			public void gaveUp(DirectorBrain.Clock clock, Tier tier, String cardId, String why) {
-				if (cardId.equals("steps_behind") && why.equals("its moment did not come")) {
+				if (cardId.equals("steps_behind") && why.startsWith(DirectorBrain.UNFIT)) {
 					gaveUp.add(new long[] {clock.playTicks()});
 				}
 			}
@@ -164,24 +168,74 @@ public class DirectorV12Tests {
 			env.tension = 0;
 			solo.step(brain, clock, env, random, rec);
 		}
-		helper.assertTrue(env.fired.isEmpty() && !gaveUp.isEmpty() && gaveUp.getFirst()[0] - heldAt >= rules.heldUnfitGiveBack
+		helper.assertTrue(!gaveUp.isEmpty() && gaveUp.getFirst()[0] - heldAt >= rules.heldUnfitGiveBack
 				&& gaveUp.getFirst()[0] - heldAt < rules.heldUnfitGiveBack + rules.tickInterval, "the unfit hold went back after "
 				+ (gaveUp.isEmpty() ? "never" : gaveUp.getFirst()[0] - heldAt) + " ticks, fired " + env.fired);
 		helper.assertTrue(!"steps_behind".equals(solo.pacing.held(Tier.AMBIENT)) && !solo.pacing.cycleFired(Tier.AMBIENT).contains("steps_behind"),
 				"the card did not go back into its deck");
-		clock = clock.plus(rules.tickInterval);
-		env.tension = 0;
-		solo.step(brain, clock, env, random, rec);
-		helper.assertTrue(env.fired.size() == 1 && env.fired.getFirst().startsWith("plain_"), "the next draw did not pass it over: " + env.fired);
+		// Looked at all along, it is parked and hands the roll that drew it to the next card, in the same tick.
+		helper.assertTrue(env.fired.size() == 1 && env.fired.getFirst().startsWith("plain_") && clock.playTicks() == gaveUp.getFirst()[0],
+				"the next draw did not pass it over in the same tick: " + env.fired);
+		long parkedUntil = solo.pacing.parkedUntil("steps_behind");
+		helper.assertTrue(parkedUntil == gaveUp.getFirst()[0] + rules.unfitPark, "the card went back without its park: until " + parkedUntil);
 
-		// Underground now: it is drawn again (once the others had their turn) and fires.
+		// Parked, it is never drawn while the others go on. Drawn again after its park, still on the surface, it goes back
+		// at its one look and hands its roll on: another ambient fires in that same tick.
+		while (gaveUp.size() < 2 && clock.playTicks() < parkedUntil + 20 * rules.tickInterval) {
+			clock = clock.plus(rules.tickInterval);
+			env.tension = 0;
+			int before = env.fired.size();
+			solo.step(brain, clock, env, random, rec);
+			helper.assertTrue(clock.playTicks() >= parkedUntil || !"steps_behind".equals(solo.pacing.held(Tier.AMBIENT)), "drawn while parked");
+			if (gaveUp.size() == 2) {
+				helper.assertTrue(gaveUp.get(1)[0] >= parkedUntil && env.fired.size() == before + 1 && env.fired.getLast().startsWith("plain_"),
+						"after its park it did not go back at once with its roll handed on: " + env.fired.subList(before, env.fired.size()));
+			}
+		}
+		helper.assertTrue(gaveUp.size() == 2 && env.fired.size() > 3, "after its park it was never drawn again: " + gaveUp.size() + " give-backs");
+		parkedUntil = solo.pacing.parkedUntil("steps_behind");
+
+		// Underground now: it waits out its new park, then it is drawn again and fires.
 		underground[0] = true;
-		for (int i = 0; i < 20 && !env.fired.contains("steps_behind"); i++) {
+		for (int i = 0; i < (int) (rules.unfitPark / rules.tickInterval) + 20 && !env.fired.contains("steps_behind"); i++) {
 			clock = clock.plus(rules.tickInterval);
 			env.tension = 0;
 			solo.step(brain, clock, env, random, rec);
+			helper.assertTrue(!env.fired.contains("steps_behind") || clock.playTicks() >= parkedUntil, "it fired while parked: " + env.fired);
 		}
-		helper.assertTrue(env.fired.contains("steps_behind"), "its moment came and it never fired: " + env.fired);
+		helper.assertTrue(env.fired.contains("steps_behind") && solo.pacing.parkedUntil("steps_behind") == -1,
+				"its moment came and it never fired, or it fired and kept its park: " + env.fired);
+
+		// The gap after a fire holds its looks back: they do not count, and the hold waits for five minutes of looks.
+		DirectorRules gapped = rules(Tempo.SLOW_BURN, Signature.CROSS_ROW);
+		gapped.proximityAmbientPerHour = 1_000_000;
+		Solo blocked = DirectorTestSupport.pinned(gapped);
+		ScriptEnv surface = new ScriptEnv(Stage.PROXIMITY, 0, gapped.attentionNeutral);
+		surface.fits = card -> !card.id().equals("steps_behind");
+		DirectorBrain.Clock from = new DirectorBrain.Clock(2 * gapped.hourTicks, 2 * DirectorBrain.DAY_TICKS);
+		long blockedAt = from.playTicks();
+		blocked.startAt(from);
+		blocked.pacing.held.put(Tier.AMBIENT, "steps_behind");
+		blocked.pacing.heldSince.put(Tier.AMBIENT, blockedAt);
+		blocked.pacing.lastFireAny = blockedAt;
+		List<long[]> blockedBack = new ArrayList<>();
+		DirectorBrain.Recorder blockedRec = new DirectorBrain.Recorder() {
+			@Override
+			public void gaveUp(DirectorBrain.Clock c, Tier tier, String cardId, String why) {
+				blockedBack.add(new long[] {c.playTicks()});
+			}
+		};
+		DirectorBrain gappedBrain = new DirectorBrain(gapped, deck, 50);
+		while (blockedBack.isEmpty() && from.playTicks() < blockedAt + gapped.holdGiveUp) {
+			from = from.plus(gapped.tickInterval);
+			surface.tension = 0;
+			blocked.step(gappedBrain, from, surface, random, blockedRec);
+		}
+		long firstLook = blockedAt + gapped.minAnyGap;
+		helper.assertTrue(!blockedBack.isEmpty() && blockedBack.getFirst()[0] >= firstLook + gapped.heldUnfitGiveBack - gapped.tickInterval
+				&& blocked.pacing.parkedUntil("steps_behind") == blockedBack.getFirst()[0] + gapped.unfitPark && surface.fired.size() == 1,
+				"a hold the gap held back went back after " + (blockedBack.isEmpty() ? "never" : blockedBack.getFirst()[0] - blockedAt) + " ticks (its looks from "
+						+ (firstLook - blockedAt) + "), parked until " + blocked.pacing.parkedUntil("steps_behind") + ", fired " + surface.fired);
 
 		// A major whose moment never fits keeps its long hold.
 		DirectorBrain majors = new DirectorBrain(rules, List.of(card("major_x", Tier.MAJOR, Stage.PROXIMITY, false)), 10);
@@ -198,6 +252,61 @@ public class DirectorV12Tests {
 		}
 		helper.assertTrue("major_x".equals(major.pacing.held(Tier.MAJOR)), "a major went back before its long hold: " + major.pacing.held(Tier.MAJOR));
 		helper.succeed();
+	}
+
+	/**
+	 * R1 #1 in the dry runs: the registered deck with the debug ping card kept in (its moment never fits) for a surface
+	 * player, for whom the tunnel ladder's three cards and far in the rock never fit either, every tempo. Each card that
+	 * never fits is drawn, goes back after five minutes, parked, with its roll handed on, so its deck refills with the
+	 * cards that can fire: the ambient and minor rates of Traces and Proximity stay within 10% of the plain runs' (where
+	 * every card fits by the dice), the first hour's targets hold, none of those cards fires, and every hard limit holds
+	 * over the 20 h. The same runs without the park are logged.
+	 */
+	@GameTest(maxTicks = 3000)
+	public void aDeckWithCardsThatNeverFitKeepsItsRates(GameTestHelper helper) {
+		List<CardInfo> all = DirectorApi.registeredCards();
+		java.util.function.Predicate<CardInfo> never = card -> card.id().equals(com.forzacode.a1016_02.debug.DebugPingCard.ID)
+				|| card.id().startsWith("steps_behind_") || card.id().equals("far_in_the_rock");
+		helper.assertTrue(all.stream().filter(never).count() == 5, "the cards that never fit: " + all.stream().filter(never).map(CardInfo::id).toList());
+		DirectorConfig unparked = new DirectorConfig();
+		unparked.unfitParkMinutes = 0;
+		for (Tempo tempo : Tempo.values()) {
+			DirectorTestSupport.FourB plain = DirectorTestSupport.FourB.of(DirectorTestSupport.registryRuns(tempo), DirectorTestSupport.registryDeck());
+			List<DirectorSim.Result> runs = DirectorTestSupport.registryRuns(tempo, new DirectorConfig(), all, never);
+			DirectorTestSupport.FourB with = DirectorTestSupport.FourB.of(runs, all);
+			DirectorTestSupport.FirstHour first = DirectorTestSupport.FirstHour.of(runs);
+			DirectorTestSupport.FourB noPark = DirectorTestSupport.FourB.of(DirectorTestSupport.registryRuns(tempo, unparked, all, never), all);
+			A1016_02.LOGGER.info("[a1016] director never-fitting cards {}: plain {}", tempo, plain.summary());
+			A1016_02.LOGGER.info("[a1016] director never-fitting cards {}: parked {}; {}", tempo, with.summary(), first.summary());
+			A1016_02.LOGGER.info("[a1016] director never-fitting cards {}: without the park {}", tempo, noPark.summary());
+			String at = tempo + ", parked " + with.summary() + " against plain " + plain.summary() + ": ";
+			long parks = 0;
+			for (DirectorSim.Result run : runs) {
+				String seed = at + "seed " + run.params.seed + ": ";
+				for (DirectorSim.Event e : run.events) {
+					if (e.kind() == DirectorSim.Kind.FIRE && never.test(cardOf(all, e.cardId()))) {
+						helper.assertTrue(false, seed + e.cardId() + " fired although its moment never comes");
+					}
+					if (e.kind() == DirectorSim.Kind.GIVE_UP && e.note().endsWith(DirectorBrain.PARKED)) {
+						parks++;
+					}
+				}
+				helper.assertTrue(run.violations.isEmpty(), seed + run.violations);
+				List<String> hard = DirectorTestSupport.feltHardLimits(run, all);
+				helper.assertTrue(hard.isEmpty(), seed + hard);
+			}
+			helper.assertTrue(parks >= runs.size(), at + "only " + parks + " unfit give-backs in " + runs.size() + " runs: the runs never parked a card");
+			helper.assertTrue(with.tracesAmbientsPerHour() >= 0.9 * plain.tracesAmbientsPerHour() && with.tracesMinorsPerHour() >= 0.9 * plain.tracesMinorsPerHour()
+					&& with.proximityAmbientsPerHour() >= 0.9 * plain.proximityAmbientsPerHour()
+					&& with.proximityMinorsPerHour() >= 0.9 * plain.proximityMinorsPerHour(), at + "a rate fell more than 10%");
+			helper.assertTrue(first.by30() * 4 >= first.runs() * 3 && first.by45() * 10 >= first.runs() * 9 && first.twoOrMore() * 10 >= first.runs() * 7
+					&& first.most() <= 5, at + "the first hour: " + first.summary());
+		}
+		helper.succeed();
+	}
+
+	private static CardInfo cardOf(List<CardInfo> deck, String id) {
+		return deck.stream().filter(card -> card.id().equals(id)).findFirst().orElseThrow();
 	}
 
 	// --- D-071: fog weather ---
@@ -585,8 +694,9 @@ public class DirectorV12Tests {
 	/**
 	 * D-075, the director's section: a v1.1 file (no version, v1.1's defaults, a few values the player changed) upgrades
 	 * to v1.2's defaults where nothing was changed and keeps every hand-changed value (a rate, a tag weight, an added tag);
-	 * the new fields come with their defaults; the result is written at version 1 and never upgraded again; a missing
-	 * section is v1.2's defaults.
+	 * the new fields come with their defaults; the result is written at the current version and never upgraded again; a
+	 * missing section is v1.2's defaults. A version 1 section (v1.2 before its fixes) takes {@code unfitParkMinutes} with
+	 * its default and keeps every other value as it is, even one equal to a v1.1 default.
 	 */
 	@GameTest
 	public void theDirectorSectionUpgradeKeepsWhatThePlayerChanged(GameTestHelper helper) {
@@ -600,14 +710,16 @@ public class DirectorV12Tests {
 		old.stageTagWeights.get("TRACES").put("MOB", 0.8); // the player's addition
 		JsonObject section = gson.toJsonTree(old).getAsJsonObject();
 		for (String added : List.of("version", "firstHourMaxFires", "emptySessionMinStage", "groupRateFactor", "fogWeatherOddsFactor",
-				"fogWeatherSightingWeight", "fogWeatherMajorPullMinutes")) {
+				"fogWeatherSightingWeight", "fogWeatherMajorPullMinutes", "heldUnfitGiveBackMinutes", "unfitParkMinutes")) {
 			section.remove(added);
 		}
 		JsonObject sections = new JsonObject();
 		sections.add("director", section);
 		DirectorConfig read = ModConfig.readSection(sections, "director", DirectorConfig.class, DirectorConfig::new);
 		DirectorConfig d = new DirectorConfig();
-		helper.assertTrue(read.version == DirectorConfig.VERSION && DirectorConfig.VERSION == 1, "version " + read.version);
+		helper.assertTrue(read.version == DirectorConfig.VERSION && DirectorConfig.VERSION == 2, "version " + read.version);
+		helper.assertTrue(read.heldUnfitGiveBackMinutes == 5 && read.unfitParkMinutes == 30, "the holds: give back after " + read.heldUnfitGiveBackMinutes
+				+ " min, parked " + read.unfitParkMinutes + " min");
 		helper.assertTrue(read.aloneAmbientPerHour == d.aloneAmbientPerHour && read.proximityAmbientPerHour == 2.5 && read.tracesMinorsPerHour == 0.5,
 				"rates: " + read.aloneAmbientPerHour + ", " + read.proximityAmbientPerHour + ", " + read.tracesMinorsPerHour);
 		Map<String, Double> alone = read.stageTagWeights.get("ALONE");
@@ -632,6 +744,20 @@ public class DirectorV12Tests {
 		mine.add("director", gson.toJsonTree(chosen));
 		helper.assertTrue(ModConfig.readSection(mine, "director", DirectorConfig.class, DirectorConfig::new).aloneAmbientPerHour == 0.3,
 				"a v1.2 file's 0.3 was taken for v1.1's default");
+
+		// Version 1 (v1.2 before its fixes, no park yet): only the park is new.
+		DirectorConfig v1 = new DirectorConfig();
+		v1.version = 1;
+		v1.aloneAmbientPerHour = 0.3; // the player's, though v1.1's default
+		v1.heldUnfitGiveBackMinutes = 8; // the player's
+		JsonObject v1Section = gson.toJsonTree(v1).getAsJsonObject();
+		v1Section.remove("unfitParkMinutes");
+		JsonObject v1Sections = new JsonObject();
+		v1Sections.add("director", v1Section);
+		DirectorConfig fromV1 = ModConfig.readSection(v1Sections, "director", DirectorConfig.class, DirectorConfig::new);
+		v1.version = DirectorConfig.VERSION;
+		helper.assertTrue(fromV1.version == DirectorConfig.VERSION && fromV1.unfitParkMinutes == 30 && gson.toJson(fromV1).equals(gson.toJson(v1)),
+				"a version 1 section upgraded to " + gson.toJson(fromV1));
 
 		DirectorConfig fresh = ModConfig.readSection(new JsonObject(), "director", DirectorConfig.class, DirectorConfig::new);
 		helper.assertTrue(fresh.version == DirectorConfig.VERSION && gson.toJson(fresh).equals(gson.toJson(withVersion(new DirectorConfig()))),

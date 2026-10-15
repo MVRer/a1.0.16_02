@@ -219,6 +219,8 @@ public class DirectorGameTests extends DirectorMultiplayerTests {
 			Map<Tier, String> last = new EnumMap<>(Tier.class);
 			Map<Tier, Long> lastProgress = new EnumMap<>(Tier.class);
 			Set<String> everFired = new HashSet<>();
+			// Cards that went back because their moment did not come, parked until these play ticks.
+			Map<String, Long> parkedUntil = new HashMap<>();
 			String previous = null;
 			for (Tier tier : Tier.values()) {
 				cycle.put(tier, new HashSet<>());
@@ -226,11 +228,14 @@ public class DirectorGameTests extends DirectorMultiplayerTests {
 			for (Event e : p.result().events) {
 				if (e.kind() == Kind.DRAW) {
 					lastProgress.put(e.tier(), e.dayTicks());
+				} else if (e.kind() == Kind.GIVE_UP && e.note().endsWith(DirectorBrain.PARKED)) {
+					parkedUntil.put(e.cardId(), e.play() + p.rules().unfitPark);
 				} else if (e.kind() == Kind.REFILL) {
 					helper.assertFalse(cycle.get(e.tier()).isEmpty(), where(p) + "refilled a deck with nothing fired");
-					// No card comes back while one it has not fired could still be drawn in this stage and profile,
-					// unless the deck drew nothing for the whole stall.
+					// No card comes back while one it has not fired could still be drawn in this stage and profile (and is
+					// not parked), unless the deck drew nothing for the whole stall.
 					List<String> waiting = synthetic.stream().filter(card -> card.tier() == e.tier() && !cycle.get(e.tier()).contains(card.id())
+							&& e.play() >= parkedUntil.getOrDefault(card.id(), Long.MIN_VALUE)
 							&& !DirectorTestSupport.outOfStageOrProfile(p.rules(), card, e.stage(), everFired)).map(CardInfo::id).toList();
 					long stuck = e.dayTicks() - lastProgress.getOrDefault(e.tier(), p.result().startDayTicks);
 					helper.assertTrue(waiting.isEmpty() || stuck >= p.rules().deckStall,

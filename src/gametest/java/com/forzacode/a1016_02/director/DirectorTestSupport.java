@@ -78,7 +78,14 @@ class DirectorTestSupport {
 
 	/** {@link #registryRuns(Tempo)} with this director section (a tuning variant), never cached. */
 	static List<DirectorSim.Result> registryRuns(Tempo tempo, DirectorConfig config) {
-		List<CardInfo> deck = registryDeck();
+		return registryRuns(tempo, config, registryDeck(), null);
+	}
+
+	/**
+	 * {@link #registryRuns(Tempo, DirectorConfig)} over this deck, with {@code neverFits} the cards whose moment never
+	 * comes in these runs ({@link DirectorSim.Params#neverFits}; null: none). Never cached.
+	 */
+	static List<DirectorSim.Result> registryRuns(Tempo tempo, DirectorConfig config, List<CardInfo> deck, Predicate<CardInfo> neverFits) {
 		List<DirectorSim.Result> out = new ArrayList<>();
 		for (long seed : DirectorApi.tuningSeeds()) {
 			DirectorRules rules = DirectorRules.from(new Pacing(), config, com.forzacode.a1016_02.debug.Playthrough.profile(seed, tempo));
@@ -86,6 +93,7 @@ class DirectorTestSupport {
 			params.hours = HOURS;
 			params.seed = seed;
 			params.attention = config.attentionNeutral;
+			params.neverFits = neverFits;
 			out.add(DirectorSim.run(rules, deck, Math.max(config.historySize, 1), new DirectorMemory(), Stage.ALONE, 0,
 					new DirectorBrain.Clock(0, 0), params));
 		}

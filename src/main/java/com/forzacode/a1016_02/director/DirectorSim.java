@@ -112,6 +112,11 @@ public final class DirectorSim {
 		/** Optional per-card override of the context dice (tests). */
 		public Predicate<CardInfo> fits;
 		/**
+		 * Cards whose moment never comes in this run (a surface player's tunnel cards, a card that never fits): they never
+		 * fit, whatever {@link #fits} or the dice say, so the run plays their holds, give-backs and parks. None by default.
+		 */
+		public Predicate<CardInfo> neverFits;
+		/**
 		 * Hours into the run at which someone names him: lore's naming {@code HerobrineEvents.TELLING}, so the
 		 * run reaches Telling and Stage 3's pacing is exercised. Negative: never (the director alone never gets there).
 		 */
@@ -1089,6 +1094,9 @@ public final class DirectorSim {
 
 		@Override
 		public boolean contextFits(CardInfo card) {
+			if (table.params.neverFits != null && table.params.neverFits.test(card)) {
+				return false;
+			}
 			return table.params.fits != null ? table.params.fits.test(card) : table.random.nextDouble() < table.params.fitChance;
 		}
 
