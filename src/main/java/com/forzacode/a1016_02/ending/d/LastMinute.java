@@ -298,9 +298,13 @@ public final class LastMinute {
 	/**
 	 * Debug: plays a cosmetic preview where {@code player} stands, for them only: no flags, no clock change, no figure,
 	 * nothing given back (the footsteps are sounds only), nothing stored; only their client effects (the silence, the
-	 * fog pulling back, the music). It stops if they leave. Only a real completion gives back.
+	 * fog pulling back, the music). It stops if they leave. Only a real completion gives back. Refused (false) while
+	 * the real last minute plays or Ending D is at it: a preview would stop the real one.
 	 */
-	public static void preview(MinecraftServer server, EndingDState data, ServerPlayer player) {
+	public static boolean preview(MinecraftServer server, EndingDState data, ServerPlayer player) {
+		if (realOne(data)) {
+			return false;
+		}
 		BlockPos at = player.blockPosition();
 		start(server, data, true, at);
 		previewer = player.getUUID();
@@ -308,18 +312,33 @@ public final class LastMinute {
 		for (int i = 1; i <= 10; i++) {
 			previewSteps.add(at.above(i * 2).relative(facing, i));
 		}
+		return true;
 	}
 
-	/** After a restart in the middle of it: carry on from the saved phase (the climb at the earliest). */
+	/** True while the real last minute plays, or Ending D is at it (a restart's resume is coming). */
+	private static boolean realOne(EndingDState data) {
+		return running && !previewing || data.step() == Step.LAST_MINUTE;
+	}
+
+	/**
+	 * After a restart in the middle of it: carry on from the saved phase (the climb at the earliest). A saved phase
+	 * that is done goes on to the afterward once D was completed (an old save a debug preview stopped the real one in,
+	 * saving its own end), else plays it from the start.
+	 */
 	static void resume(MinecraftServer server, EndingDState data) {
 		if (running || data.step() != Step.LAST_MINUTE) {
 			return;
 		}
 		reset();
-		running = true;
 		data.set(EndingDState.PREVIEW, false);
 		Phase saved = Phase.values()[Mth.clamp(data.lastMinutePhase(), 0, Phase.values().length - 1)];
-		phase = saved.ordinal() <= Phase.CLIMB.ordinal() ? Phase.START : saved;
+		if (saved == Phase.DONE && completed(server, data)) {
+			data.setStep(Step.AFTERWARD);
+			A1016_02.LOGGER.info("[a1016] ending d: the last minute was over; the afterward begins");
+			return;
+		}
+		running = true;
+		phase = saved.ordinal() <= Phase.CLIMB.ordinal() || saved == Phase.DONE ? Phase.START : saved;
 		origin = data.stair().map(StairPlan::twin).orElse(null);
 		clock = server.getTickCount();
 		phaseStart = clock;

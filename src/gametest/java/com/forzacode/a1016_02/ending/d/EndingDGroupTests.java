@@ -406,4 +406,65 @@ public class EndingDGroupTests extends EndingDDangerTests {
 		}
 		helper.succeed();
 	}
+
+	/**
+	 * MP-7: a debug preview never stops a real last minute (it would save its own end over the real one's phase and
+	 * leave Ending D at step 8 for good), and a save already wedged that way goes on to the afterward.
+	 */
+	@GameTest
+	public void aPreviewNeverStopsTheRealLastMinute(GameTestHelper helper) {
+		MinecraftServer server = helper.getLevel().getServer();
+		EndingDState data = new EndingDState();
+		EndingDConfig cfg = new EndingDConfig();
+		Recording ports = new Recording();
+		ServerPlayer placer = EndingDSupport.player(helper, new Vec3(2.5, 1, 2.5), 0, 0);
+		ServerPlayer op = EndingDSupport.player(helper, new Vec3(6.5, 1, 6.5), 0, 0);
+		LastMinute.Present both = LastMinute.Present.of(List.of(placer, op));
+		HerobrineState real = HerobrineState.get(server);
+		boolean flagBefore = real.hasFlag(LastMinute.FLAG);
+		try {
+			LastMinute.use(ports);
+			LastMinute.start(server, data, false, placer.blockPosition());
+			long at = server.getTickCount();
+			LastMinute.tick(server, data, cfg, both, ++at);
+			helper.assertFalse(LastMinute.preview(server, data, op), "the preview was not refused during the real last minute");
+			helper.assertTrue(LastMinute.running() && !LastMinute.describe().contains("preview") && data.step() == Step.LAST_MINUTE,
+					"a preview took over the real last minute: " + LastMinute.describe());
+			// Nor between a restart and its resume (step 8, nothing running yet).
+			LastMinute.reset();
+			helper.assertFalse(LastMinute.preview(server, data, op) || LastMinute.running(), "a preview played while Ending D is at the last minute: "
+					+ LastMinute.describe());
+
+			// A save a preview already wedged: its phase is done, its step still the last minute. It reaches the afterward.
+			EndingDState wedged = new EndingDState();
+			wedged.setStep(Step.LAST_MINUTE);
+			wedged.setCompleteDay(0);
+			wedged.setLastMinutePhase(LastMinute.Phase.DONE.ordinal());
+			LastMinute.reset();
+			for (int i = 0; i < 6 && wedged.step() == Step.LAST_MINUTE; i++) {
+				if (LastMinute.running()) {
+					LastMinute.tick(server, wedged, cfg, both, ++at);
+				} else {
+					LastMinute.resume(server, wedged);
+				}
+			}
+			helper.assertTrue(wedged.step() == Step.AFTERWARD && !LastMinute.running(), "the wedged save never reached the afterward: " + wedged.step());
+			helper.assertTrue(ports.completions == 1, "the wedged save completed D again: " + ports.completions);
+
+			// Wedged before the real one even completed D: it plays again from the start, and completes D then.
+			EndingDState early = new EndingDState();
+			early.setStep(Step.LAST_MINUTE);
+			early.setLastMinutePhase(LastMinute.Phase.DONE.ordinal());
+			LastMinute.reset();
+			LastMinute.resume(server, early);
+			LastMinute.tick(server, early, cfg, both, ++at);
+			helper.assertTrue(LastMinute.running() && ports.completions == 2 && early.completeDay() >= 0 && early.step() == Step.LAST_MINUTE,
+					"a save wedged before D was completed did not play it: " + LastMinute.describe());
+		} finally {
+			LastMinute.use(LastMinute.Ports.LIVE);
+			LastMinute.reset();
+			real.setFlag(LastMinute.FLAG, flagBefore);
+		}
+		helper.succeed();
+	}
 }

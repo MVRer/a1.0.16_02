@@ -29,7 +29,8 @@ import org.jspecify.annotations.Nullable;
  * {@code /a1016 ending d ...}: {@code status} (the step and what is missing), {@code step <n> [player]} (jump the
  * chain, for testing; 4 and up build the stair now if it is not there, 8 starts the last minute for real where that
  * player stands), {@code lastminute [player]} (a cosmetic preview of the last minute where that player stands, for them
- * only: no flags, no clock, no figure, nothing given back; only the silence, the fog and the music), {@code undo status},
+ * only: no flags, no clock, no figure, nothing given back; only the silence, the fog and the music; refused while the
+ * real last minute plays), {@code undo status},
  * {@code kit [player]} (marked items for steps 5 to 7: a first block and grove planks, debug only). Each acts on the
  * player who runs it or the one named (D-062.9); from the console, on the first participant.
  */
@@ -98,7 +99,10 @@ public final class EndingDCommands {
 			say(ctx.getSource(), "name a player, or run it as one");
 			return 0;
 		}
-		LastMinute.preview(ctx.getSource().getServer(), EndingDState.get(ctx.getSource().getServer()), player);
+		if (!LastMinute.preview(ctx.getSource().getServer(), EndingDState.get(ctx.getSource().getServer()), player)) {
+			say(ctx.getSource(), "no preview: the real last minute is playing (Ending D is at step 8); a preview would stop it");
+			return 0;
+		}
 		say(ctx.getSource(), "the last minute (preview) plays where " + player.getName().getString() + " stands, for them only");
 		return 1;
 	}
