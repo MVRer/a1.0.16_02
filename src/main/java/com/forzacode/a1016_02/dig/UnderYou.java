@@ -28,12 +28,14 @@ import org.jspecify.annotations.Nullable;
  * is one network per distinct base: a base within {@link DigConfig#networkShareDistance} of a network's base shares
  * that network (friends living in one house get one network under it), and a base farther from every network gets
  * its own once its player has been at home there and it has stood for {@link DigConfig#networkStartAfterNights}
- * nights, at most {@link DigConfig#networkMaxPerWorld} networks per world. A respawn point a player never came home
- * to never starts one. Each in-game night credits {@link DigConfig#networkBlocksPerNight} steps to a network while
- * one of its players takes part (its own players' nights; nights missed while they were away catch up, at most
- * {@link DigConfig#networkMaxCatchUpNights}), once per network however many of them are online, so a shared base
- * never grows faster. The steps are carved while the base is loaded and out of view of every player, a few at a
- * time. The shaft stops under the bed of the network's founder. Players are looked up fresh each check (D-062.1).
+ * nights, while fewer than {@link DigConfig#networkMaxPerWorld} networks are still under someone's base (a base
+ * everyone moved away from, such as a night's camp bed, no longer counts, so a new base always gets one, as in v1.0).
+ * A respawn point a player never came home to never starts one. Each in-game night credits
+ * {@link DigConfig#networkBlocksPerNight} steps to a network while one of its players takes part (its own players'
+ * nights; nights missed while they were away catch up, at most {@link DigConfig#networkMaxCatchUpNights}), once per
+ * network however many of them are online, so a shared base never grows faster. The steps are carved while the base
+ * is loaded and out of view of every player, a few at a time. The shaft stops under the bed of the network's founder.
+ * Players are looked up fresh each check (D-062.1).
  */
 public final class UnderYou {
 	/** Steps carved per check, so a long catch-up never lands in one tick. */
@@ -136,8 +138,8 @@ public final class UnderYou {
 	/**
 	 * The network for this player's base: the one whose base is within {@link DigConfig#networkShareDistance} (shared,
 	 * the player becomes one of its owners), else a new one once they played at this base and it has stood for
-	 * {@link DigConfig#networkStartAfterNights} nights, while the world has fewer than
-	 * {@link DigConfig#networkMaxPerWorld} ({@code force}, debug: right away and past the cap). Null while it waits.
+	 * {@link DigConfig#networkStartAfterNights} nights, while fewer than {@link DigConfig#networkMaxPerWorld} networks
+	 * are {@linkplain #inUse in use} ({@code force}, debug: right away and past the cap). Null while it waits.
 	 */
 	static @Nullable Network active(DigData data, UUID player, GlobalPos base, long night, DigConfig config, boolean force) {
 		Network shared = data.networkFor(base.dimension(), base.pos(), config.networkShareDistance);
@@ -150,7 +152,7 @@ public final class UnderYou {
 		if (!force) {
 			DigData.BaseSeen seen = data.baseSeen.get(player);
 			if (seen == null || !near(seen.base(), base, config.networkBaseMoveDistance) || !seen.playedThere()
-					|| night - seen.night() < config.networkStartAfterNights || data.networks.size() >= config.networkMaxPerWorld) {
+					|| night - seen.night() < config.networkStartAfterNights || inUse(data, config) >= config.networkMaxPerWorld) {
 				return null;
 			}
 		}
@@ -158,6 +160,37 @@ public final class UnderYou {
 		net.owners.add(player);
 		data.addNetwork(net);
 		return net;
+	}
+
+	/**
+	 * How many networks count toward {@link DigConfig#networkMaxPerWorld}: those still under some owner's base, the
+	 * base dig last saw that owner with ({@link DigData#baseSeen}, kept while they are away) within
+	 * {@link DigConfig#networkShareDistance} of the network's. A network every owner moved away from (a camp bed slept
+	 * in for a night) no longer counts; it stays, and is theirs again if one of them comes back. One with no owners yet
+	 * (a save from before multiplayer), or an owner dig never saw a base for, counts.
+	 */
+	static int inUse(DigData data, DigConfig config) {
+		int count = 0;
+		for (Network net : data.networks) {
+			if (inUse(data, net, config)) {
+				count++;
+			}
+		}
+		return count;
+	}
+
+	static boolean inUse(DigData data, Network net, DigConfig config) {
+		if (net.owners.isEmpty()) {
+			return true;
+		}
+		GlobalPos under = GlobalPos.of(net.dimension, net.base);
+		for (UUID owner : net.owners) {
+			DigData.BaseSeen seen = data.baseSeen.get(owner);
+			if (seen == null || near(seen.base(), under, config.networkShareDistance)) {
+				return true;
+			}
+		}
+		return false;
 	}
 
 	static NetworkGrower.Ctx ctx(ServerLevel level, Network net, DigData data, List<BlockPos> players, long night, RandomSource random) {
