@@ -334,6 +334,97 @@ public class DirectorMultiplayerTests {
 	}
 
 	/**
+	 * Ana and Ben each had a different card while apart (m_a hers, m_b his), then every card new to both while together
+	 * (m_c): each one's only undrawn card is the one the other had. Those cards are spent for the moment, so the deck
+	 * has run out for the pair and refills at once: something fires while they stay together, and never a card the
+	 * other already had.
+	 */
+	@GameTest
+	public void cardsHadApartNeverDeadlockTheDeckTogether(GameTestHelper helper) {
+		DirectorRules rules = rules(Tempo.SLOW_BURN, Signature.CROSS_ROW);
+		rules.minorsPerHourMin = rules.minorsPerHourMax = 1_000_000;
+		rules.proximityAmbientPerHour = 0;
+		DirectorBrain brain = new DirectorBrain(rules, List.of(card("m_a", Tier.MINOR, Stage.TRACES, false), card("m_b", Tier.MINOR, Stage.TRACES, false),
+				card("m_c", Tier.MINOR, Stage.TRACES, false)), 50);
+		SharedStage stage = new SharedStage(Stage.PROXIMITY);
+		WorldMemory world = new WorldMemory();
+		DirectorTestSupport.pin(world, rules);
+		PacingMemory ana = playing();
+		ana.cycleFired.get(Tier.MINOR).addAll(List.of("m_a", "m_c"));
+		ana.lastFired.put(Tier.MINOR, "m_c");
+		PacingMemory ben = playing();
+		ben.cycleFired.get(Tier.MINOR).addAll(List.of("m_b", "m_c"));
+		ben.lastFired.put(Tier.MINOR, "m_c");
+		PlayerEnv anaEnv = new PlayerEnv(stage);
+		PlayerEnv benEnv = new PlayerEnv(stage);
+		RandomSource random = RandomSource.create(5);
+		long w = 6 * rules.hourTicks + rules.minorGap;
+		List<String> outcomes = new ArrayList<>();
+		for (int i = 0; i < 20 && anaEnv.fired.isEmpty() && benEnv.fired.isEmpty(); i++) {
+			long t = w + i * rules.tickInterval;
+			DirectorBrain.Clock anaClock = clock(t, t);
+			DirectorBrain.Clock benClock = clock(t - 2 * rules.hourTicks, t);
+			anaEnv.sharers = List.of(new DirectorBrain.Sharer(ben, benClock, benEnv, DirectorBrain.Recorder.NONE));
+			outcomes.add("Ana: " + brain.step(world, ana, anaClock, anaEnv, random, DirectorBrain.Recorder.NONE));
+			benEnv.sharers = List.of(new DirectorBrain.Sharer(ana, anaClock, anaEnv, DirectorBrain.Recorder.NONE));
+			outcomes.add("Ben: " + brain.step(world, ben, benClock, benEnv, random, DirectorBrain.Recorder.NONE));
+		}
+		List<String> fired = new ArrayList<>(anaEnv.fired);
+		fired.addAll(benEnv.fired);
+		helper.assertTrue(fired.size() == 1, "nothing fired for the pair together: " + outcomes);
+		helper.assertTrue(anaEnv.fired.isEmpty() || anaEnv.fired.equals(List.of("m_a")), "Ana fired " + anaEnv.fired + ", which Ben had");
+		helper.assertTrue(benEnv.fired.isEmpty() || benEnv.fired.equals(List.of("m_b")), "Ben fired " + benEnv.fired + ", which Ana had");
+		helper.succeed();
+	}
+
+	/**
+	 * Two players apart for the first 3 hours (their decks drift apart), then together for the rest: together they
+	 * still feel minors at least 0.7 times the solo rate (the deck never deadlocks on what each had apart), and every
+	 * hard limit holds.
+	 */
+	@GameTest(maxTicks = 2000)
+	public void twoPlayersApartThenTogetherKeepTheirMinors(GameTestHelper helper) {
+		List<DirectorSim.Seat> seats = List.of(new DirectorSim.Seat(ANA, 0), new DirectorSim.Seat(BEN, 0));
+		for (Tempo tempo : Tempo.values()) {
+			List<DirectorSim.Result> soloRuns = DirectorTestSupport.registryRuns(tempo);
+			long hour = soloRuns.getFirst().rules.hourTicks;
+			long meet = 3 * hour;
+			DirectorSim.Sharing laterTogether = (worldTicks, a, b) -> worldTicks >= meet;
+			List<DirectorSim.Group> groups = DirectorTestSupport.groupRuns(tempo, seats, laterTogether, SEEDS);
+			apartThenTogether(helper, tempo + " registered deck", DirectorTestSupport.registryDeck(), DirectorSim.Rates.of(soloRuns), groups, meet);
+		}
+		helper.succeed();
+	}
+
+	/** Every limit held, and the felt Proximity minors per hour from {@code meet} on are at least 0.7 times solo. */
+	private static void apartThenTogether(GameTestHelper helper, String what, List<CardInfo> deck, DirectorSim.Rates solo, List<DirectorSim.Group> groups,
+			long meet) {
+		String at = what + ", apart then together: ";
+		long minors = 0;
+		long ticks = 0;
+		long hour = 1;
+		for (DirectorSim.Group group : groups) {
+			helper.assertTrue(group.allViolations().isEmpty(), at + group.allViolations());
+			for (DirectorSim.Result player : group.players) {
+				hour = player.rules.hourTicks;
+				List<String> hard = DirectorTestSupport.feltHardLimits(player, deck);
+				helper.assertTrue(hard.isEmpty(), at + "seed " + player.params.seed + ": " + hard);
+				long proximity = player.stageAt(Stage.PROXIMITY);
+				if (proximity < 0) {
+					continue;
+				}
+				long from = Math.max(proximity, meet);
+				ticks += Math.max(0, player.endPlay - from);
+				minors += player.felt().stream().filter(e -> e.tier() == Tier.MINOR && e.stage() == Stage.PROXIMITY && e.play() >= from).count();
+			}
+		}
+		double together = ticks <= 0 ? 0 : minors / (ticks / (double) hour);
+		A1016_02.LOGGER.info("[a1016] director {}, apart then together: {} minors/h together (solo {})", what, String.format(Locale.ROOT, "%.3f", together),
+				String.format(Locale.ROOT, "%.3f", solo.minorsPerHour()));
+		assertNear(helper, at + "felt minors/h together", together, solo.minorsPerHour(), 0.7, 1.25);
+	}
+
+	/**
 	 * A player who took part once and never came back blocks nobody and their memory does not change while away:
 	 * Ana fires the signature Ben was holding, and when Ben returns his hold goes back without firing.
 	 */

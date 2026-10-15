@@ -41,7 +41,8 @@ import net.minecraft.util.RandomSource;
  * other telling (writing near his traces) never moves the stage. REMOVAL never from here.</li>
  * <li>One deck per tier and player, drawn without replacement and weighted by the profile habits and per-stage tag
  * weights (a weight below 1 also skips the card for that draw with chance 1 - weight). A deck runs out when every
- * card it has not fired this cycle is ruled out by the stage or the profile; only then do its fired cards come back,
+ * card it has not fired this cycle is ruled out by the stage or the profile (beside friends, or was had by one of
+ * them: never drawn while they are close); only then do its fired cards come back,
  * and the last one fired is never drawn next. Cards that only wait on a passing gate (no accident yet, a sighting
  * today, a skip roll) hold the reshuffle back, up to {@code deckStall} of in-game time. Signature cards never come
  * back, and fire at most once per world whoever gets them.</li>
@@ -639,8 +640,10 @@ public final class DirectorBrain {
 	 *
 	 * <p>With friends close by ({@code sharers}, D-060.3) it never draws a card one of them already had (in their
 	 * cycle, or their last of the tier): the moment could not reach them, so it would only sit held, blocking the tier
-	 * while they stay together. If only such cards are left, nothing is drawn this time and no deck is refilled for it.
-	 * Alone, the draw is exactly the solo one.
+	 * while they stay together. Those cards are spent for this moment, so they count as fired for the run-out rule:
+	 * when every card left undrawn is ruled out or one a friend had (each had different cards apart, then every card
+	 * new to both while together), the deck refills now instead of deadlocking while they stay together; when some are
+	 * only gated, it waits for them as alone. Alone, the draw is exactly the solo one.
 	 *
 	 * @param skipped filled with the cards a stage weight passed over in this draw
 	 */
@@ -651,17 +654,17 @@ public final class DirectorBrain {
 		while (true) {
 			List<CardInfo> eligible = candidates(tier, w, m, c, stage);
 			eligible.removeIf(card -> skipped.contains(card.id()));
-			if (!eligible.isEmpty() && !sharers.isEmpty()) {
+			if (!sharers.isEmpty()) {
 				eligible.removeIf(card -> anyHad(card, sharers));
-				if (eligible.isEmpty()) {
-					return null;
-				}
 			}
 			if (eligible.isEmpty()) {
 				if (refilled || tier == Tier.SIGNATURE || m.cycleFired.get(tier).isEmpty()) {
 					return null;
 				}
-				if (!runOut(tier, w, m, stage)) {
+				if (!sharers.isEmpty() && !refillHelps(tier, w, m, c, stage, sharers)) {
+					return null; // nothing that would come back is new to everyone here: keep the deck as it is
+				}
+				if (!runOut(tier, w, m, stage, sharers)) {
 					Long stuckSince = m.deckStuckSince.get(tier);
 					if (stuckSince == null || stuckSince > c.dayTicks()) {
 						stuckSince = c.dayTicks();
@@ -699,9 +702,30 @@ public final class DirectorBrain {
 	 * already fired once per world). A card that only waits on the moment (a gate, a skip roll) keeps it going.
 	 */
 	public boolean runOut(Tier tier, WorldMemory w, PacingMemory m, Stage stage) {
+		return runOut(tier, w, m, stage, List.of());
+	}
+
+	/**
+	 * Beside friends: true if refilling this player's deck now would give them a card to draw, one of this cycle's
+	 * (not their last) whose gates are open and that none of the friends had. Otherwise the refill would only throw
+	 * their cycle away.
+	 */
+	private boolean refillHelps(Tier tier, WorldMemory w, PacingMemory m, Clock c, Stage stage, List<Sharer> sharers) {
+		String last = m.lastFired.get(tier);
+		for (String id : m.cycleFired.get(tier)) {
+			CardInfo card = card(id);
+			if (card != null && !id.equals(last) && cardBlock(card, w, m, c, stage) == null && !anyHad(card, sharers)) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	/** {@link #runOut(Tier, WorldMemory, PacingMemory, Stage)} beside friends: a card one of them had is spent for the moment too. */
+	private boolean runOut(Tier tier, WorldMemory w, PacingMemory m, Stage stage, List<Sharer> sharers) {
 		Set<String> cycle = m.cycleFired.get(tier);
 		for (CardInfo card : byTier.get(tier)) {
-			if (!cycle.contains(card.id()) && staticBlock(card, w, stage) == null) {
+			if (!cycle.contains(card.id()) && staticBlock(card, w, stage) == null && !anyHad(card, sharers)) {
 				return false;
 			}
 		}
