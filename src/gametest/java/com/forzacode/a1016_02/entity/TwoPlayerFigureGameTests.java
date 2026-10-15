@@ -89,8 +89,21 @@ public class TwoPlayerFigureGameTests {
 	 * the level, where {@code observers} and {@code watchers} read {@code level.players()}.
 	 */
 	static HimEntity watchedBy(GameTestHelper helper, Variant variant, Vec3 relativeFeet, float yaw, List<ServerPlayer> everyone) {
+		return watchedBy(helper, variant, relativeFeet, yaw, everyone, false);
+	}
+
+	/**
+	 * {@link #watchedBy}, and with {@code leaves} his leave targets count as ticking too, so he really walks or runs off
+	 * here (in a world the players keep the chunks around him ticking).
+	 */
+	static HimEntity watchedBy(GameTestHelper helper, Variant variant, Vec3 relativeFeet, float yaw, List<ServerPlayer> everyone, boolean leaves) {
 		ServerLevel level = helper.getLevel();
 		HimEntity him = new HimEntity(ModEntities.HIM, level) {
+			@Override
+			protected boolean leaveTargetTicking(ServerLevel serverLevel, Vec3 target) {
+				return leaves ? serverLevel.isLoaded(BlockPos.containing(target)) : super.leaveTargetTicking(serverLevel, target);
+			}
+
 			@Override
 			protected List<ServerPlayer> observers(ServerLevel serverLevel) {
 				return everyone.stream().filter(p -> p.isAlive() && !p.isSpectator()).toList();
@@ -453,6 +466,100 @@ public class TwoPlayerFigureGameTests {
 				"a step into someone walking into his line");
 		helper.assertTrue(Rush.clearOf(middle.him(), List.of(new Rush.Bystander(aside, Vec3.ZERO)), offset), "a clear step refused");
 		helper.succeed();
+	}
+
+	// --- leaving with someone ahead (MP-7) ---
+
+	/**
+	 * Leaving at a run with A 5 blocks north of him and B 20 blocks south, both watching: the push away from them points
+	 * straight at B (A is nearer), yet he never runs at B or through B, and never turns back toward A. He goes off
+	 * sideways, clear of both.
+	 */
+	@GameTest(structure = YARD, maxTicks = 160)
+	public void leavingHeNeverRunsAtSomeoneElseOrTurnsBack(GameTestHelper helper) {
+		yard(helper, 0, 23);
+		Vec3 himRel = new Vec3(21.5, 1.0, 6.5);
+		Vec3 himFeet = helper.absoluteVec(himRel);
+		Vec3 aFeet = himFeet.add(0.0, 0.0, -5.0);
+		Vec3 bFeet = himFeet.add(0.0, 0.0, 20.0);
+		// Both look at him, off the crosshair (in view, never a stare); B keeps him in view whichever way he goes west.
+		ServerPlayer a = player(helper, GameType.SURVIVAL, aFeet, yawAt(aFeet, himFeet, 25.0F));
+		ServerPlayer b = player(helper, GameType.SURVIVAL, bFeet, yawAt(bFeet, himFeet, 10.0F));
+		HimEntity him = watchedBy(helper, Variant.RIDGE, himRel, 0.0F, new CopyOnWriteArrayList<>(List.of(a, b)), true);
+		him.setSpawnDistance(40.0); // as a fog-edge sighting sets it: the flee distance is the full one
+		him.walkAway(Variant.Gait.RUN);
+		List<Vec3> trail = new CopyOnWriteArrayList<>();
+		helper.onEachTick(() -> {
+			if (!him.isRemoved()) {
+				trail.add(him.position());
+			}
+		});
+		helper.startSequence()
+				.thenExecuteAfter(100, () -> {
+					helper.assertTrue(trail.size() > 20, "he did not tick: " + trail.size());
+					double nearestB = Double.MAX_VALUE;
+					double farthest = 0.0;
+					for (Vec3 at : trail) {
+						nearestB = Math.min(nearestB, SpotFinder.horizontal(at, bFeet));
+						double out = SpotFinder.horizontal(at, himFeet);
+						helper.assertTrue(farthest < 3.0 || out >= farthest - 1.5,
+								String.format(java.util.Locale.ROOT, "he turned back: %.1f blocks out after %.1f (%s)", out, farthest, trace(trail, himFeet)));
+						farthest = Math.max(farthest, out);
+					}
+					helper.assertTrue(farthest >= 6.0, "he never left: " + trace(trail, himFeet));
+					helper.assertTrue(nearestB >= 16.0, String.format(java.util.Locale.ROOT, "he ran at B: %.1f blocks from B (%s)", nearestB, trace(trail, himFeet)));
+					discard(him);
+				})
+				.thenSucceed();
+	}
+
+	/**
+	 * The way out with A at (0, -5) and B at (0, 20): the push away from both points straight at B, so the way he takes
+	 * is not the push but the first that keeps clear of everyone: never toward B, never back toward A.
+	 */
+	@GameTest
+	public void theWayOutNeverPointsAtSomeoneElse(GameTestHelper helper) {
+		Vec3 him = Vec3.ZERO;
+		Vec3 a = new Vec3(0.0, 0.0, -5.0);
+		Vec3 b = new Vec3(0.0, 0.0, 20.0);
+		List<Vec3> both = List.of(a, b);
+		Vec3 toA = a.subtract(him).normalize();
+		Vec3 toB = b.subtract(him).normalize();
+		Vec3 push = HimEntity.awayFrom(him, both, new Vec3(1.0, 0.0, 0.0));
+		helper.assertTrue(push.dot(toB) > 0.99, "the push no longer points at B, so this checks nothing: " + push);
+		double ahead = 14.5;
+		double keep = 18.0;
+		List<Vec3> targets = new ArrayList<>();
+		for (double turn : HimEntity.WIDE_TURNS) {
+			targets.add(him.add(HimEntity.turned(push, turn).scale(ahead)));
+		}
+		Vec3 first = HimEntity.clearestFirst(him, targets, both, keep).getFirst();
+		Vec3 way = first.subtract(him).normalize();
+		helper.assertTrue(way.dot(toB) <= 1.0E-6 && way.dot(toA) <= 1.0E-6, "he leaves toward someone: " + way);
+		helper.assertTrue(HimEntity.clearance(List.of(him, first), both, keep) >= -1.0E-6, "the way out is not clear: " + way);
+		// A leg through B, or one ending 10 blocks short of B, is refused; for A, 5 blocks off, any step closer is.
+		helper.assertTrue(HimEntity.clearance(List.of(him, new Vec3(0.0, 0.0, 25.0)), both, keep) < -17.0, "a leg through B counts as clear");
+		helper.assertTrue(HimEntity.clearance(List.of(him, new Vec3(0.0, 0.0, 10.0)), both, keep) < 0.0, "a leg toward B counts as clear");
+		helper.assertTrue(HimEntity.clearance(List.of(him, new Vec3(1.0, 0.0, -1.0)), List.of(a), keep) < 0.0, "a step toward A counts as clear");
+		helper.assertTrue(HimEntity.clearance(List.of(him, new Vec3(14.5, 0.0, 0.0)), List.of(a), keep) >= -1.0E-6, "a step across from A refused");
+		// Hemmed in (someone on every side, all close): the way out is still the one that keeps clearest.
+		List<Vec3> around = List.of(new Vec3(0.0, 0.0, -5.0), new Vec3(0.0, 0.0, 6.0), new Vec3(-7.0, 0.0, 0.0), new Vec3(8.0, 0.0, 0.0));
+		List<Vec3> ordered = HimEntity.clearestFirst(him, targets, around, keep);
+		for (Vec3 other : ordered) {
+			helper.assertTrue(HimEntity.clearance(List.of(him, ordered.getFirst()), around, keep) >= HimEntity.clearance(List.of(him, other), around, keep) - 1.0E-9,
+					"a clearer way out comes later: " + other);
+		}
+		helper.succeed();
+	}
+
+	/** Every fifth position relative to {@code from}, for failure messages. */
+	private static String trace(List<Vec3> trail, Vec3 from) {
+		StringBuilder out = new StringBuilder();
+		for (int i = 0; i < trail.size(); i += 5) {
+			Vec3 at = trail.get(i).subtract(from);
+			out.append(String.format(java.util.Locale.ROOT, " (%.1f %.1f)", at.x, at.z));
+		}
+		return out.toString();
 	}
 
 	// --- fog per player (D-035) ---
