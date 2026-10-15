@@ -155,7 +155,7 @@ Every scar has to pass as odd worldgen at first glance. The horror comes on the 
 
 Density and which scars exist come from the world's profile (see The director), so one world may have dead mountains and crosses while another has abandoned builds and lone lights.
 
-**The sky is wrong too: fog weather (D-071).** One sky for the world. Most nights are clear and keep the faint dusk fog; some are fog nights: the fog closes in from dusk and stays, close and thick, the fog the player half-saw in a drift, ending about 75 blocks out in the first stages and 37 in the last (at a 12-chunk view). At night it is lifted from vanilla's near black toward a pale grey, so it shows as a wall in the dark instead of plain darkness. About a third of fog nights carry into a grey morning, and rarely a whole day is foggy, the canon screenshot's light. The first night is always clear, one of the first three is always foggy, and before Proximity two fog nights never come in a row; after that up to half the nights are foggy, and fog days come from Traces on, never two in a row. On a fog night or day he is more likely to act and can be seen in daytime fog, but a quarter of the spells are quiet, so a fog night is never a sure sign. Nothing once the world is quiet for good or while Ending D's last minute plays, and none in the Nether or the End. Shaderpacks that draw their own fog (Iris) hide it.
+**The sky is wrong too: fog weather (D-071).** One sky for the world. Most nights are clear and keep the faint dusk fog; some are fog nights: the fog closes in from dusk and stays, close and thick, the fog the player half-saw in a drift, ending about 75 blocks out in the first stages and 37 in the last (at a 12-chunk view). At night it is lifted from vanilla's near black toward a pale grey, so it shows as a wall in the dark instead of plain darkness. About a third of fog nights carry into a grey morning, and rarely a whole day is foggy, the canon screenshot's light. The first night is always clear, one of the first three is always foggy, and before Proximity two fog nights never come in a row; after that up to half the nights are foggy, and fog days come from Traces on, never two in a row. On a fog night or day he is more likely to act and can be seen in daytime fog, but a quarter of the spells are quiet, so a fog night is never a sure sign. It is weather: it hangs outside, and in a tunnel or indoors where the sky's light does not reach it clears within about a second. Nothing once the world is quiet for good or while Ending D's last minute plays, and none in the Nether or the End. Shaderpacks that draw their own fog (Iris) hide it.
 
 &#91;ours\] Every scar in this section is our invention. Redstone torches as a sign of him come from later fan stories, not the 2010 text; we use them as one option, not a rule.
 
@@ -264,25 +264,25 @@ The goal is surprise built across many sessions, starting in the first hour (D-0
 - From Proximity on, some whole sessions (45+ minutes, about 1 in 10) contain nothing at all, on purpose.
 - Never anything in the first 5 minutes after joining.
 - Never more than five moments in a player's own first hour, their own and ones they felt beside a friend. The target: the first event (fakes count) by 30 minutes in 3 runs of 4 and by 45 in 9 of 10, at least two in 7 of 10.
-- On a fog night or day that is not quiet (D-071), ambient and minor odds are 3.5 times higher, sightings 3 times as likely to be picked, and a major due within the hour may come now. The gaps between events take part of it back: such an hour holds a little over twice a clear hour's events.
+- On a fog night or day that is not quiet (D-071), while the fog is at least half in, ambient and minor odds are 3.5 times higher, sightings 3 times as likely to be picked, and a major due within the hour may come now. The gaps between events take part of it back: such an hour holds a little over twice a clear hour's events.
 - Friends together share one moment and roll 1.5 times one player's rate between them; apart, each has their own pace (D-074). The tunnel ladder only happens to a player alone.
 
-What the director's dry runs show (registered deck, 192 seeds of 20 hours per tempo; "active" leaves out quiets and empty sessions, which take 42 to 46% of Proximity):
+What the director's dry runs show (registered deck, 192 seeds of 20 hours per tempo; "active" leaves out quiets and empty sessions, which take 43 to 44% of Proximity; main after the v1.2 review fixes):
 
 | | Early | Slow burn | Very late |
 | --- | --- | --- | --- |
 | Alone lasts | 0.49 h | 0.65 h | 0.81 h |
-| Alone: ambients per hour | 2.85 | 3.11 | 3.05 |
-| Traces: ambients per hour | 2.33 | 2.27 | 2.31 |
-| Traces: minors per hour | 0.80 | 0.81 | 0.78 |
-| Proximity: ambients per hour | 1.39 | 1.41 | 1.49 |
-| Proximity: minors per hour (active) | 0.97 (1.79) | 1.04 (1.87) | 1.09 (1.88) |
-| Proximity: a major every | 1.79 h | 2.23 h | 2.76 h |
-| First accident: median (earliest) | 4.27 h (2.66 h) | 5.15 h (3.50 h) | 6.36 h (4.42 h) |
-| First hour: first event by 30 / 45 minutes | 81% / 94% | 82% / 96% | 83% / 97% |
-| First hour: two or more events | 91% | 94% | 96% |
+| Alone: ambients per hour | 2.86 | 3.09 | 3.05 |
+| Traces: ambients per hour | 2.25 | 2.30 | 2.23 |
+| Traces: minors per hour | 0.83 | 0.83 | 0.81 |
+| Proximity: ambients per hour | 1.39 | 1.44 | 1.44 |
+| Proximity: minors per hour (active) | 1.05 (1.89) | 1.07 (1.90) | 1.09 (1.92) |
+| Proximity: a major every | 1.76 h | 2.24 h | 2.77 h |
+| First accident: median (earliest) | 4.24 h (2.63 h) | 5.19 h (3.52 h) | 6.53 h (4.43 h) |
+| First hour: first event by 30 / 45 minutes | 81% / 94% | 83% / 96% | 83% / 97% |
+| First hour: two or more events | 91% | 94% | 97% |
 
-In every tempo the median first event comes 15.5 minutes in, and no first hour holds more than five. A fog spell that is not quiet holds 2.1 to 2.3 times a clear hour's events while the director may act; a quiet one about a clear hour's.
+In every tempo the median first event comes 15.5 minutes in, and no first hour holds more than five. A fog spell that counts and is not quiet holds 2.1 to 2.3 times a clear hour's events while the director may act; a quiet one about a clear hour's. A card whose moment never comes for this player (the tunnel steps for someone who never digs a long tunnel) is set aside for half an hour of play instead of holding its tier, so Traces' and Proximity's rates stay within 10% of these.
 
 ### 5. False positives
 
