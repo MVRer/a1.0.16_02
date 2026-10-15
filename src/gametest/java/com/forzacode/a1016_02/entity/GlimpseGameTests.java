@@ -3,6 +3,7 @@ package com.forzacode.a1016_02.entity;
 import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Predicate;
 
 import com.forzacode.a1016_02.core.FireResult;
@@ -467,6 +468,58 @@ public class GlimpseGameTests extends TwoPlayerFigureGameTests {
 		helper.assertTrue(SightingRules.clearDaylight(6000, false, false, config) == SightingRules.clearDaylight(6000, false, config),
 				"without a spell the rule changed");
 		helper.succeed();
+	}
+
+	/**
+	 * A sighting that came in daytime fog walks away once the fog stops counting and the day is clear (D-071; review R2:
+	 * a morning carry-over lifting under him): unseen, he turns to leave and is gone out of view at once; seen, he turns
+	 * and walks, never gone in view; one that came under another sky (dusk, rain) is left alone by the same clear day.
+	 * The sky is each figure's own here, never the shared server's clock and spell.
+	 */
+	@GameTest(structure = YARD, maxTicks = 100)
+	public void aDaytimeFogSightingWalksAwayAsTheFogLifts(GameTestHelper helper) {
+		tunnel(helper);
+		Vec3 aFeet = helper.absoluteVec(A_FEET);
+		ServerPlayer away = a(helper, WEST);
+		ServerPlayer looking = a(helper, EAST);
+		AtomicReference<SightingRules.Sky> fogSky = new AtomicReference<>(SightingRules.Sky.DAYTIME_FOG);
+		AtomicReference<SightingRules.Sky> duskSky = new AtomicReference<>(SightingRules.Sky.OTHER);
+		Vec3 unseenAt = new Vec3(15.5, 1.0, 10.5);
+		Vec3 seenAt = new Vec3(17.5, 1.0, 10.5);
+		Vec3 duskAt = new Vec3(13.5, 1.0, 10.5);
+		HimEntity unseen = watchedBy(helper, Variant.COW, unseenAt, HimEntity.yawToward(helper.absoluteVec(unseenAt), aFeet), List.of(away), false, fogSky::get);
+		HimEntity seen = watchedBy(helper, Variant.COW, seenAt, HimEntity.yawToward(helper.absoluteVec(seenAt), aFeet), List.of(looking), false, fogSky::get);
+		HimEntity dusk = watchedBy(helper, Variant.COW, duskAt, HimEntity.yawToward(helper.absoluteVec(duskAt), aFeet), List.of(away), false, duskSky::get);
+		helper.assertTrue(SightingRules.fogLifted(SightingRules.Sky.DAYTIME_FOG, SightingRules.Sky.CLEAR_DAYLIGHT)
+				&& !SightingRules.fogLifted(SightingRules.Sky.DAYTIME_FOG, SightingRules.Sky.DAYTIME_FOG)
+				&& !SightingRules.fogLifted(SightingRules.Sky.DAYTIME_FOG, SightingRules.Sky.OTHER)
+				&& !SightingRules.fogLifted(SightingRules.Sky.OTHER, SightingRules.Sky.CLEAR_DAYLIGHT), "the pure rule");
+		helper.startSequence()
+				.thenExecuteAfter(10, () -> {
+					for (HimEntity him : List.of(unseen, seen, dusk)) {
+						helper.assertTrue(!him.isRemoved() && !him.triggered(), "gone or leaving in the fog: " + him.goneWhy());
+					}
+					helper.assertTrue(unseen.cameUnder() == SightingRules.Sky.DAYTIME_FOG && seen.cameUnder() == SightingRules.Sky.DAYTIME_FOG
+							&& dusk.cameUnder() == SightingRules.Sky.OTHER, "the skies they came under: " + unseen.cameUnder() + " " + dusk.cameUnder());
+					helper.assertTrue(seen.everSeen() && !unseen.everSeen(), "the seen one is not seen, or the other is");
+					fogSky.set(SightingRules.Sky.CLEAR_DAYLIGHT); // the carry-over lifts: the day is clear
+					duskSky.set(SightingRules.Sky.CLEAR_DAYLIGHT);
+				})
+				.thenExecuteAfter(2, () -> {
+					try {
+						helper.assertTrue(unseen.isRemoved() && String.valueOf(unseen.goneWhy()).contains("out of view") && !unseen.seenWhenRemoved(),
+								"unseen, the fog gone, yet " + unseen.goneWhy());
+						helper.assertTrue(!seen.isRemoved() && seen.triggered() && seen.phase() == HimEntity.Phase.LEAVING,
+								"seen, the fog gone: not walking away, or gone in view: " + seen.phase() + " " + seen.goneWhy());
+						helper.assertTrue(!dusk.isRemoved() && !dusk.triggered() && dusk.phase() == HimEntity.Phase.IDLE,
+								"one who came at dusk left with the daytime fog: " + dusk.phase() + " " + dusk.goneWhy());
+					} finally {
+						discard(unseen);
+						discard(seen);
+						discard(dusk);
+					}
+				})
+				.thenSucceed();
 	}
 
 	/**

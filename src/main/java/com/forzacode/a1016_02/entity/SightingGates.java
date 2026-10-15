@@ -32,7 +32,9 @@ import net.minecraft.world.phys.Vec3;
  * same variant twice in a row, one figure at a time. Debug fires skip all of this; never the out-of-view rule. A
  * fog spell over the day (D-071: a fog day, a morning carry-over) is not clear daylight, and in that daytime fog only
  * the cow, the one walking away, between the trunks, across the water and close may come
- * ({@link SightingRules#daylight}). The glimpse is not a card ({@link Variant#isCard}): it has no gates here.
+ * ({@link SightingRules#daylight}); the fog counts only while the spell gives at least half its level
+ * ({@link SightingRules#fogWeather}), and a sighting that came in it walks away once it no longer does
+ * ({@link SightingRules#fogLifted}). The glimpse is not a card ({@link Variant#isCard}): it has no gates here.
  *
  * <p>Multiplayer (D-058 to D-062): the gates are asked for the player the director picked, in that player's own
  * level. He is one being, so one figure at a time, the day count, the variant rule and the 300-block rule are the
@@ -188,11 +190,24 @@ public final class SightingGates {
 	}
 
 	/**
-	 * True while the world's fog spell (D-071, {@code HerobrineState.Effects.fogSpell}) is on, on the overworld clock
-	 * (absolute {@code getDefaultClockTime()}, as the spell and {@code FogLimits.of(player)} use it).
+	 * True while the world's fog spell (D-071, {@code HerobrineState.Effects.fogSpell}) gives fog that counts
+	 * ({@link SightingRules#fogWeather}), on the overworld clock (absolute {@code getDefaultClockTime()}, as the spell
+	 * and {@code FogLimits.of(player)} use it).
 	 */
 	public static boolean fogWeather(MinecraftServer server) {
 		return SightingRules.fogWeather(HerobrineState.get(server).effects().fogSpell(), server.overworld().getDefaultClockTime());
+	}
+
+	/**
+	 * The sky over this level now ({@link SightingRules#sky}): the overworld's time of day, this level's rain and the
+	 * world's fog weather; {@link SightingRules.Sky#OTHER} where time stands still (the End, the Nether).
+	 */
+	public static SightingRules.Sky sky(ServerLevel level) {
+		if (level.dimensionType().hasFixedTime()) {
+			return SightingRules.Sky.OTHER;
+		}
+		MinecraftServer server = level.getServer();
+		return SightingRules.sky(timeOfDay(server), level.isRaining(), fogWeather(server), EntityConfig.get());
 	}
 
 	/** True if {@code pos} is within {@code radius} blocks (horizontal) of the player's own base (D-061). */

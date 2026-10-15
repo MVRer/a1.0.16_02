@@ -60,7 +60,8 @@ import org.jspecify.annotations.Nullable;
  * first: stared at (3 s), approached (10 blocks closed since first seen) or come too close to (18 blocks), the last two
  * scaled down for a figure that appeared close (D-035), he ends the sighting the way his {@link Variant} says, then
  * despawns once out of view or past the fog. Once seen he stays at least {@code minSeenSeconds} unless he flees.
- * Unseen, he despawns after a lifetime. He never vanishes in view.
+ * Unseen, he despawns after a lifetime. He never vanishes in view. One who came in daytime fog (D-071) walks away
+ * once the fog no longer counts and the day is clear ({@link SightingRules#fogLifted}).
  *
  * <p>Leaving at a run he always outpaces whoever chases him (D-036): {@code outrunFactor} times the chaser's speed, at
  * least {@code baseRunSpeed}, at most {@code maxRunSpeed}. Walking away, he breaks into that run when a player closes
@@ -190,6 +191,8 @@ public class HimEntity extends PathfinderMob {
 	private boolean seenWhenRemoved;
 	/** Why his own rules removed him, or null while he is out. */
 	private @Nullable String goneWhy;
+	/** The sky on his first tick (D-071): one who came in daytime fog walks away once the day is clear ({@link SightingRules#fogLifted}). */
+	private SightingRules.Sky cameUnder = SightingRules.Sky.OTHER;
 	/** The glimpse: the farthest the player he appeared for has stood from him since he appeared (an approach is measured from there). */
 	private final Map<UUID, Double> glimpseStarts = new HashMap<>();
 
@@ -329,6 +332,7 @@ public class HimEntity extends PathfinderMob {
 			if (Double.isNaN(spawnDistance)) {
 				spawnDistance = players.stream().mapToDouble(p -> SpotFinder.horizontal(p.position(), position())).min().orElse(Double.NaN);
 			}
+			cameUnder = sky(level);
 		}
 		age++;
 		phaseTicks++;
@@ -369,6 +373,11 @@ public class HimEntity extends PathfinderMob {
 		if (!triggered && appearedFor != null && !present(players, appearedFor)) {
 			// D-062.5: the one he appeared for left, died, turned spectator or changed dimension. He leaves, walking
 			// (nobody chased him), and is gone once nobody can see him.
+			walkAway(walkGait());
+		}
+		if (!triggered && cameUnder == SightingRules.Sky.DAYTIME_FOG && SightingRules.fogLifted(cameUnder, sky(level))) {
+			// D-071: he came in daytime fog and it no longer counts (FogSpell.counts): the day is clear. He leaves,
+			// walking, and is gone by the normal rules once nobody can see him.
 			walkAway(walkGait());
 		}
 
@@ -449,6 +458,16 @@ public class HimEntity extends PathfinderMob {
 			default -> {
 			}
 		}
+	}
+
+	/** The sky over him now, for the daytime-fog rules (D-071, {@link SightingGates#sky}). Game tests override it. */
+	protected SightingRules.Sky sky(ServerLevel level) {
+		return SightingGates.sky(level);
+	}
+
+	/** The sky on his first tick: {@link SightingRules.Sky#DAYTIME_FOG} if he came in daytime fog (D-071). */
+	public SightingRules.Sky cameUnder() {
+		return cameUnder;
 	}
 
 	/**

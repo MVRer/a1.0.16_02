@@ -46,9 +46,9 @@ public final class SightingRules {
 	}
 
 	/**
-	 * Clear daylight with the world's fog weather (D-071): a fog spell over the day window (a fog day, a fog night's
-	 * morning carry-over, a fog night's first ticks before dusk) is not clear daylight. {@code fogWeather}:
-	 * {@link #fogWeather} now.
+	 * Clear daylight with the world's fog weather (D-071): fog that counts over the day window (a fog day, a fog night's
+	 * morning carry-over while it still gives fog) is not clear daylight; a spell's first ticks before its fog comes and
+	 * its last as it lifts are. {@code fogWeather}: {@link #fogWeather} now.
 	 */
 	public static boolean clearDaylight(long timeOfDay, boolean raining, boolean fogWeather, EntityConfig config) {
 		return !fogWeather && clearDaylight(timeOfDay, raining, config);
@@ -62,9 +62,41 @@ public final class SightingRules {
 		return fogWeather && clearDaylight(timeOfDay, raining, config);
 	}
 
-	/** True while the world's fog spell is on at this overworld clock tick ({@link FogSpell#activeAt}). */
+	/**
+	 * True while the world's fog spell gives fog that counts at this overworld clock tick ({@link FogSpell#counts}: its
+	 * amount at least {@code fogGateShare}, 0.5, of its level). A spell that is on but still easing in (a fog night's
+	 * 11500 to 11800, inside the clear-day window) or nearly gone (the end of a morning carry-over) is no fog for the
+	 * sightings.
+	 */
 	public static boolean fogWeather(Optional<FogSpell> spell, long clockTicks) {
-		return spell.isPresent() && spell.get().activeAt(clockTicks);
+		return spell.isPresent() && spell.get().counts(clockTicks);
+	}
+
+	/** The sky a sighting stands under, for the daytime-fog rules (D-071). */
+	public enum Sky {
+		/** The day window, no rain, no fog that counts: never a sighting. */
+		CLEAR_DAYLIGHT,
+		/** What would be clear daylight, but the fog counts: only {@link Variant#inDaytimeFog} come. */
+		DAYTIME_FOG,
+		/** Anything else: dusk, night, dawn, rain, or a dimension where time stands still. */
+		OTHER
+	}
+
+	/** The sky now ({@link #clearDaylight}, {@link #daytimeFog}). */
+	public static Sky sky(long timeOfDay, boolean raining, boolean fogWeather, EntityConfig config) {
+		if (clearDaylight(timeOfDay, raining, fogWeather, config)) {
+			return Sky.CLEAR_DAYLIGHT;
+		}
+		return daytimeFog(timeOfDay, raining, fogWeather, config) ? Sky.DAYTIME_FOG : Sky.OTHER;
+	}
+
+	/**
+	 * D-071: a sighting that came in daytime fog ({@code came}, the sky on his first tick) walks away once the day is
+	 * clear ({@code now}): the fog stopped counting while he was out. He leaves by the normal rules, out of view. A
+	 * sighting that came under any other sky is left alone.
+	 */
+	public static boolean fogLifted(Sky came, Sky now) {
+		return came == Sky.DAYTIME_FOG && now == Sky.CLEAR_DAYLIGHT;
 	}
 
 	/**
