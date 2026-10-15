@@ -50,13 +50,13 @@ import net.minecraft.world.phys.Vec3;
  */
 public class LadderGameTests {
 	/**
-	 * The detector finds a straight tunnel players dug (a torch in it, a 2-wide one) behind the player along their
-	 * heading, and refuses a natural cave, a bend, water in it or beside it, a run too short, and walls open to a cave
-	 * along it.
+	 * The detector finds a straight tunnel players dug (a torch in it, a 2-wide one, a strip mine with a branch every 2
+	 * cells) behind the player along their heading, and refuses a natural cave, a bend, water in it or beside it, a run
+	 * too short, and walls open to a cave along it.
 	 */
 	@GameTest(maxTicks = 100)
 	public void detectorFindsADugTunnelAndRefusesCavesBendsWaterAndShortRuns(GameTestHelper helper) {
-		DigGround g = DigGround.of(helper, 16, 48, 8, 48, Blocks.STONE);
+		DigGround g = DigGround.of(helper, 16, 48, 8, 56, Blocks.STONE);
 		LadderRig rig = new LadderRig(helper, g, "Alex");
 		DigConfig config = rig.config;
 		int minRun = config.ladderMinRun;
@@ -109,6 +109,18 @@ public class LadderGameTests {
 		g.digBox(2, 3, 44, 31, 4, 45);
 		Optional<TunnelRun> wide = TunnelRun.detect(g.level, rig.crew.watch, g.at(31, 3, 44), Direction.EAST, minRun, share);
 		helper.assertTrue(wide.isPresent() && wide.get().length() == 29 && wide.get().sealed() == 29, "a 2-wide tunnel: " + wide.map(TunnelRun::sealed));
+
+		// A strip mine: a branch off both sides every 2 cells, so about half its cells are open. It counts at the default
+		// share (0.45), and would not have at 0.6.
+		rig.tunnelX(2, 31, 3, 51);
+		for (int x = 3; x <= 29; x += 2) {
+			g.digBox(x, 3, 49, x, 4, 50);
+			g.digBox(x, 3, 52, x, 4, 53);
+		}
+		Optional<TunnelRun> strip = TunnelRun.detect(g.level, rig.crew.watch, g.at(31, 3, 51), Direction.EAST, minRun, share);
+		helper.assertTrue(strip.isPresent() && strip.get().length() == 29 && strip.get().sealed() == 15, "a strip mine with a branch every 2 cells: "
+				+ strip.map(TunnelRun::sealed));
+		helper.assertTrue(TunnelRun.detect(g.level, rig.crew.watch, g.at(31, 3, 51), Direction.EAST, minRun, 0.6).isEmpty(), "the strip mine at 0.6");
 		helper.succeed();
 	}
 
@@ -388,12 +400,12 @@ public class LadderGameTests {
 			LadderRig.Asked first = rig.asked.getFirst();
 			helper.assertTrue(!first.spawn() && first.feet().equals(Vec3.atBottomCenterOf(spot)), "the first spot asked is not the nearest dark one: " + first);
 			helper.assertTrue(rig.asked.stream().filter(a -> !a.spawn()).allMatch(a -> a.tick() <= rig.heard.getFirst().tick()), "asked after the steps began");
-			helper.assertTrue(rig.heard.size() >= rig.config.ladderGlimpseStepsMin && rig.heard.size() <= rig.config.ladderGlimpseStepsMax,
-					rig.heard.size() + " steps");
-			int previous = Integer.MAX_VALUE;
+			helper.assertTrue(rig.heard.size() >= 3 && rig.heard.size() <= rig.config.ladderGlimpseStepsMax, rig.heard.size() + " steps");
+			double previous = Double.MAX_VALUE;
 			for (LadderRig.Heard step : rig.heard) {
-				int back = LadderRig.backAlongX(alex, step.pos());
-				helper.assertTrue(back < previous && back >= 17, "the steps do not come up to the spot: " + back + " after " + previous);
+				double back = LadderRig.exactBackAlongX(alex, step.pos());
+				helper.assertTrue(back < previous && back >= 17 - 1.0E-6, "the steps do not come up to the spot: " + back + " after " + previous);
+				helper.assertTrue(step.volume() <= rig.config.ladderGlimpseVolumeMax + 1.0E-6, "a reaching step at " + step.volume());
 				previous = back;
 			}
 			LadderRig.Heard last = rig.heard.getLast();
@@ -405,6 +417,37 @@ public class LadderGameTests {
 			Vec3 facing = new Vec3(-Math.sin(Math.toRadians(him.yaw())), 0, Math.cos(Math.toRadians(him.yaw())));
 			Vec3 toAlex = alex.position().subtract(him.feet()).multiply(1, 0, 1).normalize();
 			helper.assertTrue(facing.dot(toAlex) > 0.99, "he does not face Alex: yaw " + him.yaw());
+			g.keepLoaded(false);
+		});
+	}
+
+	/**
+	 * Rung 3 must be heard: with his spot 19 back, at least three of the steps coming up to it reach the player (their
+	 * volume, up to {@code ladderGlimpseVolumeMax} 1.3, carries about 21 blocks), the last one on the spot, and none
+	 * reaches a friend 60 away. Rungs 1 and 2 never go above 1.
+	 */
+	@GameTest(maxTicks = 300)
+	public void aGlimpseNineteenBackIsHeardComingButNotSixtyAway(GameTestHelper helper) {
+		DigGround g = DigGround.of(helper, 26, 48, 8, 9, Blocks.STONE);
+		g.keepLoaded(true);
+		LadderRig rig = new LadderRig(helper, g, "Alex", "Sam");
+		rig.tunnelX(2, 41, 3, 4);
+		ServerPlayer alex = rig.stand("Alex", 40, 3, 4, LadderRig.EAST);
+		ServerPlayer sam = rig.stand("Sam", 40 - 60, 3, 4, LadderRig.EAST);
+		rig.figureWhere = feet -> LadderRig.backAlongX(alex, feet) >= 19; // nearer spots are lit, say
+		helper.assertTrue(rig.fire(Ladder.Rung.GLIMPSE, alex, false, true, 81L) == FireResult.FIRED, "rung 3 did not fire: "
+				+ Ladder.check(Ladder.Rung.GLIMPSE, alex, rig.env(), true).why());
+		BlockPos spot = g.at(40 - 19, 3, 4);
+		helper.succeedWhen(() -> {
+			helper.assertFalse(LadderRig.walking(alex), "the steps are still coming");
+			helper.assertTrue(!rig.heard.isEmpty() && rig.heard.getLast().pos().equals(Vec3.atBottomCenterOf(spot)), "the last step is not on the spot 19 back");
+			long heardByAlex = rig.heard.stream().filter(step -> SoundCues.hearers(g.level, List.of(alex), step.pos(), step.volume()).contains(alex)).count();
+			helper.assertTrue(heardByAlex >= 3, "Alex heard " + heardByAlex + " of " + rig.heard.size() + " steps: " + rig.heard);
+			helper.assertTrue(rig.heard.stream().allMatch(step -> SoundCues.hearers(g.level, List.of(sam), step.pos(), step.volume()).isEmpty()),
+					"the friend 60 away heard a step");
+			helper.assertTrue(rig.heard.stream().allMatch(step -> step.volume() <= rig.config.ladderGlimpseVolumeMax + 1.0E-6 && step.volume() > 1.0F),
+					"the reaching steps are not above 1 and at most the cap: " + rig.heard);
+			helper.assertTrue(rig.spawns().size() == 1 && rig.spawns().getFirst().feet().equals(Vec3.atBottomCenterOf(spot)), "no glimpse on the spot");
 			g.keepLoaded(false);
 		});
 	}

@@ -3,6 +3,7 @@ package com.forzacode.a1016_02.dig;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
+import java.util.function.Predicate;
 
 import com.forzacode.a1016_02.core.Figure;
 import com.forzacode.a1016_02.core.FireContext;
@@ -48,8 +49,9 @@ final class LadderRig implements Ladder.Sounds, Figure {
 	final DigConfig config = new DigConfig();
 	final List<Heard> heard = new ArrayList<>();
 	final List<Asked> asked = new ArrayList<>();
-	/** What {@code canGlimpse} answers. */
+	/** What {@code canGlimpse} answers: {@code figureCan} for the feet {@code figureWhere} accepts. */
 	boolean figureCan = true;
+	Predicate<Vec3> figureWhere = feet -> true;
 	/** Every crew member's own clock (a large start, so "never" stays far from it). */
 	long playTicks = 10_000_000L;
 	long day;
@@ -115,6 +117,11 @@ final class LadderRig implements Ladder.Sounds, Figure {
 		return (int) Math.round(player.getX() - pos.x);
 	}
 
+	/** {@link #backAlongX} without rounding (rung 3's steps may fall between cell centres). */
+	static double exactBackAlongX(ServerPlayer player, Vec3 pos) {
+		return player.getX() - pos.x;
+	}
+
 	List<Asked> spawns() {
 		return asked.stream().filter(Asked::spawn).toList();
 	}
@@ -131,7 +138,7 @@ final class LadderRig implements Ladder.Sounds, Figure {
 	@Override
 	public boolean canGlimpse(ServerPlayer player, Vec3 feet) {
 		asked.add(new Asked(server.getTickCount(), feet, false, 0.0F));
-		return figureCan;
+		return figureCan && figureWhere.test(feet);
 	}
 
 	@Override

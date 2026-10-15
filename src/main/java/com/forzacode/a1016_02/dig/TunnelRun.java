@@ -16,8 +16,9 @@ import net.minecraft.world.phys.Vec3;
  * The tunnel ladder's detector (D-072): a straight, level, 2-high run of player-dug air behind a player along their
  * heading. Any player's dug footprint counts ({@link PlayerWatch#wasDugByPlayer}: the dug air of a friend's tunnel is a
  * tunnel too), and a cell a player placed something see-through in (a torch, a rail) still belongs to it. Each cell of
- * the run has a solid floor and no fluid in or next to it; most cells have sealed walls (a branch or two may open off
- * it, a natural cave alongside may not open most of it). Reads the world and the footprint only, never loads a chunk,
+ * the run has a solid floor and no fluid in or next to it; enough cells have sealed walls ({@code ladderMinSealedShare}:
+ * a strip mine with a branch every 2 cells counts, a tunnel open to a natural cave along it does not). Reads the world
+ * and the footprint only, never loads a chunk,
  * walks back at most {@link #MAX_BACK} cells.
  *
  * @param feet    the player's feet cell

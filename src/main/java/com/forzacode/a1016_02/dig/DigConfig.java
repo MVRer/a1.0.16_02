@@ -135,8 +135,11 @@ public final class DigConfig implements ModConfig.Versioned {
 	// --- someone behind you: the tunnel ladder (D-072) ---
 	/** Cells of straight player-dug 2-high tunnel the player must have behind them, along their heading. */
 	public int ladderMinRun = 16;
-	/** Share of those cells whose walls (both sides, at the feet and the head) are sealed: "most cells". */
-	public double ladderMinSealedShare = 0.6;
+	/**
+	 * Share of those cells whose walls (both sides, at the feet and the head) are sealed. 0.45 lets a strip mine with a
+	 * branch every 2 cells count (half its cells open); a tunnel open to a natural cave along it does not.
+	 */
+	public double ladderMinSealedShare = 0.45;
 	/** At most one ladder event per this many minutes of the player's own play. */
 	public double ladderGapMinutes = 25;
 	/** Never within this long of combat (seconds). */
@@ -185,11 +188,18 @@ public final class DigConfig implements ModConfig.Versioned {
 	public int ladderGlimpseSpotMax = 20;
 	public int ladderGlimpseMaxBlockLight = 3;
 	/**
-	 * Rung 3's steps, coming up to the spot a step and a half apart (a slow walk). Only those within vanilla's 16-block
-	 * range are heard, so the nearest dark spot is taken first.
+	 * Rung 3's steps, coming up the tunnel to the spot (at most a step and a half apart, closer when the spot is far, so
+	 * at least three are in hearing range for a spot up to 19 back), all within the range below where they can be.
 	 */
 	public int ladderGlimpseStepsMin = 4;
 	public int ladderGlimpseStepsMax = 7;
+	/**
+	 * Rung 3's steps play at this volume, the one place a ladder step goes above 1: vanilla's hearing range is
+	 * {@code max(volume, 1) * 16}, so 1.3 reaches about 21 blocks and a step at the spot 14 to 20 back is heard (faint
+	 * from the start, louder as they come). Each step is also held under the shared moment radius, so a friend outside
+	 * it never hears one. Rungs 1 and 2 stay at 1 at most.
+	 */
+	public float ladderGlimpseVolumeMax = 1.3F;
 
 	/** D-075: brings an older section up to {@link #CURRENT_VERSION}; values the player changed are kept. */
 	@Override

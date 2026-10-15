@@ -294,16 +294,24 @@ final class Ladder {
 		return new LadderSteps.Walk(Rung.COMING.id + " (fake)", player, run, env, steps, true, true, false, null, start);
 	}
 
-	/** Rung 3: steps up to the spot ({@code spot} cells back, fixed), the last one on it; he is there after it. */
+	/**
+	 * Rung 3: steps coming up the tunnel to the spot ({@code spot} cells back, fixed), the last one on it; he is there
+	 * after it. They start inside the reaching steps' hearing range ({@link #reach}), so the first is already faintly
+	 * heard: at most a step and a half apart, closer when the spot is far, so a spot up to 19 back still gets three
+	 * heard steps (only one 20 back starts past the edge to have room for three).
+	 */
 	private static LadderSteps.Walk glimpse(ServerPlayer player, TunnelRun run, Env env, RandomSource random, long start, int spot) {
 		DigConfig config = env.config();
 		int cadence = Math.max(1, config.ladderStepTicks);
 		int wanted = between(random, Math.max(1, config.ladderGlimpseStepsMin), Math.max(1, config.ladderGlimpseStepsMax));
-		int from = Math.min(run.length(), spot + (int) Math.round(1.5 * (wanted - 1)));
-		int count = Math.max(1, Math.min(wanted, from - spot + 1));
+		double edge = reach(config) - 0.5;
+		double spacing = Mth.clamp((edge - spot) / 2.0, 0.5, 1.5);
+		double from = Math.min(run.length(), spot + spacing * (wanted - 1));
+		from = Math.max(spot, Math.min(from, Math.max(edge, spot + 2 * spacing)));
+		int count = Math.max(1, Math.min(wanted, (int) Math.floor((from - spot) / spacing + 1.0E-6) + 1));
 		List<LadderSteps.Step> steps = new ArrayList<>();
 		for (int i = 0; i < count; i++) {
-			int back = count == 1 ? spot : (int) Math.round(from + (spot - from) * (i / (double) (count - 1)));
+			double back = i == count - 1 ? spot : from + (spot - from) * (i / (double) (count - 1));
 			steps.add(new LadderSteps.Step((long) i * cadence, back, 1.0F));
 		}
 		return new LadderSteps.Walk(Rung.GLIMPSE.id, player, run, env, steps, false, true, false, run.cell(spot), start);
@@ -352,6 +360,22 @@ final class Ladder {
 		double near = config.ladderComingStopMin;
 		double t = far > near ? Mth.clamp((far - distance) / (far - near), 0.0, 1.0) : 1.0;
 		return (float) Mth.clamp(Mth.lerp(t, config.ladderVolumeFar, config.ladderVolumeNear), 0.0, 1.0);
+	}
+
+	/**
+	 * Rung 3's steps' volume {@code distance} blocks from the player: {@code ladderGlimpseVolumeMax} (1.3: vanilla's range
+	 * {@code max(volume, 1) * 16}, about 21 blocks, so steps 14 to 20 back are heard, louder as they near by the
+	 * client's own fade), and always under what a friend outside the shared moment radius could hear (their distance
+	 * from the step is at least that radius minus {@code distance}).
+	 */
+	static float reachingVolume(double distance, DigConfig config) {
+		double alone = (ModConfig.pacing().sharedMomentRadius - distance) / 16.0 * 0.99;
+		return (float) Math.max(0.0, Math.min(config.ladderGlimpseVolumeMax, alone));
+	}
+
+	/** How far rung 3's steps are heard at {@code ladderGlimpseVolumeMax} (vanilla's {@code max(volume, 1) * 16} blocks). */
+	static double reach(DigConfig config) {
+		return Math.max(1.0F, config.ladderGlimpseVolumeMax) * 16.0;
 	}
 
 	/** The yaw (degrees, the entity's) of someone at {@code from} facing {@code to}. */

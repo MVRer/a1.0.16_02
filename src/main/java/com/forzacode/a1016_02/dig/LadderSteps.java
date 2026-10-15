@@ -44,10 +44,11 @@ final class LadderSteps {
 	static final int SAMPLES = 200 / DigTicker.LADDER_TICKS;
 
 	/**
-	 * One planned step: {@code at} ticks after the walk starts, {@code back} cells behind the player along the run (0:
-	 * at the player's own feet), its volume times {@code factor}.
+	 * One planned step: {@code at} ticks after the walk starts, {@code back} blocks behind the player along the run (0:
+	 * at the player's own feet; it may fall between cell centres, the cell it is in must be the tunnel's), its volume
+	 * times {@code factor}.
 	 */
-	record Step(long at, int back, float factor) {
+	record Step(long at, double back, float factor) {
 	}
 
 	/** One rung's steps in progress for one player. */
@@ -119,12 +120,13 @@ final class LadderSteps {
 			ServerLevel level = target.level();
 			while (next < steps.size() && start + steps.get(next).at() <= now) {
 				Step step = steps.get(next);
-				BlockPos cell = cellFor(target, step);
+				Vec3 pos = posFor(target, step);
+				BlockPos cell = pos == null ? null : BlockPos.containing(pos);
 				if (cell == null || (!own && !TunnelRun.tunnelCell(level, env.watch(), cell))) {
 					stopped = "the tunnel ends there";
 					return false;
 				}
-				play(target, level, cell, step);
+				play(target, level, pos, cell, step);
 				next++;
 				if (next == steps.size() && spot != null) {
 					Vec3 feet = Vec3.atBottomCenterOf(spot);
@@ -135,13 +137,14 @@ final class LadderSteps {
 		}
 
 		/**
-		 * Where a step falls: {@code back} cells behind the player along the run, from where they are now (a walk that
-		 * follows) or from where they were (rung 3's fixed spot); null once they left the run's line.
+		 * Where a step falls, on the floor of the run's line: {@code back} blocks behind the player along the run, from
+		 * where they are now (a walk that follows) or from where they were (rung 3's fixed spot); null once they left the
+		 * run's line.
 		 */
-		private @Nullable BlockPos cellFor(ServerPlayer target, Step step) {
+		private @Nullable Vec3 posFor(ServerPlayer target, Step step) {
 			BlockPos feet = target.blockPosition();
 			if (own) {
-				return feet;
+				return Vec3.atBottomCenterOf(feet);
 			}
 			BlockPos base = origin;
 			if (follows) {
@@ -155,15 +158,26 @@ final class LadderSteps {
 				}
 				base = origin.relative(heading, along);
 			}
-			return base.relative(heading.getOpposite(), step.back());
+			Direction back = heading.getOpposite();
+			return Vec3.atBottomCenterOf(base).add(back.getStepX() * step.back(), 0.0, back.getStepZ() * step.back());
 		}
 
-		/** The floor block's own step sound (stone if it is not solid), PLAYERS, at the cell's floor, for everyone in range. */
-		private void play(ServerPlayer target, ServerLevel level, BlockPos cell, Step step) {
+		/**
+		 * The floor block's own step sound (stone if it is not solid), PLAYERS, at {@code pos} on the cell's floor, for
+		 * everyone in range: louder as it nears, at most 1 (vanilla's 16 blocks), except rung 3's reaching steps
+		 * ({@link Ladder#reachingVolume}).
+		 */
+		private void play(ServerPlayer target, ServerLevel level, Vec3 pos, BlockPos cell, Step step) {
 			SoundType type = SoundCards.soundAt(level, cell.below());
-			Vec3 pos = Vec3.atBottomCenterOf(cell);
-			float volume = own ? type.getVolume() * 0.15F : Ladder.volumeAt(pos.distanceTo(target.position()), env.config());
-			volume = Mth.clamp(volume * step.factor(), 0.0F, 1.0F);
+			double distance = pos.distanceTo(target.position());
+			float volume;
+			if (own) {
+				volume = Mth.clamp(type.getVolume() * 0.15F * step.factor(), 0.0F, 1.0F);
+			} else if (spot != null) {
+				volume = Ladder.reachingVolume(distance, env.config());
+			} else {
+				volume = Mth.clamp(Ladder.volumeAt(distance, env.config()) * step.factor(), 0.0F, 1.0F);
+			}
 			env.sounds().play(level, BuiltInRegistries.SOUND_EVENT.wrapAsHolder(type.getStepSound()), SoundSource.PLAYERS, pos, volume, type.getPitch());
 		}
 	}
