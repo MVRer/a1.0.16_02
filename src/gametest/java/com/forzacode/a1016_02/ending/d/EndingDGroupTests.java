@@ -20,6 +20,7 @@ import com.forzacode.a1016_02.lore.UntouchedGrove;
 import net.fabricmc.fabric.api.gametest.v1.GameTest;
 
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
 import net.minecraft.core.GlobalPos;
 import net.minecraft.gametest.framework.GameTestHelper;
 import net.minecraft.network.chat.Component;
@@ -37,6 +38,7 @@ import net.minecraft.world.level.block.entity.SignBlockEntity;
 import net.minecraft.world.level.block.entity.SignText;
 import net.minecraft.world.level.block.entity.SignTextSlot;
 import net.minecraft.world.level.levelgen.structure.BoundingBox;
+import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.Vec3;
 
 /**
@@ -464,6 +466,47 @@ public class EndingDGroupTests extends EndingDDangerTests {
 			LastMinute.use(LastMinute.Ports.LIVE);
 			LastMinute.reset();
 			real.setFlag(LastMinute.FLAG, flagBefore);
+		}
+		helper.succeed();
+	}
+
+	/**
+	 * MP-7: the marked block is tracked where it was placed. A's ordinary poplar plank, B's grove plank on top of it
+	 * (clicking its top face): the one on top is grove wood, A's is not. Holding a marked block while right-clicking a
+	 * placed block of the same kind places nothing, and tracks nothing.
+	 */
+	@GameTest(structure = EndingDSupport.YARD)
+	public void theMarkedBlockIsTrackedWhereItWentNotWhereItWasClicked(GameTestHelper helper) {
+		ServerLevel level = helper.getLevel();
+		MinecraftServer server = level.getServer();
+		EndingDState data = new EndingDState();
+		ServerPlayer a = EndingDSupport.player(helper, new Vec3(2.5, 1, 2.5), 0, 0);
+		ServerPlayer b = EndingDSupport.player(helper, new Vec3(4.5, 1, 6.5), 0, 0);
+		BlockPos post = helper.absolutePos(new BlockPos(4, 1, 4));
+		BlockPos top = post.above();
+		helper.setBlock(4, 1, 4, Blocks.POPLAR_PLANKS);
+		Services.watch().onPlaced(a, level, post, Blocks.POPLAR_PLANKS.defaultBlockState());
+		try {
+			ItemStack planks = new ItemStack(Items.POPLAR_PLANKS, 4);
+			Marks.set(planks, Marks.GROVE_WOOD);
+			Marks.onUseBlock(b, planks, new BlockHitResult(Vec3.atCenterOf(post).add(0, 0.5, 0), Direction.UP, post, false));
+			helper.setBlock(4, 2, 4, Blocks.POPLAR_PLANKS);
+			Services.watch().onPlaced(b, level, top, Blocks.POPLAR_PLANKS.defaultBlockState());
+			Marks.placed(server, data, server.getTickCount() + 1);
+			helper.assertTrue(data.trackedAt(GlobalPos.of(level.dimension(), top)).equals(Optional.of(Marks.GROVE_WOOD)), "the grove plank on top is not tracked");
+			helper.assertTrue(data.trackedAt(GlobalPos.of(level.dimension(), post)).isEmpty(), "A's ordinary plank under it was tracked as grove wood");
+
+			// B holds a marked first block and right-clicks A's crafting table (it opens; nothing is placed).
+			BlockPos table = helper.absolutePos(new BlockPos(8, 1, 4));
+			helper.setBlock(8, 1, 4, Blocks.CRAFTING_TABLE);
+			Services.watch().onPlaced(a, level, table, Blocks.CRAFTING_TABLE.defaultBlockState());
+			ItemStack first = new ItemStack(Items.CRAFTING_TABLE);
+			Marks.set(first, Marks.FIRST_BLOCK);
+			Marks.onUseBlock(b, first, new BlockHitResult(Vec3.atCenterOf(table).add(0.5, 0, 0), Direction.EAST, table, false));
+			Marks.placed(server, data, server.getTickCount() + 1);
+			helper.assertTrue(data.trackedAt(GlobalPos.of(level.dimension(), table)).isEmpty(), "A's crafting table was tracked as the first block");
+		} finally {
+			Marks.clear();
 		}
 		helper.succeed();
 	}
