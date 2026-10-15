@@ -69,6 +69,11 @@ public final class Telling {
 	@FunctionalInterface
 	interface Traces {
 		boolean near(GlobalPos pos, int radius);
+
+		/** True inside Ending D's chamber ({@link #outsideChamber}): never near his traces, never the "Stop." sign. */
+		default boolean inChamber(GlobalPos pos) {
+			return false;
+		}
 	}
 
 	/** What a writing turned out to be. */
@@ -161,10 +166,21 @@ public final class Telling {
 
 	/**
 	 * M9 (D-066): a sign written inside Ending D's bedrock chamber is never "near his traces", even when the stair above
-	 * lost blocks to him: the true sentence is not telling. Naming him there still counts as naming.
+	 * lost blocks to him: the true sentence is not telling. Naming him there still counts as naming, but such a sign
+	 * is never the "Stop." sign (F25: the chamber is the one place he can't cut).
 	 */
 	static Traces outsideChamber(Traces traces, java.util.function.Predicate<GlobalPos> inChamber) {
-		return (pos, radius) -> !inChamber.test(pos) && traces.near(pos, radius);
+		return new Traces() {
+			@Override
+			public boolean near(GlobalPos pos, int radius) {
+				return !inChamber.test(pos) && traces.near(pos, radius);
+			}
+
+			@Override
+			public boolean inChamber(GlobalPos pos) {
+				return inChamber.test(pos);
+			}
+		};
 	}
 
 	/** A player saved or signed a book in this inventory slot (lore's book mixin, after vanilla changed it). */
@@ -241,8 +257,8 @@ public final class Telling {
 		coWriters.add(player.getUUID());
 		data.putSign(new WrittenSign(at, old.map(WrittenSign::writer).orElse(player.getUUID()), coWriters, text, about, names, seq, day, after, false));
 		// "Stop." goes on the first sign anyone writes about him in Stage 3: once a candidate is set (this tick or
-		// earlier), a second writer's sign never replaces it (D-062.3).
-		if (names && data.stopCandidate().isEmpty() && !state.stopFired() && state.stage().atLeast(Stage.TELLING)) {
+		// earlier), a second writer's sign never replaces it (D-062.3). Never one in Ending D's chamber (F25).
+		if (names && data.stopCandidate().isEmpty() && !state.stopFired() && state.stage().atLeast(Stage.TELLING) && !traces.inChamber(at)) {
 			data.setStopCandidate(at);
 			A1016_02.LOGGER.info("[a1016] lore: the sign at {} is the one that will say \"Stop.\"", pos.toShortString());
 		}

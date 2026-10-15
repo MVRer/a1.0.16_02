@@ -32,6 +32,7 @@ import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.server.network.FilteredText;
+import net.minecraft.util.RandomSource;
 import net.minecraft.world.Container;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
@@ -40,6 +41,7 @@ import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.entity.SignBlockEntity;
 import net.minecraft.world.level.block.entity.SignTextSlot;
+import net.minecraft.world.level.levelgen.structure.BoundingBox;
 import net.minecraft.world.phys.Vec3;
 
 /**
@@ -202,6 +204,68 @@ public class LoreMultiplayerTests extends LoreTellingTests {
 		helper.succeed();
 	}
 
+	/**
+	 * F25, "the only place he cant cut" (MP-8 item 4, MP-7): B named him earlier, so every sign since is remembered.
+	 * A's signs in Ending D's chamber, the true sentence among them, are never blank sign's and never the "Stop." sign
+	 * (a sign naming him outside still is). And core refuses every edit of his inside the chamber, whichever card asks,
+	 * while what others leave there, the ending's own scenes and a give-back go through.
+	 */
+	@GameTest
+	public void theChamberIsTheOnePlaceHeCantCut(GameTestHelper helper) {
+		floor(helper);
+		ServerLevel level = helper.getLevel();
+		MinecraftServer server = level.getServer();
+		ServerPlayer a = mock(helper);
+		ServerPlayer b = mock(helper);
+		HerobrineState state = new HerobrineState();
+		TellingData data = new TellingData();
+		LoreData lore = new LoreData();
+		BoundingBox box = BoundingBox.fromCorners(helper.absolutePos(new BlockPos(3, 1, 3)), helper.absolutePos(new BlockPos(6, 3, 6)));
+		TeamChamber.record(lore, level.dimension(), box);
+		java.util.function.Predicate<GlobalPos> inChamber = pos -> TeamChamber.contains(lore, pos);
+		Telling.Traces traces = Telling.outsideChamber(NO_TRACES, inChamber);
+		sign(helper, new BlockPos(1, 1, 1), b, "herobrine", state, data, traces);
+		helper.assertTrue(data.told() && data.stopCandidate().isEmpty(), "B's naming before Stage 3 did not tell, or became the Stop. sign");
+		state.setStage(server, Stage.TELLING);
+		sign(helper, new BlockPos(4, 1, 4), a, "i did, but he is no longer with us", state, data, traces);
+		sign(helper, new BlockPos(5, 1, 5), a, "herobrine", state, data, traces);
+		helper.assertTrue(data.sign(at(helper, 4, 1, 4)).isPresent() && data.sign(at(helper, 5, 1, 5)).isPresent(), "the chamber signs are not remembered");
+		helper.assertTrue(data.stopCandidate().isEmpty(), "a sign in the chamber is the Stop. sign: " + data.stopCandidate());
+		helper.assertTrue(TellingCards.blankPool(a, data, inChamber).isEmpty(), "blank sign may take a chamber sign: " + TellingCards.blankPool(a, data, inChamber));
+		TestEditor editor = new TestEditor();
+		helper.assertTrue(TellingCards.fireBlank(server, a, data, editor, RandomSource.create(5), inChamber) == FireResult.SKIPPED && editor.edits.isEmpty(),
+				"blank sign fired in the chamber: " + editor.edits);
+		sign(helper, new BlockPos(1, 1, 6), a, "herobrine took my sword", state, data, traces);
+		helper.assertTrue(data.stopCandidate().equals(Optional.of(at(helper, 1, 1, 6))), "a sign naming him outside is no longer the Stop. sign");
+
+		// The live chamber (lore's anchors restored after the test): core refuses every edit of his in it.
+		LoreData live = LoreData.get(server);
+		List<String> keys = List.of(TeamChamber.MIN, TeamChamber.MAX);
+		List<Optional<GlobalPos>> before = keys.stream().map(live::anchor).toList();
+		try {
+			TeamChamber.record(live, level.dimension(), box);
+			BlockPos sign = helper.absolutePos(new BlockPos(4, 1, 4));
+			BlockPos inside = helper.absolutePos(new BlockPos(6, 1, 3));
+			BlockPos inside2 = helper.absolutePos(new BlockPos(3, 1, 6));
+			BlockPos outside = helper.absolutePos(new BlockPos(0, 1, 7));
+			helper.setBlock(new BlockPos(6, 1, 3), Blocks.COBBLESTONE);
+			helper.setBlock(new BlockPos(3, 1, 6), Blocks.COBBLESTONE);
+			helper.setBlock(new BlockPos(0, 1, 7), Blocks.COBBLESTONE);
+			var traceService = Services.traces().forced();
+			helper.assertFalse(traceService.editSign(level, sign, null, null, "lore:his/blank_sign"), "his sign edit in the chamber went through");
+			helper.assertFalse(traceService.remove(level, inside, "accident:dark_corner"), "his block edit in the chamber went through");
+			helper.assertTrue(traceService.remove(level, outside, "accident:dark_corner"), "the veto reached outside the chamber");
+			helper.assertTrue(traceService.remove(level, inside2, "ending:d/test"), "the ending's own edit in the chamber was refused");
+			helper.assertTrue(traceService.leave(level, inside2, Blocks.COBBLESTONE.defaultBlockState(), "lore:left/F35"), "what others leave was refused");
+		} finally {
+			for (int n = 0; n < keys.size(); n++) {
+				String key = keys.get(n);
+				before.get(n).ifPresentOrElse(pos -> live.setAnchor(key, pos), () -> live.removeAnchor(key));
+			}
+		}
+		helper.succeed();
+	}
+
 	/** A's sign rewritten by B, A's book signed by B: still A's too; one who never wrote breaks nothing of theirs. */
 	@GameTest
 	public void writingsStayTheirWritersWhoeverHoldsThem(GameTestHelper helper) {
@@ -217,8 +281,8 @@ public class LoreMultiplayerTests extends LoreTellingTests {
 		TellingData.WrittenSign record = data.sign(at).orElseThrow();
 		helper.assertTrue(record.writer().equals(a.getUUID()) && record.writers().equals(List.of(a.getUUID(), b.getUUID())),
 				"the sign's writers " + record.writers());
-		helper.assertTrue(TellingCards.blankPool(a, data).stream().anyMatch(s -> s.pos().equals(at))
-				&& TellingCards.blankPool(b, data).stream().anyMatch(s -> s.pos().equals(at)), "the sign is not both writers' for blank sign");
+		helper.assertTrue(TellingCards.blankPool(a, data, NO_CHAMBER).stream().anyMatch(s -> s.pos().equals(at))
+				&& TellingCards.blankPool(b, data, NO_CHAMBER).stream().anyMatch(s -> s.pos().equals(at)), "the sign is not both writers' for blank sign");
 		helper.assertFalse(Telling.signBroken(c, at, data), "someone who never wrote on it destroyed their own writing");
 		sign(helper, new BlockPos(2, 1, 2), a, "herobrine", state, data, NO_TRACES);
 		sign(helper, new BlockPos(2, 1, 2), b, "herobrine still", state, data, NO_TRACES);

@@ -5,6 +5,7 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
+import java.util.function.Predicate;
 
 import com.forzacode.a1016_02.A1016_02;
 import com.forzacode.a1016_02.core.CardTag;
@@ -168,26 +169,32 @@ final class TellingCards {
 		@Override
 		public boolean contextFits(ServerPlayer player, ServerLevel world) {
 			MinecraftServer server = world.getServer();
-			return !blankPool(player, TellingData.get(server)).isEmpty();
+			return !blankPool(player, TellingData.get(server), inChamber(server)).isEmpty();
 		}
 
 		@Override
 		public FireResult fire(FireContext ctx) {
 			MinecraftServer server = ctx.level().getServer();
-			return fireBlank(server, ctx.player(), TellingData.get(server), SignEdits.editor(Services.traces()), ctx.random());
+			return fireBlank(server, ctx.player(), TellingData.get(server), SignEdits.editor(Services.traces()), ctx.random(), inChamber(server));
 		}
+	}
+
+	/** Inside Ending D's chamber, the one place he can't cut (F25; lore's trace veto refuses it there too). */
+	static Predicate<GlobalPos> inChamber(MinecraftServer server) {
+		LoreData lore = LoreData.get(server);
+		return pos -> TeamChamber.contains(lore, pos);
 	}
 
 	/**
 	 * The signs blank sign may take: ones this player wrote on (alone or with others), written after the world's
-	 * first telling, not blanked yet, and never the "Stop." sign (or the one that will be). Signs about him first,
-	 * then oldest first.
+	 * first telling, not blanked yet, never the "Stop." sign (or the one that will be) and never one inside Ending D's
+	 * chamber ({@code inChamber}: F25, the only place he can't cut). Signs about him first, then oldest first.
 	 */
-	static List<WrittenSign> blankPool(ServerPlayer player, TellingData data) {
+	static List<WrittenSign> blankPool(ServerPlayer player, TellingData data, Predicate<GlobalPos> inChamber) {
 		List<WrittenSign> pool = new ArrayList<>();
 		for (WrittenSign sign : data.signs()) {
 			if (sign.afterTelling() && !sign.blanked() && sign.writtenBy(player.getUUID()) && !data.stopCandidate().map(sign.pos()::equals).orElse(false)
-					&& !data.stopSign().map(sign.pos()::equals).orElse(false)) {
+					&& !data.stopSign().map(sign.pos()::equals).orElse(false) && !inChamber.test(sign.pos())) {
 				pool.add(sign);
 			}
 		}
@@ -199,8 +206,9 @@ final class TellingCards {
 	 * Blanks one sign of the pool that is out of view (signs about him first, a random one among them).
 	 * {@code SKIPPED} with an empty pool, {@code NO_SPOT} if every candidate is in view or unloaded.
 	 */
-	static FireResult fireBlank(MinecraftServer server, ServerPlayer player, TellingData data, SignEdits.Editor editor, RandomSource random) {
-		List<WrittenSign> pool = blankPool(player, data);
+	static FireResult fireBlank(MinecraftServer server, ServerPlayer player, TellingData data, SignEdits.Editor editor, RandomSource random,
+			Predicate<GlobalPos> inChamber) {
+		List<WrittenSign> pool = blankPool(player, data, inChamber);
 		if (pool.isEmpty()) {
 			return FireResult.SKIPPED;
 		}

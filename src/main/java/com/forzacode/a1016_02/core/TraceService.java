@@ -77,6 +77,12 @@ public final class TraceService {
 	public static final double UNDER_FEET_LOOK_UP_DEGREES = 30.0;
 	/** {@link #editSign} may change a waxed sign only for this cause prefix (lore placing F30). */
 	public static final String WAXED_SIGN_CAUSE = "lore:left/F30";
+	/**
+	 * The cause a {@link TraceVeto} is asked with for an edit that only gives back what a ledger entry took
+	 * ({@link #restoreBlock}, {@link #restoreStack}, and so the REMOVE and REMOVE_STACK undos): never a cut of his,
+	 * whatever the entry's own cause. The ledger still keeps the entry's cause.
+	 */
+	public static final String GIVE_BACK_CAUSE = "core:give_back";
 	/** {@link #restoreBlock} puts a block back at most this many blocks (on every axis) from where it was. */
 	public static final int RESTORE_REACH = 2;
 	/** {@link #figureDig} and {@link #figureFill} work at most this many blocks (horizontally) from the dig's column. */
@@ -134,14 +140,14 @@ public final class TraceService {
 		VETOES.remove(veto);
 	}
 
-	/** True if any registered veto objects to any of these positions. */
-	static boolean vetoed(ServerLevel level, Collection<BlockPos> positions) {
+	/** True if any registered veto objects to any of these positions, for an edit with this cause. */
+	static boolean vetoed(ServerLevel level, Collection<BlockPos> positions, String cause) {
 		if (VETOES.isEmpty()) {
 			return false;
 		}
 		for (BlockPos pos : positions) {
 			for (TraceVeto veto : VETOES) {
-				if (veto.vetoes(level, pos)) {
+				if (veto.vetoes(level, pos, cause)) {
 					return true;
 				}
 			}
@@ -461,7 +467,8 @@ public final class TraceService {
 			return false;
 		}
 		BlockPos to = toPos.immutable();
-		TraceEdit edit = plan(level, entry.cause(), List.of(new TraceBatch.Restore(to, entry.state().get(), entry.blockEntity().map(CompoundTag::copy).orElse(null))), null);
+		TraceEdit edit = plan(level, entry.cause(), GIVE_BACK_CAUSE, List.of(new TraceBatch.Restore(to, entry.state().get(),
+				entry.blockEntity().map(CompoundTag::copy).orElse(null))), null);
 		if (edit == null || !allowed(level, edit.checkedPositions())) {
 			return false;
 		}
@@ -543,7 +550,7 @@ public final class TraceService {
 			return false;
 		}
 		List<BlockPos> at = List.of(pos.immutable());
-		if (vetoed(level, at) || !allowed(level, at)) {
+		if (vetoed(level, at, cause) || !allowed(level, at)) {
 			return false;
 		}
 		BlockState state = level.getBlockState(pos);
@@ -657,7 +664,7 @@ public final class TraceService {
 	 */
 	public boolean removeStack(ServerLevel level, BlockPos pos, int slot, int count, String cause) {
 		if (count <= 0 || !(level.getBlockEntity(pos) instanceof Container container) || slot < 0 || slot >= container.getContainerSize()
-				|| container.getItem(slot).isEmpty() || !allowedAndNotVetoed(level, List.of(pos))) {
+				|| container.getItem(slot).isEmpty() || !allowedAndNotVetoed(level, List.of(pos), cause)) {
 			return false;
 		}
 		ItemStack removed = container.removeItem(slot, count);
@@ -677,7 +684,7 @@ public final class TraceService {
 		}
 		ItemStack stack = source.getItem(slot);
 		int targetSlot = emptySlotFor(target, stack);
-		if (targetSlot < 0 || !allowedAndNotVetoed(level, List.of(from, to))) {
+		if (targetSlot < 0 || !allowedAndNotVetoed(level, List.of(from, to), cause)) {
 			return false;
 		}
 		target.setItem(targetSlot, stack.copy());
@@ -697,7 +704,7 @@ public final class TraceService {
 			return false;
 		}
 		int slot = emptySlotFor(target, stack);
-		if (slot < 0 || !allowedAndNotVetoed(level, List.of(containerPos))) {
+		if (slot < 0 || !allowedAndNotVetoed(level, List.of(containerPos), cause)) {
 			return false;
 		}
 		target.setItem(slot, stack.copy());
@@ -720,7 +727,7 @@ public final class TraceService {
 		}
 		ItemStack stack = entry.stack().get();
 		int slot = emptySlotFor(target, stack);
-		if (slot < 0 || !allowedAndNotVetoed(level, List.of(toPos))) {
+		if (slot < 0 || !allowedAndNotVetoed(level, List.of(toPos), GIVE_BACK_CAUSE)) {
 			return false;
 		}
 		target.setItem(slot, stack.copy());
@@ -756,7 +763,7 @@ public final class TraceService {
 			BlockPos at = entry.to().get();
 			int toSlot = entry.toSlot();
 			if (!(level.getBlockEntity(at) instanceof Container container) || toSlot < 0 || toSlot >= container.getContainerSize()
-					|| !ItemStack.matches(container.getItem(toSlot), wanted) || !allowedAndNotVetoed(level, List.of(at))) {
+					|| !ItemStack.matches(container.getItem(toSlot), wanted) || !allowedAndNotVetoed(level, List.of(at), cause)) {
 				return false;
 			}
 			stack = container.getItem(toSlot).copy();
@@ -841,6 +848,11 @@ public final class TraceService {
 	 * null. The view check is the caller's, on {@link TraceEdit#checkedPositions()}: what the edit itself changes.
 	 */
 	private static @Nullable TraceEdit plan(ServerLevel level, String cause, List<TraceBatch.Op> ops, @Nullable TraceFall fall) {
+		return plan(level, cause, cause, ops, fall);
+	}
+
+	/** {@link #plan(ServerLevel, String, List, TraceFall)}, asking the vetoes with {@code vetoCause} (a give-back). */
+	private static @Nullable TraceEdit plan(ServerLevel level, String cause, String vetoCause, List<TraceBatch.Op> ops, @Nullable TraceFall fall) {
 		TraceEdit edit = new TraceEdit(level, cause);
 		if (fall != null) {
 			edit.letFall(fall);
@@ -850,7 +862,7 @@ public final class TraceService {
 				return null;
 			}
 		}
-		if (edit.isEmpty() || !edit.expand() || edit.touchesAttachedEntity() || vetoed(level, edit.affectedPositions())) {
+		if (edit.isEmpty() || !edit.expand() || edit.touchesAttachedEntity() || vetoed(level, edit.affectedPositions(), vetoCause)) {
 			return null;
 		}
 		return edit;
@@ -860,8 +872,8 @@ public final class TraceService {
 		return force || isOutOfView(level, positions);
 	}
 
-	private boolean allowedAndNotVetoed(ServerLevel level, Collection<BlockPos> positions) {
-		return !vetoed(level, positions) && allowed(level, positions);
+	private boolean allowedAndNotVetoed(ServerLevel level, Collection<BlockPos> positions, String cause) {
+		return !vetoed(level, positions, cause) && allowed(level, positions);
 	}
 
 	private static int emptySlotFor(Container target, ItemStack stack) {

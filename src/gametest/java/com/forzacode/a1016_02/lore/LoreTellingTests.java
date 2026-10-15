@@ -60,6 +60,8 @@ public class LoreTellingTests extends LorePlacementTests {
 	}
 
 	static final Telling.Traces NO_TRACES = (pos, radius) -> false;
+	/** No Ending D chamber anywhere (blank sign's pool). */
+	static final java.util.function.Predicate<GlobalPos> NO_CHAMBER = pos -> false;
 
 	/** A sign edit as the test sees it: where, the front lines and the back lines asked for. */
 	record Edit(BlockPos pos, List<String> front, List<String> back) {
@@ -402,13 +404,13 @@ public class LoreTellingTests extends LorePlacementTests {
 		BlockPos telling = helper.absolutePos(new BlockPos(3, 1, 1));
 		BlockPos after = helper.absolutePos(new BlockPos(5, 1, 1));
 		BlockPos others = helper.absolutePos(new BlockPos(1, 1, 5));
-		helper.assertTrue(TellingCards.blankPool(player, data).stream().map(s -> s.pos().pos()).toList().equals(List.of(after)),
-				"blank pool " + TellingCards.blankPool(player, data));
+		helper.assertTrue(TellingCards.blankPool(player, data, NO_CHAMBER).stream().map(s -> s.pos().pos()).toList().equals(List.of(after)),
+				"blank pool " + TellingCards.blankPool(player, data, NO_CHAMBER));
 
-		helper.assertTrue(TellingCards.fireBlank(server, player, data, editor, RandomSource.create(5)) == FireResult.FIRED, "no sign came back blank");
+		helper.assertTrue(TellingCards.fireBlank(server, player, data, editor, RandomSource.create(5), NO_CHAMBER) == FireResult.FIRED, "no sign came back blank");
 		helper.assertTrue(editor.edits.size() == 1 && editor.edits.getFirst().pos().equals(after), "edits " + editor.edits);
 		helper.assertTrue(editor.edits.getFirst().front().isEmpty() && editor.edits.getFirst().back().isEmpty(), "the sign was not blanked");
-		helper.assertTrue(TellingCards.fireBlank(server, player, data, editor, RandomSource.create(5)) == FireResult.SKIPPED, "blanked twice");
+		helper.assertTrue(TellingCards.fireBlank(server, player, data, editor, RandomSource.create(5), NO_CHAMBER) == FireResult.SKIPPED, "blanked twice");
 		helper.assertTrue(frontOf(helper, after).stream().allMatch(String::isEmpty), "the sign still reads " + frontOf(helper, after));
 		for (BlockPos kept : List.of(before, telling, others)) {
 			helper.assertFalse(frontOf(helper, kept).stream().allMatch(String::isEmpty), "a sign it may not take was blanked: " + kept);
@@ -418,7 +420,7 @@ public class LoreTellingTests extends LorePlacementTests {
 		HerobrineState inTelling = telling(helper);
 		sign(helper, new BlockPos(5, 1, 5), player, "herobrine took it", inTelling, data, NO_TRACES);
 		helper.assertTrue(data.stopCandidate().map(GlobalPos::pos).equals(Optional.of(helper.absolutePos(new BlockPos(5, 1, 5)))), "no candidate");
-		helper.assertTrue(TellingCards.blankPool(player, data).isEmpty(), "the Stop. candidate is in the blank pool");
+		helper.assertTrue(TellingCards.blankPool(player, data, NO_CHAMBER).isEmpty(), "the Stop. candidate is in the blank pool");
 		helper.succeed();
 	}
 

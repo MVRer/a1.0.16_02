@@ -70,6 +70,8 @@ public final class LoreInit {
 		// F30's signs: no player may break them (the rest is in lore's mixins), and not even he may change them.
 		PlayerBlockBreakEvents.BEFORE.register((level, player, pos, state, blockEntity) -> !UnbreakableSigns.isProtected(level, pos));
 		Services.traces().addVeto(UnbreakableSigns::isProtected);
+		// Ending D's chamber: the only place he can't cut (F25).
+		Services.traces().addVeto(TeamChamber.VETO);
 		// Telling: breaking your own sign about him; naming him in chat (signs and books come through lore's mixins).
 		PlayerBlockBreakEvents.AFTER.register((level, player, pos, state, blockEntity) -> {
 			if (player instanceof ServerPlayer serverPlayer && level instanceof ServerLevel serverLevel) {
