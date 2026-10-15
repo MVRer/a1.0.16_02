@@ -14,11 +14,12 @@ import com.forzacode.a1016_02.core.ModConfig;
  * {@link ModConfig#realTicks(double)}.
  *
  * <p>Versioned (D-075): {@link #upgrade} brings a section written by an older version up one step at a time, taking
- * the new default only where a value still equals the old one. Version 1 is v1.2's pacing (D-070, D-071, D-074).
+ * the new default only where a value still equals the old one. Version 1 is v1.2's pacing (D-070, D-071, D-074);
+ * version 2 adds {@link #unfitParkMinutes}.
  */
 public final class DirectorConfig implements ModConfig.Versioned {
-	/** The section's current version: 1 since v1.2. Raise it, and add a step to {@link #upgrade}, for every later default change. */
-	public static final int VERSION = 1;
+	/** The section's current version: 2 since v1.2's fixes. Raise it, and add a step to {@link #upgrade}, for every later default change. */
+	public static final int VERSION = 2;
 
 	/** The version this section was last written at; missing in a file (0) is v1.1 or older. Keep the field's default at 0. */
 	public int version = 0;
@@ -79,11 +80,21 @@ public final class DirectorConfig implements ModConfig.Versioned {
 	public double holdGiveUpMinutes = 60;
 	/**
 	 * A held ambient or minor card whose moment does not fit (its context, as a card only underground on the surface)
-	 * goes back into its deck after this much play (real minutes), so it never freezes its tier for the whole
-	 * {@link #holdGiveUpMinutes}; the next draw passes it over if anything else can be drawn. Majors and signatures keep
-	 * the long hold.
+	 * goes back into its deck after this much play (real minutes) in which it was looked at every director tick (looks a
+	 * gate held back do not count), so it never freezes its tier for the whole {@link #holdGiveUpMinutes}; the next draw
+	 * passes it over if anything else can be drawn. Majors and signatures keep the long hold.
 	 */
 	public double heldUnfitGiveBackMinutes = 5;
+	/**
+	 * A card given back because its moment did not come at any look of its hold (after
+	 * {@link #heldUnfitGiveBackMinutes}, or a major's {@link #holdGiveUpMinutes}) is parked for this much play (real
+	 * minutes): never drawn, and out of its deck for the run-out rule, so the deck refills with the cards that can fire
+	 * instead of drawing it again and again (the tunnel ladder for someone who never walks a long dug tunnel), and an
+	 * ambient or minor one hands the roll that drew it to the next card. After it, it is drawn as any other card and
+	 * fires once its moment comes; until then a hold of it goes back, parked again, at its first look that does not fit.
+	 * 0: never parked.
+	 */
+	public double unfitParkMinutes = 30;
 	/** An empty session stays empty up to this long (real minutes); a marathon session is not empty forever. */
 	public double emptySessionMaxMinutes = 180;
 
@@ -169,6 +180,9 @@ public final class DirectorConfig implements ModConfig.Versioned {
 	 * (0.35); each only where it still equals v1.1's default. The fields new in v1.2 (the first hour's cap, the short
 	 * give-back of unfit ambient and minor holds, empty sessions from Proximity, the group factor, the fog weather boost)
 	 * come with their defaults when missing.
+	 *
+	 * <p>Step 1 to 2 (v1.2's fixes, R1): only the new {@link #unfitParkMinutes}, which comes with its default when
+	 * missing; every other value stays as it is.
 	 */
 	@Override
 	public boolean upgrade() {
@@ -182,6 +196,7 @@ public final class DirectorConfig implements ModConfig.Versioned {
 			tracesMinorsPerHour = ModConfig.Upgrades.keepOrNew(tracesMinorsPerHour, 0.25, d.tracesMinorsPerHour);
 			stageTagWeights = ModConfig.Upgrades.tagWeights(stageTagWeights, v11StageTagWeights(), d.stageTagWeights);
 		}
+		// version < 2: unfitParkMinutes is new, nothing to step.
 		version = VERSION;
 		return true;
 	}

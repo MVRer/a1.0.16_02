@@ -56,8 +56,16 @@ import net.minecraft.util.RandomSource;
  * back, and fire at most once per world whoever gets them.</li>
  * <li>A drawn card is held until its context fits; {@code NO_SPOT} and {@code SKIPPED} keep it held. A card held
  * too long ({@code holdGiveUp}) goes back into its deck, and an ambient or minor card whose context has not fit for
- * {@code heldUnfitGiveBack} (5 minutes) goes back sooner, so a card for a moment far off never freezes its tier; the
- * next draw passes a given-back card over if it can.</li>
+ * {@code heldUnfitGiveBack} (5 minutes) of looks (one each director tick; looks a gate held back do not count) goes
+ * back sooner, so a card for a moment far off never freezes its tier; the next draw passes a given-back card over if it
+ * can. A card that goes back either way having been looked at all along without fitting is parked for
+ * {@code unfitPark} (30 minutes) of the player's play (R1, v1.2): never drawn, and ruled out for the run-out rule, so a
+ * deck whose only undrawn cards wait on a moment that never comes (the tunnel ladder for someone who never walks a long
+ * dug tunnel) refills with the cards that can fire instead of drawing the same one again and again. After its park it
+ * is drawn as any other card and fires once its moment comes; until it fires, a hold of it goes back (parked again) at
+ * its first look that does not fit. An ambient or minor card parked as it goes back hands the roll that drew it to the
+ * next card in the same tick, so a card whose moment never comes costs its tier one five-minute hold, never a
+ * fire.</li>
  * <li>Gates: the silence flag ({@link DirectorFlags}: nothing at all fires), join grace, forced quiet, empty
  * sessions (rolled from {@code emptySessionMinStage} on, Proximity), a small gap between any two fires, at most
  * {@code firstHourMaxFires} (5) moments in the player's own first hour (D-070), the minor and major gaps (never
@@ -82,6 +90,14 @@ public final class DirectorBrain {
 	static final Tier[] PRIORITY = {Tier.SIGNATURE, Tier.MAJOR, Tier.MINOR, Tier.AMBIENT};
 	static final Set<String> PROFILE_SIGNATURES = Set.of(CardInfo.SIGNATURE_STILL_BURNING, CardInfo.SIGNATURE_HOUSE_ELSEWHERE,
 			CardInfo.SIGNATURE_CROSS_ROW);
+	/** Why a card held for {@code holdGiveUp} goes back. */
+	static final String HELD_TOO_LONG = "held too long";
+	/** Why an ambient or minor card whose moment does not fit goes back after {@code heldUnfitGiveBack}. */
+	static final String UNFIT = "its moment did not come";
+	/** Added to why a card went back when it is parked too ({@link #park}). */
+	static final String PARKED = " (parked)";
+	/** How many times a tick a card that went back hands its roll to the next card drawn ({@link #step}). */
+	private static final int MAX_CARRIED = 2;
 
 	/**
 	 * Shared state and the world-facing half of the cards, for the one player being decided for (tension and the cards
@@ -113,9 +129,10 @@ public final class DirectorBrain {
 		}
 
 		/**
-		 * The fog spell on for this player right now (D-071), or empty: the world's spell while the clock is inside it
-		 * and the player's dimension shows weather (none in fixed-time dimensions, as {@code FogLimits.of} reads it).
-		 * The live director reads the stored spell on the level's clock; dry runs roll one per in-game day with
+		 * The fog spell on for this player right now (D-071), or empty: the world's spell while it counts as fog at the
+		 * clock ({@code FogSpell.counts}: its amount at least half its level, so not while it eases in or out below
+		 * that) and the player's dimension shows weather (none in fixed-time dimensions, as {@code FogLimits.of} reads
+		 * it). The live director reads the stored spell on the level's clock; dry runs roll one per in-game day with
 		 * {@code FogWeatherRules}. A quiet spell gives no boost. None by default (no weather).
 		 */
 		default Optional<FogSpell> fogSpell() {
@@ -419,6 +436,7 @@ public final class DirectorBrain {
 		// Other systems may have raised tension since the last tick, not only our own fires.
 		checkQuiet(m, c, env, random, rec);
 		Stage stage = env.stage();
+		endParks(m);
 		releaseStaleHolds(w, m, c, stage, rec);
 		List<Sharer> sharers = env.sharers();
 		shareMood(m, c, sharers, random, rec);
@@ -430,53 +448,71 @@ public final class DirectorBrain {
 		boolean fog = boosts(env.fogSpell());
 		List<String> notes = new ArrayList<>();
 		for (Tier tier : PRIORITY) {
-			CardInfo card = card(m.held.get(tier));
-			if (card == null) {
-				if (tierBlock(tier, m, c, stage) != null || !due(tier, m, c, stage, random, sharers.size(), fog)) {
-					continue;
-				}
-				Set<String> passedOver = new HashSet<>();
-				card = draw(tier, w, m, c, stage, sharers, random, rec, passedOver, fog);
+			// A card parked as it goes back (its moment did not come at any look) hands the roll that drew it to the next
+			// card (up to MAX_CARRIED times a tick), so a card whose moment never comes costs its tier no fire (R1, v1.2).
+			int carried = 0;
+			while (true) {
+				CardInfo card = card(m.held.get(tier));
 				if (card == null) {
-					if (tier == Tier.MAJOR && !passedOver.isEmpty()) {
-						// A stage weight passed the slot's card over: the slot is spent, as a probabilistic tier's
-						// tick is. Retrying every tick would re-roll an "almost never" card until it fires.
-						scheduleNextMajor(m, c.playTicks(), random);
+					if (tierBlock(tier, m, c, stage) != null || carried == 0 && !due(tier, m, c, stage, random, sharers.size(), fog)) {
+						break;
 					}
-					continue;
+					Set<String> passedOver = new HashSet<>();
+					card = draw(tier, w, m, c, stage, sharers, random, rec, passedOver, fog);
+					if (card == null) {
+						if (tier == Tier.MAJOR && !passedOver.isEmpty()) {
+							// A stage weight passed the slot's card over: the slot is spent, as a probabilistic tier's
+							// tick is. Retrying every tick would re-roll an "almost never" card until it fires.
+							scheduleNextMajor(m, c.playTicks(), random);
+						}
+						break;
+					}
+					m.held.put(tier, card.id());
+					m.heldSince.put(tier, c.playTicks());
+					m.unfitLooks.remove(tier);
+					rec.drew(c, card);
 				}
-				m.held.put(tier, card.id());
-				m.heldSince.put(tier, c.playTicks());
-				rec.drew(c, card);
-			}
-			String why = fireBlock(card, w, m, c, stage);
-			if (why != null) {
-				notes.add(card.id() + " waits (" + why + ")");
-				continue;
-			}
-			String shared = sharedBlock(card, w, sharers, stage);
-			if (shared != null) {
-				notes.add(card.id() + " waits (" + shared + ")");
-				continue;
-			}
-			if (!env.contextFits(card)) {
-				if ((tier == Tier.AMBIENT || tier == Tier.MINOR) && c.playTicks() - m.heldSince.getOrDefault(tier, c.playTicks()) >= rules.heldUnfitGiveBack) {
-					// Its moment may be far off (a card only for a tunnel, drawn on the surface): it must not freeze the
-					// tier for the whole hold. Majors and signatures keep theirs.
-					giveUp(m, c, tier, card.id(), "its moment did not come", rec);
-					notes.add(card.id() + " goes back: its moment did not come");
-				} else {
-					notes.add(card.id() + " held: the moment does not fit");
+				String why = fireBlock(card, w, m, c, stage);
+				if (why != null) {
+					notes.add(card.id() + " waits (" + why + ")");
+					break;
 				}
-				continue;
+				String shared = sharedBlock(card, w, sharers, stage);
+				if (shared != null) {
+					notes.add(card.id() + " waits (" + shared + ")");
+					break;
+				}
+				if (!env.contextFits(card)) {
+					m.unfitLooks.merge(tier, 1L, Long::sum);
+					if ((tier == Tier.AMBIENT || tier == Tier.MINOR) && unfitGoesBack(m, c, tier, card)) {
+						// Its moment may be far off (a card only for a tunnel, drawn on the surface): it must not freeze the
+						// tier for the whole hold. Majors and signatures keep theirs. Parked, it is out of its deck for a
+						// while, and the roll that drew it goes to the next card.
+						boolean parks = parksNow(m, tier, card);
+						String back = parks ? UNFIT + PARKED : UNFIT;
+						giveUp(m, c, tier, card.id(), back, rec);
+						if (parks) {
+							park(m, c, card.id());
+						}
+						notes.add(card.id() + " goes back: " + back);
+						if (parks && carried < MAX_CARRIED) {
+							carried++;
+							continue;
+						}
+					} else {
+						notes.add(card.id() + " held: the moment does not fit");
+					}
+					break;
+				}
+				boolean fake = card.hasFake() && random.nextDouble() < rules.fakeChance;
+				FireResult result = env.fire(card, fake);
+				if (result == FireResult.FIRED) {
+					recordFire(w, m, c, card, fake, false, stage, env, sharers, random, rec);
+					return "fired " + card.id() + (fake ? " (fake)" : "") + (sharers.isEmpty() ? "" : ", felt by " + sharers.size() + " more");
+				}
+				notes.add(card.id() + " " + result + ", kept for later");
+				break;
 			}
-			boolean fake = card.hasFake() && random.nextDouble() < rules.fakeChance;
-			FireResult result = env.fire(card, fake);
-			if (result == FireResult.FIRED) {
-				recordFire(w, m, c, card, fake, false, stage, env, sharers, random, rec);
-				return "fired " + card.id() + (fake ? " (fake)" : "") + (sharers.isEmpty() ? "" : ", felt by " + sharers.size() + " more");
-			}
-			notes.add(card.id() + " " + result + ", kept for later");
 		}
 		return notes.isEmpty() ? "nothing due" : String.join("; ", notes);
 	}
@@ -756,13 +792,16 @@ public final class DirectorBrain {
 
 	// --- decks ---
 
-	/** Cards of this tier this player could draw now: undrawn this cycle, not the last one fired, every gate open. */
+	/**
+	 * Cards of this tier this player could draw now: undrawn this cycle, not the last one fired, not parked, every gate
+	 * open.
+	 */
 	public List<CardInfo> candidates(Tier tier, WorldMemory w, PacingMemory m, Clock c, Stage stage) {
 		Set<String> cycle = m.cycleFired.get(tier);
 		String last = m.lastFired.get(tier);
 		List<CardInfo> out = new ArrayList<>();
 		for (CardInfo card : byTier.get(tier)) {
-			if (!cycle.contains(card.id()) && !card.id().equals(last) && cardBlock(card, w, m, c, stage) == null) {
+			if (!cycle.contains(card.id()) && !card.id().equals(last) && !parked(m, c, card.id()) && cardBlock(card, w, m, c, stage) == null) {
 				out.add(card);
 			}
 		}
@@ -785,6 +824,10 @@ public final class DirectorBrain {
 	 * over together. A {@code PERSONAL} card is out of the moment while anyone is close (D-074), as a stage rule would
 	 * rule it out: never drawn beside a friend, and never holding the deck back (a deck whose only undrawn cards are
 	 * PERSONAL has run out for the moment and refills by the solo rule). Alone, the draw is exactly the solo one.
+	 *
+	 * <p>A parked card (given back because its moment did not come, {@link #park}) is out of the deck for its park the
+	 * same way, alone or not: never drawn, and ruled out for the run-out rule, so a deck whose only undrawn cards are
+	 * parked refills now with the cards that can fire.
 	 *
 	 * @param skipped filled with the cards a stage weight passed over in this draw
 	 * @param fog     a fog spell that is not quiet is on: SIGHTING cards weigh more ({@link #stageWeight})
@@ -813,7 +856,7 @@ public final class DirectorBrain {
 				if (onlyTheirs && !refillHelps(tier, w, m, c, stage, sharers)) {
 					return null; // only cards a friend had are left, and nothing that would come back is new to everyone here
 				}
-				if (!runOut(tier, w, m, stage, sharers)) {
+				if (!runOut(tier, w, m, c, stage, sharers)) {
 					Long stuckSince = m.deckStuckSince.get(tier);
 					if (stuckSince == null || stuckSince > c.dayTicks()) {
 						stuckSince = c.dayTicks();
@@ -848,10 +891,11 @@ public final class DirectorBrain {
 
 	/**
 	 * A deck has run out when every card it has not fired this cycle is ruled out by the stage or the profile (or
-	 * already fired once per world). A card that only waits on the moment (a gate, a skip roll) keeps it going.
+	 * already fired once per world), or is parked (its moment did not come, {@link #park}). A card that only waits on a
+	 * passing gate (a sighting today, no accident yet, a skip roll) keeps it going.
 	 */
-	public boolean runOut(Tier tier, WorldMemory w, PacingMemory m, Stage stage) {
-		return runOut(tier, w, m, stage, List.of());
+	public boolean runOut(Tier tier, WorldMemory w, PacingMemory m, Clock c, Stage stage) {
+		return runOut(tier, w, m, c, stage, List.of());
 	}
 
 	/**
@@ -863,7 +907,7 @@ public final class DirectorBrain {
 		String last = m.lastFired.get(tier);
 		for (String id : m.cycleFired.get(tier)) {
 			CardInfo card = card(id);
-			if (card != null && !id.equals(last) && cardBlock(card, w, m, c, stage) == null && !spentForTheMoment(card, sharers)) {
+			if (card != null && !id.equals(last) && !parked(m, c, id) && cardBlock(card, w, m, c, stage) == null && !spentForTheMoment(card, sharers)) {
 				return true;
 			}
 		}
@@ -871,13 +915,13 @@ public final class DirectorBrain {
 	}
 
 	/**
-	 * {@link #runOut(Tier, WorldMemory, PacingMemory, Stage)} beside friends: a card one of them had, and a
+	 * {@link #runOut(Tier, WorldMemory, PacingMemory, Clock, Stage)} beside friends: a card one of them had, and a
 	 * {@code PERSONAL} card, are spent for the moment too.
 	 */
-	private boolean runOut(Tier tier, WorldMemory w, PacingMemory m, Stage stage, List<Sharer> sharers) {
+	private boolean runOut(Tier tier, WorldMemory w, PacingMemory m, Clock c, Stage stage, List<Sharer> sharers) {
 		Set<String> cycle = m.cycleFired.get(tier);
 		for (CardInfo card : byTier.get(tier)) {
-			if (!cycle.contains(card.id()) && staticBlock(card, w, stage) == null && !spentForTheMoment(card, sharers)) {
+			if (!cycle.contains(card.id()) && staticBlock(card, w, stage) == null && !parked(m, c, card.id()) && !spentForTheMoment(card, sharers)) {
 				return false;
 			}
 		}
@@ -923,6 +967,11 @@ public final class DirectorBrain {
 		return eligible.getLast();
 	}
 
+	/**
+	 * Held cards that go back on their own: one no longer registered, one ruled out by the stage or the profile, and one
+	 * held for {@code holdGiveUp} without firing, which is also parked ({@link #park}) if it keeps not fitting
+	 * ({@link #parksNow}).
+	 */
 	private void releaseStaleHolds(WorldMemory w, PacingMemory m, Clock c, Stage stage, Recorder rec) {
 		for (Tier tier : Tier.values()) {
 			String id = m.held.get(tier);
@@ -934,16 +983,23 @@ public final class DirectorBrain {
 			if (card == null) {
 				why = "no longer registered";
 			} else if (c.playTicks() - m.heldSince.getOrDefault(tier, c.playTicks()) >= rules.holdGiveUp) {
-				why = "held too long";
+				why = HELD_TOO_LONG;
 			} else {
 				why = staticBlock(card, w, stage);
 			}
 			if (why != null) {
 				if (card != null) {
-					giveUp(m, c, tier, id, why, rec);
+					// Parked only if its moment was what it waited for: a hold that sat out a quiet or an empty session
+					// goes back as it always did.
+					boolean parks = why.equals(HELD_TOO_LONG) && parksNow(m, tier, card);
+					giveUp(m, c, tier, id, parks ? why + PARKED : why, rec);
+					if (parks) {
+						park(m, c, id);
+					}
 				} else {
 					m.held.remove(tier);
 					m.heldSince.remove(tier);
+					m.unfitLooks.remove(tier);
 					rec.gaveUp(c, tier, id, why);
 				}
 			}
@@ -954,8 +1010,76 @@ public final class DirectorBrain {
 	private static void giveUp(PacingMemory m, Clock c, Tier tier, String id, String why, Recorder rec) {
 		m.held.remove(tier);
 		m.heldSince.remove(tier);
+		m.unfitLooks.remove(tier);
 		m.lastGivenUp.put(tier, id);
 		rec.gaveUp(c, tier, id, why);
+	}
+
+	/**
+	 * A card that went back because its moment did not come is parked for {@code unfitPark} of this player's play
+	 * (R1, v1.2): never drawn, and ruled out for the run-out rule, so its deck refills with the cards that can fire
+	 * instead of drawing it again and again while its moment never comes (a tunnel card for a surface player). It comes
+	 * back after the park, and fires once its moment does; until it fires, a hold of it goes back at its first look that
+	 * does not fit ({@link #unfitGoesBack}), and hands its roll on, so it costs its tier no fire.
+	 */
+	private void park(PacingMemory m, Clock c, String id) {
+		if (rules.unfitPark > 0) {
+			m.parkedUntil.put(id, c.playTicks() + rules.unfitPark);
+		}
+	}
+
+	/** True while this card is parked for this player ({@link #park}). */
+	public boolean parked(PacingMemory m, Clock c, String id) {
+		Long until = m.parkedUntil.get(id);
+		return rules.unfitPark > 0 && until != null && c.playTicks() < until && until - c.playTicks() <= rules.unfitPark;
+	}
+
+	/**
+	 * True if the current hold of this tier has been looked at for a whole {@code heldUnfitGiveBack} and its moment
+	 * never fit: as many looks as director ticks in it. Looks a gate held back (the gap after any fire, a quiet, an empty
+	 * session, a friend's gates) do not count, so a hold only goes back for its moment, never for a gate.
+	 */
+	private boolean unfitAllAlong(PacingMemory m, Tier tier) {
+		return m.unfitLooks.getOrDefault(tier, 0L) >= Math.max(1, rules.heldUnfitGiveBack / rules.tickInterval);
+	}
+
+	/**
+	 * True when a held ambient or minor card whose moment does not fit at this look goes back: after
+	 * {@code heldUnfitGiveBack} of play looked at all along ({@link #unfitAllAlong}), or at once for one that went back
+	 * so before and has not fired since (its park over): one look, then back.
+	 */
+	private boolean unfitGoesBack(PacingMemory m, Clock c, Tier tier, CardInfo card) {
+		if (struck(m, card)) {
+			return true;
+		}
+		return c.playTicks() - m.heldSince.getOrDefault(tier, c.playTicks()) >= rules.heldUnfitGiveBack && unfitAllAlong(m, tier);
+	}
+
+	/**
+	 * Whether the held card of this tier, going back now because its moment did not come, is parked: always while
+	 * parking is on ({@code unfitPark} above 0), for a hold looked at all along or a card parked before.
+	 */
+	private boolean parksNow(PacingMemory m, Tier tier, CardInfo card) {
+		return rules.unfitPark > 0 && (struck(m, card) || unfitAllAlong(m, tier));
+	}
+
+	/** True if this card already went back because its moment did not come and has not fired since ({@link #park}). */
+	private boolean struck(PacingMemory m, CardInfo card) {
+		return rules.unfitPark > 0 && m.parkedUntil.containsKey(card.id());
+	}
+
+	/**
+	 * Park entries stay until their card fires (an ended park still means one look, then back); those of cards no
+	 * longer registered are dropped, and every one when parking is off.
+	 */
+	private void endParks(PacingMemory m) {
+		if (!m.parkedUntil.isEmpty()) {
+			if (rules.unfitPark <= 0) {
+				m.parkedUntil.clear();
+			} else {
+				m.parkedUntil.keySet().removeIf(id -> !byId.containsKey(id));
+			}
+		}
 	}
 
 	/**
@@ -1035,11 +1159,13 @@ public final class DirectorBrain {
 		if (card.id().equals(m.held.get(tier))) {
 			m.held.remove(tier);
 			m.heldSince.remove(tier);
+			m.unfitLooks.remove(tier);
 		}
 		m.cycleFired.get(tier).add(card.id());
 		m.lastFired.put(tier, card.id());
 		m.lastGivenUp.remove(tier);
 		m.deckStuckSince.remove(tier);
+		m.parkedUntil.remove(card.id());
 		if (oncePerWorld(card)) {
 			// D-062.3: set in the same call that fired it, so nobody else's decision can fire it again this tick.
 			w.signaturesFired.add(card.id());
@@ -1101,9 +1227,11 @@ public final class DirectorBrain {
 		if (card.id().equals(m.held.get(tier))) {
 			m.held.remove(tier);
 			m.heldSince.remove(tier);
+			m.unfitLooks.remove(tier);
 		}
 		m.cycleFired.get(tier).add(card.id());
 		m.lastFired.put(tier, card.id());
+		m.parkedUntil.remove(card.id());
 		for (CardTag tag : card.tags()) {
 			m.lastTag.put(tag, now);
 		}

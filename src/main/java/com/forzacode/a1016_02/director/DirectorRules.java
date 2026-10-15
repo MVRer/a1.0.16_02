@@ -33,6 +33,8 @@ public final class DirectorRules {
 	public long holdGiveUp;
 	/** A held ambient or minor card whose moment does not fit goes back after this many play ticks. */
 	public long heldUnfitGiveBack;
+	/** A card given back because its moment did not come is parked (not drawn, out for the run-out rule) this many play ticks; 0: never. */
+	public long unfitPark;
 	public int noMajorBeforeDay;
 	public long firstAccident;
 	public int sightingsPerDayMax;
@@ -131,6 +133,7 @@ public final class DirectorRules {
 		rules.firstHourMaxFires = config.firstHourMaxFires;
 		rules.holdGiveUp = Math.max(1, ModConfig.realTicks(config.holdGiveUpMinutes * 60));
 		rules.heldUnfitGiveBack = Math.max(1, Math.min(rules.holdGiveUp, ModConfig.realTicks(config.heldUnfitGiveBackMinutes * 60)));
+		rules.unfitPark = Math.max(0, ModConfig.realTicks(Math.max(0, config.unfitParkMinutes) * 60));
 		rules.noMajorBeforeDay = pacing.noMajorBeforeDay;
 		rules.firstAccident = pacing.firstAccidentTicks(profile.tempo());
 		rules.sightingsPerDayMax = pacing.sightingsPerDayMax;

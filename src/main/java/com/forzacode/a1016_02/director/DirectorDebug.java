@@ -63,7 +63,11 @@ final class DirectorDebug {
 	static String fogLine(Optional<FogSpell> stored, long clock, DirectorRules rules) {
 		Optional<FogSpell> on = DirectorImpl.fogSpellOn(stored, clock, false);
 		if (on.isEmpty()) {
-			return "clear, no boost";
+			// A spell easing in or out below half its level is not fog yet (or any more): no boost (R2#1).
+			return stored.filter(spell -> spell.activeAt(clock))
+					.map(spell -> String.format(Locale.ROOT, "a %sspell giving %.2f fog of its %.2f, below half: no boost", spell.quiet() ? "quiet " : "",
+							spell.amount(clock), spell.level()))
+					.orElse("clear, no boost");
 		}
 		FogSpell spell = on.get();
 		String until = String.format(Locale.ROOT, "until day %d %05d", Math.floorDiv(spell.untilClock(), DirectorBrain.DAY_TICKS),
@@ -132,16 +136,21 @@ final class DirectorDebug {
 		for (Tier tier : Tier.values()) {
 			List<String> undrawn = new ArrayList<>();
 			List<String> fired = new ArrayList<>();
+			List<String> parked = new ArrayList<>();
 			for (CardInfo card : brain.cards(tier)) {
 				boolean used = m.cycleFired.get(tier).contains(card.id()) || DirectorBrain.oncePerWorld(card) && w.signaturesFired.contains(card.id());
 				(used ? fired : undrawn).add(card.id());
+				if (brain.parked(m, c, card.id())) {
+					parked.add(card.id() + " " + dur(rules, m.parkedUntil.get(card.id()) - now));
+				}
 			}
 			int drawable = brain.candidates(tier, w, m, c, stage).size();
 			Long stuck = m.deckStuckSince.get(tier);
 			String waiting = stuck == null ? "" : String.format(Locale.ROOT, ", waiting on gated cards for %.1f days",
 					(c.dayTicks() - stuck) / (double) DirectorBrain.DAY_TICKS);
-			lines.add(String.format(Locale.ROOT, "deck %s: undrawn %s, fired %s, last %s, drawable now %d%s", tier, undrawn, fired,
-					m.lastFired.getOrDefault(tier, "-"), drawable, waiting));
+			String parkedNote = parked.isEmpty() ? "" : ", parked " + parked;
+			lines.add(String.format(Locale.ROOT, "deck %s: undrawn %s, fired %s, last %s, drawable now %d%s%s", tier, undrawn, fired,
+					m.lastFired.getOrDefault(tier, "-"), drawable, parkedNote, waiting));
 		}
 		List<DirectorMemory.HistoryEntry> history = m.history();
 		int from = Math.max(0, history.size() - 5);
