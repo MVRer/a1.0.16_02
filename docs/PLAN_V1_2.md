@@ -2,6 +2,16 @@
 
 Oct 16, 2026 · from the playtest of 2026-10-16 (Mariano and a friend, LAN, 70 minutes, nothing noticed)
 
+## Status
+
+Waves 0 to 3 are on `main` (`5b86f0a`, 584 tests green): C-1, W-DIR, W-ATMO, W-ENT, W-DIG, INT-1 (preview jar
+`dist/a1016_02-1.2.0-preview.1-26.3.jar`), the R1 to R3 bug hunt and its fixes (FIX-CORE, FIX-DIG, FIX-ENT, FIX-DIR,
+FIX-ATMO). VERIFY (wave 4) is queued. This plan is kept as it was written; where the build differs from it (numbers
+the sims asked for, such as `aloneAmbientPerHour` 4.5 and `fogWeatherOddsFactor` 3.5, the roll times, the parked
+cards, `FogSpell`'s own ease and `counts`, the sky gate, raw brightness for "dark"), the "As built" and "Fixes" notes
+on D-070 to D-075 in `docs/DECISIONS.md` record what shipped and why, ARCHITECTURE has the contracts, and DESIGN 4b
+the numbers the dry runs show. `docs/TASKS.md` has each task's merge commit.
+
 Every worker reads `docs/ARCHITECTURE.md`, this file's section for their task, and the decisions below. The
 decisions are final; numbers in them are the new defaults. Where this file and older decisions disagree, this file
 wins and D-070 to D-075 record why.

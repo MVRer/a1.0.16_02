@@ -18,30 +18,46 @@ What changed, in plain words:
   - Far in the rock: underground, alone, a stone hit or a gravel slide somewhere in the rock around you. The cave
     sound no longer needs you standing still underground.
   - Friends: together you share one moment at 1.5 times one player's pace, split between you; the tunnel steps only
-    happen to someone alone (no friend within 48 blocks).
+    happen to someone alone (nobody else within 48 blocks).
 See it now (Dev Client; /a1016 debug overlay on shows the fog spell and everyone's ladder rung):
   1. Fog night: /a1016 fog night, then /time add 2500 (the spell eases in over 2500 ticks). /a1016 fog shows the
-     clock, the spell, tonight's and today's roll and the history.
+     clock, the spell (the fog it gives now, easing in, full or easing out, its ramp and fade, and "counts" once it
+     gives at least half its level: only then does the director get its boost and daytime fog let him come),
+     tonight's and today's roll and the history.
   2. Fog day: /a1016 fog day (grey, desaturated). /a1016 fog clear eases it out. Add "quiet" (/a1016 fog night quiet)
      for a spell that gives the director no boost.
-  3. The ladder: dig a straight 2-high tunnel of 20+ blocks underground (5+ blocks below the surface, dark), walk to
+  3. The fog is weather, outside: walk into a tunnel, or indoors where the sky's light does not reach, and the
+     spell's fog clears in about a second (it follows the sky light where you stand, full from sky light 10, none at
+     4 or less); step back out and it closes in again. The dusk fog is not weather and stays.
+  4. The ladder: dig a straight 2-high tunnel of 20+ blocks underground (5+ blocks below the surface, dark), walk to
      its end and face away down it, no torches behind you. Then /a1016 fire steps_behind_once, then
      /a1016 fire steps_behind_coming (turn around mid-steps: they stop), then /a1016 fire steps_behind_glimpse (keep
      facing away until the steps stop, then turn slowly). /a1016 dig steps prints your rung, the last events, the used
      tunnels and whether it sees a tunnel behind you now. A forced fire skips the rung order and spacing, never the
-     rules (underground, alone, the tunnel, no combat).
-  4. /a1016 director shows the fog weather line (the boost while a spell that is not quiet is on).
-  5. The real way: a NEW world, play normally for an hour. The tunnel rungs come one after another, at most one every
+     rules (underground, alone, the tunnel, no combat). Alone means nobody else within 48 blocks, spectators and
+     dead players included (the steps would reach them): a friend spectating beside you stops it.
+  5. /a1016 director shows the fog weather line (the boost while a spell that counts and is not quiet is on; "below
+     half: no boost" while it eases in or out) and, per deck, any card parked because its moment never came (the
+     tunnel steps on the surface, for half an hour of play).
+  6. The real way: a NEW world, play normally for an hour. The tunnel rungs come one after another, at most one every
      25 minutes of your own play, the glimpse at most once an in-game day.
 What to look for: whether the first hour feels like something; whether a fog night reads as fog, not darkness; whether
   the steps sound like someone in the tunnel, and whether you ever see the glimpse straight on.
 Multiplayer: the fog is the same sky for everyone. Personal moments (the tunnel steps and the glimpse) need your
   friends 48+ blocks away; standing together you get shared moments instead.
 Existing worlds and config files are upgraded automatically: a v1.1 world rolls its stage times again in the new
-  windows (a stage reached stays reached), and config values you changed by hand are kept.
-Known rough edges: Iris shaderpacks draw their own fog and hide the mod's fog weather (not supported). The client
-  eases a spell with its own config, so a client whose fog numbers differ from the server's sees a slightly
-  different ease. The v1.2 bug hunt is still running.
+  windows (a stage reached stays reached), and config values you changed by hand are kept. A value the game cannot
+  read keeps its default with one warning in the log naming it; a config file that is not JSON at all is kept as
+  config/a1016_02.json.broken and a fresh one is written.
+Still to check in the Dev Client (the game tests cannot see a frame):
+  - a fog night reads as a pale wall in the dark (the night lift), not plain darkness;
+  - a fog day reads grey and desaturated;
+  - at the bottom of a ravine near bedrock it stays black (vanilla's void darkening holds over the fog's tint);
+  - Darkness (a warden) and Blindness fade in and out over a fog spell without a snap, and night vision works as
+    without a spell;
+  - the tunnel steps are heard at 50% master volume, rung 3's from 14 to 20 blocks back;
+  - the glimpse stands only where it is dark to the eye (light 0 to 3: no torch near, no daylight down a shaft).
+Known rough edges: Iris shaderpacks draw their own fog and hide the mod's fog weather (not supported).
 ```
 
 ## READY TO TRY: v1.1 multiplayer and story clues  (jar build/libs/a1016_02-1.1.0-26.3.jar)
