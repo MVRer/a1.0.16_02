@@ -82,7 +82,7 @@ import org.jspecify.annotations.Nullable;
  *
  * <p>The glimpse (D-073, {@link Variant#GLIMPSE}) is the one exception to "he never vanishes in view": he stands still
  * where the caller put him, eyes FLAT ({@link #eyeStyle}, synced), and is simply gone the tick the player he appeared
- * for looks toward him, anyone steps toward him, he has been seen for a moment, or nobody has seen him for a while
+ * for looks toward him or steps toward him, he has been seen for a moment, or nobody has seen him for a while
  * ({@link #glimpseStep}); the client stops drawing him first ({@link #vanishesInView}). No stare counts for him.
  *
  * <p>All behaviour runs in {@link #customServerAiStep} from plain look and move controls; spawn him through
@@ -190,7 +190,7 @@ public class HimEntity extends PathfinderMob {
 	private boolean seenWhenRemoved;
 	/** Why his own rules removed him, or null while he is out. */
 	private @Nullable String goneWhy;
-	/** The glimpse: the farthest each player has stood from him since he first had them (an approach is measured from there). */
+	/** The glimpse: the farthest the player he appeared for has stood from him since he appeared (an approach is measured from there). */
 	private final Map<UUID, Double> glimpseStarts = new HashMap<>();
 
 	// client: the low pose, blended
@@ -568,7 +568,9 @@ public class HimEntity extends PathfinderMob {
 	 * <ul>
 	 * <li>the player he appeared for looks within {@code glimpseServerDegrees} (35) of his middle, or anyone else who can
 	 * see him does;</li>
-	 * <li>anyone has stepped {@code glimpseApproachBlocks} (2) toward him from the farthest they stood since he appeared;</li>
+	 * <li>the player he appeared for has stepped {@code glimpseApproachBlocks} (2) toward him from the farthest they
+	 * stood since he appeared (anyone else counts only through the in-view rules: a friend far off walking his way never
+	 * ends it);</li>
 	 * <li>he has been in view (anyone's, the out-of-view rule) {@code glimpseSeenSeconds} (3) in all;</li>
 	 * <li>nobody has seen him for {@code glimpseWaitSeconds} (10) in a row (he goes out of view);</li>
 	 * <li>the one he appeared for is gone (left, died, turned spectator, changed dimension), or he was told to go
@@ -592,13 +594,16 @@ public class HimEntity extends PathfinderMob {
 		double degrees = config.glimpseServerDegrees();
 		for (ServerPlayer player : players) {
 			UUID uuid = player.getUUID();
-			double distance = player.position().distanceTo(position());
-			double start = glimpseStarts.merge(uuid, distance, Math::max); // the farthest they stood: any 2 blocks toward him count
 			boolean his = appearedFor == null || appearedFor.equals(uuid);
 			if (GlimpseRules.looksWithin(player.getEyePosition(), player.getViewVector(1.0F), center, degrees) && (his || seenBy(level, player))) {
 				gone(level, "the glimpse: looked toward");
 				return;
 			}
+			if (!his) {
+				continue; // D-073: only the one he appeared for steps toward him; anyone else counts by being in view
+			}
+			double distance = player.position().distanceTo(position());
+			double start = glimpseStarts.merge(uuid, distance, Math::max); // the farthest they stood: any 2 blocks toward him count
 			if (GlimpseRules.closedOn(start, distance, config.glimpseApproachBlocks)) {
 				gone(level, "the glimpse: stepped toward");
 				return;

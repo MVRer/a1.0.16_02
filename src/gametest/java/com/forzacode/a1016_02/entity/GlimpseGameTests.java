@@ -19,6 +19,7 @@ import net.fabricmc.fabric.api.gametest.v1.GameTest;
 
 import net.minecraft.core.BlockPos;
 import net.minecraft.gametest.framework.GameTestHelper;
+import net.minecraft.gametest.framework.GameTestSequence;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
@@ -55,6 +56,17 @@ public class GlimpseGameTests extends TwoPlayerFigureGameTests {
 				}
 			}
 		}
+	}
+
+	/**
+	 * A fresh tunnel keeps the yard's daylight until the light engine has run (the cells were open air): the sequence
+	 * waits until the spot is dark under the rock, sky light included (the glimpse's darkness counts the sky, D-073).
+	 */
+	private static GameTestSequence afterTheLightSettles(GameTestHelper helper) {
+		BlockPos feet = BlockPos.containing(helper.absoluteVec(SPOT));
+		return helper.startSequence().thenWaitUntil(() -> helper.assertTrue(helper.getLevel().getBrightness(LightLayer.SKY, feet) == 0
+				&& helper.getLevel().getBrightness(LightLayer.SKY, feet.above()) == 0, "the tunnel's light has not settled yet: sky "
+				+ helper.getLevel().getBrightness(LightLayer.SKY, feet) + " at the spot"));
 	}
 
 	private static Watchers watching(GameTestHelper helper, ServerPlayer... players) {
@@ -127,28 +139,30 @@ public class GlimpseGameTests extends TwoPlayerFigureGameTests {
 		ServerPlayer near = player(helper, GameType.SURVIVAL, helper.absoluteVec(new Vec3(8.5, 1.0, 10.5)), WEST); // 11 blocks off
 		ServerPlayer spectator = player(helper, GameType.SPECTATOR, helper.absoluteVec(A_FEET), WEST);
 		Predicate<Vec3> loaded = loaded(helper);
-
-		GlimpseFigure.Check ok = GlimpseFigure.check(away, spot, watching(helper, away), false, loaded);
-		helper.assertTrue(ok.ok(), "the dark spot behind A is refused: " + ok.why());
-		helper.assertTrue(GlimpseFigure.check(away, spot, watching(helper, away), true, loaded).result() == FireResult.NO_SPOT, "a glimpse while he is out");
-		GlimpseFigure.Check inView = GlimpseFigure.check(looking, spot, watching(helper, looking), false, loaded);
-		helper.assertTrue(inView.result() == FireResult.NO_SPOT && inView.why().contains("view"), "a glimpse in A's view: " + inView.why());
-		GlimpseFigure.Check close = GlimpseFigure.check(near, spot, watching(helper, near), false, loaded);
-		helper.assertTrue(close.result() == FireResult.NO_SPOT && close.why().contains("close"), "a glimpse 11 blocks from A: " + close.why());
-		GlimpseFigure.Check wall = GlimpseFigure.check(away, spot.add(0.0, 0.0, 1.0), watching(helper, away), false, loaded);
-		helper.assertTrue(wall.result() == FireResult.NO_SPOT && wall.why().contains("room"), "a glimpse in the wall: " + wall.why());
-		GlimpseFigure.Check air = GlimpseFigure.check(away, spot.add(0.0, 1.0, 0.0), watching(helper, away), false, loaded);
-		helper.assertTrue(!air.ok(), "a glimpse with his head in the ceiling");
-		helper.assertTrue(GlimpseFigure.check(spectator, spot, watching(helper, spectator), false, loaded).result() == FireResult.SKIPPED,
-				"a glimpse for a spectator");
-		// 14 blocks is enough (from the eyes to his feet), 13 is not.
-		helper.assertTrue(GlimpseFigure.farFromEveryone(watching(helper, away), spot, 14.0) && !GlimpseFigure.farFromEveryone(watching(helper, near), spot, 14.0),
-				"the 14-block rule");
-
-		// A torch on the floor beside the spot: once its light is there, the spot is too light.
-		helper.setBlock(18, 1, 10, Blocks.TORCH);
 		BlockPos feet = BlockPos.containing(spot);
-		helper.startSequence()
+
+		afterTheLightSettles(helper)
+				.thenExecute(() -> {
+					GlimpseFigure.Check ok = GlimpseFigure.check(away, spot, watching(helper, away), false, loaded);
+					helper.assertTrue(ok.ok(), "the dark spot behind A is refused: " + ok.why());
+					helper.assertTrue(GlimpseFigure.check(away, spot, watching(helper, away), true, loaded).result() == FireResult.NO_SPOT, "a glimpse while he is out");
+					GlimpseFigure.Check inView = GlimpseFigure.check(looking, spot, watching(helper, looking), false, loaded);
+					helper.assertTrue(inView.result() == FireResult.NO_SPOT && inView.why().contains("view"), "a glimpse in A's view: " + inView.why());
+					GlimpseFigure.Check close = GlimpseFigure.check(near, spot, watching(helper, near), false, loaded);
+					helper.assertTrue(close.result() == FireResult.NO_SPOT && close.why().contains("close"), "a glimpse 11 blocks from A: " + close.why());
+					GlimpseFigure.Check wall = GlimpseFigure.check(away, spot.add(0.0, 0.0, 1.0), watching(helper, away), false, loaded);
+					helper.assertTrue(wall.result() == FireResult.NO_SPOT && wall.why().contains("room"), "a glimpse in the wall: " + wall.why());
+					GlimpseFigure.Check air = GlimpseFigure.check(away, spot.add(0.0, 1.0, 0.0), watching(helper, away), false, loaded);
+					helper.assertTrue(!air.ok(), "a glimpse with his head in the ceiling");
+					helper.assertTrue(GlimpseFigure.check(spectator, spot, watching(helper, spectator), false, loaded).result() == FireResult.SKIPPED,
+							"a glimpse for a spectator");
+					// 14 blocks is enough (from the eyes to his feet), 13 is not.
+					helper.assertTrue(GlimpseFigure.farFromEveryone(watching(helper, away), spot, 14.0) && !GlimpseFigure.farFromEveryone(watching(helper, near), spot, 14.0),
+							"the 14-block rule");
+
+					// A torch on the floor beside the spot: once its light is there, the spot is too light.
+					helper.setBlock(18, 1, 10, Blocks.TORCH);
+				})
 				.thenWaitUntil(() -> helper.assertTrue(helper.getLevel().getBrightness(LightLayer.BLOCK, feet) > 3, "the torch's light is not there yet"))
 				.thenExecute(() -> {
 					GlimpseFigure.Check lit = GlimpseFigure.check(away, spot, watching(helper, away), false, loaded);
@@ -164,7 +178,7 @@ public class GlimpseGameTests extends TwoPlayerFigureGameTests {
 	 * it, sees the spot (A, looking away, does not), so there is no glimpse; a spectator's view counts the same; B
 	 * close to it, looking away, refuses it too; B looking away far enough off lets it through.
 	 */
-	@GameTest(structure = YARD)
+	@GameTest(structure = YARD, maxTicks = 100)
 	public void theGlimpseSpotIsHiddenFromTheFriendToo(GameTestHelper helper) {
 		tunnel(helper);
 		Vec3 spot = helper.absoluteVec(SPOT);
@@ -177,15 +191,18 @@ public class GlimpseGameTests extends TwoPlayerFigureGameTests {
 		ServerPlayer bNear = player(helper, GameType.SURVIVAL, helper.absoluteVec(new Vec3(9.5, 1.0, 10.5)), WEST);
 		Predicate<Vec3> loaded = loaded(helper);
 
-		helper.assertTrue(GlimpseFigure.check(a, spot, watching(helper, a), false, loaded).ok(), "A alone: refused, so this checks nothing");
-		GlimpseFigure.Check seen = GlimpseFigure.check(a, spot, watching(helper, a, bSees), false, loaded);
-		helper.assertTrue(seen.result() == FireResult.NO_SPOT && seen.why().contains("view"), "B sees the spot, yet: " + seen.why());
-		helper.assertFalse(GlimpseFigure.check(a, spot, watching(helper, a, bSpectates), false, loaded).ok(), "a spectator's view does not count");
-		helper.assertFalse(GlimpseFigure.check(a, spot, watching(helper, a, bNear), false, loaded).ok(), "B 10 blocks from the spot does not count");
-		helper.assertTrue(GlimpseFigure.check(a, spot, watching(helper, a, bAway), false, loaded).ok(), "B far off, looking away, refuses it");
-		FigureApi.Spawned refused = GlimpseFigure.glimpse(a, spot, Float.NaN, watching(helper, a, bSees), false, loaded);
-		helper.assertTrue(refused.result() == FireResult.NO_SPOT && refused.figure() == null, "a glimpse spawned in B's view");
-		helper.succeed();
+		afterTheLightSettles(helper)
+				.thenExecute(() -> {
+					helper.assertTrue(GlimpseFigure.check(a, spot, watching(helper, a), false, loaded).ok(), "A alone: refused, so this checks nothing");
+					GlimpseFigure.Check seen = GlimpseFigure.check(a, spot, watching(helper, a, bSees), false, loaded);
+					helper.assertTrue(seen.result() == FireResult.NO_SPOT && seen.why().contains("view"), "B sees the spot, yet: " + seen.why());
+					helper.assertFalse(GlimpseFigure.check(a, spot, watching(helper, a, bSpectates), false, loaded).ok(), "a spectator's view does not count");
+					helper.assertFalse(GlimpseFigure.check(a, spot, watching(helper, a, bNear), false, loaded).ok(), "B 10 blocks from the spot does not count");
+					helper.assertTrue(GlimpseFigure.check(a, spot, watching(helper, a, bAway), false, loaded).ok(), "B far off, looking away, refuses it");
+					FigureApi.Spawned refused = GlimpseFigure.glimpse(a, spot, Float.NaN, watching(helper, a, bSees), false, loaded);
+					helper.assertTrue(refused.result() == FireResult.NO_SPOT && refused.figure() == null, "a glimpse spawned in B's view");
+				})
+				.thenSucceed();
 	}
 
 	// --- glimpse ---
@@ -194,39 +211,42 @@ public class GlimpseGameTests extends TwoPlayerFigureGameTests {
 	 * The glimpse spawns at the spot for A: FLAT eyes, vanishing in view, facing A, A's (appearedFor), on the record as
 	 * a glimpse only (no surface sighting's place or variant).
 	 */
-	@GameTest(structure = YARD)
+	@GameTest(structure = YARD, maxTicks = 100)
 	public void theGlimpseSpawnsFlatForThePlayer(GameTestHelper helper) {
 		tunnel(helper);
 		MinecraftServer server = helper.getLevel().getServer();
 		Vec3 spot = helper.absoluteVec(SPOT);
 		ServerPlayer a = a(helper, WEST);
 		EntityData data = EntityData.get(server);
-		int glimpses = data.glimpses();
-		String lastVariant = data.lastVariant();
-		int sightings = data.sightings();
-		FigureApi.Spawned spawned = GlimpseFigure.glimpse(a, spot, Float.NaN, watching(helper, a), false, loaded(helper));
-		HimEntity him = spawned.figure();
-		try {
-			helper.assertTrue(spawned.result() == FireResult.FIRED && him != null, "no glimpse: " + spawned.result());
-			helper.assertTrue(him.variant() == Variant.GLIMPSE && him.eyeStyle().equals(Optional.of(EyeStyle.FLAT)) && him.vanishesInView()
-					&& him.mayVanishInView(), "not a FLAT glimpse that vanishes: " + him.variant() + " " + him.eyeStyle());
-			helper.assertTrue(a.getUUID().equals(him.appearedFor()), "not A's glimpse");
-			helper.assertTrue(him.position().distanceTo(spot) < 1.0E-6, "not at the spot: " + him.position());
-			float toward = HimEntity.yawToward(spot, a.position());
-			helper.assertTrue(Math.abs(Mth.wrapDegrees(him.getYRot() - toward)) < 1.0F, "he does not face A: " + him.getYRot() + " vs " + toward);
-			helper.assertTrue(data.glimpses() == glimpses + 1 && data.lastGlimpseDay() == GameClock.day(server), "the glimpse is not on the record");
-			helper.assertTrue(data.sightings() == sightings && data.lastVariant().equals(lastVariant), "the glimpse counted as a surface sighting");
-			// The caller's yaw is kept.
-			discard(him);
-			FigureApi.Spawned turned = GlimpseFigure.glimpse(a, spot, 45.0F, watching(helper, a), false, loaded(helper));
-			helper.assertTrue(turned.figure() != null && Math.abs(Mth.wrapDegrees(turned.figure().getYRot() - 45.0F)) < 1.0F, "the caller's yaw was not kept");
-			discard(turned.figure());
-		} finally {
-			if (him != null) {
-				discard(him);
-			}
-		}
-		helper.succeed();
+		afterTheLightSettles(helper)
+				.thenExecute(() -> {
+					int glimpses = data.glimpses();
+					String lastVariant = data.lastVariant();
+					int sightings = data.sightings();
+					FigureApi.Spawned spawned = GlimpseFigure.glimpse(a, spot, Float.NaN, watching(helper, a), false, loaded(helper));
+					HimEntity him = spawned.figure();
+					try {
+						helper.assertTrue(spawned.result() == FireResult.FIRED && him != null, "no glimpse: " + spawned.result());
+						helper.assertTrue(him.variant() == Variant.GLIMPSE && him.eyeStyle().equals(Optional.of(EyeStyle.FLAT)) && him.vanishesInView()
+								&& him.mayVanishInView(), "not a FLAT glimpse that vanishes: " + him.variant() + " " + him.eyeStyle());
+						helper.assertTrue(a.getUUID().equals(him.appearedFor()), "not A's glimpse");
+						helper.assertTrue(him.position().distanceTo(spot) < 1.0E-6, "not at the spot: " + him.position());
+						float toward = HimEntity.yawToward(spot, a.position());
+						helper.assertTrue(Math.abs(Mth.wrapDegrees(him.getYRot() - toward)) < 1.0F, "he does not face A: " + him.getYRot() + " vs " + toward);
+						helper.assertTrue(data.glimpses() == glimpses + 1 && data.lastGlimpseDay() == GameClock.day(server), "the glimpse is not on the record");
+						helper.assertTrue(data.sightings() == sightings && data.lastVariant().equals(lastVariant), "the glimpse counted as a surface sighting");
+						// The caller's yaw is kept.
+						discard(him);
+						FigureApi.Spawned turned = GlimpseFigure.glimpse(a, spot, 45.0F, watching(helper, a), false, loaded(helper));
+						helper.assertTrue(turned.figure() != null && Math.abs(Mth.wrapDegrees(turned.figure().getYRot() - 45.0F)) < 1.0F, "the caller's yaw was not kept");
+						discard(turned.figure());
+					} finally {
+						if (him != null) {
+							discard(him);
+						}
+					}
+				})
+				.thenSucceed();
 	}
 
 	/**
@@ -499,5 +519,63 @@ public class GlimpseGameTests extends TwoPlayerFigureGameTests {
 		bad.glimpseHideDegrees = Double.NaN;
 		helper.assertTrue(bad.glimpseMinDistance() == EntityConfig.MIN_DISTANCE_FLOOR && bad.glimpseHideDegrees() == 28.0, "bad glimpse values not tamed");
 		helper.succeed();
+	}
+
+	// --- review R3 (v1.2 bug hunt): each fails on main ---
+
+	/**
+	 * R3: D-073 removes him when "the player he appeared for ... steps 2 blocks toward him". A friend 120 blocks away,
+	 * who cannot see him and is nowhere near, walking 3 blocks his general way must not take the glimpse away before
+	 * A (looking the other way) has even turned. On main {@code glimpseStep} applies the approach rule to every player
+	 * in the level, so any moving friend anywhere in the overworld ends the glimpse within half a second.
+	 */
+	@GameTest(structure = YARD, maxTicks = 100)
+	public void r3AFarFriendWalkingAboutLeavesTheGlimpseAlone(GameTestHelper helper) {
+		tunnel(helper);
+		ServerPlayer a = a(helper, WEST);
+		Vec3 bFeet = helper.absoluteVec(new Vec3(19.5, 1.0, 130.5)); // 120 blocks south of the spot, looking south (away)
+		ServerPlayer b = player(helper, GameType.SURVIVAL, bFeet, 0.0F);
+		List<ServerPlayer> everyone = new CopyOnWriteArrayList<>(List.of(a, b));
+		HimEntity him = glimpseFor(helper, a, everyone);
+		helper.startSequence()
+				.thenExecuteAfter(5, () -> {
+					helper.assertFalse(him.isRemoved(), "gone before anyone moved: " + him.goneWhy());
+					look(b, bFeet.add(0.0, 0.0, -3.0), 0.0F); // B walks 3 blocks north, still 117 away and looking away
+				})
+				.thenExecuteAfter(3, () -> {
+					boolean removed = him.isRemoved();
+					String why = String.valueOf(him.goneWhy());
+					discard(him);
+					helper.assertFalse(removed, "a friend 117 blocks away who never saw him stepped 3 blocks his way and the glimpse was gone: " + why);
+				})
+				.thenSucceed();
+	}
+
+	/**
+	 * R3: D-073 "past the last torch he is a dim shape" ("underground the dark stands in for the fog"). The spot's
+	 * darkness is only block light: a spot under the player's own shaft open to the sky (sky light 15, full daylight at
+	 * noon) passes {@code canGlimpse}, so he can stand lit by the sun at the bottom of a shaft or near a tunnel mouth.
+	 */
+	@GameTest(structure = YARD, maxTicks = 100)
+	public void r3TheGlimpseNeverStandsInDaylight(GameTestHelper helper) {
+		tunnel(helper);
+		helper.setBlock(19, 3, 10, Blocks.AIR); // a 1x1 shaft from the spot up to the sky
+		helper.setBlock(19, 4, 10, Blocks.AIR);
+		Vec3 spot = helper.absoluteVec(SPOT);
+		BlockPos feet = BlockPos.containing(spot);
+		ServerPlayer away = a(helper, WEST);
+		BlockPos sealed = helper.absolutePos(new BlockPos(4, 1, 10)); // a tunnel cell 15 from the shaft: dark once the light has settled
+		helper.startSequence()
+				.thenWaitUntil(() -> helper.assertTrue(helper.getLevel().getBrightness(LightLayer.SKY, feet) >= 14
+						&& helper.getLevel().getBrightness(LightLayer.SKY, sealed) <= 3, "the light has not settled yet: sky "
+						+ helper.getLevel().getBrightness(LightLayer.SKY, feet) + " at the spot, " + helper.getLevel().getBrightness(LightLayer.SKY, sealed)
+						+ " under the rock"))
+				.thenExecute(() -> {
+					int sky = helper.getLevel().getBrightness(LightLayer.SKY, feet);
+					int block = helper.getLevel().getBrightness(LightLayer.BLOCK, feet);
+					GlimpseFigure.Check check = GlimpseFigure.check(away, spot, watching(helper, away), false, loaded(helper));
+					helper.assertFalse(check.ok(), "the glimpse may stand in daylight: sky light " + sky + ", block light " + block + " at his feet");
+				})
+				.thenSucceed();
 	}
 }
