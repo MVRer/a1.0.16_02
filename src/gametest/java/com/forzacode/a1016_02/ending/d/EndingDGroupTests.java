@@ -234,6 +234,8 @@ public class EndingDGroupTests extends EndingDDangerTests {
 		int musicOn;
 		final List<UUID> silenced = new ArrayList<>();
 		final List<UUID> music = new ArrayList<>();
+		/** Whose eyes his far-shore spot was looked for (none is ever found here). */
+		final List<UUID> spotsFor = new ArrayList<>();
 
 		@Override
 		public void complete(MinecraftServer server, EndingDConfig cfg) {
@@ -273,6 +275,12 @@ public class EndingDGroupTests extends EndingDDangerTests {
 		@Override
 		public List<SiteRegistry.Site> groves(ServerLevel level, BlockPos near) {
 			return List.of();
+		}
+
+		@Override
+		public Optional<LastMinute.Spot> farShore(ServerLevel level, ServerPlayer player, BlockPos from, EndingDConfig cfg) {
+			spotsFor.add(player.getUUID());
+			return Optional.empty();
 		}
 	}
 
@@ -353,6 +361,48 @@ public class EndingDGroupTests extends EndingDDangerTests {
 			if (TraceLedger.get(server).entries().contains(taken)) {
 				Services.traces().forced().restoreBlock(level, taken, lost);
 			}
+		}
+		helper.succeed();
+	}
+
+	/**
+	 * MP-7: the climb is theirs who climb it. A friend at home far off, under the open sky, is not coming out of the
+	 * pyramid: the minute waits for the one at bedrock, and plays once they come out at the pyramid.
+	 */
+	@GameTest(structure = EndingDSupport.SHAFT, maxTicks = 40)
+	public void theClimbWaitsForTheOneDownThereNotAFriendUnderTheSky(GameTestHelper helper) {
+		ServerLevel level = helper.getLevel();
+		MinecraftServer server = level.getServer();
+		EndingDSupport.shaftWorld(helper);
+		EndingDState data = new EndingDState();
+		EndingDConfig cfg = new EndingDConfig();
+		EndingDSupport.buildStair(helper, data);
+		Recording ports = new Recording();
+		ServerPlayer placer = EndingDSupport.player(helper, new Vec3(6.5, 2, 6.5), 0, 0);
+		ServerPlayer friend = EndingDSupport.player(helper, new Vec3(EndingDSupport.AX + 0.5, 40, EndingDSupport.AZ + 0.5 + 200), 0, 0);
+		LastMinute.Present both = LastMinute.Present.of(List.of(placer, friend));
+		HerobrineState real = HerobrineState.get(server);
+		boolean flagBefore = real.hasFlag(LastMinute.FLAG);
+		try {
+			LastMinute.use(ports);
+			LastMinute.start(server, data, false, placer.blockPosition());
+			long at = play(server, data, cfg, both, server.getTickCount(), 4000, LastMinute.Phase.CLIMB);
+			helper.assertTrue(LastMinute.phase() == LastMinute.Phase.CLIMB, "the last minute did not reach the climb: " + LastMinute.phase());
+			at = play(server, data, cfg, both, at, 40, LastMinute.Phase.FIGURE);
+			helper.assertTrue(LastMinute.phase() == LastMinute.Phase.CLIMB && ports.fogGone == 0,
+					"the climb ended for a friend under the sky far from the pyramid: " + LastMinute.phase());
+			helper.assertFalse(ports.spotsFor.contains(friend.getUUID()) || LastMinute.spawnedHim(), "his spot was picked for the friend at home");
+			helper.assertTrue(ports.spotsFor.contains(placer.getUUID()), "his spot was not looked for the one climbing");
+
+			// The placer comes out at the pyramid: the rest plays, for them.
+			placer.snapTo(helper.absoluteVec(new Vec3(EndingDSupport.AX + 0.5, 27, EndingDSupport.AZ + 0.5)), 0, 0);
+			play(server, data, cfg, both, at, 2, LastMinute.Phase.FIGURE);
+			helper.assertTrue(LastMinute.phase() == LastMinute.Phase.FIGURE && ports.fogGone == 1, "coming out at the pyramid did not end the climb: "
+					+ LastMinute.phase());
+		} finally {
+			LastMinute.use(LastMinute.Ports.LIVE);
+			LastMinute.reset();
+			real.setFlag(LastMinute.FLAG, flagBefore);
 		}
 		helper.succeed();
 	}

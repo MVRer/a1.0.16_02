@@ -66,10 +66,12 @@ import org.jspecify.annotations.Nullable;
  * <li>music: back on, and one of the game's calm tracks starts.</li>
  * </ol>
  * Then the afterward. It plays for everyone present (D-064): the silence and the music reach every online player, the
- * climb and his spot follow whoever of the group is there, in the stair's own dimension. It keeps no player: each tick
- * it is handed who is there ({@link Present}), so whoever placed the last plank may leave or die and it goes on for the
- * others; with nobody online at all it waits, its timers held. Server thread only; the phase is saved, the rest starts
- * over after a restart, and the completion (the story's end, the flags) happens once for the world.
+ * climb and his spot follow whoever of the group is at the stair (in its dimension, within {@code climbRadius} of its
+ * axis): the first of them to come out of the pyramid starts the far shore, a friend elsewhere never does. It keeps no
+ * player: each tick it is handed who is there ({@link Present}), so whoever placed the last plank may leave or die and
+ * it goes on for the others; with nobody online at all it waits, its timers held. Server thread only; the phase is
+ * saved, the rest starts over after a restart, and the completion (the story's end, the flags) happens once for the
+ * world.
  */
 public final class LastMinute {
 	public enum Phase { START, FOOTSTEPS, TORCH, CLIMB, FIGURE, LEAVES, MUSIC, DONE }
@@ -129,6 +131,11 @@ public final class LastMinute {
 
 		/** The bare groves the world recorded, nearest {@code near} first. */
 		List<SiteRegistry.Site> groves(ServerLevel level, BlockPos near);
+
+		/** Where he stands for this player's eyes, seen from {@code from} ({@link LastMinute#farShore}). */
+		default Optional<Spot> farShore(ServerLevel level, ServerPlayer player, BlockPos from, EndingDConfig cfg) {
+			return LastMinute.farShore(level, player, from, cfg);
+		}
 
 		Ports LIVE = new Ports() {
 			@Override
@@ -481,10 +488,10 @@ public final class LastMinute {
 			case CLIMB -> {
 				boolean out;
 				if (previewing) {
-					out = cameOut(viewer, data, true);
+					out = cameOut(viewer, data, cfg, true);
 				} else {
-					List<ServerPlayer> climbers = climbers(present, data);
-					Optional<ServerPlayer> first = climbers.stream().filter(p -> cameOut(p, data, false)).findFirst();
+					List<ServerPlayer> climbers = climbers(present, data, cfg);
+					Optional<ServerPlayer> first = climbers.stream().filter(p -> cameOut(p, data, cfg, false)).findFirst();
 					if (figureId == null) {
 						first.or(() -> climbers.stream().filter(p -> nearTop(p, data)).findFirst()).ifPresent(p -> trySpawn(p, data, cfg));
 					}
@@ -508,7 +515,7 @@ public final class LastMinute {
 				HimEntity him = figure(server);
 				if (figureId == null) {
 					if (now % SPAWN_RETRY_TICKS == 0) {
-						spotter(present, data).ifPresent(p -> trySpawn(p, data, cfg));
+						spotter(present, data, cfg).ifPresent(p -> trySpawn(p, data, cfg));
 					}
 				} else if (him == null) {
 					enter(server, data, Phase.LEAVES);
@@ -598,21 +605,44 @@ public final class LastMinute {
 		return null;
 	}
 
-	/** Those in it, in the stair's dimension (a friend in the Nether is not climbing). */
-	private static List<ServerPlayer> climbers(Present present, EndingDState data) {
-		ResourceKey<Level> dimension = data.stair().map(StairPlan::dimension).orElse(Level.OVERWORLD);
-		return present.inIt().stream().filter(p -> p.level().dimension().equals(dimension)).toList();
+	/**
+	 * Those in it who climb: at the stair, in its dimension and near its axis ({@link #atStair}). A friend in the Nether,
+	 * or at home under the sky, is not climbing.
+	 */
+	private static List<ServerPlayer> climbers(Present present, EndingDState data, EndingDConfig cfg) {
+		return present.inIt().stream().filter(p -> atStair(p, data, cfg)).toList();
 	}
 
-	/** Whose eyes his spot is picked for: one in it who came out, else one in it, else anyone online there. */
-	private static Optional<ServerPlayer> spotter(Present present, EndingDState data) {
-		List<ServerPlayer> climbers = climbers(present, data);
-		Optional<ServerPlayer> out = climbers.stream().filter(p -> cameOut(p, data, false)).findFirst();
+	/**
+	 * In the stair's dimension and within {@code climbRadius} blocks (horizontally) of its axis: down there, on the
+	 * way up or just out of the pyramid. With no stair, of where the sequence started.
+	 */
+	private static boolean atStair(ServerPlayer player, EndingDState data, EndingDConfig cfg) {
+		ResourceKey<Level> dimension = data.stair().map(StairPlan::dimension).orElse(Level.OVERWORLD);
+		BlockPos axis = data.stair().map(StairPlan::twin).orElse(origin);
+		if (!player.level().dimension().equals(dimension)) {
+			return false;
+		}
+		if (axis == null) {
+			return true;
+		}
+		double dx = player.getX() - (axis.getX() + 0.5);
+		double dz = player.getZ() - (axis.getZ() + 0.5);
+		double radius = Math.max(0, cfg.climbRadius);
+		return dx * dx + dz * dz <= radius * radius;
+	}
+
+	/**
+	 * Whose eyes his spot is picked for: a climber who came out (the first, so he is there for the ones out), else a
+	 * climber, else anyone online at the stair (a spectator watching). Nobody far off: he would stand for no one.
+	 */
+	private static Optional<ServerPlayer> spotter(Present present, EndingDState data, EndingDConfig cfg) {
+		List<ServerPlayer> climbers = climbers(present, data, cfg);
+		Optional<ServerPlayer> out = climbers.stream().filter(p -> cameOut(p, data, cfg, false)).findFirst();
 		if (out.isPresent() || !climbers.isEmpty()) {
 			return out.or(() -> climbers.stream().findFirst());
 		}
-		ResourceKey<Level> dimension = data.stair().map(StairPlan::dimension).orElse(Level.OVERWORLD);
-		return present.everyone().stream().filter(p -> p.level().dimension().equals(dimension)).findFirst();
+		return present.everyone().stream().filter(p -> atStair(p, data, cfg)).findFirst();
 	}
 
 	private static ServerLevel stairLevel(MinecraftServer server, EndingDState data) {
@@ -718,8 +748,14 @@ public final class LastMinute {
 				&& p.getY() >= s.chamberCeil() && p.getY() <= s.yTop();
 	}
 
-	/** Out of the pyramid: above the stair's top with the sky over their head (out of the water). */
-	static boolean cameOut(ServerPlayer player, EndingDState data, boolean preview) {
+	/**
+	 * Out of the pyramid: at the stair ({@link #atStair}), above its top, with the sky over their head (out of the
+	 * water). A preview only asks for the sky.
+	 */
+	static boolean cameOut(ServerPlayer player, EndingDState data, EndingDConfig cfg, boolean preview) {
+		if (!preview && !atStair(player, data, cfg)) {
+			return false;
+		}
 		ServerLevel level = player.level();
 		BlockPos eye = BlockPos.containing(player.getEyePosition());
 		boolean sky = level.canSeeSky(eye) && level.getFluidState(eye).isEmpty();
@@ -729,8 +765,9 @@ public final class LastMinute {
 		return sky && data.stair().map(s -> player.getY() > s.yTop() + 1).orElse(true);
 	}
 
-	private static boolean nearTop(ServerPlayer player, EndingDState data) {
-		return data.stair().map(s -> player.getY() >= s.yTop() - 24).orElse(false);
+	/** A climber (at the stair, {@link #climbers}) close to its top: he may come out now, before they do. */
+	private static boolean nearTop(ServerPlayer climber, EndingDState data) {
+		return data.stair().map(s -> climber.getY() >= s.yTop() - 24).orElse(false);
 	}
 
 	// --- him ---
@@ -744,7 +781,7 @@ public final class LastMinute {
 		ServerLevel level = player.level();
 		BlockPos from = data.stair().isEmpty() ? player.blockPosition()
 				: new BlockPos(data.stair().get().axisX(), level.getSeaLevel(), data.stair().get().axisZ());
-		Optional<Spot> spot = farShore(level, player, from, cfg);
+		Optional<Spot> spot = ports.farShore(level, player, from, cfg);
 		if (spot.isEmpty()) {
 			return;
 		}
