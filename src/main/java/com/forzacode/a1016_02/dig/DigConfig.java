@@ -18,7 +18,10 @@ public final class DigConfig {
 	 * base farther from every network gets its own (blocks).
 	 */
 	public int networkShareDistance = 64;
-	/** At most this many networks per world (every base a group ever had counts). */
+	/**
+	 * At most this many networks in use per world: one counts while it is under some owner's base. A network all its
+	 * players moved away from (a camp bed slept in for a night) no longer counts, so a new base always gets one.
+	 */
 	public int networkMaxPerWorld = 6;
 	/** Corridor depth below the base (blocks), unless the player's digs force it deeper. */
 	public int networkDepthBelowBase = 12;

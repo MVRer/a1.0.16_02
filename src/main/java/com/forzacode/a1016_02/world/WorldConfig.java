@@ -90,6 +90,8 @@ public final class WorldConfig {
 	public int stillBurningCandidates = 6;
 	/** Real minutes before a failed search tries new candidates (a cost setting). */
 	public double stillBurningRetryMinutes = 5;
+	/** The camp keeps this far from every known player's base, an offline friend's too (blocks). */
+	public int stillBurningBaseClearance = 64;
 
 	// --- signatures: your house, elsewhere (D-005) ---
 	/** The copy stands this far from the copied house (blocks). Lore puts F27 in it, within 1500 of the base. */
@@ -111,6 +113,8 @@ public final class WorldConfig {
 	public int houseCopyFinishDepth = 16;
 	/** Copy site candidates checked per search. */
 	public int houseCopyCandidates = 8;
+	/** The copy site keeps this far from every known player's base, an offline friend's too (blocks). */
+	public int houseCopyBaseClearance = 64;
 	/** Real seconds between tries while a step waits for chunks or is in view (a cost setting). */
 	public double houseCopyRetrySeconds = 30;
 

@@ -71,6 +71,64 @@ public class DigMultiplayerTests {
 	}
 
 	/**
+	 * Camp beds never use up the world's networks (MP-7): Ben sleeps at a new camp bed every night (a bed he gets into
+	 * is his respawn point, and he is at home there), and a network starts under each one the morning after. A camp he
+	 * moved on from is nobody's base any more, so it no longer counts toward {@code networkMaxPerWorld}: Alex's new home
+	 * far away still gets its own network after its night.
+	 */
+	@GameTest
+	public void campBedsNeverUseUpTheWorldsNetworks(GameTestHelper helper) {
+		Crew crew = new Crew(helper, "Alex", "Ben");
+		UUID alex = crew.uuid("Alex");
+		UUID ben = crew.uuid("Ben");
+		DigConfig config = new DigConfig();
+		DigData data = crew.data;
+		GlobalPos start = GlobalPos.of(helper.getLevel().dimension(), new BlockPos(100, 70, 100));
+		long night = 3;
+		for (int camp = 0; camp < config.networkMaxPerWorld; camp++, night++) {
+			GlobalPos bed = GlobalPos.of(start.dimension(), start.pos().east(200 * camp));
+			UnderYou.see(data, ben, bed, night, true, config);
+			Network under = UnderYou.active(data, ben, bed, night + 1, config, false);
+			helper.assertTrue(under != null && under.base().equals(bed.pos()), "no network under camp bed " + camp);
+		}
+		GlobalPos home = GlobalPos.of(start.dimension(), start.pos().south(1500));
+		UnderYou.see(data, alex, home, night, true, config);
+		helper.assertTrue(UnderYou.active(data, alex, home, night, config, false) == null, "Alex's new home started on its first night");
+		Network alexs = UnderYou.active(data, alex, home, night + config.networkStartAfterNights, config, false);
+		helper.assertTrue(alexs != null && alexs.founder().equals(Optional.of(alex)) && alexs.base().equals(home.pos()),
+				"Ben's old camp beds used up the world's networks: Alex's home got none (" + data.networks.size() + " networks)");
+		// Ben comes back to his first camp: its network is his again (no new one), and it counts once more.
+		GlobalPos first = GlobalPos.of(start.dimension(), start.pos());
+		UnderYou.see(data, ben, first, night + 5, true, config);
+		int before = data.networks.size();
+		Network back = UnderYou.active(data, ben, first, night + 5, config, false);
+		helper.assertTrue(back != null && back.base().equals(first.pos()) && data.networks.size() == before, "Ben's first camp did not get its network back");
+		helper.succeed();
+	}
+
+	/**
+	 * A player alone who moves base gets a network at every new base, as in v1.0, however often they move: the bases they
+	 * left never use up {@code networkMaxPerWorld}.
+	 */
+	@GameTest
+	public void aSoloPlayerWhoMovesBaseGetsANetworkAtEachNewBase(GameTestHelper helper) {
+		Crew crew = new Crew(helper, "Alex");
+		UUID alex = crew.uuid("Alex");
+		DigConfig config = new DigConfig();
+		DigData data = crew.data;
+		BlockPos first = new BlockPos(-400, 70, 300);
+		long night = 2;
+		for (int move = 0; move <= config.networkMaxPerWorld + 1; move++, night += 3) {
+			GlobalPos base = GlobalPos.of(helper.getLevel().dimension(), first.north(300 * move));
+			UnderYou.see(data, alex, base, night, true, config);
+			Network net = UnderYou.active(data, alex, base, night + config.networkStartAfterNights, config, false);
+			helper.assertTrue(net != null && net.base().equals(base.pos()) && net.founder().equals(Optional.of(alex)),
+					"Alex's base " + (move + 1) + " got no network (" + data.networks.size() + " networks)");
+		}
+		helper.succeed();
+	}
+
+	/**
 	 * ENTERED_TUNNEL once per occasion: two friends walking into the same tunnel together count once, a third player in
 	 * another tunnel far away is an occasion of her own, and nobody counts again within the cooldown.
 	 */

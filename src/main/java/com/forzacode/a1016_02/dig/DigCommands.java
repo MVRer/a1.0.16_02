@@ -145,13 +145,14 @@ final class DigCommands {
 		HerobrineState state = HerobrineState.get(server);
 		ServerPlayer player = player(ctx, named);
 		List<String> lines = new ArrayList<>();
-		lines.add(String.format(Locale.ROOT, "[a1016] dig: %d network(s) of at most %d; bases within %d share one", data.networks.size(),
-				config.networkMaxPerWorld, config.networkShareDistance));
+		lines.add(String.format(Locale.ROOT, "[a1016] dig: %d network(s), %d in use of at most %d; bases within %d share one", data.networks.size(),
+				UnderYou.inUse(data, config), config.networkMaxPerWorld, config.networkShareDistance));
 		for (int n = 0; n < data.networks.size(); n++) {
 			Network each = data.networks.get(n);
-			lines.add(String.format(Locale.ROOT, "  #%d under %s (%s), %s: %d anchors, nights=%d", n + 1, each.base.toShortString(), each.dimension.identifier(),
+			lines.add(String.format(Locale.ROOT, "  #%d under %s (%s), %s: %d anchors, nights=%d%s", n + 1, each.base.toShortString(), each.dimension.identifier(),
 					each.owners.isEmpty() ? "no owner yet (a save from before multiplayer)" : "owners " + each.owners.stream()
-							.map(uuid -> state.player(uuid).map(HerobrineState.Subject::name).orElse(uuid.toString())).toList(), each.anchors.size(), each.nights));
+							.map(uuid -> state.player(uuid).map(HerobrineState.Subject::name).orElse(uuid.toString())).toList(), each.anchors.size(), each.nights,
+					UnderYou.inUse(data, each, config) ? "" : " (nobody's base now)"));
 		}
 		Network mine = networkOf(server, player);
 		if (mine == null) {
