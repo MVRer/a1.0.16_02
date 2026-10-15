@@ -36,6 +36,63 @@ public class GroupTrapGameTests {
 	}
 
 	/**
+	 * Alex's bed is taken; Alex is offline for 20000 ticks while Sam plays, then back and still sleepless: a phantom
+	 * near Alex is one of the bed's (the stat that counts Alex's sleepless time is Alex's own play time, so the bed
+	 * counts on Alex's own clock, not the world's). And the bed's window runs on Alex's clock too: offline for longer
+	 * than it, the trap is still there when Alex comes back, and over once Alex has played it out.
+	 */
+	@GameTest(structure = Yard.STRUCTURE, maxTicks = 40)
+	public void theBedCountsTheSleeplessNightsOnItsPlayersOwnClock(GameTestHelper helper) {
+		Yard y = new Yard(helper);
+		ServerLevel level = y.level;
+		MinecraftServer server = level.getServer();
+		y.fill(0, 0, 0, 14, 0, 14, Blocks.STONE);
+		BlockState foot = Blocks.BED.white().defaultBlockState().setValue(BedBlock.FACING, Direction.SOUTH).setValue(BedBlock.PART, BedPart.FOOT);
+		y.set(3, 1, 3, foot);
+		y.set(3, 1, 4, foot.setValue(BedBlock.PART, BedPart.HEAD));
+		ServerPlayer alex = y.player;
+		ServerPlayer sam = mock(helper);
+		alex.setRespawnPosition(new ServerPlayer.RespawnConfig(LevelData.RespawnData.of(level.dimension(), y.abs(3, 1, 3), 0, 0), false), false);
+		alex.getStats().setValue(alex, Stats.CUSTOM.get(Stats.TIME_SINCE_REST), 1000);
+		alex.snapTo(y.absVec(200.5, 1, 6.5), 0, 0);
+		sam.snapTo(y.absVec(220.5, 1, 6.5), 0, 0);
+		Group group = new Group(helper, alex, sam);
+		Group.Clocks clocks = new Group.Clocks();
+		clocks.play(30000, alex, sam);
+		clocks.play(20000, sam); // Sam played before Alex ever joined: the world clock is ahead of Alex's own
+		AccidentPlannerImpl planner = group.planner(y.data, Yard.NOBODY, clocks);
+		helper.assertTrue(planner.arm(alex, Traps.NO_BED, true).armed(), "Alex's bed was not taken");
+
+		// Alex is offline for 20000 ticks while Sam plays, then back for 2000, never sleeping.
+		group.online.remove(alex);
+		clocks.play(20000, sam);
+		group.online.add(alex);
+		clocks.play(2000, alex, sam);
+		alex.getStats().setValue(alex, Stats.CUSTOM.get(Stats.TIME_SINCE_REST), 3000);
+		alex.snapTo(y.absVec(8.5, 1, 8.5), 0, 0);
+		Phantom phantom = helper.spawn(EntityTypes.PHANTOM, new BlockPos(8, 6, 8));
+		try {
+			planner.onSpawned(level, phantom);
+			helper.assertTrue(planner.causedBy(alex, level.damageSources().mobAttack(phantom)),
+					"a phantom of Alex's sleepless nights after the bed went does not count, because Sam played while Alex was away");
+		} finally {
+			phantom.discard();
+		}
+
+		// Offline for longer than the bed's window while Sam plays: Alex's nights have not passed, so it is still there.
+		long window = Traps.NO_BED.window(y.cfg);
+		group.online.remove(alex);
+		clocks.play(window + 1000, sam);
+		planner.step(server, y.data, y.cfg, clocks.world);
+		helper.assertTrue(y.data.armed(alex.getUUID()).isPresent(), "the bed's window ran out while Alex was offline: " + y.data.history());
+		group.online.add(alex);
+		clocks.play(window + 1000, alex, sam);
+		planner.step(server, y.data, y.cfg, clocks.world);
+		helper.assertTrue(y.data.armed(alex.getUUID()).isEmpty(), "the bed's window never ran out on Alex's own clock");
+		helper.succeed();
+	}
+
+	/**
 	 * The dark corner is out for the night; Sam lies down in a bed (the night is not skipped: Alex is up). The torches
 	 * stay out until the real morning comes on the game clock, which is what a skipped night jumps to.
 	 */

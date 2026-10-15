@@ -124,13 +124,12 @@ final class AccidentCommands {
 	static List<String> status(AccidentPlannerImpl planner, MinecraftServer server, @Nullable ServerPlayer player) {
 		AccidentData d = planner.data(server);
 		AccidentConfig cfg = AccidentConfig.get();
-		long now = GameClock.playTicks(server);
 		List<String> lines = new ArrayList<>();
 		Map<UUID, ArmedTrap> traps = d.traps();
 		lines.add(traps.isEmpty() ? "[a1016] accident: nothing armed" : "[a1016] accident: " + traps.size() + " armed (one per player)");
 		traps.forEach((owner, t) -> {
 			lines.add("  " + planner.name(server, owner) + ": " + t.type() + " " + t.phase().name().toLowerCase(Locale.ROOT) + " at " + Candidate.at(t.pos()) + " in "
-					+ t.dimension().identifier().getPath() + ", " + minutes(t.until() - now) + " left");
+					+ t.dimension().identifier().getPath() + ", " + minutes(t.until() - planner.now(server, owner, t)) + " left");
 			lines.add("    clue: " + t.clue());
 			t.worn().ifPresent(w -> lines.add("    worn: " + StolenGear.describe(w.stack()) + " in the " + w.slot().getName() + " slot"));
 		});

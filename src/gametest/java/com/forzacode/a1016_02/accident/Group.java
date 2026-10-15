@@ -1,7 +1,9 @@
 package com.forzacode.a1016_02.accident;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 import com.forzacode.a1016_02.core.DeathMarker;
@@ -70,7 +72,36 @@ final class Group implements PlayerWatch.Source {
 
 	/** A planner over this group (who takes part) and the given data, marking deaths through this group's marker. */
 	AccidentPlannerImpl planner(AccidentData data, ViewGate view) {
+		return planner(data, view, AccidentPlannerImpl.Clocks.GAME);
+	}
+
+	/** The same on these clocks ({@link Clocks}: the world's and each player's own, moved by hand). */
+	AccidentPlannerImpl planner(AccidentData data, ViewGate view, AccidentPlannerImpl.Clocks clocks) {
 		DeathMarker marker = marker(data, view);
-		return new AccidentPlannerImpl(server -> data, view, watch, () -> marker);
+		return new AccidentPlannerImpl(server -> data, view, watch, () -> marker, clocks);
+	}
+
+	/** Play clocks a test moves by hand (D-059): the world's runs while anyone plays, each player's own only while they do. */
+	static final class Clocks implements AccidentPlannerImpl.Clocks {
+		long world;
+		final Map<UUID, Long> own = new HashMap<>();
+
+		/** {@code ticks} of play with these players online. */
+		void play(long ticks, ServerPlayer... online) {
+			world += ticks;
+			for (ServerPlayer player : online) {
+				own.merge(player.getUUID(), ticks, Long::sum);
+			}
+		}
+
+		@Override
+		public long world(MinecraftServer server) {
+			return world;
+		}
+
+		@Override
+		public long own(MinecraftServer server, UUID player) {
+			return own.getOrDefault(player, 0L);
+		}
 	}
 }

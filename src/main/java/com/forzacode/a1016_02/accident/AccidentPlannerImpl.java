@@ -56,8 +56,9 @@ import org.jspecify.annotations.Nullable;
  * <li>When a trap's player leaves or dies it stays armed and deniable for whoever sets it off (D-062.5); live traps
  * spring for whichever participant is in place. A personal trap is dropped when its player turns spectator.</li>
  * </ul>
- * Every edit is out of view of every player, spectators included. Trap windows run on the world play clock. Players
- * are kept by UUID and looked up again each tick (D-062.1).
+ * Every edit is out of view of every player, spectators included. Trap windows run on the world play clock, except a
+ * personal trap's, which runs on its own player's (the bed's sleepless nights are theirs, D-059). Players are kept by
+ * UUID and looked up again each tick (D-062.1).
  */
 public final class AccidentPlannerImpl implements AccidentPlanner {
 	/** What an arm attempt did. */
@@ -78,10 +79,33 @@ public final class AccidentPlannerImpl implements AccidentPlanner {
 	private record Spent(UUID owner, ArmedTrap trap, long tick, Set<UUID> victims) {
 	}
 
+	/** The play clocks the planner reads (D-059): the world's, and each player's own. Two-player tests bring their own. */
+	public interface Clocks {
+		/** {@link GameClock#playTicks(MinecraftServer)}. */
+		long world(MinecraftServer server);
+
+		/** {@link GameClock#playTicks(MinecraftServer, UUID)}. */
+		long own(MinecraftServer server, UUID player);
+
+		/** The game's clocks. */
+		Clocks GAME = new Clocks() {
+			@Override
+			public long world(MinecraftServer server) {
+				return GameClock.playTicks(server);
+			}
+
+			@Override
+			public long own(MinecraftServer server, UUID player) {
+				return GameClock.playTicks(server, player);
+			}
+		};
+	}
+
 	private final Function<MinecraftServer, AccidentData> data;
 	private final ViewGate view;
 	private final PlayerWatch watch;
 	private final Supplier<DeathMarker> marker;
+	private final Clocks clocks;
 	private final RouteSampler sampler = new RouteSampler();
 	/** Per player: candidate counts from the last refresh, by trap id, for the cards' cheap context gate. */
 	private final Map<UUID, Map<String, Integer>> cachedCandidates = new HashMap<>();
@@ -102,10 +126,16 @@ public final class AccidentPlannerImpl implements AccidentPlanner {
 
 	/** A planner over its own view of who takes part and its own death marker (two-player tests). */
 	public AccidentPlannerImpl(Function<MinecraftServer, AccidentData> data, ViewGate view, PlayerWatch watch, Supplier<DeathMarker> marker) {
+		this(data, view, watch, marker, Clocks.GAME);
+	}
+
+	/** The same on its own clocks (two-player tests: one player offline while another plays). */
+	public AccidentPlannerImpl(Function<MinecraftServer, AccidentData> data, ViewGate view, PlayerWatch watch, Supplier<DeathMarker> marker, Clocks clocks) {
 		this.data = data;
 		this.view = view;
 		this.watch = watch;
 		this.marker = marker;
+		this.clocks = clocks;
 	}
 
 	public void attach(@Nullable MinecraftServer newServer) {
@@ -228,7 +258,7 @@ public final class AccidentPlannerImpl implements AccidentPlanner {
 		MinecraftServer forServer = victim.level().getServer();
 		AccidentData d = data(forServer);
 		AccidentConfig cfg = AccidentConfig.get();
-		long now = GameClock.playTicks(forServer);
+		long now = clocks.world(forServer);
 		long clock = clock(forServer);
 		UUID id = victim.getUUID();
 		List<Map.Entry<UUID, ArmedTrap>> order = new ArrayList<>();
@@ -239,17 +269,38 @@ public final class AccidentPlannerImpl implements AccidentPlanner {
 			}
 		});
 		for (Map.Entry<UUID, ArmedTrap> entry : order) {
-			if (claims(victim, source, entry.getKey(), entry.getValue(), d, cfg, now, clock)) {
+			if (claims(victim, source, entry.getKey(), entry.getValue(), d, cfg, now(forServer, entry.getKey(), entry.getValue(), now), clock)) {
 				return Optional.of(new Claim(entry.getKey(), entry.getValue(), false));
 			}
 		}
 		long tick = forServer.getTickCount();
 		for (Spent done : spent) {
-			if (tick - done.tick() <= cfg.spentGraceTicks() && !done.victims().contains(id) && claims(victim, source, done.owner(), done.trap(), d, cfg, now, clock)) {
+			if (tick - done.tick() <= cfg.spentGraceTicks() && !done.victims().contains(id)
+					&& claims(victim, source, done.owner(), done.trap(), d, cfg, now(forServer, done.owner(), done.trap(), now), clock)) {
 				return Optional.of(new Claim(done.owner(), done.trap(), true));
 			}
 		}
 		return Optional.empty();
+	}
+
+	/**
+	 * The play ticks this kind of trap's window runs on (D-059): its own player's clock for a
+	 * {@linkplain TrapKind#personal() personal} trap (the bed: the sleepless nights are theirs, counted by the stat their
+	 * own play time moves, so a friend playing while they are away never uses up their nights), else the world clock
+	 * ({@code worldNow}). A trap's set time and window are on that clock from when it is armed.
+	 */
+	long now(MinecraftServer forServer, UUID owner, TrapKind kind, long worldNow) {
+		return kind.personal() ? clocks.own(forServer, owner) : worldNow;
+	}
+
+	/** {@link #now(MinecraftServer, UUID, TrapKind, long)} for this player's armed trap (the status lines' time left). */
+	public long now(MinecraftServer forServer, UUID owner, ArmedTrap trap) {
+		return now(forServer, owner, trap, clocks.world(forServer));
+	}
+
+	private long now(MinecraftServer forServer, UUID owner, ArmedTrap trap, long worldNow) {
+		TrapKind kind = Traps.byId(trap.type()).orElse(null);
+		return kind == null ? worldNow : now(forServer, owner, kind, worldNow);
 	}
 
 	/** True if this trap of {@code owner}'s claims this death: set, in its window, in its place, its way of killing. */
@@ -300,7 +351,7 @@ public final class AccidentPlannerImpl implements AccidentPlanner {
 		ServerLevel level = player.level();
 		MinecraftServer forServer = level.getServer();
 		return new TrapContext(level, player, player.getUUID(), List.of(player), center.immutable(), data(forServer), view, AccidentConfig.get(),
-				GameClock.playTicks(forServer), GameClock.day(forServer), watch);
+				clocks.world(forServer), GameClock.day(forServer), watch);
 	}
 
 	/** The spots the planner would try for this player, nearest first (clear of everyone else's traps). */
@@ -345,7 +396,8 @@ public final class AccidentPlannerImpl implements AccidentPlanner {
 		if (blocked != null && !(debug && kind.live())) {
 			return new ArmResult(Status.BLOCKED, null, null, blocked);
 		}
-		TrapContext ctx = context(player, center);
+		TrapContext world = context(player, center);
+		TrapContext ctx = world.at(now(forServer, id, kind, world.now())); // the trap's own clock (the bed: this player's)
 		List<Candidate> found = kind.candidates(ctx);
 		if (found.isEmpty()) {
 			return new ArmResult(Status.NO_SPOT, null, null, "no spot for " + kind.id() + " near " + who);
@@ -556,7 +608,7 @@ public final class AccidentPlannerImpl implements AccidentPlanner {
 			}
 			ServerPlayer owner = targetable(forServer, entry.getKey());
 			TrapContext ctx = new TrapContext(level, owner, entry.getKey(), owner == null ? List.of() : List.of(owner), trap.pos(), d, view, cfg,
-					GameClock.playTicks(forServer), GameClock.day(forServer), watch);
+					now(forServer, entry.getKey(), kind, clocks.world(forServer)), GameClock.day(forServer), watch);
 			ArmedTrap next = kind.onSpawned(ctx, entity, trap);
 			if (next != trap) {
 				d.setArmed(entry.getKey(), next);
@@ -582,13 +634,13 @@ public final class AccidentPlannerImpl implements AccidentPlanner {
 		AccidentConfig cfg = AccidentConfig.get();
 		long tick = forServer.getTickCount();
 		AccidentData d = data(forServer);
-		long now = GameClock.playTicks(forServer);
+		long now = clocks.world(forServer);
 		long day = GameClock.day(forServer);
 		List<ServerPlayer> players = watch.participants(forServer);
 		boolean sample = tick % AccidentConfig.cadenceTicks(cfg.routeSampleSeconds) == 0;
 		for (ServerPlayer player : players) {
 			if (sample) {
-				sampler.sample(player, d, cfg, GameClock.playTicks(forServer, player), day);
+				sampler.sample(player, d, cfg, clocks.own(forServer, player.getUUID()), day);
 			}
 			if (watch.isTargetable(player)) {
 				watchBurns(player, d, cfg, now);
@@ -632,8 +684,11 @@ public final class AccidentPlannerImpl implements AccidentPlanner {
 		}
 	}
 
-	/** One armed trap's step, with the players in its level who could set it off (its own player first). */
-	private void stepTrap(MinecraftServer forServer, AccidentData d, UUID owner, ArmedTrap trap, List<ServerPlayer> players, AccidentConfig cfg, long now,
+	/**
+	 * One armed trap's step, with the players in its level who could set it off (its own player first), on the clock its
+	 * window runs on ({@code worldNow}, or its player's own for the bed).
+	 */
+	private void stepTrap(MinecraftServer forServer, AccidentData d, UUID owner, ArmedTrap trap, List<ServerPlayer> players, AccidentConfig cfg, long worldNow,
 			long day) {
 		TrapKind kind = Traps.byId(trap.type()).orElse(null);
 		ServerLevel level = forServer.getLevel(trap.dimension());
@@ -641,6 +696,7 @@ public final class AccidentPlannerImpl implements AccidentPlanner {
 			disarm(forServer, owner, "unknown trap or level");
 			return;
 		}
+		long now = now(forServer, owner, kind, worldNow);
 		if (level.isLoaded(trap.pos()) && trap.saved().stream().allMatch(s -> level.isLoaded(s.pos()))) {
 			List<ServerPlayer> here = new ArrayList<>();
 			ServerPlayer own = null;
