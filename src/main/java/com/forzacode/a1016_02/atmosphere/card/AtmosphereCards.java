@@ -28,6 +28,7 @@ public final class AtmosphereCards {
 				new CatHissesCornerCard(),
 				new PatientSkeletonCard(),
 				new EmptyWaterCard(),
-				new BatInSealedRoomCard());
+				new BatInSealedRoomCard(),
+				new FarInTheRockCard());
 	}
 }

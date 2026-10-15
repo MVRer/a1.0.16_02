@@ -128,6 +128,17 @@ abstract class AtmosphereCard implements EventCard {
 		return true;
 	}
 
+	/** {@link #alone(ServerPlayer, int)} among {@link #everyone} in the player's level: no other non-spectator player within {@code radius}. */
+	protected boolean aloneHere(ServerPlayer player, int radius) {
+		double r2 = (double) radius * radius;
+		for (ServerPlayer other : everyone.apply(player.level())) {
+			if (!other.getUUID().equals(player.getUUID()) && !other.isSpectator() && other.distanceToSqr(player) <= r2) {
+				return false;
+			}
+		}
+		return true;
+	}
+
 	/** Nobody in the level ({@link #everyone}, spectators included) within {@code blocks} of {@code pos}: not the target, not a friend at home. */
 	protected boolean farFromEveryone(ServerLevel level, BlockPos pos, int blocks) {
 		double r2 = (double) blocks * blocks;

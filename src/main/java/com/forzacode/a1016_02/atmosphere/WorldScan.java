@@ -16,6 +16,7 @@ import net.minecraft.tags.BlockTags;
 import net.minecraft.tags.FluidTags;
 import net.minecraft.util.RandomSource;
 import net.minecraft.world.level.Level;
+import net.minecraft.world.level.LightLayer;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.IronBarsBlock;
 import net.minecraft.world.level.block.entity.BlockEntity;
@@ -65,6 +66,65 @@ public final class WorldScan {
 	/** Nothing that blocks motion above this block (heightmap: updates at once, unlike sky light). */
 	public static boolean openToSky(Level level, BlockPos pos) {
 		return loaded(level, pos.getX(), pos.getZ()) && pos.getY() >= level.getHeight(Heightmap.Types.MOTION_BLOCKING, pos.getX(), pos.getZ());
+	}
+
+	/**
+	 * Underground: in a level with sky light (the overworld), hardly any sky light here (4 or less) and well below the
+	 * surface (more than 4 blocks under the column's top), the rule dig's tunnels use. A position that is not loaded
+	 * is not underground.
+	 */
+	public static boolean underground(Level level, BlockPos pos) {
+		if (!level.dimensionType().hasSkyLight() || !level.isLoaded(pos)) {
+			return false;
+		}
+		return level.getBrightness(LightLayer.SKY, pos) <= 4 && pos.getY() < level.getHeight(Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, pos.getX(), pos.getZ()) - 4;
+	}
+
+	/** Rock a sound can come from: an opaque block of natural stone (stone, deepslate, tuff and the rest of the base stones) or gravel. */
+	public static boolean isRock(BlockState state) {
+		return state.isSolidRender() && (state.is(BlockTags.BASE_STONE_OVERWORLD) || state.is(Blocks.GRAVEL));
+	}
+
+	/**
+	 * Far in the rock: a block of rock ({@link #isRock}) {@code minDist} to {@code maxDist} blocks from {@code origin}
+	 * (3D), from {@code below} blocks under it to {@code above} over it, buried (all six sides against opaque blocks,
+	 * so the sound comes from inside the rock, never from a cave wall), never a block a player placed. Loaded chunks
+	 * only. Null if 48 tries find none.
+	 */
+	public static @Nullable BlockPos rockSpot(ServerLevel level, BlockPos origin, int minDist, int maxDist, int above, int below, RandomSource random) {
+		int up = Math.max(0, above);
+		int down = Math.max(0, below);
+		double min = Math.max(0, minDist);
+		double max = Math.max(min, maxDist);
+		for (int attempt = 0; attempt < 48; attempt++) {
+			int dy = random.nextInt(up + down + 1) - down;
+			double dist = min + random.nextDouble() * (max - min);
+			if (Math.abs(dy) > dist) {
+				continue;
+			}
+			double across = Math.sqrt(dist * dist - (double) dy * dy);
+			double angle = random.nextDouble() * Math.PI * 2.0;
+			BlockPos pos = origin.offset((int) Math.round(Math.cos(angle) * across), dy, (int) Math.round(Math.sin(angle) * across));
+			double d2 = pos.distSqr(origin);
+			if (d2 < min * min || d2 > max * max || !level.isLoaded(pos) || !isRock(level.getBlockState(pos))) {
+				continue;
+			}
+			if (buried(level, pos) && !Services.watch().wasPlacedByPlayer(level, pos)) {
+				return pos.immutable();
+			}
+		}
+		return null;
+	}
+
+	/** Every side of the block against an opaque, loaded block. */
+	public static boolean buried(Level level, BlockPos pos) {
+		for (Direction direction : Direction.values()) {
+			BlockPos side = pos.relative(direction);
+			if (!level.isLoaded(side) || !level.getBlockState(side).isSolidRender()) {
+				return false;
+			}
+		}
+		return true;
 	}
 
 	/** Something with collision within {@code maxUp} blocks above. */

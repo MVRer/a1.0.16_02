@@ -37,7 +37,7 @@ import net.minecraft.world.phys.Vec3;
  * blocks) over the test's own players. Run in the End, where no other test keeps chests or stone, so the cards can only find this test's.
  * {@code atmosphere.AtmosphereGameTests} extends this (through {@link SharedMobGameTests} and {@code SharedMomentGameTests}).
  */
-public class CardSoundGameTests {
+public class CardSoundGameTests extends RockSoundGameTests {
 	private static final String YARD = "a1016_02:accident/yard";
 
 	/** One sound a card played: what, where, and who heard it. */

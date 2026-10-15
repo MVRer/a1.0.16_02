@@ -14,22 +14,22 @@ import net.minecraft.gametest.framework.GameTestHelper;
  * days and across level changes, starting from vanilla's overworld fog, and no step may move the fog by more than a
  * small share of the render distance. Deep dusk and the night keep the look tuned in v0.4.
  */
-public class DuskFogGameTests extends SharedMomentGameTests {
+public class DuskFogGameTests extends FogWeatherGameTests {
 	/** Render distances in chunks: vanilla's minimum, short, default-ish, long. */
-	private static final int[] CHUNKS = {2, 4, 6, 12, 16, 32};
+	static final int[] CHUNKS = {2, 4, 6, 12, 16, 32};
 	/** Sampling step: one second. */
-	private static final int STEP = 20;
+	static final int STEP = 20;
 	/** The most the fog end or a fog start may move in one step, as a share of the render distance. */
-	private static final double MAX_EDGE_STEP = 0.015;
+	static final double MAX_EDGE_STEP = 0.015;
 	/**
 	 * The most the haze (where the fog reaches a quarter, half, three quarters) may move in one step, as a share of the
 	 * render distance. Checked in clear weather from 4 chunks: rain's haze starts 160 blocks behind the camera, and
 	 * at 2 chunks the whole view is 32 blocks, so the same gradual change sweeps through the view faster.
 	 */
-	private static final double MAX_HAZE_STEP = 0.025;
+	static final double MAX_HAZE_STEP = 0.025;
 	private static final double[] HAZE_LEVELS = {0.25, 0.5, 0.75};
 	/** The most the clouds' fade at the render distance may change in one step (v0.4: from 9% to 100% in one frame). */
-	private static final double MAX_CLOUD_STEP = 0.04;
+	static final double MAX_CLOUD_STEP = 0.04;
 
 	@GameTest
 	public void duskFogNeverJumpsAcrossTheDay(GameTestHelper helper) {
@@ -201,7 +201,7 @@ public class DuskFogGameTests extends SharedMomentGameTests {
 	 * distance; where the haze reaches a quarter, half and three quarters within {@code maxHaze} (NaN: not checked);
 	 * the clouds' fade at the render distance within {@code maxCloud}.
 	 */
-	private static void assertSteps(GameTestHelper helper, Curves.Fog a, Curves.Fog b, double r, double maxEdge, double maxHaze, double maxCloud,
+	static void assertSteps(GameTestHelper helper, Curves.Fog a, Curves.Fog b, double r, double maxEdge, double maxHaze, double maxCloud,
 			String where) {
 		step(helper, "fog end", a.end(), b.end(), r, maxEdge, where);
 		step(helper, "fog start", a.renderDistanceStart, b.renderDistanceStart, r, maxEdge, where);
@@ -245,7 +245,7 @@ public class DuskFogGameTests extends SharedMomentGameTests {
 		return Math.clamp(Math.min(environmental, render), 0.0, limit);
 	}
 
-	private static boolean same(Curves.Fog a, Curves.Fog b) {
+	static boolean same(Curves.Fog a, Curves.Fog b) {
 		return close(a.environmentalStart, b.environmentalStart) && close(a.environmentalEnd, b.environmentalEnd)
 				&& close(a.renderDistanceStart, b.renderDistanceStart) && close(a.renderDistanceEnd, b.renderDistanceEnd) && close(a.skyEnd, b.skyEnd)
 				&& close(a.cloudEnd, b.cloudEnd);

@@ -86,6 +86,39 @@ public final class Curves {
 		return to > from ? (double) (t - from) / (to - from) : 1.0;
 	}
 
+	/** Vanilla's day timeline ({@code minecraft:day}, its fog color track) starts darkening the fog color here... */
+	public static final long SUNSET_FROM = 11867L;
+	/** ...and has it at its night color (about 6%, {@code #0f0f16}) from here... */
+	public static final long SUNSET_TO = 13670L;
+	/** ...until here... */
+	public static final long SUNRISE_FROM = 22330L;
+	/** ...and back to its day color here (133 of the next day). */
+	public static final long SUNRISE_TO = DAY + 133L;
+
+	/**
+	 * How much of the day the fog color shows at a time of day, 0 (night) to 1 (day): the same keyframes vanilla's day
+	 * timeline darkens the fog color with, linear between them (1 until {@link #SUNSET_FROM}, 0 from
+	 * {@link #SUNSET_TO} to {@link #SUNRISE_FROM}, 1 again at {@link #SUNRISE_TO}). Continuous everywhere, across
+	 * midnight too. The fog weather's color uses it to go from the day's grey to the night's lift
+	 * ({@link WeatherFog#color}) exactly as vanilla's own fog darkens.
+	 */
+	public static double daylight(long timeOfDay) {
+		long t = Math.floorMod(timeOfDay, DAY);
+		if (t < SUNRISE_TO - DAY) {
+			t += DAY; // the sunrise ramp runs past midnight
+		}
+		if (t < SUNSET_FROM) {
+			return 1.0;
+		}
+		if (t < SUNSET_TO) {
+			return 1.0 - span(t, SUNSET_FROM, SUNSET_TO);
+		}
+		if (t < SUNRISE_FROM) {
+			return 0.0;
+		}
+		return span(t, SUNRISE_FROM, SUNRISE_TO);
+	}
+
 	/**
 	 * How much dusk fog applies now (0 to 1): the dusk level (clamped to 0 to 1) times {@link #duskWeight}. The client
 	 * fog uses exactly this, and core's {@code FogLimits} does the same math with the installed shape.

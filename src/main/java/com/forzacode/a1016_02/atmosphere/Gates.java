@@ -64,9 +64,14 @@ public final class Gates {
 		return state.hasFlag(SILENCE_FOREVER_FLAG) || state.hasFlag(PATH_C_FLAG);
 	}
 
-	/** Distant cave sound: alone and still. */
-	public static boolean caveSound(boolean alone, long stillTicks, long stillNeeded) {
-		return alone && stillTicks >= stillNeeded;
+	/** Distant cave sound: alone, and underground or (on the surface) still (D-070). */
+	public static boolean caveSound(boolean alone, boolean underground, long stillTicks, long stillNeeded) {
+		return alone && (underground || stillTicks >= stillNeeded);
+	}
+
+	/** Far in the rock: underground and alone. */
+	public static boolean rockSound(boolean underground, boolean alone) {
+		return underground && alone;
 	}
 
 	/**

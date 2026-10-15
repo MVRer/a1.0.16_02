@@ -54,7 +54,7 @@ public class AtmosphereGameTests extends TamperGameTests {
 		}
 		for (String id : List.of("fog_drift", "animals_face_fog", "distant_cave_sound", "silence", "mining_in_the_dark", "chest_opens",
 				"door_left_open", "one_block_missing", "footstep_late", "compass_drift", "cow_where_nothing_spawns", "villagers_inside_at_noon",
-				"dog_wont_go", "cat_hisses_corner", "patient_skeleton", "empty_water", "bat_in_sealed_room", "zombie_at_dusk")) {
+				"dog_wont_go", "cat_hisses_corner", "patient_skeleton", "empty_water", "bat_in_sealed_room", "zombie_at_dusk", "far_in_the_rock")) {
 			helper.assertTrue(CardRegistry.get(id).isPresent(), "missing card " + id);
 		}
 		helper.assertTrue(CardRegistry.get("distant_cave_sound").orElseThrow().hasFake(), "the cave sound is a false positive");
@@ -117,8 +117,12 @@ public class AtmosphereGameTests extends TamperGameTests {
 		helper.assertFalse(Gates.footstep(false, true, true, false), "footstep armed twice");
 		helper.assertFalse(Gates.footstep(false, false, false, false) || Gates.footstep(false, false, true, true), "footstep off foot");
 
-		// Cave sound: alone and still.
-		helper.assertTrue(Gates.caveSound(true, 200, 160) && !Gates.caveSound(false, 200, 160) && !Gates.caveSound(true, 10, 160), "cave sound");
+		// Cave sound: alone, and still on the surface; underground no stillness is needed (D-070).
+		helper.assertTrue(Gates.caveSound(true, false, 200, 160) && !Gates.caveSound(false, false, 200, 160) && !Gates.caveSound(true, false, 10, 160),
+				"cave sound on the surface");
+		helper.assertTrue(Gates.caveSound(true, true, 0, 160) && !Gates.caveSound(false, true, 200, 160), "cave sound underground");
+		// Far in the rock: underground and alone, nothing else.
+		helper.assertTrue(Gates.rockSound(true, true) && !Gates.rockSound(false, true) && !Gates.rockSound(true, false), "far in the rock");
 
 		// Time windows, including one that wraps past midnight.
 		helper.assertTrue(Gates.inWindow(6000, 4500, 7500) && !Gates.inWindow(7500, 4500, 7500), "noon window");
