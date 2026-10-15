@@ -462,4 +462,35 @@ public class LoreMultiplayerTests extends LoreTellingTests {
 		helper.assertFalse(waiting.migrate(new HerobrineState()) || waiting.legacyCause().isEmpty(), "the old cause went to nobody");
 		helper.succeed();
 	}
+
+	/**
+	 * MP-7, D-062.8: a v1.0 world that finished Ending B. Its F10 ended "* removed Alex" (v1.0's one subject, named from
+	 * the flag alone, with no list of names); Sam joined since. Opening F10 keeps Alex's line, and never names Sam.
+	 */
+	@GameTest
+	public void anOldSaveThatFinishedEndingBKeepsF10sLastLine(GameTestHelper helper) {
+		RegistryOps<Tag> ops = LoreRoster.ops(helper);
+		Known alex = new Known(UUID.fromString("00000000-0000-0000-0000-0000000b1016"), "Alex", 50_000, HerobrineState.FirstBlocks.NONE);
+		HerobrineState state = LoreRoster.v1State(helper, alex);
+		state.setFlag(LiveBooks.F10_FINISHED, true);
+		UUID sam = UUID.randomUUID();
+		state.addKnownPlayer(sam, "Sam");
+		TellingData data = TellingData.CODEC.parse(ops, new CompoundTag()).getOrThrow();
+		ItemStack f10 = FragmentItems.book(fragment("F10"), "Alex");
+		LiveBooks.refresh(f10, "Alex", Optional.empty(), true);
+		helper.assertTrue(lines(pages(f10)).getLast().equals("* removed Alex"), "setup: v1.0's F10 reads " + pages(f10));
+
+		// Loaded (TellingData.get migrates the old record), then opened by Sam.
+		data.migrate(state);
+		LiveBooks.refreshForReading(f10, "Sam", state, data);
+		helper.assertTrue(lines(pages(f10)).getLast().equals("* removed Alex"), "opening F10 lost its last line: " + lines(pages(f10)));
+		helper.assertTrue(data.f10Removed().equals(List.of(alex.uuid())), "F10 does not name v1.0's subject: " + data.f10Removed());
+
+		// A v1.0 world that never finished B names nobody.
+		HerobrineState notB = LoreRoster.v1State(helper, alex);
+		TellingData none = TellingData.CODEC.parse(ops, new CompoundTag()).getOrThrow();
+		none.migrate(notB);
+		helper.assertTrue(none.f10Removed().isEmpty(), "F10 names someone in a world that never finished B");
+		helper.succeed();
+	}
 }
