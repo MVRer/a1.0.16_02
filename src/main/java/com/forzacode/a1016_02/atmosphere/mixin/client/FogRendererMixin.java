@@ -13,7 +13,11 @@ import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
-/** Dusk fog and fog surges: pulls the computed world fog in after vanilla sets it up. */
+/**
+ * Dusk fog, fog weather and fog surges: pulls the computed world fog in, and tints its color for a fog spell, after
+ * vanilla sets it up. {@code FogData.color} is already final here (vanilla computes it first); in 26.3 it is both the
+ * fog color of the world's shaders (terrain, sky, clouds fade into it) and the main target's clear color.
+ */
 @Mixin(FogRenderer.class)
 abstract class FogRendererMixin {
 	@Inject(method = "setupFog", at = @At("RETURN"))

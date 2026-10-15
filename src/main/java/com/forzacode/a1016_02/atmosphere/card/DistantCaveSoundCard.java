@@ -4,6 +4,7 @@ import java.util.Set;
 
 import com.forzacode.a1016_02.atmosphere.AtmosphereConfig;
 import com.forzacode.a1016_02.atmosphere.Gates;
+import com.forzacode.a1016_02.atmosphere.WorldScan;
 import com.forzacode.a1016_02.core.CardTag;
 import com.forzacode.a1016_02.core.FireContext;
 import com.forzacode.a1016_02.core.FireResult;
@@ -19,7 +20,10 @@ import net.minecraft.sounds.SoundSource;
 import net.minecraft.util.RandomSource;
 import net.minecraft.world.phys.Vec3;
 
-/** Distant cave sound: the game's own cave ambience, timed for when the player is alone and still. A pure false positive. */
+/**
+ * Distant cave sound: the game's own cave ambience, timed for when the player is alone, underground or (on the
+ * surface) still (D-070: a mine is where it belongs, so there it needs no stillness). A pure false positive.
+ */
 public final class DistantCaveSoundCard extends AtmosphereCard {
 	public static final String ID = "distant_cave_sound";
 
@@ -30,7 +34,8 @@ public final class DistantCaveSoundCard extends AtmosphereCard {
 	@Override
 	public boolean contextFits(ServerPlayer player, ServerLevel world) {
 		AtmosphereConfig cfg = cfg();
-		return Gates.caveSound(alone(player, cfg.caveSoundAloneRadius), Services.watch().stillTicks(player), AtmosphereConfig.ticks(cfg.caveSoundStillSeconds));
+		return Gates.caveSound(alone(player, cfg.caveSoundAloneRadius), WorldScan.underground(world, player.blockPosition()),
+				Services.watch().stillTicks(player), AtmosphereConfig.ticks(cfg.caveSoundStillSeconds));
 	}
 
 	@Override
@@ -45,7 +50,7 @@ public final class DistantCaveSoundCard extends AtmosphereCard {
 	 * <p>This one stays {@code playTo}, the player alone: it is not a sound he makes but the game's own cave mood
 	 * ambience, which vanilla plays on each client by itself (never to the players around). Played to everyone in
 	 * range it would be the one cave sound two players ever heard together, a tell that it is not the game. The card
-	 * also needs the player alone ({@code caveSoundAloneRadius}, 48 blocks, past its 21-block hearing range).
+	 * also needs the player alone ({@code caveSoundAloneRadius}, 24 blocks, past its 21-block hearing range).
 	 */
 	static void play(ServerPlayer player, RandomSource random) {
 		double angle = random.nextDouble() * Math.PI * 2.0;

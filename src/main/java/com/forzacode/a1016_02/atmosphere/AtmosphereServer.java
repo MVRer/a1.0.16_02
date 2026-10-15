@@ -17,8 +17,9 @@ import net.minecraft.server.MinecraftServer;
 
 /**
  * Server side of the atmosphere layer: ticks MobTamper, the timeline and the footstep watcher; turns music off the
- * first night any participant is online (once per world); sets the dusk fog level for the stage (the world's); keeps
- * the dead mountains' areas and sends each client the ones near it.
+ * first night any participant is online (once per world); sets the dusk fog level for the stage (the world's); rolls
+ * and stores the fog weather ({@link FogWeather}, D-071); keeps the dead mountains' areas and sends each client the
+ * ones near it.
  *
  * <p>Sessions (D-062.4): {@code HerobrineEvents.PARTICIPATION} drives per-player session work. Starting to take part
  * re-sends that player's running effects (once per connection, {@link ActiveEffects}); stopping (leaving, or turning
@@ -67,6 +68,7 @@ public final class AtmosphereServer {
 		if (server.getTickCount() % CHECK_TICKS == 0) {
 			checkFirstNight(server);
 			checkDuskFog(server);
+			FogWeather.check(server);
 		}
 	}
 

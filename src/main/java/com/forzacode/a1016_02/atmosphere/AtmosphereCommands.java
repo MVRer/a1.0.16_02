@@ -8,6 +8,8 @@ import java.util.Optional;
 import com.forzacode.a1016_02.atmosphere.mob.MobTamperImpl;
 import com.forzacode.a1016_02.core.ClientEffects;
 import com.forzacode.a1016_02.core.CommandHooks;
+import com.forzacode.a1016_02.core.FogSpell;
+import com.forzacode.a1016_02.core.FogWeatherRules;
 import com.forzacode.a1016_02.core.GameClock;
 import com.forzacode.a1016_02.core.HerobrineState;
 import com.forzacode.a1016_02.core.Services;
@@ -33,6 +35,11 @@ import net.minecraft.world.phys.Vec3;
  * the shared ones a card sends (D-060: the player and everyone sharing the moment). They and status act on the named
  * player ({@code ... surge <strength> <seconds> <player>}, {@code silence <seconds> <player>}, {@code status <player>}),
  * else the player running the command, else (from the console) the first participant (D-062.9).
+ *
+ * <p>Fog weather (D-071), at the root: {@code /a1016 fog} prints the clock, the world's spell, tonight's and today's
+ * roll and the rules' history; {@code /a1016 fog night|morning|day [quiet]} sets a spell from now to the end of the
+ * night, the morning carry-over or the day (the stage's level, joined to the fog there is, so it eases in); {@code
+ * /a1016 fog clear} eases the fog out over the fade. Refused while the world is quiet for good.
  */
 final class AtmosphereCommands {
 	private static final double TAMPER_RANGE = 32.0;
@@ -72,6 +79,55 @@ final class AtmosphereCommands {
 				.then(Commands.literal("status").executes(ctx -> status(ctx, target(ctx)))
 						.then(Commands.argument("player", EntityArgument.player())
 								.executes(ctx -> status(ctx, Optional.of(EntityArgument.getPlayer(ctx, "player"))))))));
+		// Fog weather (D-071): /a1016 fog, and fog night|morning|day [quiet] or clear to set the world's spell now (testing).
+		CommandHooks.register((root, context) -> root.then(Commands.literal("fog")
+				.executes(AtmosphereCommands::fogStatus)
+				.then(fogSet("night", FogWeather.Kind.NIGHT))
+				.then(fogSet("morning", FogWeather.Kind.MORNING))
+				.then(fogSet("day", FogWeather.Kind.DAY))
+				.then(Commands.literal("clear").executes(AtmosphereCommands::fogClear))));
+	}
+
+	private static com.mojang.brigadier.builder.LiteralArgumentBuilder<CommandSourceStack> fogSet(String name, FogWeather.Kind kind) {
+		return Commands.literal(name)
+				.executes(ctx -> fogSet(ctx, kind, false))
+				.then(Commands.literal("quiet").executes(ctx -> fogSet(ctx, kind, true)));
+	}
+
+	private static int fogStatus(CommandContext<CommandSourceStack> ctx) {
+		for (String line : FogWeather.status(ctx.getSource().getServer())) {
+			fogOk(ctx, line);
+		}
+		return 1;
+	}
+
+	private static int fogSet(CommandContext<CommandSourceStack> ctx, FogWeather.Kind kind, boolean quiet) {
+		MinecraftServer server = ctx.getSource().getServer();
+		if (FogWeather.quiet(server)) {
+			return fogFail(ctx, "no fog weather now: the world is quiet for good (" + Gates.SILENCE_FOREVER_FLAG + " or " + Gates.PATH_C_FLAG
+					+ "), or Ending D's last minute is running");
+		}
+		FogSpell spell = FogWeather.set(server, kind, quiet);
+		FogWeatherRules.Settings settings = FogWeatherRules.settings();
+		return fogOk(ctx, String.format(Locale.ROOT, "%s spell set%s: level %.2f, until day %d %d, easing in over %d ticks from the fog there is",
+				kind.name().toLowerCase(Locale.ROOT), quiet ? " (quiet: no director boost)" : "", spell.level(), Math.floorDiv(spell.untilClock(), FogWeather.DAY),
+				Math.floorMod(spell.untilClock(), FogWeather.DAY), settings.rampTicks()));
+	}
+
+	private static int fogClear(CommandContext<CommandSourceStack> ctx) {
+		Optional<FogSpell> left = FogWeather.clear(ctx.getSource().getServer());
+		return fogOk(ctx, left.isPresent() ? String.format(Locale.ROOT, "the fog eases out by day %d %d", Math.floorDiv(left.get().untilClock(), FogWeather.DAY),
+				Math.floorMod(left.get().untilClock(), FogWeather.DAY)) : "no spell");
+	}
+
+	private static int fogOk(CommandContext<CommandSourceStack> ctx, String text) {
+		ctx.getSource().sendSuccess(() -> Component.literal("[a1016] fog: " + text), true);
+		return 1;
+	}
+
+	private static int fogFail(CommandContext<CommandSourceStack> ctx, String text) {
+		ctx.getSource().sendFailure(Component.literal("[a1016] fog: " + text));
+		return 0;
 	}
 
 	private static com.mojang.brigadier.builder.LiteralArgumentBuilder<CommandSourceStack> tamper(String op) {

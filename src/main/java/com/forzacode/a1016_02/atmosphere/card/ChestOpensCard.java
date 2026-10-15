@@ -35,7 +35,8 @@ public final class ChestOpensCard extends AtmosphereCard {
 	public static final String ID = "chest_opens";
 
 	public ChestOpensCard() {
-		super(ID, Tier.MINOR, Stage.PROXIMITY, Set.of(Habit.COLLECTOR, Habit.VISITOR), Set.of(CardTag.SOUND, CardTag.ITEM), true);
+		// From Traces (D-070; v1.1: Proximity).
+		super(ID, Tier.MINOR, Stage.TRACES, Set.of(Habit.COLLECTOR, Habit.VISITOR), Set.of(CardTag.SOUND, CardTag.ITEM), true);
 	}
 
 	@Override

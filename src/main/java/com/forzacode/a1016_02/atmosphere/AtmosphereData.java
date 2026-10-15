@@ -19,11 +19,13 @@ import net.minecraft.world.level.saveddata.SavedDataType;
  * happened (once per world), which stage the dusk fog was last set for, each player's mining-in-the-dark count for
  * the night (by UUID: everyone who heard one has had theirs, D-059/D-060), and the long transient effects (silence,
  * compass drift) still running per player, timed on the world play clock so they carry on after a relog or a world
- * reload.
+ * reload, and the live fog weather's memory ({@link FogWeather.Memory}; the spell itself is the world's, in
+ * {@code HerobrineState}).
  *
  * <p>Old saves (D-062.8): a v1.0 file kept one world-level mining count ({@code miningNight}, {@code miningCount}).
  * It loads as everyone's count for that night, and is dropped (no longer written) once any player's mining is
- * recorded on another night.
+ * recorded on another night. A file from before fog weather (v1.1) has no {@code fogWeather} and loads at
+ * {@link FogWeather.Memory#START}: its next night is the first night rolled, so it is clear.
  */
 public final class AtmosphereData extends SavedData {
 	/** One player's mining sounds on one night (the in-game day number). */
@@ -70,7 +72,9 @@ public final class AtmosphereData extends SavedData {
 			Codec.LONG.optionalFieldOf("miningNight", -1L).forGetter(d -> d.legacyMiningNight),
 			Codec.INT.optionalFieldOf("miningCount", 0).forGetter(d -> d.legacyMiningCount),
 			Codec.unboundedMap(UUIDUtil.STRING_CODEC, Mining.CODEC).optionalFieldOf("mining", Map.of()).forGetter(d -> d.mining),
-			Codec.unboundedMap(UUIDUtil.STRING_CODEC, Transient.CODEC).optionalFieldOf("transients", Map.of()).forGetter(d -> d.transients)
+			Codec.unboundedMap(UUIDUtil.STRING_CODEC, Transient.CODEC).optionalFieldOf("transients", Map.of()).forGetter(d -> d.transients),
+			// v1.2's fog weather (D-071); a save from before has none and starts from the first night.
+			FogWeather.Memory.CODEC.optionalFieldOf("fogWeather", FogWeather.Memory.START).forGetter(d -> d.fogWeather)
 	).apply(i, AtmosphereData::new));
 
 	public static final SavedDataType<AtmosphereData> TYPE = new SavedDataType<>(A1016_02.id("atmosphere"), AtmosphereData::new, CODEC, null);
@@ -82,18 +86,32 @@ public final class AtmosphereData extends SavedData {
 	private int legacyMiningCount;
 	private final Map<UUID, Mining> mining = new HashMap<>();
 	private final Map<UUID, Transient> transients = new HashMap<>();
+	private FogWeather.Memory fogWeather = FogWeather.Memory.START;
 
 	public AtmosphereData() {
 	}
 
 	private AtmosphereData(boolean musicOffDone, int duskStage, long legacyMiningNight, int legacyMiningCount, Map<UUID, Mining> mining,
-			Map<UUID, Transient> transients) {
+			Map<UUID, Transient> transients, FogWeather.Memory fogWeather) {
 		this.musicOffDone = musicOffDone;
 		this.duskStage = duskStage;
 		this.legacyMiningNight = legacyMiningCount > 0 ? legacyMiningNight : -1;
 		this.legacyMiningCount = legacyMiningCount > 0 ? legacyMiningCount : 0;
 		this.mining.putAll(mining);
 		this.transients.putAll(transients);
+		this.fogWeather = fogWeather;
+	}
+
+	/** The live fog weather's memory (D-071): the rules' history and the last night and day rolled. */
+	public FogWeather.Memory fogWeather() {
+		return fogWeather;
+	}
+
+	public void setFogWeather(FogWeather.Memory memory) {
+		if (!memory.equals(fogWeather)) {
+			fogWeather = memory;
+			setDirty();
+		}
 	}
 
 	public static AtmosphereData get(MinecraftServer server) {
