@@ -27,9 +27,9 @@ import net.minecraft.util.RandomSource;
  * follows it on the server and the director boosts its odds during it.
  *
  * <p>When: tonight (the night starting on this clock day, with its morning carry-over) is rolled at
- * {@link #nightRollTime} (10000 with the default fade: before a fog day starts thinning, so a fog day hands over to a
- * fog night without a dip), a fog day at {@link FogWeatherRules#DAY_FROM} (23000 of the day before; never when a
- * morning carry-over already covers it). A new spell is joined to the one still giving fog
+ * {@link #nightRollTime} (core's {@link FogWeatherRules#NIGHT_ROLL}, 10000: before a fog day starts thinning, so a fog
+ * day hands over to a fog night without a dip), a fog day at {@link FogWeatherRules#DAY_ROLL} (23000 of the day before;
+ * never when a morning carry-over already covers it). The director's dry runs roll at the same times. A new spell is joined to the one still giving fog
  * ({@link FogWeatherRules#handOver}), so the fog never pops. Each night and each day is rolled once, only while
  * someone takes part (the first nights rules count the nights a player was there for), and only inside its window;
  * one rolled late (the first participant joined mid-night) eases in from that moment. A clock set back rolls the
@@ -90,12 +90,12 @@ public final class FogWeather {
 	// --- the schedule (pure) ---
 
 	/**
-	 * Time of day tonight is rolled at: {@link FogWeatherRules#DAY_UNTIL} minus the fade (10000 by default), so a fog
-	 * day still at full when tonight's fog night rolls is handed over without thinning; never after
-	 * {@link FogWeatherRules#NIGHT_FROM}.
+	 * Time of day tonight is rolled at: {@link FogWeatherRules#nightRollTime}, {@link FogWeatherRules#NIGHT_ROLL}
+	 * (10000) unless a longer fade needs it earlier, so a fog day still at full when tonight's fog night rolls is handed
+	 * over without thinning.
 	 */
 	public static long nightRollTime(FogWeatherRules.Settings settings) {
-		return Math.clamp(FogWeatherRules.DAY_UNTIL - settings.fadeTicks(), 0L, FogWeatherRules.NIGHT_FROM);
+		return FogWeatherRules.nightRollTime(settings);
 	}
 
 	/** The night whose roll window this clock tick is in or after: the clock day, from {@link #nightRollTime} on. */
@@ -108,14 +108,14 @@ public final class FogWeather {
 		return night * DAY + Math.max(FogWeatherRules.NIGHT_FROM, FogWeatherRules.NIGHT_UNTIL - settings.fadeTicks());
 	}
 
-	/** The day whose daylight roll window this clock tick is in or after: from {@link FogWeatherRules#DAY_FROM} of the day before. */
+	/** The day whose daylight roll window this clock tick is in or after: from {@link FogWeatherRules#DAY_ROLL} of the day before. */
 	public static long dayIndex(long clock) {
-		return Math.floorDiv(clock - FogWeatherRules.DAY_FROM, DAY) + 1;
+		return Math.floorDiv(clock - FogWeatherRules.DAY_ROLL, DAY) + 1;
 	}
 
-	/** When day {@code day}'s roll window closes (where tonight's opens, 10000 by default). */
+	/** When day {@code day}'s roll window closes: where tonight's opens ({@link #nightRollTime}, 10000). */
 	public static long dayRollUntil(long day, FogWeatherRules.Settings settings) {
-		return day * DAY + Math.max(0L, FogWeatherRules.DAY_UNTIL - settings.fadeTicks());
+		return day * DAY + nightRollTime(settings);
 	}
 
 	/**
@@ -260,7 +260,7 @@ public final class FogWeather {
 		lines.add(String.format(Locale.ROOT, "tonight (night of day %d): %s", today, tonight));
 		long day = dayIndex(now);
 		String daylight = memory.dayRolled() == day ? memory.dayRoll().map(s -> "fog day " + level(s)).orElse("no fog day")
-				: memory.dayRolled() > day ? "rolled ahead" : "rolls at " + FogWeatherRules.DAY_FROM + " of day " + (day - 1);
+				: memory.dayRolled() > day ? "rolled ahead" : "rolls at " + FogWeatherRules.DAY_ROLL + " of day " + (day - 1);
 		lines.add(String.format(Locale.ROOT, "daylight of day %d: %s", day, daylight));
 		FogWeatherRules.History h = memory.history();
 		lines.add(String.format(Locale.ROOT, "history: %d nights rolled, %d clear in a row, last night %s, last day %s", h.nights(), h.clearNights(),

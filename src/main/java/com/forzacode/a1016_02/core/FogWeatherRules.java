@@ -41,6 +41,15 @@ public final class FogWeatherRules {
 	public static final long DAY_FROM = 23000L;
 	/** A fog day is gone by this time of day, where a fog night starts. */
 	public static final long DAY_UNTIL = 11500L;
+	/**
+	 * Time of day tonight (the night starting on this clock day, with its morning carry-over) is rolled:
+	 * {@link #DAY_UNTIL} minus the default fade, so a fog day still at full when tonight's fog night rolls hands over
+	 * without thinning. Atmosphere's live weather and the director's dry runs both roll it then
+	 * ({@link #nightRollTime}).
+	 */
+	public static final long NIGHT_ROLL = 10000L;
+	/** Time of day the next day's fog day is rolled: where it starts, {@link #DAY_FROM} of the day before. */
+	public static final long DAY_ROLL = DAY_FROM;
 
 	/**
 	 * The numbers behind the rolls, D-071's by default. Every list has one entry per {@link Stage} ({@link Stage#level()}
@@ -178,6 +187,15 @@ public final class FogWeatherRules {
 			out.add((double) value);
 		}
 		return out;
+	}
+
+	/**
+	 * Time of day tonight is rolled with these settings: {@link #NIGHT_ROLL}, earlier only when a fade longer than the
+	 * default would start a fog day thinning before it ({@link #DAY_UNTIL} minus the fade); never after
+	 * {@link #NIGHT_FROM}.
+	 */
+	public static long nightRollTime(Settings settings) {
+		return Math.clamp(Math.min(NIGHT_ROLL, DAY_UNTIL - settings.fadeTicks()), 0L, NIGHT_FROM);
 	}
 
 	/** Clock tick a fog night starting on clock day {@code day} begins. */

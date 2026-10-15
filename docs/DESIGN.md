@@ -155,7 +155,7 @@ Every scar has to pass as odd worldgen at first glance. The horror comes on the 
 
 Density and which scars exist come from the world's profile (see The director), so one world may have dead mountains and crosses while another has abandoned builds and lone lights.
 
-**The sky is wrong too: fog weather (D-071).** One sky for the world. Most nights are clear and keep the faint dusk fog; some are fog nights: the fog closes in from dusk and stays, close and thick, the fog the player half-saw in a drift, ending 40 to 75 blocks out. At night it is lifted from vanilla's near black toward a pale grey, so it shows as a wall in the dark instead of plain darkness. About a third of fog nights carry into a grey morning, and rarely a whole day is foggy, the canon screenshot's light. The first night is always clear, one of the first three is always foggy, and before Proximity two fog nights never come in a row; after that up to half the nights are foggy, and fog days come from Traces on, never two in a row. On a fog night or day he is more likely to act and can be seen in daytime fog, but a quarter of the spells are quiet, so a fog night is never a sure sign. Nothing once the world is quiet for good, and none in the Nether or the End. Shaderpacks that draw their own fog (Iris) hide it.
+**The sky is wrong too: fog weather (D-071).** One sky for the world. Most nights are clear and keep the faint dusk fog; some are fog nights: the fog closes in from dusk and stays, close and thick, the fog the player half-saw in a drift, ending about 75 blocks out in the first stages and 37 in the last (at a 12-chunk view). At night it is lifted from vanilla's near black toward a pale grey, so it shows as a wall in the dark instead of plain darkness. About a third of fog nights carry into a grey morning, and rarely a whole day is foggy, the canon screenshot's light. The first night is always clear, one of the first three is always foggy, and before Proximity two fog nights never come in a row; after that up to half the nights are foggy, and fog days come from Traces on, never two in a row. On a fog night or day he is more likely to act and can be seen in daytime fog, but a quarter of the spells are quiet, so a fog night is never a sure sign. Nothing once the world is quiet for good or while Ending D's last minute plays, and none in the Nether or the End. Shaderpacks that draw their own fog (Iris) hide it.
 
 &#91;ours\] Every scar in this section is our invention. Redstone torches as a sign of him come from later fan stories, not the 2010 text; we use them as one option, not a rule.
 
@@ -228,7 +228,7 @@ Each tick it checks for a forced quiet, draws the next event, and holds it until
 ### 2. The deck
 
 - Each tier is a shuffled deck, drawn without replacement. The same event never fires twice in a row, and never again until its deck runs out.
-- **Ambient** (often): fog drift, animals facing the fog, a distant vanilla cave sound.
+- **Ambient** (often): fog drift, animals facing the fog, a distant vanilla cave sound, a step behind you in your tunnel, a sound far in the rock.
 - **Minor** (sometimes): chest opens, mining in the dark, a torch gone, a new scar out of view.
 - **Major** (rare): close sighting, tunnel into your mine, emptied house, lone light near base. At most one per real hour of play.
 - **Signature** (once): the world's chosen moment.
@@ -240,6 +240,7 @@ A drawn card waits until its moment exists, so timing comes from how the player 
 - Mining in the dark needs night, the player in bed or standing still for 20+ seconds, and no other sound event in the last 10 minutes.
 - A sighting needs fog or dusk, the spawn spot out of the player's view, and 300+ blocks from where the last one happened.
 - New scars need the target area unloaded or out of view, and the player gone from it for 2+ in-game days.
+- A small card whose moment does not come (a tunnel card drawn on the surface) goes back into its deck after about 5 minutes, so it never holds up the rest; a major or signature waits up to an hour.
 
 ### 4. Tension and silence
 
@@ -249,22 +250,39 @@ A drawn card waits until its moment exists, so timing comes from how the player 
 
 ### 4b. Pacing targets (real play time)
 
-The goal is surprise built across many sessions, starting in the first hour (D-070): something small and deniable in the first 10 to 25 minutes, two or three moments in the first hour, evidence from hour 2. Silence is still designed, just shorter. All stage times shift by up to 25% with the world's tempo roll.
+The goal is surprise built across many sessions, starting in the first hour (D-070): something small and deniable in the first 10 to 25 minutes, two or three moments in the first hour, evidence from hour 2. Silence is still designed, just shorter. The stage times, the major gap and the first accident shift by up to 25% with the world's tempo roll (x0.75, x1, x1.25).
 
 | Stage | Typical real play time | What it feels like |
 | --- | --- | --- |
 | Alone | The first 25 to 55 minutes (0.4 to 0.9 hours) | Small deniable things: a fog drift, a cave sound, a step behind you in your tunnel. At most three ambient oddities |
 | Traces | Until hour 1.75 to 2.75 | A scar or two found while exploring, a far sighting, footsteps that come closer. About two ambient cards and one minor per hour |
-| Proximity | From hour 1.75 to 2.75 on, for hours | One and a half to two and a half minor events per hour. A major every 1.5 to 3 hours. The first armed accident not before hour 3.5 |
+| Proximity | From hour 1.75 to 2.75 on, for hours | One and a half to two and a half minor events per hour. A major every 1.5 to 3 hours. The first armed accident not before hour 3.5 (2.6 in an early world, 4.4 in a very late one) |
 | Telling | Player-driven | Fewer sightings, faster removals, accidents closer to home |
 | Removal | Player-driven | Endings |
 
 - At least 15 real minutes between minor events, and never more than one major per real hour.
 - From Proximity on, some whole sessions (45+ minutes, about 1 in 10) contain nothing at all, on purpose.
 - Never anything in the first 5 minutes after joining.
-- The first hour, in the director's dry runs: the first event (fakes count) by 30 minutes in 3 runs of 4 and by 45 in 9 of 10, at least two in 7 of 10, never more than five.
-- On a fog night or day that is not quiet (D-071), ambient and minor odds are 2.5 times higher, sightings 3 times as likely to be picked, and a major due within the hour may come now.
-- Friends together share one moment and roll 1.5 times one player's rate between them; apart, each has their own pace (D-074).
+- Never more than five moments in a player's own first hour, their own and ones they felt beside a friend. The target: the first event (fakes count) by 30 minutes in 3 runs of 4 and by 45 in 9 of 10, at least two in 7 of 10.
+- On a fog night or day that is not quiet (D-071), ambient and minor odds are 3.5 times higher, sightings 3 times as likely to be picked, and a major due within the hour may come now. The gaps between events take part of it back: such an hour holds a little over twice a clear hour's events.
+- Friends together share one moment and roll 1.5 times one player's rate between them; apart, each has their own pace (D-074). The tunnel ladder only happens to a player alone.
+
+What the director's dry runs show (registered deck, 192 seeds of 20 hours per tempo; "active" leaves out quiets and empty sessions, which take 42 to 46% of Proximity):
+
+| | Early | Slow burn | Very late |
+| --- | --- | --- | --- |
+| Alone lasts | 0.49 h | 0.65 h | 0.81 h |
+| Alone: ambients per hour | 2.85 | 3.11 | 3.05 |
+| Traces: ambients per hour | 2.33 | 2.27 | 2.31 |
+| Traces: minors per hour | 0.80 | 0.81 | 0.78 |
+| Proximity: ambients per hour | 1.39 | 1.41 | 1.49 |
+| Proximity: minors per hour (active) | 0.97 (1.79) | 1.04 (1.87) | 1.09 (1.88) |
+| Proximity: a major every | 1.79 h | 2.23 h | 2.76 h |
+| First accident: median (earliest) | 4.27 h (2.66 h) | 5.15 h (3.50 h) | 6.36 h (4.42 h) |
+| First hour: first event by 30 / 45 minutes | 81% / 94% | 82% / 96% | 83% / 97% |
+| First hour: two or more events | 91% | 94% | 96% |
+
+In every tempo the median first event comes 15.5 minutes in, and no first hour holds more than five. A fog spell that is not quiet holds 2.1 to 2.3 times a clear hour's events while the director may act; a quiet one about a clear hour's.
 
 ### 5. False positives
 
@@ -347,14 +365,14 @@ These are the cards in the director's decks. Each one is a removal, a sound with
 | Animals facing the fog | Ambient | Alone | Every cow, sheep and pig nearby stops and faces the same point in the fog. Nothing is there | Lasts until the player walks toward that point |
 | Distant cave sound | Ambient | Alone | A vanilla cave ambience sound, timed when the player is alone (and still, on the surface) | Pure false positive. It's just the game |
 | Far in the rock | Ambient | Alone | Underground, one stone or deepslate hit, or a gravel slide, 18 to 28 blocks off, inside solid rock below or beside you. Faint | No other player within 24 blocks. Fake: the vanilla cave sound |
-| Steps behind you | Ambient | Alone | In a long straight tunnel you dug, one or two footsteps 10 to 12 blocks behind you, then nothing | Underground, alone (no friend within 48 blocks). The floor's own step sound. Never a block change (D-072). Fake: your own step, late |
+| Steps behind you | Ambient | Alone | In a long straight tunnel you dug, one or two footsteps 10 to 12 blocks behind you, then nothing | Once per player. Underground, 16+ blocks of straight dug tunnel behind you, alone (no friend within 48 blocks). The floor's own step sound. Never a block change (D-072). Fake: your own step, late |
 | Silence | Minor | Traces | All ambient sound and music cut out for about 60 seconds | Comes back gradually, not all at once |
 | Light on the mountain | Minor | Traces | At night, one torch visible on a far hilltop that wasn't there. Next day it's gone, no trace | Only visible from 100+ blocks |
 | New scar out of view | Minor | Traces | A hill you crossed days ago is now dead, or a grove is bare | Only in areas unloaded for 2+ in-game days |
 | Mining in the dark | Minor | Proximity | In bed or standing still at night: one block-break sound nearby. Nothing broken when checked | Max once per night |
 | Chest opens | Minor | Traces | Chest open and close sound from a chest within 16 blocks, out of sight | Contents unchanged, or one stack missing |
-| Someone coming | Minor | Traces | Six to ten footsteps walk up your tunnel from about 16 blocks back, closing to 4 to 6, then silence. Turn around and they stop | Only after steps behind you. Alone, never with a friend near (D-072). Fake: a few far steps that fade |
-| The glimpse | Minor | Traces | The steps stop 14 to 20 blocks back, past your last torch. Something stands there in the dark, flat-eyed. Look at it and it is gone | Only after someone came, 20+ minutes of play later. At most once per in-game day. Counts as the day's sighting. The one time he vanishes in view (D-073) |
+| Someone coming | Minor | Traces | Six to ten footsteps walk up your tunnel from about 15 blocks back, closing to 4 to 6, then silence. Sometimes slower and quieter, sneaking. Turn around and they stop | Only after steps behind you, at most one tunnel event per 25 minutes of play, never the same tunnel twice. Alone, never with a friend near (D-072). Fake: a few far steps that fade |
+| The glimpse | Minor | Traces | The steps come up the tunnel and stop 14 to 20 blocks back, past your last torch. Something stands there in the dark, flat-eyed. Look toward it, step toward it or wait, and it is gone | Only after someone came, 20+ minutes of play later. At most once per in-game day and 2 hours of play apart. Counts as the day's sighting. The one time he vanishes in view (D-073) |
 | Door left open | Minor | Proximity | A door you closed is open when you come back | Only doors you placed and closed |
 | One block missing | Minor | Proximity | A single block of your house wall is gone, making a 1x1 window that looks out at the fog | Removed from outside. Never the roof |
 | Torches gone | Minor | Proximity | Torches removed from a cave you lit, support blocks left | Only in places you have left |
@@ -371,7 +389,7 @@ These are the cards in the director's decks. Each one is a removal, a sound with
 | "Stop." | Signature | Telling | One sign shows only "Stop." (F03) | Once per world |
 | Missing first block | Signature | Removal | Your first crafting table, chest or placed block disappears (found in F13) | Ending B path |
 | The screenshot | Stretch | Proximity | Very rarely, a screenshot you take shows him at the fog edge, even though he wasn't visible in game | Technical stretch goal. Max once per world. A direct nod to the one canon screenshot |
-| Fog night | Weather | Alone | From dusk the fog closes in and stays, a pale wall in the dark, 40 to 75 blocks out. Most nights are clear | Not a card: the world's weather (D-071). Never the first night; never two in a row before Proximity. He is more likely to act, unless it is a quiet one |
+| Fog night | Weather | Alone | From dusk the fog closes in and stays, a pale wall in the dark, about 37 to 75 blocks out. Most nights are clear | Not a card: the world's weather (D-071). Never the first night; never two in a row before Proximity. He is more likely to act, unless it is a quiet one |
 | Fog morning | Weather | Alone | A fog night that does not lift: grey until mid-morning | About a third of fog nights. Not clear daylight, so he can be seen in it |
 | Fog day | Weather | Traces | Rarely a whole day of fog, the canon screenshot's light | Never two in a row. Only the cow, walks into nothing, between trunks, across the water and close come in daytime fog |
 | Under you | Signature | Traces | A tunnel network grows under your base for days, found only by digging down (see below) | Always running in the background. Breachable only within 2 blocks of a player dig |
