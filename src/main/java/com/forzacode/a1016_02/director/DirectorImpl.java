@@ -380,7 +380,7 @@ public final class DirectorImpl implements Director {
 		long shift = c.dayTicks() - server.overworld().getDefaultClockTime();
 		params.fogSpell = HerobrineState.get(server).effects().fogSpell()
 				.map(spell -> new FogSpell(spell.fromClock() + shift, spell.untilClock() + shift, spell.level(), spell.quiet()));
-		long nights = c.day() + (Math.floorMod(c.dayTicks(), DirectorBrain.DAY_TICKS) >= DirectorSim.NIGHT_ROLL ? 1 : 0);
+		long nights = c.day() + (Math.floorMod(c.dayTicks(), DirectorBrain.DAY_TICKS) >= FogWeatherRules.nightRollTime(params.fogSettings) ? 1 : 0);
 		params.fogHistory = new FogWeatherRules.History(Math.clamp(nights, 0, Integer.MAX_VALUE), 0, false, false);
 	}
 

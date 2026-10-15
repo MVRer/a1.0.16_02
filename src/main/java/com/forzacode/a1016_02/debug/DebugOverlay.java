@@ -1,7 +1,9 @@
 package com.forzacode.a1016_02.debug;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.StringJoiner;
 import java.util.UUID;
 
@@ -9,8 +11,12 @@ import com.forzacode.a1016_02.A1016_02;
 import com.forzacode.a1016_02.accident.AccidentPlannerImpl;
 import com.forzacode.a1016_02.accident.ArmedTrap;
 import com.forzacode.a1016_02.core.AccidentPlanner;
+import com.forzacode.a1016_02.core.FogSpell;
+import com.forzacode.a1016_02.core.FogWeatherRules;
+import com.forzacode.a1016_02.core.HerobrineState;
 import com.forzacode.a1016_02.core.Services;
 import com.forzacode.a1016_02.core.TrapType;
+import com.forzacode.a1016_02.dig.DigData;
 import com.forzacode.a1016_02.director.DirectorApi;
 import com.forzacode.a1016_02.entity.FigureApi;
 import com.forzacode.a1016_02.entity.HimEntity;
@@ -26,8 +32,9 @@ import net.minecraft.server.level.ServerPlayer;
 /**
  * Dev overlay, server side. Only in a development environment and only after {@code /a1016 debug overlay on} (off
  * by default, never saved): once per second, every op player gets the director's state as they see it (their own
- * pacing and tension, the shared stage and attention, their own armed trap and how many others are armed) as an
- * {@link OverlayPayload}. Read-only: it never changes the director or the world.
+ * pacing and tension, the shared stage and attention, their own armed trap and how many others are armed, the world's
+ * fog spell, each participant's tunnel ladder rung) as an {@link OverlayPayload}. Read-only: it never changes the
+ * director or the world.
  */
 final class DebugOverlay {
 	private static final int PERIOD_TICKS = 20;
@@ -65,10 +72,11 @@ final class DebugOverlay {
 		}
 	}
 
-	/** The overlay for one viewer: their own pacing, tension and trap, the shared stage and attention. */
+	/** The overlay for one viewer: their own pacing, tension and trap, the shared stage and attention, the fog spell and the ladder. */
 	static OverlayPayload build(MinecraftServer server, UUID viewer) {
 		try {
-			return new OverlayPayload(true, OverlayText.rows(DirectorApi.snapshot(server, viewer), trap(server, viewer), sighting(server)));
+			return new OverlayPayload(true, OverlayText.rows(DirectorApi.snapshot(server, viewer), trap(server, viewer), sighting(server), fog(server),
+					ladder(server, viewer)));
 		} catch (RuntimeException e) {
 			A1016_02.LOGGER.error("[a1016] debug overlay failed", e);
 			return new OverlayPayload(true, List.of("error" + OverlayPayload.SEPARATOR + e));
@@ -114,6 +122,55 @@ final class DebugOverlay {
 		StringJoiner joiner = new StringJoiner(", ");
 		for (HimEntity him : out) {
 			joiner.add(him.variant().shortName() + " " + Fmt.lower(him.phase()) + (him.everSeen() ? " (seen)" : " (unseen)"));
+		}
+		return joiner.toString();
+	}
+
+	/** The world's fog spell (D-071) on the overworld clock, with the installed weather numbers. */
+	static String fog(MinecraftServer server) {
+		return fog(HerobrineState.get(server).effects().fogSpell(), server.overworld().getDefaultClockTime(), FogWeatherRules.settings());
+	}
+
+	/**
+	 * A fog spell as one line: "none", or its level, from and until on the overworld clock ("day 3 11500", as
+	 * {@code /a1016 fog} prints it), the fog it gives at {@code clock} and "quiet" for a spell without the director's
+	 * boost.
+	 */
+	static String fog(Optional<FogSpell> spell, long clock, FogWeatherRules.Settings settings) {
+		if (spell.isEmpty()) {
+			return "none";
+		}
+		FogSpell s = spell.get();
+		return Fmt.f("level %.2f, %s to %s | fog now %.2f%s", s.level(), when(s.fromClock()), when(s.untilClock()), s.amount(clock, settings),
+				s.quiet() ? " | quiet" : "");
+	}
+
+	private static String when(long clock) {
+		return Fmt.f("day %d %d", Math.floorDiv(clock, FogWeatherRules.DAY), Math.floorMod(clock, FogWeatherRules.DAY));
+	}
+
+	/** One participant's tunnel ladder rung (D-072): the highest rung they heard, 0 to 3. */
+	record Rung(String name, boolean viewer, int rung) {
+	}
+
+	/** Every participant's tunnel ladder rung, in join order ({@link DigData#ladderRung}). */
+	static String ladder(MinecraftServer server, UUID viewer) {
+		DigData dig = DigData.get(server);
+		List<Rung> rungs = new ArrayList<>();
+		for (ServerPlayer player : Services.watch().participants(server)) {
+			rungs.add(new Rung(player.getName().getString(), player.getUUID().equals(viewer), dig.ladderRung(player.getUUID())));
+		}
+		return ladder(rungs);
+	}
+
+	/** "Ana rung 2 (you), Ben rung 0", or "nobody taking part". */
+	static String ladder(List<Rung> rungs) {
+		if (rungs.isEmpty()) {
+			return "nobody taking part";
+		}
+		StringJoiner joiner = new StringJoiner(", ");
+		for (Rung r : rungs) {
+			joiner.add(r.name() + " rung " + r.rung() + (r.viewer() ? " (you)" : ""));
 		}
 		return joiner.toString();
 	}

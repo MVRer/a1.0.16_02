@@ -2,6 +2,48 @@
 
 One entry per merge, newest first. Run the game from the main checkout (this folder, on `main`).
 
+## READY TO TRY: v1.2  (jar dist/a1016_02-1.2.0-preview.1-26.3.jar)
+```
+Restart needed: full game restart. Everyone who plays needs the same jar plus Fabric API.
+What changed, in plain words:
+  - Something happens in the first hour: a small, deniable thing in the first 10 to 25 minutes, two or three in the
+    first hour, never more than five. Traces comes after about 25 to 55 minutes, Proximity after 1.75 to 2.75 hours,
+    the first accident not before about 3.5 hours (2.6 in an early world, 4.4 in a very late one).
+  - Fog weather, one sky for everyone: some nights are fog nights (a pale wall in the dark, not just darkness), some
+    carry into a grey morning, rarely a whole day is foggy. The first night is always clear, the second or third is
+    foggy. On a fog night or day he is more likely to act and can be seen in daytime fog, unless it is a quiet one.
+  - Someone behind you: in a long straight tunnel you dug, footsteps behind you. First one or two steps, later steps
+    that come closer and stop when you turn around, later still steps that stop far back past your last torch, and
+    something stands there. Look toward it and it is gone (the one time he vanishes in view).
+  - Far in the rock: underground, alone, a stone hit or a gravel slide somewhere in the rock around you. The cave
+    sound no longer needs you standing still underground.
+  - Friends: together you share one moment at 1.5 times one player's pace, split between you; the tunnel steps only
+    happen to someone alone (no friend within 48 blocks).
+See it now (Dev Client; /a1016 debug overlay on shows the fog spell and everyone's ladder rung):
+  1. Fog night: /a1016 fog night, then /time add 2500 (the spell eases in over 2500 ticks). /a1016 fog shows the
+     clock, the spell, tonight's and today's roll and the history.
+  2. Fog day: /a1016 fog day (grey, desaturated). /a1016 fog clear eases it out. Add "quiet" (/a1016 fog night quiet)
+     for a spell that gives the director no boost.
+  3. The ladder: dig a straight 2-high tunnel of 20+ blocks underground (5+ blocks below the surface, dark), walk to
+     its end and face away down it, no torches behind you. Then /a1016 fire steps_behind_once, then
+     /a1016 fire steps_behind_coming (turn around mid-steps: they stop), then /a1016 fire steps_behind_glimpse (keep
+     facing away until the steps stop, then turn slowly). /a1016 dig steps prints your rung, the last events, the used
+     tunnels and whether it sees a tunnel behind you now. A forced fire skips the rung order and spacing, never the
+     rules (underground, alone, the tunnel, no combat).
+  4. /a1016 director shows the fog weather line (the boost while a spell that is not quiet is on).
+  5. The real way: a NEW world, play normally for an hour. The tunnel rungs come one after another, at most one every
+     25 minutes of your own play, the glimpse at most once an in-game day.
+What to look for: whether the first hour feels like something; whether a fog night reads as fog, not darkness; whether
+  the steps sound like someone in the tunnel, and whether you ever see the glimpse straight on.
+Multiplayer: the fog is the same sky for everyone. Personal moments (the tunnel steps and the glimpse) need your
+  friends 48+ blocks away; standing together you get shared moments instead.
+Existing worlds and config files are upgraded automatically: a v1.1 world rolls its stage times again in the new
+  windows (a stage reached stays reached), and config values you changed by hand are kept.
+Known rough edges: Iris shaderpacks draw their own fog and hide the mod's fog weather (not supported). The client
+  eases a spell with its own config, so a client whose fog numbers differ from the server's sees a slightly
+  different ease. The v1.2 bug hunt is still running.
+```
+
 ## READY TO TRY: v1.1 multiplayer and story clues  (jar build/libs/a1016_02-1.1.0-26.3.jar)
 ```
 Restart needed: full game restart. Everyone who plays needs the same jar plus Fabric API.

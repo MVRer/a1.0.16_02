@@ -37,17 +37,14 @@ import org.jspecify.annotations.Nullable;
  * ({@link Kind#FELT}), their sessions and quiets, and the world's stage changes.
  * <p>
  * Fog weather (D-071): one sky for the table, rolled with core's {@link FogWeatherRules} on its own dice (so the
- * weather never shifts the director's), as atmosphere's live weather rolls it: tonight's fog night at
- * {@link #NIGHT_ROLL} and a fog day at {@link #DAY_ROLL} of the day before, joined with {@code handOver}. The run's day
- * clock stands in for the overworld clock. Each {@link Result} books its time and fires under each {@link Sky}.
+ * weather never shifts the director's), at the times atmosphere's live weather rolls it: tonight's fog night at
+ * {@link FogWeatherRules#nightRollTime} ({@link FogWeatherRules#NIGHT_ROLL}, 10000) and a fog day at
+ * {@link FogWeatherRules#DAY_ROLL} (23000) of the day before, joined with {@code handOver}. The run's day clock stands in
+ * for the overworld clock. Each {@link Result} books its time and fires under each {@link Sky}.
  */
 public final class DirectorSim {
 	/** The player of a one-player dry run. */
 	public static final UUID SOLO = new UUID(0L, 0xA1016L);
-	/** Time of day tonight's fog night is rolled (atmosphere's live weather rolls it then too). */
-	public static final long NIGHT_ROLL = 11000L;
-	/** Time of day the next day's fog day is rolled. */
-	public static final long DAY_ROLL = 23000L;
 
 	/** The sky over a stretch of a run (D-071): no spell on, a quiet spell (no boost), or a fog spell that boosts. */
 	public enum Sky { CLEAR, QUIET, FOG }
@@ -843,19 +840,22 @@ public final class DirectorSim {
 
 		/**
 		 * Rolls the fog weather due since the last call, as atmosphere's live weather does (D-071): at
-		 * {@link #NIGHT_ROLL} tonight's fog night (or a clear night), at {@link #DAY_ROLL} the next day's fog day (never
-		 * when a morning carry-over already runs into it); a spell rolled while another still gives fog is joined to it
-		 * ({@code handOver}). The stage is the world's at the roll.
+		 * {@link FogWeatherRules#nightRollTime} (10000) tonight's fog night (or a clear night), at
+		 * {@link FogWeatherRules#DAY_ROLL} the next day's fog day (never when a morning carry-over already runs into it);
+		 * a spell rolled while another still gives fog is joined to it ({@code handOver}). The stage is the world's at the
+		 * roll.
 		 */
 		void rollWeather() {
 			if (!params.fogWeather) {
 				return;
 			}
 			FogWeatherRules.Settings settings = params.fogSettings == null ? FogWeatherRules.Settings.DEFAULT : params.fogSettings;
+			long nightRoll = FogWeatherRules.nightRollTime(settings);
+			long dayRoll = FogWeatherRules.DAY_ROLL;
 			while (true) {
 				long base = Math.floorDiv(weatherClock, DirectorBrain.DAY_TICKS) * DirectorBrain.DAY_TICKS;
-				long night = base + NIGHT_ROLL > weatherClock ? base + NIGHT_ROLL : base + DirectorBrain.DAY_TICKS + NIGHT_ROLL;
-				long day = base + DAY_ROLL > weatherClock ? base + DAY_ROLL : base + DirectorBrain.DAY_TICKS + DAY_ROLL;
+				long night = base + nightRoll > weatherClock ? base + nightRoll : base + DirectorBrain.DAY_TICKS + nightRoll;
+				long day = base + dayRoll > weatherClock ? base + dayRoll : base + DirectorBrain.DAY_TICKS + dayRoll;
 				long next = Math.min(night, day);
 				if (next > dayTicks) {
 					return;

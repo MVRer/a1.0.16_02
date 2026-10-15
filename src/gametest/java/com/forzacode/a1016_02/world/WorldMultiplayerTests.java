@@ -135,8 +135,12 @@ public class WorldMultiplayerTests {
 	 * house, right where the search would put the copy first, and he has been away for three days (his chunks were last
 	 * visited then). The search keeps every known base clear: no candidate and no site within
 	 * {@code houseCopyBaseClearance} of Ben's base.
+	 *
+	 * <p>The candidates are 300 blocks out, so their chunks generate in the background before a site can be picked: a
+	 * busy batch took more than 600 ticks for that about 1 run in 3. The search starts on the server's own clock (as the
+	 * live one does), so its first candidate gets the whole load wait too, and the test waits up to 2400 ticks.
 	 */
-	@GameTest(structure = BIG, maxTicks = 600)
+	@GameTest(structure = BIG, maxTicks = 2400)
 	public void houseCopySiteKeepsAwayFromAnOfflineFriendsBase(GameTestHelper helper) {
 		ServerLevel level = helper.getLevel();
 		WorldConfig config = new WorldConfig();
@@ -158,7 +162,8 @@ public class WorldMultiplayerTests {
 		ChunkPos benChunk = ChunkPos.containing(benBase);
 		NewScarPlacer.VisitLookup visits = (l, chunk) -> Math.abs(chunk.x() - benChunk.x()) <= 1 && Math.abs(chunk.z() - benChunk.z()) <= 1 ? today - 3 : -1;
 
-		HouseCopier.SiteSearch search = HouseCopier.siteSearch(f.bases(), level, copy, config, RandomSource.create(7), today, visits, 0);
+		HouseCopier.SiteSearch search = HouseCopier.siteSearch(f.bases(), level, copy, config, RandomSource.create(7), today, visits,
+				level.getServer().getTickCount());
 		for (BlockPos center : search.centers()) {
 			helper.assertTrue(horizontal(center, benBase) >= config.houseCopyBaseClearance, "a copy site candidate at " + center.toShortString() + ", "
 					+ Math.round(horizontal(center, benBase)) + " blocks from Ben's base");

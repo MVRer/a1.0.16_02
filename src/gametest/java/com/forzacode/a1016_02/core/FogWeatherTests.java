@@ -245,6 +245,13 @@ public class FogWeatherTests extends ConfigVersionTests {
 		}
 		helper.assertTrue(D.secondNightChance() == 0.5 && D.clearNightsBeforeFog() == 4 && D.morningCarryChance() == 0.35 && D.quietShare() == 0.25
 				&& D.rampTicks() == 2500 && D.fadeTicks() == 1500 && D.easeExponent() == 3.0, "D-071 settings " + D);
+		// The roll times atmosphere's live weather and the director's dry runs share: tonight at 10000 (a fog day still at
+		// full then), a fog day at 23000 of the day before; a fade longer than the default rolls tonight before it thins.
+		FogWeatherRules.Settings longFade = new FogWeatherRules.Settings(D.nightChanceByStage(), D.secondNightChance(), D.clearNightsBeforeFog(),
+				D.morningCarryChance(), D.dayChanceByStage(), D.nightLevelByStage(), D.dayLevelByStage(), D.quietShare(), D.rampTicks(), 3000L,
+				D.easeExponent());
+		helper.assertTrue(FogWeatherRules.NIGHT_ROLL == 10_000L && FogWeatherRules.DAY_ROLL == 23_000L && FogWeatherRules.nightRollTime(D) == 10_000L
+				&& FogWeatherRules.nightRollTime(longFade) == 8_500L, "roll times " + FogWeatherRules.nightRollTime(D) + ", " + FogWeatherRules.nightRollTime(longFade));
 		helper.succeed();
 	}
 
