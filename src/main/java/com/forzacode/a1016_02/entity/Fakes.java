@@ -60,18 +60,22 @@ final class Fakes {
 		return true;
 	}
 
-	/** The existing mob of that kind nearest the fog edge, between the minimum distance and the edge, out of view. */
+	/**
+	 * The existing mob of that kind nearest the fog edge, between the minimum distance and the edge, out of view, and
+	 * not held by anything already (another card's trick, someone else's fake: it is theirs, MP-7).
+	 */
 	static Optional<Mob> find(ServerPlayer player, Variant.Fake kind) {
 		ServerLevel level = player.level();
 		FogEdge edge = FogEdge.of(player, false);
 		double min = Math.max(EntityConfig.get().minDistance(), edge.outer() * 0.6);
 		double max = edge.outer() + 4.0;
+		MobTamper mobs = Services.mobs();
 		List<Mob> candidates = new ArrayList<>();
 		for (EntityType<? extends Mob> type : types(kind)) {
 			candidates.addAll(level.getEntities(type, mob -> {
 				double d = SpotFinder.horizontal(player.position(), mob.position());
 				return mob.isAlive() && !mob.isBaby() && !mob.hasCustomName() && !mob.isLeashed() && !mob.isPassenger() && !mob.isVehicle()
-						&& d >= min && d <= max && Services.traces().isOutOfView(level, mob.getBoundingBox());
+						&& d >= min && d <= max && !mobs.isTampered(mob) && Services.traces().isOutOfView(level, mob.getBoundingBox());
 			}));
 		}
 		BlockPos at = player.blockPosition();

@@ -31,6 +31,7 @@ import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.util.Mth;
 import net.minecraft.util.RandomSource;
 import net.minecraft.world.entity.EntityTypes;
+import net.minecraft.world.entity.Mob;
 import net.minecraft.world.entity.animal.cow.Cow;
 import net.minecraft.world.level.GameType;
 import net.minecraft.world.level.Level;
@@ -748,6 +749,35 @@ public class TwoPlayerFigureGameTests {
 			helper.assertFalse(Fakes.hold(new MobTamper.Stub(), cow, a, 1200) || tamper.isTampered(cow), "the stub held a mob");
 		} finally {
 			tamper.release(cow);
+			cow.discard();
+		}
+		helper.succeed();
+	}
+
+	/**
+	 * A fake sighting for B never takes a mob that is held for someone else (MP-7): the cow at B's fog edge, held for
+	 * A (bound to A, as another card or A's own fake holds it), is not B's cow; once let go it is. In the End, where no
+	 * other test keeps cows; the cow stands at the far end of B's range, so no other cow would be the one picked.
+	 */
+	@GameTest(dimension = "minecraft:the_end", structure = YARD)
+	public void aFakeNeverTakesAMobHeldForSomeoneElse(GameTestHelper helper) {
+		yard(helper, 0, 23);
+		ServerPlayer a = player(helper, GameType.SURVIVAL, helper.absoluteVec(new Vec3(12.5, 1.0, 1.5)), 0.0F);
+		ServerPlayer b = player(helper, GameType.SURVIVAL, helper.absoluteVec(new Vec3(1.5, 1.0, 1.5)), 0.0F);
+		helper.assertTrue(Services.mobs() instanceof MobTamperImpl, "the real MobTamper is not installed");
+		Cow cow = helper.spawn(EntityTypes.COW, new BlockPos(13, 1, 13));
+		ReportedFog.set(b, 24.0);
+		try {
+			Optional<Mob> free = Fakes.find(b, Variant.Fake.COW);
+			helper.assertTrue(free.isPresent() && free.get() == cow, "the cow at B's fog edge is not B's fake when nobody holds it: " + free);
+			helper.assertTrue(Fakes.hold(Services.mobs(), cow, a, 1200) && Services.mobs().isTampered(cow), "the cow was not held for A");
+			Optional<Mob> held = Fakes.find(b, Variant.Fake.COW);
+			helper.assertTrue(held.isEmpty() || held.get() != cow, "B's fake took the cow held for A");
+			Services.mobs().release(cow);
+			helper.assertTrue(Fakes.find(b, Variant.Fake.COW).filter(found -> found == cow).isPresent(), "the cow, let go, is not B's fake again");
+		} finally {
+			ReportedFog.forget(b.getUUID());
+			Services.mobs().release(cow);
 			cow.discard();
 		}
 		helper.succeed();
