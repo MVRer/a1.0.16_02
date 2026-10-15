@@ -1,32 +1,16 @@
 package com.forzacode.a1016_02.entity;
 
-import java.io.IOException;
-import java.io.Reader;
-import java.io.Writer;
-import java.nio.file.Files;
-import java.nio.file.Path;
-
-import com.forzacode.a1016_02.A1016_02;
 import com.forzacode.a1016_02.core.ModConfig;
-import com.google.gson.Gson;
-import com.google.gson.GsonBuilder;
-import com.google.gson.JsonElement;
-import com.google.gson.JsonObject;
-import com.google.gson.JsonParseException;
-import com.google.gson.JsonParser;
-
-import net.fabricmc.loader.api.FabricLoader;
 
 /**
  * The entity workstream's tunables, stored under {@code sections.entity} in {@code config/a1016_02.json}.
  * Shared rules (300-block spacing, one per day) come from {@code Pacing}; the minimum distance is {@link #minDistance}
  * here (D-035 replaced the 24-block floor).
- * Real-time values are in seconds and go through {@link ModConfig#realTicks(double)}.
+ * Real-time values are in seconds and go through {@link ModConfig#realTicks(double)}. Versioned (D-075,
+ * {@link ModConfig.Versioned}): {@link ModConfig#section} brings an older section up to date on its first read.
  */
-public final class EntityConfig {
+public final class EntityConfig implements ModConfig.Versioned {
 	private static final String SECTION = "entity";
-	/** Same settings as {@code ModConfig}'s writer. */
-	private static final Gson GSON = new GsonBuilder().setPrettyPrinting().disableHtmlEscaping().create();
 
 	// --- where he stands (see FogEdge; D-035) ---
 	/**
@@ -169,9 +153,35 @@ public final class EntityConfig {
 	/** BRIGHT and GLOW: the eye pixels take fog at {@code 1 - this} strength. 0 = fogged like the body, 1 = never fogged. */
 	public volatile double eyeFogResistance = 0.5;
 
-	/** Section version, so changed defaults reach files written before the change ({@link #migrate}). */
+	// --- the glimpse (D-073; dig's tunnel ladder sets it up through core's Figure) ---
+	/**
+	 * Never closer than this to any player (from their eyes to his feet, in 3D; the surface sighting's minimum distance
+	 * does not apply underground). Never under {@link #MIN_DISTANCE_FLOOR}. Tunable live.
+	 */
+	public double glimpseMinDistance = 14;
+	/** Block light at his feet and at his eyes at most this: he stands past the last torch, a dim shape. */
+	public int glimpseMaxLight = 3;
+	/**
+	 * Client: the renderer stops drawing him, for good, the first frame his center is within this many degrees of the
+	 * camera's look, or within {@link #glimpseHideBlocks} of the camera. Read from the client's own config. Tunable live.
+	 */
+	public double glimpseHideDegrees = 28;
+	public double glimpseHideBlocks = 10;
+	/**
+	 * Server: he is removed the tick the player he appeared for looks within this many degrees of him (anyone else
+	 * who can see him too). Tunable live.
+	 */
+	public double glimpseServerDegrees = 35;
+	/** Server: he is removed once anyone steps this many blocks toward him (from the farthest they stood since he appeared). Tunable live. */
+	public double glimpseApproachBlocks = 2;
+	/** Server: he is removed once he has been in view (anyone's, the out-of-view rule) this long in all. Tunable live. */
+	public double glimpseSeenSeconds = 3;
+	/** Server: unseen this long in a row, he is gone, out of view. Tunable live. */
+	public double glimpseWaitSeconds = 10;
+
+	/** Section version, so changed defaults reach files written before the change ({@link #upgrade}). */
 	public int version = 0;
-	private static final int CURRENT_VERSION = 3;
+	static final int CURRENT_VERSION = 4;
 	/** {@link #minDistance} is never taken under this. */
 	public static final double MIN_DISTANCE_FLOOR = 8.0;
 
@@ -180,9 +190,8 @@ public final class EntityConfig {
 	}
 
 	/**
-	 * Brings an older section up to date and saves it. Version 2 (playtest): approach 10 blocks (was 6), stare cone 8
-	 * degrees (was 6), stare back 2 s (was 1). Version 3 (D-035): the close clamp is 16 to 28 blocks (was 24 to 36).
-	 * Values that only appeared now take their defaults by themselves.
+	 * Brings an older section up to date and saves it. {@link ModConfig#section} already upgrades the section on its
+	 * first read ({@link #upgrade}), so this only saves a section that was changed in memory since.
 	 */
 	public void migrate() {
 		if (upgrade()) {
@@ -190,8 +199,16 @@ public final class EntityConfig {
 		}
 	}
 
-	/** {@link #migrate} without saving. Returns true if anything changed. */
-	boolean upgrade() {
+	/**
+	 * Brings an older section up to its current version ({@link ModConfig.Versioned}); true if anything changed. The steps
+	 * from before versioned config (D-075) give way unconditionally, as they always did: version 2 (playtest): approach
+	 * 10 blocks (was 6), stare cone 8 degrees (was 6), stare back 2 s (was 1); version 3 (D-035): the close clamp is 16
+	 * to 28 blocks (was 24 to 36). Version 4 (v1.2, D-073) only adds the glimpse's values, which a section without them
+	 * takes from the defaults by itself; no default changed, so nothing the player set is touched. Every later default
+	 * change adds a step with {@link ModConfig.Upgrades#keepOrNew}.
+	 */
+	@Override
+	public boolean upgrade() {
 		if (version >= CURRENT_VERSION) {
 			return false;
 		}
@@ -206,6 +223,7 @@ public final class EntityConfig {
 			closeMinDistance = defaults.closeMinDistance;
 			closeMaxDistance = defaults.closeMaxDistance;
 		}
+		// Version 4: the glimpse's fields are new, nothing to replace.
 		version = CURRENT_VERSION;
 		return true;
 	}
@@ -247,39 +265,31 @@ public final class EntityConfig {
 		return Double.isNaN(resistance) ? 0.5 : Math.clamp(resistance, 0.0, 1.0);
 	}
 
+	/** {@link #glimpseMinDistance}, never under {@link #MIN_DISTANCE_FLOOR}. */
+	public double glimpseMinDistance() {
+		double min = glimpseMinDistance;
+		return Double.isNaN(min) ? MIN_DISTANCE_FLOOR : Math.max(MIN_DISTANCE_FLOOR, min);
+	}
+
+	/** {@link #glimpseHideDegrees} in 0 to 90 (28 if NaN). */
+	public double glimpseHideDegrees() {
+		return angle(glimpseHideDegrees, 28.0);
+	}
+
+	/** {@link #glimpseServerDegrees} in 0 to 90 (35 if NaN). */
+	public double glimpseServerDegrees() {
+		return angle(glimpseServerDegrees, 35.0);
+	}
+
+	private static double angle(double degrees, double fallback) {
+		return Double.isNaN(degrees) ? fallback : Math.clamp(degrees, 0.0, 90.0);
+	}
+
 	/**
-	 * Writes this section back to {@code config/a1016_02.json}, in memory and on disk. Only {@code sections.entity}
-	 * changes in the file; everything else is kept as it is there. {@code ModConfig} has no public save, so this
-	 * takes the same lock and writes the same way.
+	 * Writes this section back to {@code config/a1016_02.json}, in memory and on disk ({@link ModConfig#saveSection}):
+	 * only {@code sections.entity} changes in the file; everything else is kept as it is there.
 	 */
 	public void save() {
-		synchronized (ModConfig.class) {
-			JsonElement tree = GSON.toJsonTree(this);
-			ModConfig.get().sections.add(SECTION, tree);
-			Path path = FabricLoader.getInstance().getConfigDir().resolve(A1016_02.MOD_ID + ".json");
-			JsonObject root = null;
-			if (Files.exists(path)) {
-				try (Reader reader = Files.newBufferedReader(path)) {
-					JsonElement read = JsonParser.parseReader(reader);
-					root = read.isJsonObject() ? read.getAsJsonObject() : null;
-				} catch (IOException | JsonParseException e) {
-					A1016_02.LOGGER.warn("[a1016] could not read {}, rewriting it from memory", path, e);
-				}
-			}
-			if (root == null) {
-				root = GSON.toJsonTree(ModConfig.get()).getAsJsonObject();
-			}
-			JsonObject sections = root.has("sections") && root.get("sections").isJsonObject() ? root.getAsJsonObject("sections") : new JsonObject();
-			sections.add(SECTION, tree);
-			root.add("sections", sections);
-			try {
-				Files.createDirectories(path.getParent());
-				try (Writer writer = Files.newBufferedWriter(path)) {
-					GSON.toJson(root, writer);
-				}
-			} catch (IOException e) {
-				A1016_02.LOGGER.error("[a1016] could not write {}", path, e);
-			}
-		}
+		ModConfig.saveSection(SECTION, this);
 	}
 }

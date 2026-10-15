@@ -80,14 +80,24 @@ import org.jspecify.annotations.Nullable;
  * for leaves, dies, turns spectator or changes dimension before anything ended the sighting, he walks away and is
  * gone once nobody can see him (D-062.5). He keeps players by UUID only, looked up again every tick.
  *
+ * <p>The glimpse (D-073, {@link Variant#GLIMPSE}) is the one exception to "he never vanishes in view": he stands still
+ * where the caller put him, eyes FLAT ({@link #eyeStyle}, synced), and is simply gone the tick the player he appeared
+ * for looks toward him, anyone steps toward him, he has been seen for a moment, or nobody has seen him for a while
+ * ({@link #glimpseStep}); the client stops drawing him first ({@link #vanishesInView}). No stare counts for him.
+ *
  * <p>All behaviour runs in {@link #customServerAiStep} from plain look and move controls; spawn him through
- * {@link FigureApi}.
+ * {@link FigureApi} (the glimpse through {@link GlimpseFigure}).
  */
 public class HimEntity extends PathfinderMob {
 	/** Set when the Ending A figure was seen and is gone. */
 	public static final String LAST_SIGHTING_SEEN_FLAG = "entity:last_sighting_seen";
 
 	private static final EntityDataAccessor<Boolean> DATA_LOW = SynchedEntityData.defineId(HimEntity.class, EntityDataSerializers.BOOLEAN);
+	/** His own eye style ({@link EyeStyle} ordinal), or {@link #CONFIGURED_EYES} for the configured one. Synced for the renderer. */
+	private static final EntityDataAccessor<Byte> DATA_EYES = SynchedEntityData.defineId(HimEntity.class, EntityDataSerializers.BYTE);
+	/** He vanishes in view (the glimpse, D-073): the client's renderer hides him for good once looked toward. */
+	private static final EntityDataAccessor<Boolean> DATA_VANISHES = SynchedEntityData.defineId(HimEntity.class, EntityDataSerializers.BOOLEAN);
+	private static final byte CONFIGURED_EYES = -1;
 	private static final float CLIENT_RISE_STEP = 1.0F / 15.0F;
 	static final double BASE_SPEED = 0.25;
 	/** He steps up a full block without jumping, so a run never stalls on one-block terrain (horses do the same). */
@@ -176,10 +186,12 @@ public class HimEntity extends PathfinderMob {
 	 * under; when he leaves, he walks. Not saved (the figure never is).
 	 */
 	private boolean noRun;
-	/** Whether a player could see him when his own rules removed him (they never should). */
+	/** Whether a player could see him when his own rules removed him (never, but for the glimpse, D-073). */
 	private boolean seenWhenRemoved;
 	/** Why his own rules removed him, or null while he is out. */
 	private @Nullable String goneWhy;
+	/** The glimpse: the farthest each player has stood from him since he first had them (an approach is measured from there). */
+	private final Map<UUID, Double> glimpseStarts = new HashMap<>();
 
 	// client: the low pose, blended
 	private float low;
@@ -215,6 +227,8 @@ public class HimEntity extends PathfinderMob {
 		this.anchor = anchor;
 		this.gait = variant.gait();
 		setLow(variant.pose() == Variant.Pose.LOW);
+		setEyeStyle(variant.eyeStyle().orElse(null));
+		entityData.set(DATA_VANISHES, variant.vanishesInView());
 		setYRot(yaw);
 		setYHeadRot(yaw);
 		setYBodyRot(yaw);
@@ -263,6 +277,28 @@ public class HimEntity extends PathfinderMob {
 	protected void defineSynchedData(SynchedEntityData.Builder builder) {
 		super.defineSynchedData(builder);
 		builder.define(DATA_LOW, false);
+		builder.define(DATA_EYES, CONFIGURED_EYES);
+		builder.define(DATA_VANISHES, false);
+	}
+
+	/** Gives him his own eye style, or with null the configured one ({@link EntityConfig#eyeStyle}). Synced to every client. */
+	void setEyeStyle(@Nullable EyeStyle style) {
+		entityData.set(DATA_EYES, style == null ? CONFIGURED_EYES : (byte) style.ordinal());
+	}
+
+	/** His own eye style, or empty for the configured one (both sides). The glimpse's is FLAT. */
+	public Optional<EyeStyle> eyeStyle() {
+		int value = entityData.get(DATA_EYES);
+		EyeStyle[] styles = EyeStyle.values();
+		return value >= 0 && value < styles.length ? Optional.of(styles[value]) : Optional.empty();
+	}
+
+	/**
+	 * True if he vanishes in view (both sides; the glimpse, D-073): the renderer stops drawing him for good once he is
+	 * looked toward ({@link GlimpseRules#hiddenOnClient}), and his own rules may remove him while seen.
+	 */
+	public boolean vanishesInView() {
+		return entityData.get(DATA_VANISHES);
 	}
 
 	private void setLow(boolean value) {
@@ -321,6 +357,10 @@ public class HimEntity extends PathfinderMob {
 
 		if (phase == Phase.GOING_UNDER || phase == Phase.UNDER) {
 			goingUnder(level, watchers, config); // nothing else ends it: he is gone once covered and out of view
+			return;
+		}
+		if (variant == Variant.GLIMPSE) {
+			glimpseStep(level, players, config); // his own rules only: no stare, no flee, no leaving
 			return;
 		}
 
@@ -520,6 +560,69 @@ public class HimEntity extends PathfinderMob {
 		return tickingAround(level, target, LEAVE_TICK_MARGIN);
 	}
 
+	// --- the glimpse (D-073) ---
+
+	/**
+	 * The glimpse's whole sighting. He stands still where he appeared, facing the way he was put, and is simply gone (in
+	 * view or not: the one figure that may vanish in view) the tick that
+	 * <ul>
+	 * <li>the player he appeared for looks within {@code glimpseServerDegrees} (35) of his middle, or anyone else who can
+	 * see him does;</li>
+	 * <li>anyone has stepped {@code glimpseApproachBlocks} (2) toward him from the farthest they stood since he appeared;</li>
+	 * <li>he has been in view (anyone's, the out-of-view rule) {@code glimpseSeenSeconds} (3) in all;</li>
+	 * <li>nobody has seen him for {@code glimpseWaitSeconds} (10) in a row (he goes out of view);</li>
+	 * <li>the one he appeared for is gone (left, died, turned spectator, changed dimension), or he was told to go
+	 * ({@link #walkAway}).</li>
+	 * </ul>
+	 * Nothing else ends it: no stare is counted (no STARED_AT_HIM, no {@code entity:stared}), no flee, approach or stare
+	 * back of the surface sightings, no walking off. The client stops drawing him before most of these
+	 * ({@link #vanishesInView}).
+	 */
+	private void glimpseStep(ServerLevel level, List<ServerPlayer> players, EntityConfig config) {
+		holdStill();
+		if (triggered) {
+			gone(level, "the glimpse was told to go");
+			return;
+		}
+		if (appearedFor != null && !present(players, appearedFor)) {
+			gone(level, "the glimpse: the one he appeared for is gone");
+			return;
+		}
+		Vec3 center = new Vec3(getX(), getY() + getBbHeight() * 0.5, getZ());
+		double degrees = config.glimpseServerDegrees();
+		for (ServerPlayer player : players) {
+			UUID uuid = player.getUUID();
+			double distance = player.position().distanceTo(position());
+			double start = glimpseStarts.merge(uuid, distance, Math::max); // the farthest they stood: any 2 blocks toward him count
+			boolean his = appearedFor == null || appearedFor.equals(uuid);
+			if (GlimpseRules.looksWithin(player.getEyePosition(), player.getViewVector(1.0F), center, degrees) && (his || seenBy(level, player))) {
+				gone(level, "the glimpse: looked toward");
+				return;
+			}
+			if (GlimpseRules.closedOn(start, distance, config.glimpseApproachBlocks)) {
+				gone(level, "the glimpse: stepped toward");
+				return;
+			}
+		}
+		if (seenTicks >= ModConfig.realTicks(config.glimpseSeenSeconds)) {
+			gone(level, "the glimpse: seen long enough");
+			return;
+		}
+		if (unseenTicks >= ModConfig.realTicks(config.glimpseWaitSeconds)) {
+			gone(level, "the glimpse: out of view, unseen");
+		}
+	}
+
+	/** True if this one player could see him now: the out-of-view rule ({@link Watchers#sees}) for them alone. */
+	private boolean seenBy(ServerLevel level, ServerPlayer player) {
+		return Watchers.of(List.of(player), level.getServer().getPlayerList().getViewDistance()).sees(level, viewBox());
+	}
+
+	/** True if his own rules may remove him while someone sees him (D-073): the glimpse only. Every other figure, never. */
+	public boolean mayVanishInView() {
+		return variant.vanishesInView();
+	}
+
 	// --- goes under (D-030) ---
 
 	/**
@@ -551,6 +654,9 @@ public class HimEntity extends PathfinderMob {
 	public Optional<String> forceGoUnder() {
 		if (!(level() instanceof ServerLevel level)) {
 			return Optional.of("not on the server");
+		}
+		if (!variant.mayGoUnder()) {
+			return Optional.of("the " + variant.shortName() + " never goes under");
 		}
 		if (phase == Phase.GOING_UNDER || phase == Phase.UNDER) {
 			return Optional.of("already going under");
@@ -972,14 +1078,22 @@ public class HimEntity extends PathfinderMob {
 				setPhase(Phase.RISING);
 			}
 			case HIDE -> setPhase(Phase.HIDING);
+			case VANISH -> {
+				// The glimpse: gone on his next tick (glimpseStep). His own rules never come here; kept for completeness.
+			}
 		}
 	}
 
 	/**
 	 * Makes him turn and walk (or run) away into the fog now. He despawns once out of view or past the fog. Going
-	 * under or rushing past someone, he is already on his way out: nothing changes.
+	 * under or rushing past someone, he is already on his way out: nothing changes. The glimpse never walks: he is
+	 * gone on his next tick (D-073).
 	 */
 	public void walkAway(Variant.Gait leaveGait) {
+		if (variant == Variant.GLIMPSE) {
+			triggered = true;
+			return;
+		}
 		if (phase == Phase.GOING_UNDER || phase == Phase.UNDER || phase == Phase.RUSH) {
 			return;
 		}
@@ -1431,7 +1545,10 @@ public class HimEntity extends PathfinderMob {
 		return phase == Phase.RUSH ? rush : null;
 	}
 
-	/** True if a player could see him when his own rules removed him. Never, by the rules; the tests check it. */
+	/**
+	 * True if a player could see him when his own rules removed him. Never, by the rules, for every variant but the
+	 * glimpse ({@link #mayVanishInView}); the tests check it.
+	 */
 	public boolean seenWhenRemoved() {
 		return seenWhenRemoved;
 	}

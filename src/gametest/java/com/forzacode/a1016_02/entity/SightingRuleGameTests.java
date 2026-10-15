@@ -293,7 +293,11 @@ public class SightingRuleGameTests extends FogAndRunGameTests {
 
 	@GameTest
 	public void everyVariantIsACard(GameTestHelper helper) {
-		for (Variant variant : Variant.values()) {
+		// Every variant but the glimpse (D-073), which only dig's tunnel ladder sets up through core's Figure.
+		helper.assertTrue(Variant.cards().size() == Variant.values().length - 1 && !Variant.cards().contains(Variant.GLIMPSE),
+				"the cards are not every variant but the glimpse: " + Variant.cards());
+		helper.assertTrue(CardRegistry.get(Variant.GLIMPSE.cardId()).isEmpty(), "the glimpse is a director card");
+		for (Variant variant : Variant.cards()) {
 			Optional<EventCard> card = CardRegistry.get(variant.cardId());
 			helper.assertTrue(card.isPresent(), "missing card " + variant.cardId());
 			helper.assertTrue(card.get().tags().contains(CardTag.SIGHTING) && card.get().habits().equals(java.util.Set.of(Habit.WATCHER)),

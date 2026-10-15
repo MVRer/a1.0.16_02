@@ -40,7 +40,7 @@ final class EntityCommands {
 		CommandHooks.register((root, context) -> root.then(Commands.literal("entity")
 				.then(Commands.literal("spawn")
 						.then(Commands.argument("variant", StringArgumentType.word())
-								.suggests((ctx, builder) -> SharedSuggestionProvider.suggest(Arrays.stream(Variant.values()).map(Variant::shortName), builder))
+								.suggests((ctx, builder) -> SharedSuggestionProvider.suggest(Variant.cards().stream().map(Variant::shortName), builder))
 								.executes(ctx -> spawn(ctx, target(ctx.getSource())))
 								.then(Commands.argument("player", EntityArgument.player())
 										.executes(ctx -> spawn(ctx, EntityArgument.getPlayer(ctx, "player"))))))
@@ -140,6 +140,11 @@ final class EntityCommands {
 			ctx.getSource().sendFailure(Component.literal("[a1016] no player to spawn him for"));
 			return 0;
 		}
+		if (!variant.get().isCard()) {
+			ctx.getSource().sendFailure(Component.literal("[a1016] the " + variant.get().shortName()
+					+ " never stands at the fog edge: dig's tunnel ladder sets it up (D-073)"));
+			return 0;
+		}
 		boolean wasOut = FigureApi.anyOut(ctx.getSource().getServer());
 		FogEdge edge = FogEdge.of(player, variant.get() == Variant.CLOSE);
 		FigureApi.Spawned spawned = FigureApi.spawnAtFogEdge(player, variant.get(), RandomSource.create(), true);
@@ -202,6 +207,10 @@ final class EntityCommands {
 					appearedFor, him.spawnDistance(), him.fleeDistance(config), him.approachBlocks(config), him.age() / 20,
 					him.seenFor() < 0 ? -1 : him.seenFor() / 20, him.unseenTicks(), stare, him.staredBy().size(), closed, him.triggered(), him.fled(),
 					him.isLow(), him.moveSpeed(), him.outrunning()));
+			if (him.vanishesInView()) {
+				lines.add(String.format(Locale.ROOT, "  glimpse: eyes %s, vanishes in view, seen %d ticks, unseen %d ticks",
+						him.eyeStyle().map(EyeStyle::shortName).orElse("as configured"), him.seenTicks(), him.unseenTicks()));
+			}
 			GoUnder dig = him.goUnder();
 			if (dig != null) {
 				lines.add(String.format(Locale.ROOT, "  under: %s at %s, %d deep, dug %d, covered %d of %d", dig.status(), dig.plan().top().toShortString(),
@@ -219,9 +228,10 @@ final class EntityCommands {
 		}
 		EntityData data = EntityData.get(server);
 		String last = data.lastPos() == null ? "-" : data.lastPos().pos().toShortString();
-		lines.add(String.format(Locale.ROOT, "record: last=%s@%s day=%d (x%d) today=%d sightings=%d fakes=%d stared=%d",
+		lines.add(String.format(Locale.ROOT, "record: last=%s@%s day=%d (x%d) today=%d sightings=%d fakes=%d stared=%d glimpses=%d (last on day %d)"
+				+ " fogWeather=%s",
 				data.lastVariant().isEmpty() ? "-" : data.lastVariant(), last, data.lastDay(), data.countOnLastDay(), GameClock.day(server),
-				data.sightings(), data.fakes(), data.stared()));
+				data.sightings(), data.fakes(), data.stared(), data.glimpses(), data.lastGlimpseDay(), SightingGates.fogWeather(server) ? "on" : "off"));
 		if (player != null) {
 			HerobrineState state = HerobrineState.get(server);
 			FogEdge edge = FogEdge.of(player, false);
@@ -235,7 +245,7 @@ final class EntityCommands {
 					close.inner(), close.outer(), config.minDistance(), edge.seeable() ? "" : " (fog too thick to see him)",
 					SightingGates.timeOfDay(server), Services.watch().base(player).map(b -> b.pos().toShortString()).orElse("-")));
 			StringBuilder gates = new StringBuilder("gates:");
-			for (Variant variant : Variant.values()) {
+			for (Variant variant : Variant.cards()) {
 				gates.append(' ').append(variant.shortName()).append('=')
 						.append(SightingGates.check(player, player.level(), variant).orElse("ok"));
 			}

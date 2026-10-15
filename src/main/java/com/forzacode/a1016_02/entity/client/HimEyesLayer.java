@@ -26,8 +26,9 @@ import net.minecraft.resources.Identifier;
 import org.jspecify.annotations.Nullable;
 
 /**
- * The figure's eyes on top of the skin, by {@link EntityConfig#eyeStyle()}, read every frame so
- * {@code /a1016 entity eyes} shows at once in singleplayer.
+ * The figure's eyes on top of the skin, by his own style if he has one ({@link HimRenderState#eyeStyle}, synced: the
+ * glimpse's FLAT, D-073), else by {@link EntityConfig#eyeStyle()}, read every frame so {@code /a1016 entity eyes}
+ * shows at once in singleplayer.
  * <ul>
  * <li>FLAT: nothing here; the eyes painted into the skin are lit like the rest of it.</li>
  * <li>BRIGHT: the four eye pixels again, opaque, unlit and unshaded (always full white), fogged at
@@ -77,7 +78,8 @@ public class HimEyesLayer extends RenderLayer<HimRenderState, HimModel> {
 	@Override
 	public void submit(PoseStack poseStack, SubmitNodeCollector collector, int light, HimRenderState state, float yRot, float xRot) {
 		EntityConfig config = EntityConfig.get();
-		EyeStyle style = config.eyeStyle();
+		// His own style first (the glimpse is always FLAT, D-073), else the configured one.
+		EyeStyle style = state.eyeStyle != null ? state.eyeStyle : config.eyeStyle();
 		if (style == EyeStyle.FLAT) {
 			return;
 		}

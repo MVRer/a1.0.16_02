@@ -348,7 +348,7 @@ public class RushAndDimensionGameTests extends SightingRuleGameTests {
 		// The director asks each card with the player's own level: the dimension gate is checked against it, first.
 		ServerPlayer player = (ServerPlayer) helper.makeMockServerPlayer(GameType.SURVIVAL);
 		for (ServerLevel level : List.of(overworld, nether, end)) {
-			for (Variant variant : Variant.values()) {
+			for (Variant variant : Variant.cards()) { // the glimpse is not a card (D-073)
 				EventCard card = CardRegistry.get(variant.cardId()).orElseThrow(() -> helper.assertionException("no card " + variant.cardId()));
 				boolean home = level.dimension() == variant.dimension();
 				Optional<String> why = SightingGates.check(player, level, variant);

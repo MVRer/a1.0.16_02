@@ -38,7 +38,8 @@ import org.jspecify.annotations.Nullable;
 /**
  * The figure, for other workstreams (the endings): spawn a variant at a position or at a player's fog edge, make
  * him walk away, see whether he is out. He is one being (D-060.4): at most one figure is out at a time, across every
- * player and dimension, and he only ever spawns out of view of every player in his level, spectators included.
+ * player and dimension, and he only ever spawns out of view of every player in his level, spectators included. The
+ * glimpse (D-073) comes through core's {@code Figure} contract ({@link GlimpseFigure}), never through the fog edge.
  * Server thread only.
  */
 public final class FigureApi {
@@ -140,8 +141,19 @@ public final class FigureApi {
 	 * than the minimum distance ({@link Watchers#hides}), or the spot is not entity-ticking.
 	 */
 	static Optional<HimEntity> spawn(ServerLevel level, Variant variant, Vec3 feet, float yaw, @Nullable BlockPos anchor, Watchers watchers) {
+		double minDistance = EntityConfig.get().minDistance();
+		return spawn(level, variant, feet, yaw, anchor, watchers, view -> watchers.hides(level, view, minDistance));
+	}
+
+	/**
+	 * {@link #spawn(ServerLevel, Variant, Vec3, float, BlockPos, Watchers)} with {@code hidden} as the spawn rule for his
+	 * view box: the glimpse's (D-073) is the same out-of-view rule with its own distance ({@link GlimpseFigure}), since the
+	 * surface sighting's minimum distance does not apply underground. Every caller's rule includes the out-of-view one.
+	 */
+	static Optional<HimEntity> spawn(ServerLevel level, Variant variant, Vec3 feet, float yaw, @Nullable BlockPos anchor, Watchers watchers,
+			Predicate<AABB> hidden) {
 		AABB view = HimEntity.viewBox(feet);
-		if (!level.isPositionEntityTicking(BlockPos.containing(feet)) || !watchers.hides(level, view, EntityConfig.get().minDistance())) {
+		if (!level.isPositionEntityTicking(BlockPos.containing(feet)) || !hidden.test(view)) {
 			return Optional.empty();
 		}
 		HimEntity him = ModEntities.HIM.create(level, EntitySpawnReason.EVENT);
@@ -185,6 +197,9 @@ public final class FigureApi {
 	static Spawned spawnAtFogEdge(ServerPlayer player, Variant variant, RandomSource random, boolean forced, Watchers watchers) {
 		ServerLevel level = player.level();
 		MinecraftServer server = level.getServer();
+		if (variant.spot() == Variant.Spot.GIVEN) {
+			return new Spawned(FireResult.SKIPPED, null); // the glimpse never stands at the fog edge: only its caller's spot (GlimpseFigure)
+		}
 		if (level.dimension() != variant.dimension()) {
 			return new Spawned(FireResult.SKIPPED, null); // each variant only in its own dimension (D-034), even forced
 		}
@@ -249,7 +264,7 @@ public final class FigureApi {
 		return out.size();
 	}
 
-	/** Makes him turn and walk away into the fog (at his variant's pace if that is slower). */
+	/** Makes him turn and walk away into the fog (at his variant's pace if that is slower). The glimpse is simply gone (D-073). */
 	public static void walkAway(HimEntity him) {
 		him.walkAway(him.variant().gait() == Variant.Gait.SLOW ? Variant.Gait.SLOW : Variant.Gait.WALK);
 	}
@@ -337,6 +352,7 @@ public final class FigureApi {
 			}
 			case ENDERMEN, PIGLINS -> SpotFinder.among(q, SightingGates.mobsAtEdge(player, variant, band, config.amongMobsRadius), config.amongMobsRadius,
 					AMONG_MIN_GAP);
+			case GIVEN -> Optional.empty(); // the glimpse: its caller gives the spot, never the spot finder
 		};
 	}
 
