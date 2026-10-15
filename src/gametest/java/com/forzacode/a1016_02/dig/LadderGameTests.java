@@ -34,6 +34,7 @@ import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.sounds.SoundEvents;
 import net.minecraft.sounds.SoundSource;
 import net.minecraft.util.RandomSource;
+import net.minecraft.world.level.GameType;
 import net.minecraft.world.level.LightLayer;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
@@ -348,6 +349,48 @@ public class LadderGameTests {
 		});
 	}
 
+	/**
+	 * A spectating friend shares no moment, but the steps reach everyone in range ({@link SoundCues#playAt}), so they
+	 * would hear every one and could confirm it: with a spectator within 48 blocks no rung fits and even a forced one
+	 * (or a fake) is skipped; a spectator coming that close while the steps come stops the rest. One 60 away changes
+	 * nothing.
+	 */
+	@GameTest(maxTicks = 300)
+	public void aSpectatorWithinTheSharedRadiusMeansNoSteps(GameTestHelper helper) {
+		DigGround g = DigGround.of(helper, 27, 40, 8, 10, Blocks.STONE);
+		g.keepLoaded(true);
+		LadderRig rig = new LadderRig(helper, g, "Alex", "Sam");
+		rig.config.ladderSneakChance = 0;
+		rig.tunnelX(2, 35, 3, 4);
+		ServerPlayer alex = rig.stand("Alex", 34, 3, 4, LadderRig.EAST);
+		Crew.Member sam = (Crew.Member) rig.stand("Sam", 34, 3, 4 + 30, LadderRig.EAST);
+		sam.setMode(GameType.SPECTATOR);
+		helper.assertTrue(sam.isSpectator() && rig.crew.watch.sharingWith(alex).size() == 1, "the spectator shares the moment");
+		for (Ladder.Rung rung : Ladder.Rung.values()) {
+			helper.assertTrue(rig.check(rung, alex).why() == Ladder.Why.NOT_ALONE, rung.id + " with a spectator 30 away: " + rig.check(rung, alex).why());
+			helper.assertTrue(rig.fire(rung, alex, false, true, 91L) == FireResult.SKIPPED, "a forced " + rung.id + " with a spectator 30 away");
+			helper.assertTrue(rig.fire(rung, alex, true, true, 92L) == FireResult.SKIPPED, "a forced fake " + rung.id + " with a spectator 30 away");
+		}
+		helper.assertTrue(!LadderRig.walking(alex) && rig.heard.isEmpty(), "steps with a spectator 30 away");
+		LadderRig.move(sam, g.at(34, 3, 4 + 60));
+		helper.assertTrue(rig.check(Ladder.Rung.ONCE, alex).fits(), "rung 1 with the spectator 60 away: " + rig.check(Ladder.Rung.ONCE, alex).why());
+		helper.assertTrue(rig.fire(Ladder.Rung.COMING, alex, false, true, 93L) == FireResult.FIRED, "rung 2 with the spectator 60 away");
+		LadderSteps.Walk walk = DigTicker.INSTANCE.ladder().walk(alex.getUUID()).orElseThrow();
+		long[] came = {Long.MAX_VALUE};
+		helper.runAfterDelay(10, () -> {
+			LadderRig.move(sam, g.at(34, 3, 4 + 20));
+			came[0] = g.level.getServer().getTickCount();
+		});
+		helper.runAfterDelay(200, () -> {
+			helper.assertFalse(LadderRig.walking(alex), "the steps never ended");
+			helper.assertTrue(!rig.heard.isEmpty() && rig.heard.stream().allMatch(step -> step.tick() <= came[0]), "a step played once the spectator came close");
+			helper.assertTrue("someone came close".equals(walk.stopped) && walk.played() < walk.steps.size(), "the steps did not stop for the spectator: "
+					+ walk.describe());
+			g.keepLoaded(false);
+			helper.succeed();
+		});
+	}
+
 	/** A run whose start is within 24 blocks of a used one never fires again; farther along the same tunnel it may. */
 	@GameTest(maxTicks = 100)
 	public void theSameRunNeverFiresTwice(GameTestHelper helper) {
@@ -452,6 +495,60 @@ public class LadderGameTests {
 		});
 	}
 
+	/**
+	 * His spot is dark to the eye, not only past the torchlight: in a tunnel under a trench open to the sky over every
+	 * cell 13 to 20 back no spot is offered and the figure is never even asked; under a single shaft 14 back a spot is
+	 * offered only where the light a player would see (vanilla's raw brightness, the sky's darkening counted) is 3 or
+	 * less at his feet and eyes, never the shaft's own cell (by day none of 14 to 20 is: the shaft lights 11 cells along
+	 * the tunnel); the same tunnel sealed offers the cell 14 back.
+	 */
+	@GameTest(maxTicks = 300)
+	public void aSkyLitSpotIsNeverOffered(GameTestHelper helper) {
+		DigGround g = DigGround.of(helper, 29, 48, 8, 13, Blocks.STONE);
+		g.keepLoaded(true);
+		LadderRig trench = new LadderRig(helper, g, "Alex");
+		trench.tunnelX(2, 41, 3, 2);
+		g.hollow(20, 5, 2, 27, 7, 2); // open to the sky from 13 to 20 back
+		LadderRig shaft = new LadderRig(helper, g, "Bea");
+		shaft.tunnelX(2, 41, 3, 6);
+		g.hollow(26, 5, 6, 26, 7, 6); // a 1x1 shaft 14 back
+		LadderRig sealed = new LadderRig(helper, g, "Cy");
+		sealed.tunnelX(2, 41, 3, 10);
+		ServerPlayer alex = trench.stand("Alex", 40, 3, 2, LadderRig.EAST);
+		ServerPlayer bea = shaft.stand("Bea", 40, 3, 6, LadderRig.EAST);
+		ServerPlayer cy = sealed.stand("Cy", 40, 3, 10, LadderRig.EAST);
+		helper.succeedWhen(() -> {
+			for (int x = 20; x <= 27; x++) {
+				helper.assertTrue(sky(g, g.at(x, 3, 2)) == 15 && sky(g, g.at(x, 4, 2)) == 15, "the daylight has not settled in the trench yet");
+			}
+			helper.assertTrue(sky(g, g.at(26, 3, 6)) == 15 && sky(g, g.at(25, 3, 6)) == 14 && sky(g, g.at(26, 3, 10)) == 0,
+					"the daylight has not settled under the shaft yet");
+			Ladder.Check lit = Ladder.check(Ladder.Rung.GLIMPSE, alex, trench.env(), true);
+			helper.assertTrue(lit.why() == Ladder.Why.NO_SPOT && trench.asked.isEmpty(), "a spot in the daylight was offered: " + lit.spot()
+					+ " back, raw brightness " + g.level.getMaxLocalRawBrightness(g.at(40 - Math.max(lit.spot(), 14), 3, 2)) + ", sky darkening "
+					+ g.level.getSkyDarken() + ", asked " + trench.asked);
+			int expected = -1;
+			for (int back = shaft.config.ladderGlimpseSpotMin; back <= shaft.config.ladderGlimpseSpotMax && expected < 0; back++) {
+				BlockPos cell = g.at(40 - back, 3, 6);
+				if (g.level.getMaxLocalRawBrightness(cell) <= 3 && g.level.getMaxLocalRawBrightness(cell.above()) <= 3) {
+					expected = back;
+				}
+			}
+			Ladder.Check under = Ladder.check(Ladder.Rung.GLIMPSE, bea, shaft.env(), true);
+			helper.assertTrue(under.spot() == expected && under.spot() != 14 && (expected < 0 ? under.why() == Ladder.Why.NO_SPOT : under.fits()),
+					"under the shaft the spot is " + under.spot() + " back (" + under.why() + "), the first dark one is " + expected + ", sky darkening "
+							+ g.level.getSkyDarken());
+			helper.assertTrue(g.level.getSkyDarken() > 0 || expected < 0, "by day a spot within 11 of the shaft is dark: " + expected);
+			Ladder.Check dark = Ladder.check(Ladder.Rung.GLIMPSE, cy, sealed.env(), true);
+			helper.assertTrue(dark.fits() && dark.spot() == 14, "the sealed tunnel offers " + dark.spot() + " (" + dark.why() + ")");
+			g.keepLoaded(false);
+		});
+	}
+
+	private static int sky(DigGround g, BlockPos pos) {
+		return g.level.getBrightness(LightLayer.SKY, pos);
+	}
+
 	private static int light(DigGround g, BlockPos pos) {
 		return g.level.getBrightness(LightLayer.BLOCK, pos);
 	}
@@ -530,7 +627,7 @@ public class LadderGameTests {
 					"rung 1's fake is not the player's own step: " + own);
 			List<LadderRig.Heard> away = rigs.get(3).heard;
 			for (int i = 1; i < away.size(); i++) {
-				helper.assertTrue(LadderRig.backAlongX(players.get(3), away.get(i).pos()) > LadderRig.backAlongX(players.get(3), away.get(i - 1).pos())
+				helper.assertTrue(LadderRig.exactBackAlongX(players.get(3), away.get(i).pos()) > LadderRig.exactBackAlongX(players.get(3), away.get(i - 1).pos())
 						&& away.get(i).volume() < away.get(i - 1).volume(), "rung 2's fake does not go away fading");
 			}
 			helper.assertTrue(rigs.get(4).spawns().size() == 1, "no glimpse at the end of rung 3");
@@ -539,6 +636,68 @@ public class LadderGameTests {
 			helper.assertTrue(TraceLedger.get(g.level.getServer()).entries().stream()
 					.noneMatch(entry -> entry.pos().dimension().equals(g.level.dimension()) && box.contains(Vec3.atCenterOf(entry.pos().pos()))),
 					"something was ledgered in the tunnels");
+			g.keepLoaded(false);
+		});
+	}
+
+	/**
+	 * Rung 2's fake is heard: its steps start 10 to 13 back and go away fading, every one inside vanilla's 16-block
+	 * range of a step at volume 1 or less and at least about as loud at the player as rung 2's own first step, none
+	 * past the run's end. On the shortest runs (16 and 17 cells) and a long one, every step plays.
+	 */
+	@GameTest(maxTicks = 200)
+	public void rungTwosFakeIsHeardGoingAwayInsideTheRun(GameTestHelper helper) {
+		DigGround g = DigGround.of(helper, 28, 40, 8, 17, Blocks.STONE);
+		g.keepLoaded(true);
+		int[] lengths = {16, 17, 30};
+		List<LadderRig> rigs = new ArrayList<>();
+		List<ServerPlayer> players = new ArrayList<>();
+		List<LadderSteps.Walk> walks = new ArrayList<>();
+		for (int i = 0; i < lengths.length; i++) {
+			String name = "Fay" + i;
+			LadderRig rig = new LadderRig(helper, g, name);
+			int z = 3 + 5 * i;
+			int x = 2 + lengths[i];
+			rig.tunnelX(2, x, 3, z);
+			ServerPlayer player = rig.stand(name, x, 3, z, LadderRig.EAST);
+			Ladder.Check check = Ladder.check(Ladder.Rung.COMING, player, rig.env(), true);
+			helper.assertTrue(check.fits() && check.run() != null && check.run().length() == lengths[i], "no " + lengths[i] + "-cell run: " + check.why()
+					+ " " + (check.run() == null ? "" : check.run().length()));
+			helper.assertTrue(rig.fire(Ladder.Rung.COMING, player, true, true, 101L + i) == FireResult.FIRED, "rung 2's fake did not fire on " + lengths[i]);
+			walks.add(DigTicker.INSTANCE.ladder().walk(player.getUUID()).orElseThrow());
+			rigs.add(rig);
+			players.add(player);
+		}
+		DigConfig config = new DigConfig();
+		double edge = Ladder.volumeAt(config.ladderComingFrom, config) * (1.0 - config.ladderComingFrom / 16.0); // rung 2's first step, at the ear
+		helper.succeedWhen(() -> {
+			for (int i = 0; i < lengths.length; i++) {
+				ServerPlayer player = players.get(i);
+				LadderSteps.Walk walk = walks.get(i);
+				List<LadderRig.Heard> heard = rigs.get(i).heard;
+				helper.assertFalse(LadderRig.walking(player), "the fake's steps are still going");
+				helper.assertTrue(walk.stopped == null && heard.size() == config.ladderComingFakeSteps, "on " + lengths[i] + " cells: " + walk.describe());
+				double previous = 0;
+				float louder = Float.MAX_VALUE;
+				for (LadderRig.Heard step : heard) {
+					double back = LadderRig.exactBackAlongX(player, step.pos());
+					BlockPos cell = BlockPos.containing(step.pos());
+					int cellBack = player.getBlockX() - cell.getX();
+					helper.assertTrue(back > previous && cellBack >= 1 && cellBack <= lengths[i] && TunnelRun.tunnelCell(g.level, rigs.get(i).crew.watch, cell),
+							"a fake step " + back + " back on a " + lengths[i] + "-cell run, after " + previous);
+					double distance = step.pos().distanceTo(player.position());
+					double gain = step.volume() * (1.0 - distance / 16.0);
+					helper.assertTrue(SoundCues.hearers(g.level, List.of(player), step.pos(), step.volume()).contains(player) && step.volume() <= 1.0F,
+							"a fake step out of hearing: " + back + " back at " + step.volume());
+					helper.assertTrue(step.volume() < louder && gain >= 0.95 * edge, "a fake step " + back + " back at " + step.volume() + " (" + gain
+							+ " at the ear, rung 2's first step " + edge + ") after " + louder);
+					previous = back;
+					louder = step.volume();
+				}
+				double first = LadderRig.exactBackAlongX(player, heard.getFirst().pos());
+				double last = LadderRig.exactBackAlongX(player, heard.getLast().pos());
+				helper.assertTrue(first >= 10 && first <= 13 && last <= Ladder.FAKE_FARTHEST, "the fake goes from " + first + " to " + last + " back");
+			}
 			g.keepLoaded(false);
 		});
 	}

@@ -34,7 +34,8 @@ import org.jspecify.annotations.Nullable;
 /**
  * The tunnel ladder's live part (D-072), run by {@link DigTicker}: the steps in progress, at most one walk per player,
  * each step played when its tick comes and cancellable (the rest stop the moment the player looks back down the tunnel,
- * or a friend comes within the shared moment radius, or the player is gone); and the detector's samples for each
+ * or anyone else, a spectator too, comes within the shared moment radius ({@link Ladder#alone}), or the player is
+ * gone); and the detector's samples for each
  * underground participant (their positions over the last 10 s for the heading, and the run behind them), taken every
  * {@link DigTicker#LADDER_TICKS} ticks. Per player by UUID, looked up again every tick (D-062.1). Nothing is saved:
  * a walk is a few seconds of sound.
@@ -108,7 +109,7 @@ final class LadderSteps {
 			}
 			ServerPlayer target = found.get();
 			if (cancellable) {
-				if (env.watch().sharingWith(target).size() > 1) {
+				if (!Ladder.alone(target, env)) {
 					stopped = "someone came close";
 					return false;
 				}
