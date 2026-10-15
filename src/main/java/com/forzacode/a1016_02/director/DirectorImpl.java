@@ -18,6 +18,8 @@ import com.forzacode.a1016_02.core.Director;
 import com.forzacode.a1016_02.core.EventCard;
 import com.forzacode.a1016_02.core.FireContext;
 import com.forzacode.a1016_02.core.FireResult;
+import com.forzacode.a1016_02.core.FogSpell;
+import com.forzacode.a1016_02.core.FogWeatherRules;
 import com.forzacode.a1016_02.core.GameClock;
 import com.forzacode.a1016_02.core.HerobrineEvents;
 import com.forzacode.a1016_02.core.HerobrineState;
@@ -29,6 +31,7 @@ import com.forzacode.a1016_02.core.Tier;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.util.RandomSource;
+import net.minecraft.world.level.Level;
 
 import org.jspecify.annotations.Nullable;
 
@@ -302,6 +305,7 @@ public final class DirectorImpl implements Director {
 		params.continueSession = true;
 		params.singleSession = true;
 		params.attention = state.attention();
+		liveWeather(server, before, params);
 		// The summary shows what time alone does: nobody writes his name during a timewarp.
 		params.tellingAtHour = -1;
 		PacingMemory pacing = focus == null ? new PacingMemory(before.dayTicks())
@@ -361,8 +365,23 @@ public final class DirectorImpl implements Director {
 		params.seed = server.getWorldGenSettings().options().seed() ^ (c.playTicks() * 0x9E3779B97F4A7C15L) ^ (synthetic ? 0x5EED : 0);
 		params.continueSession = Services.watch().participant(server, player).isPresent();
 		params.attention = state.attention();
+		liveWeather(server, c, params);
 		List<CardInfo> cards = synthetic ? SyntheticDeck.cards() : cards();
 		return DirectorSim.run(rules, cards, config.historySize, DirectorData.get(server).memory(), state.stage(), state.tension(player), c, params);
+	}
+
+	/**
+	 * The live sky for a dry run from now (D-071): the installed weather numbers, the stored spell moved onto the run's
+	 * day clock (which counts timewarp days, the overworld clock does not), and the nights rolled so far, so a world a
+	 * few days old is past the first nights' rules.
+	 */
+	private static void liveWeather(MinecraftServer server, DirectorBrain.Clock c, DirectorSim.Params params) {
+		params.fogSettings = FogWeatherRules.settings();
+		long shift = c.dayTicks() - server.overworld().getDefaultClockTime();
+		params.fogSpell = HerobrineState.get(server).effects().fogSpell()
+				.map(spell -> new FogSpell(spell.fromClock() + shift, spell.untilClock() + shift, spell.level(), spell.quiet()));
+		long nights = c.day() + (Math.floorMod(c.dayTicks(), DirectorBrain.DAY_TICKS) >= DirectorSim.NIGHT_ROLL ? 1 : 0);
+		params.fogHistory = new FogWeatherRules.History(Math.clamp(nights, 0, Integer.MAX_VALUE), 0, false, false);
 	}
 
 	// --- helpers ---
@@ -520,6 +539,23 @@ public final class DirectorImpl implements Director {
 			}
 			return DirectorImpl.this.sharers(server, DirectorData.get(server).memory(), uuid, Services.watch().sharingWith(player));
 		}
+
+		@Override
+		public Optional<FogSpell> fogSpell() {
+			if (player == null) {
+				return Optional.empty();
+			}
+			Level level = player.level();
+			return fogSpellOn(HerobrineState.get(server).effects().fogSpell(), level.getDefaultClockTime(), level.dimensionType().hasFixedTime());
+		}
+	}
+
+	/**
+	 * The world's stored fog spell if it is on at this clock (absolute {@code getDefaultClockTime()}) in a level that
+	 * shows weather (D-071): none in fixed-time dimensions, as {@code FogLimits.of(player)} reads it.
+	 */
+	static Optional<FogSpell> fogSpellOn(Optional<FogSpell> stored, long clockTime, boolean fixedTime) {
+		return fixedTime ? Optional.empty() : stored.filter(spell -> spell.activeAt(clockTime));
 	}
 
 	/** Logs what the live director decides, for one player (or the world). */
@@ -579,6 +615,12 @@ public final class DirectorImpl implements Director {
 		@Override
 		public void quietStarted(DirectorBrain.Clock clock, int days, long untilDayTicks, double tensionBefore) {
 			A1016_02.LOGGER.info(String.format(Locale.ROOT, "[a1016] director (%s): tension %.1f, quiet for %d in-game days", who, tensionBefore, days));
+		}
+
+		@Override
+		public void rulesUpgraded(DirectorBrain.Clock clock, int fromVersion, long tracesAt, long proximityAt) {
+			A1016_02.LOGGER.info("[a1016] director: world rules {} -> {}: stage points rolled again, traces at {}, proximity at {} (world play)",
+					fromVersion, WorldMemory.RULES_VERSION, playTime(tracesAt), playTime(proximityAt));
 		}
 
 		static String playTime(long ticks) {

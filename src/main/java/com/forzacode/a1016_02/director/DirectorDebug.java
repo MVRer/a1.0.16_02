@@ -3,9 +3,11 @@ package com.forzacode.a1016_02.director;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
+import java.util.Optional;
 import java.util.StringJoiner;
 import java.util.UUID;
 
+import com.forzacode.a1016_02.core.FogSpell;
 import com.forzacode.a1016_02.core.HerobrineState;
 import com.forzacode.a1016_02.core.Services;
 import com.forzacode.a1016_02.core.Stage;
@@ -53,7 +55,22 @@ final class DirectorDebug {
 						dur(rules, rules.majorGap), dur(rules, rules.majorEvery.min()), dur(rules, rules.majorEvery.max())));
 		lines.add("director: once per world fired " + (w.signaturesFired.isEmpty() ? "-" : String.join(", ", w.signaturesFired))
 				+ (w.lastWarpSummary.isEmpty() ? "" : " | last timewarp " + w.lastWarpSummary));
+		lines.add("director: fog weather " + fogLine(state.effects().fogSpell(), server.overworld().getDefaultClockTime(), rules));
 		return lines;
+	}
+
+	/** What the fog weather does to the director at this overworld clock (D-071): the spell on, if any, and its boost. */
+	static String fogLine(Optional<FogSpell> stored, long clock, DirectorRules rules) {
+		Optional<FogSpell> on = DirectorImpl.fogSpellOn(stored, clock, false);
+		if (on.isEmpty()) {
+			return "clear, no boost";
+		}
+		FogSpell spell = on.get();
+		String until = String.format(Locale.ROOT, "until day %d %05d", Math.floorDiv(spell.untilClock(), DirectorBrain.DAY_TICKS),
+				Math.floorMod(spell.untilClock(), DirectorBrain.DAY_TICKS));
+		return spell.quiet() ? "a quiet spell " + until + ", no boost"
+				: String.format(Locale.ROOT, "a fog spell %s: ambient and minor odds x%.1f, sightings x%.1f, a major due within %s may come now", until,
+						rules.fogWeatherOddsFactor, rules.fogWeatherSightingWeight, dur(rules, rules.fogWeatherMajorPull));
 	}
 
 	/** One player's pacing on one line: tension, quiet, pity, session, held cards, the gate now, what is next, counts. */

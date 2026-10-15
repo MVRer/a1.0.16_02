@@ -7,10 +7,12 @@ import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 
 import com.forzacode.a1016_02.core.CardTag;
 import com.forzacode.a1016_02.core.FireResult;
+import com.forzacode.a1016_02.core.FogSpell;
 import com.forzacode.a1016_02.core.Signature;
 import com.forzacode.a1016_02.core.Stage;
 import com.forzacode.a1016_02.core.Tier;
@@ -29,9 +31,15 @@ import net.minecraft.util.RandomSource;
  * Everyone who shares that moment ({@link Env#sharers()}, taken at fire time) counts it as felt: it goes into their
  * gaps, hard limits, major schedule, no-repeat cycle and tension, never as their own draw. So that nobody feels more
  * than their own rules allow, a card only fires when every sharer could have had it on their own right now (their
- * gates open, and they have not seen it this cycle); otherwise it waits, as for a moment that does not fit. And so
- * that a group is not busier than one player, the ambient and minor odds are split between everyone sharing: each
- * rolls its share of one solo rate.
+ * gates open, and they have not seen it this cycle); otherwise it waits, as for a moment that does not fit. A group
+ * sharing a moment rolls {@code groupRateFactor} (1.5) solo ambient and minor rates between them, each its share
+ * (D-074): together is shared atmosphere, never a multiple of it. A {@code PERSONAL} card (one player alone) is never
+ * drawn beside a sharer, and one held from before goes back the moment a sharer is close.
+ *
+ * <p>Fog weather (D-071): while a fog spell that is not quiet is on for the player ({@link Env#fogSpell}), the
+ * ambient and minor odds are {@code fogWeatherOddsFactor} times higher, SIGHTING cards weigh
+ * {@code fogWeatherSightingWeight} times more, and a major slot due within {@code fogWeatherMajorPull} may come now.
+ * Every gate holds as ever.
  *
  * <p>Rules (DESIGN.md "The director", 4b; ARCHITECTURE "Director"):
  * <ul>
@@ -47,11 +55,15 @@ import net.minecraft.util.RandomSource;
  * today, a skip roll) hold the reshuffle back, up to {@code deckStall} of in-game time. Signature cards never come
  * back, and fire at most once per world whoever gets them.</li>
  * <li>A drawn card is held until its context fits; {@code NO_SPOT} and {@code SKIPPED} keep it held. A card held
- * too long goes back into its deck.</li>
+ * too long ({@code holdGiveUp}) goes back into its deck, and an ambient or minor card whose context has not fit for
+ * {@code heldUnfitGiveBack} (5 minutes) goes back sooner, so a card for a moment far off never freezes its tier; the
+ * next draw passes a given-back card over if it can.</li>
  * <li>Gates: the silence flag ({@link DirectorFlags}: nothing at all fires), join grace, forced quiet, empty
- * sessions, a small gap between any two fires, the minor and major gaps (never shortened by the pace multiplier flag),
- * no major (or signature) in the player's first {@code noMajorBeforeDay} in-game days, no ACCIDENT card before
- * {@code firstAccident} of their own play, at most {@code aloneMaxAmbient} ambients in Alone, sightings per day.
+ * sessions (rolled from {@code emptySessionMinStage} on, Proximity), a small gap between any two fires, at most
+ * {@code firstHourMaxFires} (5) moments in the player's own first hour (D-070), the minor and major gaps (never
+ * shortened by the pace multiplier flag), no major (or signature) in the player's first {@code noMajorBeforeDay}
+ * in-game days, no ACCIDENT card before {@code firstAccident} of their own play, at most {@code aloneMaxAmbient}
+ * ambients in Alone, sightings per day.
  * Every card waits for its own earliest stage and its tier's first stage ({@code minorMinStage},
  * {@code majorMinStage}, {@code signatureMinStage}).</li>
  * <li>Rates: ambient and minor tiers roll per director tick at their per-hour rate, raised by the pity bonus and
@@ -99,6 +111,16 @@ public final class DirectorBrain {
 		default List<Sharer> sharers() {
 			return List.of();
 		}
+
+		/**
+		 * The fog spell on for this player right now (D-071), or empty: the world's spell while the clock is inside it
+		 * and the player's dimension shows weather (none in fixed-time dimensions, as {@code FogLimits.of} reads it).
+		 * The live director reads the stored spell on the level's clock; dry runs roll one per in-game day with
+		 * {@code FogWeatherRules}. A quiet spell gives no boost. None by default (no weather).
+		 */
+		default Optional<FogSpell> fogSpell() {
+			return Optional.empty();
+		}
 	}
 
 	/**
@@ -143,6 +165,10 @@ public final class DirectorBrain {
 		}
 
 		default void quietStarted(Clock clock, int days, long untilDayTicks, double tensionBefore) {
+		}
+
+		/** A world saved under older rules rolled its stage points again (D-075), at these world play ticks. */
+		default void rulesUpgraded(Clock clock, int fromVersion, long tracesAt, long proximityAt) {
 		}
 	}
 
@@ -200,18 +226,21 @@ public final class DirectorBrain {
 	// --- sessions (per player, D-062.4) ---
 
 	/**
-	 * This player started taking part: a new session for them only. From Traces on, the dice decide whether their
-	 * whole session stays empty, except that a player who starts next to someone already in a session takes that
-	 * session's mood (empty until the same moment, or not empty): otherwise each friend's own empty sessions would
-	 * add up and a group would be silent far more often than one player. Nobody else's session changes.
+	 * This player started taking part: a new session for them only. From {@code emptySessionMinStage} on (Proximity,
+	 * D-070), the dice decide whether their whole session stays empty, except that a player who starts next to someone
+	 * already in a session takes that session's mood (empty until the same moment, or not empty): otherwise each
+	 * friend's own empty sessions would add up and a group would be silent far more often than one player. Nobody
+	 * else's session changes. A pacing saved under older rules (D-075) rolls its major slot again here, never later than
+	 * it was; the session minor rate is rolled at every session.
 	 */
 	public void onJoin(WorldMemory w, PacingMemory m, Clock c, Env env, RandomSource random, Recorder rec) {
+		upgradePacing(m, c, random);
 		advanceTime(w, m, c, env, random, rec);
 		Stage stage = env.stage();
 		m.sessionStart = c.playTicks();
 		m.sessionCount++;
 		m.sessionMinorRate = rules.minorsPerHourMin + random.nextDouble() * (rules.minorsPerHourMax - rules.minorsPerHourMin);
-		boolean rolled = stage.atLeast(Stage.TRACES) && random.nextDouble() < rules.emptySessionChance;
+		boolean rolled = stage.atLeast(rules.emptySessionMinStage) && random.nextDouble() < rules.emptySessionChance;
 		Sharer company = null;
 		for (Sharer sharer : env.sharers()) {
 			if (sharer.memory().sessionStart >= 0 && sharer.memory().sessionStart <= sharer.clock().playTicks()) {
@@ -234,6 +263,20 @@ public final class DirectorBrain {
 		m.lowRenderAccum = 0;
 		m.lowRenderCounted = false;
 		rec.sessionStarted(c, stage, m.sessionEmpty, m.sessionEmptyUntil);
+	}
+
+	/**
+	 * D-075: a pacing rolled under older rules (v1.1's major every 2 to 4 hours) takes the current ones at its next
+	 * session: a major slot still ahead is rolled again from now, and kept if the old one comes sooner. Once.
+	 */
+	private void upgradePacing(PacingMemory m, Clock c, RandomSource random) {
+		if (m.rulesVersion >= WorldMemory.RULES_VERSION) {
+			return;
+		}
+		if (m.nextMajorDue > c.playTicks()) {
+			m.nextMajorDue = Math.min(m.nextMajorDue, c.playTicks() + rules.majorEvery.pick(random));
+		}
+		m.rulesVersion = WorldMemory.RULES_VERSION;
 	}
 
 	/** This player stopped taking part: their session ends, nobody else's. */
@@ -259,6 +302,7 @@ public final class DirectorBrain {
 	 */
 	public void advanceWorld(WorldMemory w, Clock c, Env env, RandomSource random, Recorder rec) {
 		String tempo = rules.profile.tempo().name();
+		upgradeWorld(w, c, env, random, rec);
 		if (w.tracesAt < 0 || w.proximityAt < 0 || !tempo.equals(w.rolledTempo)) {
 			w.tracesAt = rules.tracesStart.pick(random);
 			w.proximityAt = Math.max(w.tracesAt + 1, rules.proximityStart.pick(random));
@@ -280,6 +324,35 @@ public final class DirectorBrain {
 		if (stage == Stage.TRACES && w.stageClock >= w.proximityAt) {
 			changeStage(c, env, stage, Stage.PROXIMITY, rec);
 		}
+	}
+
+	/**
+	 * D-075: a world whose stage points were rolled under older rules (v1.1: Traces at 1 to 3 hours, Proximity at 5 to
+	 * 6) rolls them again in the current windows, once, before its time moves. A stage already reached stays reached
+	 * (the stage never moves back), and none is skipped: a world still in Alone whose new Traces point has already gone
+	 * by starts Traces now, with Proximity its rolled stretch later. A world that never rolled them rolls them as any
+	 * new world does.
+	 */
+	private void upgradeWorld(WorldMemory w, Clock c, Env env, RandomSource random, Recorder rec) {
+		if (w.rulesVersion >= WorldMemory.RULES_VERSION) {
+			return;
+		}
+		int from = w.rulesVersion;
+		w.rulesVersion = WorldMemory.RULES_VERSION;
+		if (w.tracesAt < 0 && w.proximityAt < 0) {
+			return;
+		}
+		long traces = rules.tracesStart.pick(random);
+		long proximity = Math.max(traces + 1, rules.proximityStart.pick(random));
+		if (env.stage() == Stage.ALONE && w.stageClock >= traces) {
+			long now = (long) Math.floor(w.stageClock);
+			proximity = now + (proximity - traces);
+			traces = now;
+		}
+		w.tracesAt = traces;
+		w.proximityAt = proximity;
+		w.rolledTempo = rules.profile.tempo().name();
+		rec.rulesUpgraded(c, from, traces, proximity);
 	}
 
 	/** This player's time passes (their own clock): tension decay outside quiet, and their first major slot. */
@@ -349,25 +422,21 @@ public final class DirectorBrain {
 		releaseStaleHolds(w, m, c, stage, rec);
 		List<Sharer> sharers = env.sharers();
 		shareMood(m, c, sharers, random, rec);
+		releaseForSharers(m, c, sharers, rec);
 		String blocked = globalBlock(m, c);
 		if (blocked != null) {
 			return "waiting: " + blocked;
 		}
+		boolean fog = boosts(env.fogSpell());
 		List<String> notes = new ArrayList<>();
 		for (Tier tier : PRIORITY) {
 			CardInfo card = card(m.held.get(tier));
-			if (card != null && !sharers.isEmpty() && anyHad(card, sharers)) {
-				// Held from before a friend who already had it came close: it can never reach them while they stay, so it
-				// goes back now (not after holdGiveUp) and a card new to everyone here may be drawn instead.
-				giveUp(m, c, tier, card.id(), "someone close by already had it", rec);
-				card = null;
-			}
 			if (card == null) {
-				if (tierBlock(tier, m, c, stage) != null || !due(tier, m, c, stage, random, sharers.size())) {
+				if (tierBlock(tier, m, c, stage) != null || !due(tier, m, c, stage, random, sharers.size(), fog)) {
 					continue;
 				}
 				Set<String> passedOver = new HashSet<>();
-				card = draw(tier, w, m, c, stage, sharers, random, rec, passedOver);
+				card = draw(tier, w, m, c, stage, sharers, random, rec, passedOver, fog);
 				if (card == null) {
 					if (tier == Tier.MAJOR && !passedOver.isEmpty()) {
 						// A stage weight passed the slot's card over: the slot is spent, as a probabilistic tier's
@@ -391,7 +460,14 @@ public final class DirectorBrain {
 				continue;
 			}
 			if (!env.contextFits(card)) {
-				notes.add(card.id() + " held: the moment does not fit");
+				if ((tier == Tier.AMBIENT || tier == Tier.MINOR) && c.playTicks() - m.heldSince.getOrDefault(tier, c.playTicks()) >= rules.heldUnfitGiveBack) {
+					// Its moment may be far off (a card only for a tunnel, drawn on the surface): it must not freeze the
+					// tier for the whole hold. Majors and signatures keep theirs.
+					giveUp(m, c, tier, card.id(), "its moment did not come", rec);
+					notes.add(card.id() + " goes back: its moment did not come");
+				} else {
+					notes.add(card.id() + " held: the moment does not fit");
+				}
 				continue;
 			}
 			boolean fake = card.hasFake() && random.nextDouble() < rules.fakeChance;
@@ -403,6 +479,34 @@ public final class DirectorBrain {
 			notes.add(card.id() + " " + result + ", kept for later");
 		}
 		return notes.isEmpty() ? "nothing due" : String.join("; ", notes);
+	}
+
+	/** True for a fog spell that is on and not quiet (D-071): the director's odds go up. */
+	public static boolean boosts(Optional<FogSpell> spellOn) {
+		return spellOn.isPresent() && !spellOn.get().quiet();
+	}
+
+	/**
+	 * With someone close by, the cards held for this player that can never reach that moment go back into their decks
+	 * at once, not after {@code holdGiveUp}, so they never block a tier while friends stand together and a card that
+	 * suits everyone here may be drawn instead: a card one of them already had (D-069), and a {@code PERSONAL} card, for
+	 * one player alone (D-074). Each is passed over by the next draw when it can be ({@code lastGivenUp}).
+	 */
+	private void releaseForSharers(PacingMemory m, Clock c, List<Sharer> sharers, Recorder rec) {
+		if (sharers.isEmpty()) {
+			return;
+		}
+		for (Tier tier : PRIORITY) {
+			CardInfo card = card(m.held.get(tier));
+			if (card == null) {
+				continue;
+			}
+			if (card.has(CardTag.PERSONAL)) {
+				giveUp(m, c, tier, card.id(), "someone came close (a card for one player alone)", rec);
+			} else if (anyHad(card, sharers)) {
+				giveUp(m, c, tier, card.id(), "someone close by already had it", rec);
+			}
+		}
 	}
 
 	/**
@@ -438,7 +542,15 @@ public final class DirectorBrain {
 		if (now - m.lastFireAny < rules.minAnyGap) {
 			return "just fired";
 		}
+		if (firstHourFull(m, c)) {
+			return "first hour full";
+		}
 		return null;
+	}
+
+	/** True while the player's own first hour of play already holds {@code firstHourMaxFires} moments (D-070). */
+	public boolean firstHourFull(PacingMemory m, Clock c) {
+		return rules.firstHourMaxFires >= 0 && c.playTicks() < rules.hourTicks && m.firstHourFires >= rules.firstHourMaxFires;
 	}
 
 	/** Reason this tier may not fire for this player now, or null. */
@@ -600,14 +712,26 @@ public final class DirectorBrain {
 	}
 
 	/**
-	 * @param sharing how many others share this player's moments right now: together, the group rolls one solo rate
-	 *                between them (each of the {@code sharing + 1} a share of it, after the same refractory wait), so being
-	 *                together never multiplies the ambient and minor odds (D-060.3)
+	 * @param sharing how many others share this player's moments right now: together, the group rolls
+	 *                {@code groupRateFactor} solo rates between them (D-074), each of the {@code sharing + 1} a share of
+	 *                it. The factor sets the group's rate, so the refractory wait after a fire is the group rate's (a
+	 *                fire anyone felt starts it for everyone); then the odds are split. Being together never multiplies
+	 *                the ambient and minor odds by the number of friends (D-060.3); alone the solo rate is rolled
+	 *                exactly as ever
+	 * @param fog     a fog spell that is not quiet is on (D-071): the ambient and minor rate times
+	 *                {@code fogWeatherOddsFactor}, the refractory wait included, so the mean rises by the whole factor;
+	 *                and a major slot due within {@code fogWeatherMajorPull} is due now
 	 */
-	private boolean due(Tier tier, PacingMemory m, Clock c, Stage stage, RandomSource random, int sharing) {
+	private boolean due(Tier tier, PacingMemory m, Clock c, Stage stage, RandomSource random, int sharing, boolean fog) {
 		return switch (tier) {
 			case AMBIENT, MINOR -> {
 				double perHour = rate(tier, m, stage);
+				if (fog) {
+					perHour *= rules.fogWeatherOddsFactor;
+				}
+				if (sharing > 0) {
+					perHour *= rules.groupRateFactor;
+				}
 				if (perHour <= 0) {
 					yield false;
 				}
@@ -619,11 +743,13 @@ public final class DirectorBrain {
 					}
 					perHour /= 1 - rules.rateRefractory;
 				}
-				perHour /= 1 + Math.max(0, sharing);
+				if (sharing > 0) {
+					perHour /= 1 + sharing;
+				}
 				double perTick = perHour * (1 + pity(m, c)) * rules.tickInterval / rules.hourTicks;
 				yield random.nextDouble() < 1 - Math.exp(-perTick);
 			}
-			case MAJOR -> m.nextMajorDue >= 0 && c.playTicks() >= m.nextMajorDue;
+			case MAJOR -> m.nextMajorDue >= 0 && (c.playTicks() >= m.nextMajorDue || fog && m.nextMajorDue - c.playTicks() <= rules.fogWeatherMajorPull);
 			case SIGNATURE -> true;
 		};
 	}
@@ -656,17 +782,25 @@ public final class DirectorBrain {
 	 * new to both while together), the deck refills now instead of deadlocking while they stay together, as long as
 	 * the refill gives back a card none of them had (otherwise the cycle is kept); when some are only gated, it waits
 	 * for them as alone. A deck whose own undrawn cards are all gone refills by the solo rule, so a pair's decks turn
-	 * over together. Alone, the draw is exactly the solo one.
+	 * over together. A {@code PERSONAL} card is out of the moment while anyone is close (D-074), as a stage rule would
+	 * rule it out: never drawn beside a friend, and never holding the deck back (a deck whose only undrawn cards are
+	 * PERSONAL has run out for the moment and refills by the solo rule). Alone, the draw is exactly the solo one.
 	 *
 	 * @param skipped filled with the cards a stage weight passed over in this draw
+	 * @param fog     a fog spell that is not quiet is on: SIGHTING cards weigh more ({@link #stageWeight})
 	 */
 	private CardInfo draw(Tier tier, WorldMemory w, PacingMemory m, Clock c, Stage stage, List<Sharer> sharers, RandomSource random, Recorder rec,
-			Set<String> skipped) {
+			Set<String> skipped, boolean fog) {
 		boolean refilled = false;
 		String givenUp = m.lastGivenUp.get(tier);
 		while (true) {
 			List<CardInfo> eligible = candidates(tier, w, m, c, stage);
 			eligible.removeIf(card -> skipped.contains(card.id()));
+			if (!sharers.isEmpty()) {
+				// A card for one player alone is out of a shared moment, as a stage rule would rule it out (D-074): a deck
+				// whose only undrawn cards are such turns over by the solo rule, so a pair never deadlocks on them.
+				eligible.removeIf(card -> card.has(CardTag.PERSONAL));
+			}
 			boolean onlyTheirs = false;
 			if (!eligible.isEmpty() && !sharers.isEmpty()) {
 				eligible.removeIf(card -> anyHad(card, sharers));
@@ -698,11 +832,11 @@ public final class DirectorBrain {
 			if (givenUp != null && eligible.size() > 1) {
 				eligible.removeIf(card -> card.id().equals(givenUp));
 			}
-			CardInfo picked = weightedPick(eligible, stage, random);
+			CardInfo picked = weightedPick(eligible, stage, random, fog);
 			if (picked == null) {
 				return null;
 			}
-			double tagWeight = rules.tagWeight(stage, picked);
+			double tagWeight = stageWeight(stage, picked, fog);
 			if (tagWeight < 1 && random.nextDouble() >= tagWeight) {
 				skipped.add(picked.id());
 				continue;
@@ -729,30 +863,51 @@ public final class DirectorBrain {
 		String last = m.lastFired.get(tier);
 		for (String id : m.cycleFired.get(tier)) {
 			CardInfo card = card(id);
-			if (card != null && !id.equals(last) && cardBlock(card, w, m, c, stage) == null && !anyHad(card, sharers)) {
+			if (card != null && !id.equals(last) && cardBlock(card, w, m, c, stage) == null && !spentForTheMoment(card, sharers)) {
 				return true;
 			}
 		}
 		return false;
 	}
 
-	/** {@link #runOut(Tier, WorldMemory, PacingMemory, Stage)} beside friends: a card one of them had is spent for the moment too. */
+	/**
+	 * {@link #runOut(Tier, WorldMemory, PacingMemory, Stage)} beside friends: a card one of them had, and a
+	 * {@code PERSONAL} card, are spent for the moment too.
+	 */
 	private boolean runOut(Tier tier, WorldMemory w, PacingMemory m, Stage stage, List<Sharer> sharers) {
 		Set<String> cycle = m.cycleFired.get(tier);
 		for (CardInfo card : byTier.get(tier)) {
-			if (!cycle.contains(card.id()) && staticBlock(card, w, stage) == null && !anyHad(card, sharers)) {
+			if (!cycle.contains(card.id()) && staticBlock(card, w, stage) == null && !spentForTheMoment(card, sharers)) {
 				return false;
 			}
 		}
 		return true;
 	}
 
-	private CardInfo weightedPick(List<CardInfo> eligible, Stage stage, RandomSource random) {
+	/**
+	 * With friends close by, a card that cannot be this moment's: one of them already had it (D-060.3), or it is a
+	 * {@code PERSONAL} card, for one player alone (D-074). Never true alone.
+	 */
+	private static boolean spentForTheMoment(CardInfo card, List<Sharer> sharers) {
+		return !sharers.isEmpty() && (card.has(CardTag.PERSONAL) || anyHad(card, sharers));
+	}
+
+	/**
+	 * A card's stage weight right now: the product of its tags' weights for the stage, and for a SIGHTING card times
+	 * {@code fogWeatherSightingWeight} while a fog spell that is not quiet is on (D-071). It weighs the pick and, below
+	 * 1, is the chance the drawn card is kept. A weight of 0 stays 0: the fog never brings a card into a stage.
+	 */
+	public double stageWeight(Stage stage, CardInfo card, boolean fog) {
+		double weight = rules.tagWeight(stage, card);
+		return fog && card.has(CardTag.SIGHTING) ? weight * rules.fogWeatherSightingWeight : weight;
+	}
+
+	private CardInfo weightedPick(List<CardInfo> eligible, Stage stage, RandomSource random, boolean fog) {
 		double total = 0;
 		double[] weights = new double[eligible.size()];
 		for (int i = 0; i < weights.length; i++) {
 			CardInfo card = eligible.get(i);
-			weights[i] = Math.max(0, rules.habitWeight(card) * rules.tagWeight(stage, card));
+			weights[i] = Math.max(0, rules.habitWeight(card) * stageWeight(stage, card, fog));
 			total += weights[i];
 		}
 		if (total <= 0) {
@@ -909,6 +1064,9 @@ public final class DirectorBrain {
 			if (tier == Tier.AMBIENT && stage == Stage.ALONE) {
 				m.aloneAmbientCount++;
 			}
+			if (now < rules.hourTicks) {
+				m.firstHourFires++;
+			}
 			m.totalFires++;
 			if (card.hasFake()) {
 				m.fakeableFires++;
@@ -966,6 +1124,9 @@ public final class DirectorBrain {
 		}
 		if (tier == Tier.AMBIENT && stage == Stage.ALONE) {
 			m.aloneAmbientCount++;
+		}
+		if (now < rules.hourTicks) {
+			m.firstHourFires++;
 		}
 		env.addTension(rules.tensionFor(tier) * (fake ? rules.fakeTensionFactor : 1), "felt " + card.id());
 		rec.felt(c, card, fake, forced, stage, env.tension());

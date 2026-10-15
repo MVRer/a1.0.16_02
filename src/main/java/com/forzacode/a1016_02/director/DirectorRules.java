@@ -28,7 +28,11 @@ public final class DirectorRules {
 	public long minorGap;
 	public long majorGap;
 	public long minAnyGap;
+	/** Moments a player's own first {@link #hourTicks} of play may hold (D-070); negative for no cap. */
+	public int firstHourMaxFires;
 	public long holdGiveUp;
+	/** A held ambient or minor card whose moment does not fit goes back after this many play ticks. */
+	public long heldUnfitGiveBack;
 	public int noMajorBeforeDay;
 	public long firstAccident;
 	public int sightingsPerDayMax;
@@ -60,6 +64,17 @@ public final class DirectorRules {
 	public double emptySessionChance;
 	public long emptySessionMin;
 	public long emptySessionMax;
+	/** First stage a session may be rolled empty in (D-070: Proximity). */
+	public Stage emptySessionMinStage;
+
+	// friends (D-074): the ambient and minor rate a group sharing a moment rolls between them, in solo rates
+	public double groupRateFactor;
+
+	// fog weather (D-071): the boost while a fog spell that is not quiet is on
+	public double fogWeatherOddsFactor;
+	public double fogWeatherSightingWeight;
+	/** A major slot due within this many play ticks may come now. */
+	public long fogWeatherMajorPull;
 
 	// fakes, tension, quiet, pity
 	public double fakeChance;
@@ -113,7 +128,9 @@ public final class DirectorRules {
 		rules.minorGap = pacing.minorGapTicks();
 		rules.majorGap = pacing.majorGapTicks();
 		rules.minAnyGap = ModConfig.realTicks(config.minAnyGapMinutes * 60);
+		rules.firstHourMaxFires = config.firstHourMaxFires;
 		rules.holdGiveUp = Math.max(1, ModConfig.realTicks(config.holdGiveUpMinutes * 60));
+		rules.heldUnfitGiveBack = Math.max(1, Math.min(rules.holdGiveUp, ModConfig.realTicks(config.heldUnfitGiveBackMinutes * 60)));
 		rules.noMajorBeforeDay = pacing.noMajorBeforeDay;
 		rules.firstAccident = pacing.firstAccidentTicks(profile.tempo());
 		rules.sightingsPerDayMax = pacing.sightingsPerDayMax;
@@ -142,6 +159,12 @@ public final class DirectorRules {
 		rules.emptySessionChance = pacing.emptySessionChance;
 		rules.emptySessionMin = pacing.emptySessionTicks();
 		rules.emptySessionMax = Math.max(rules.emptySessionMin, ModConfig.realTicks(config.emptySessionMaxMinutes * 60));
+		rules.emptySessionMinStage = stage(config.emptySessionMinStage, Stage.PROXIMITY);
+
+		rules.groupRateFactor = Math.max(0, config.groupRateFactor);
+		rules.fogWeatherOddsFactor = Math.max(0, config.fogWeatherOddsFactor);
+		rules.fogWeatherSightingWeight = Math.max(0, config.fogWeatherSightingWeight);
+		rules.fogWeatherMajorPull = Math.max(0, ModConfig.realTicks(Math.max(0, config.fogWeatherMajorPullMinutes) * 60));
 
 		rules.fakeChance = pacing.fakeChance;
 		rules.fakeTensionFactor = config.fakeTensionFactor;

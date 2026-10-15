@@ -12,16 +12,29 @@ import com.forzacode.a1016_02.core.ModConfig;
  * timings (gaps, stage windows, tension, pity, quiet) live in {@code Pacing}; this section only holds what
  * DESIGN.md leaves to the director. Real-time values are in natural units and go through
  * {@link ModConfig#realTicks(double)}.
+ *
+ * <p>Versioned (D-075): {@link #upgrade} brings a section written by an older version up one step at a time, taking
+ * the new default only where a value still equals the old one. Version 1 is v1.2's pacing (D-070, D-071, D-074).
  */
-public final class DirectorConfig {
+public final class DirectorConfig implements ModConfig.Versioned {
+	/** The section's current version: 1 since v1.2. Raise it, and add a step to {@link #upgrade}, for every later default change. */
+	public static final int VERSION = 1;
+
+	/** The version this section was last written at; missing in a file (0) is v1.1 or older. Keep the field's default at 0. */
+	public int version = 0;
+
 	// --- rates (events per real hour of play, before pity) ---
-	/** Ambient odds in Alone. Pacing caps Alone at {@code aloneMaxAmbient}; "maybe nothing at all". */
-	public double aloneAmbientPerHour = 0.3;
-	public double proximityAmbientPerHour = 2.0;
+	/**
+	 * Ambient odds in Alone. Pacing caps Alone at {@code aloneMaxAmbient}: something small and deniable early in the
+	 * first hour (D-070). D-070 named 3; the dry runs need 4.5 for the first fire by 30 minutes in 3 runs of 4 (at 3, 7
+	 * in 10; the median first fire is 15 minutes at 4.5, 20 at 3).
+	 */
+	public double aloneAmbientPerHour = 4.5;
+	public double proximityAmbientPerHour = 2.5;
 	/** Telling and Removal. */
 	public double tellingAmbientPerHour = 1.5;
-	/** Traces: "a scar or two found while exploring". Proximity and later use Pacing's 1 to 2 per hour. */
-	public double tracesMinorsPerHour = 0.25;
+	/** Traces: "a scar or two found while exploring", about one an hour. Proximity and later use Pacing's 1.5 to 2.5 per hour. */
+	public double tracesMinorsPerHour = 1.0;
 	/**
 	 * Ambient and minor fires are spread out: after one, the next waits this fraction of the mean interval
 	 * (1 / rate), and the odds afterwards rise to keep the mean. 0 = plain random clumping.
@@ -32,12 +45,45 @@ public final class DirectorConfig {
 	public String majorMinStage = "PROXIMITY";
 	/** First stage that draws signature cards; each card's own earliest stage still applies on top. */
 	public String signatureMinStage = "TRACES";
+	/** First stage whose sessions may be rolled empty ({@code Pacing.emptySessionChance}); before it every session is lively (D-070). */
+	public String emptySessionMinStage = "PROXIMITY";
+
+	// --- friends (D-074) ---
+	/**
+	 * Players sharing a moment roll this many times one player's ambient and minor rate between them (each a share of
+	 * it); apart, each keeps the solo pace. 1 is v1.1's exactly one solo rate.
+	 */
+	public double groupRateFactor = 1.5;
+
+	// --- fog weather (D-071): during a fog spell that is not quiet ---
+	/**
+	 * Ambient and minor odds are multiplied by this. D-071 named 2.5; the gaps every fire keeps (15 minutes between
+	 * minors, 5 between any two) take most of it back, so the dry runs need 3.5 for twice the fires per hour of a clear
+	 * sky (at 2.5, about 1.9 times).
+	 */
+	public double fogWeatherOddsFactor = 3.5;
+	/** The stage weight of SIGHTING cards is multiplied by this (as a pick weight, and as the keep chance while below 1). */
+	public double fogWeatherSightingWeight = 3;
+	/** A major slot due within this many real minutes may come now. */
+	public double fogWeatherMajorPullMinutes = 60;
 
 	// --- gates ---
 	/** No two fires of any tier closer than this (real minutes). */
 	public double minAnyGapMinutes = 5;
+	/**
+	 * A player's own first hour of play holds at most this many moments, theirs and felt ones (D-070: two or three,
+	 * never more than five). Negative: no cap.
+	 */
+	public int firstHourMaxFires = 5;
 	/** A drawn card whose moment never comes goes back into its deck after this much play (real minutes). */
 	public double holdGiveUpMinutes = 60;
+	/**
+	 * A held ambient or minor card whose moment does not fit (its context, as a card only underground on the surface)
+	 * goes back into its deck after this much play (real minutes), so it never freezes its tier for the whole
+	 * {@link #holdGiveUpMinutes}; the next draw passes it over if anything else can be drawn. Majors and signatures keep
+	 * the long hold.
+	 */
+	public double heldUnfitGiveBackMinutes = 5;
 	/** An empty session stays empty up to this long (real minutes); a marathon session is not empty forever. */
 	public double emptySessionMaxMinutes = 180;
 
@@ -117,14 +163,48 @@ public final class DirectorConfig {
 		return ModConfig.section("director", DirectorConfig.class, DirectorConfig::new);
 	}
 
+	/**
+	 * Step 0 to 1 (v1.2, D-070): ambients in Alone 4.5 an hour (was 0.3), in Proximity 2.5 (2), minors in Traces 1 an
+	 * hour (0.25), Alone's tag weights SIGHTING 0.3, SCAR 0.6 and DIG 0.6 (0.15, 0.3, 0.3), Traces' SIGHTING 0.5
+	 * (0.35); each only where it still equals v1.1's default. The fields new in v1.2 (the first hour's cap, the short
+	 * give-back of unfit ambient and minor holds, empty sessions from Proximity, the group factor, the fog weather boost)
+	 * come with their defaults when missing.
+	 */
+	@Override
+	public boolean upgrade() {
+		if (version >= VERSION) {
+			return false;
+		}
+		DirectorConfig d = new DirectorConfig();
+		if (version < 1) {
+			aloneAmbientPerHour = ModConfig.Upgrades.keepOrNew(aloneAmbientPerHour, 0.3, d.aloneAmbientPerHour);
+			proximityAmbientPerHour = ModConfig.Upgrades.keepOrNew(proximityAmbientPerHour, 2.0, d.proximityAmbientPerHour);
+			tracesMinorsPerHour = ModConfig.Upgrades.keepOrNew(tracesMinorsPerHour, 0.25, d.tracesMinorsPerHour);
+			stageTagWeights = ModConfig.Upgrades.tagWeights(stageTagWeights, v11StageTagWeights(), d.stageTagWeights);
+		}
+		version = VERSION;
+		return true;
+	}
+
 	private static Map<String, Map<String, Double>> defaultStageTagWeights() {
 		Map<String, Map<String, Double>> map = new LinkedHashMap<>();
-		// Alone: looks vanilla. A tiny chance per day of one far sighting, no accidents.
-		map.put("ALONE", weights("SIGHTING", 0.15, "ACCIDENT", 0.0, "SCAR", 0.3, "TEXT", 0.0, "DIG", 0.3));
-		// Traces: rare, distant sightings.
-		map.put("TRACES", weights("SIGHTING", 0.35, "TEXT", 0.3));
+		// Alone: looks vanilla, almost. Now and then one far sighting, no accidents (D-070).
+		map.put("ALONE", weights("SIGHTING", 0.3, "ACCIDENT", 0.0, "SCAR", 0.6, "TEXT", 0.0, "DIG", 0.6));
+		// Traces: distant sightings.
+		map.put("TRACES", weights("SIGHTING", 0.5, "TEXT", 0.3));
 		map.put("PROXIMITY", weights());
 		// Telling: sightings drop off (which is worse), faster removals, accidents closer to home.
+		map.put("TELLING", weights("SIGHTING", 0.03, "TEXT", 1.5, "SCAR", 1.3, "ACCIDENT", 1.3));
+		map.put("REMOVAL", weights("SIGHTING", 0.03, "TEXT", 1.5, "SCAR", 1.3, "ACCIDENT", 1.3));
+		return map;
+	}
+
+	/** v1.1's {@link #stageTagWeights} (section version 0), for the upgrade step. */
+	static Map<String, Map<String, Double>> v11StageTagWeights() {
+		Map<String, Map<String, Double>> map = new LinkedHashMap<>();
+		map.put("ALONE", weights("SIGHTING", 0.15, "ACCIDENT", 0.0, "SCAR", 0.3, "TEXT", 0.0, "DIG", 0.3));
+		map.put("TRACES", weights("SIGHTING", 0.35, "TEXT", 0.3));
+		map.put("PROXIMITY", weights());
 		map.put("TELLING", weights("SIGHTING", 0.03, "TEXT", 1.5, "SCAR", 1.3, "ACCIDENT", 1.3));
 		map.put("REMOVAL", weights("SIGHTING", 0.03, "TEXT", 1.5, "SCAR", 1.3, "ACCIDENT", 1.3));
 		return map;
