@@ -22,9 +22,9 @@ import net.minecraft.world.phys.Vec3;
  * Two-player game tests of the dig workstream (D-058 to D-062): one network per distinct base, ENTERED_TUNNEL once per
  * occasion, a torch follower that stops when its player leaves, and saves from before multiplayer. Each test has its
  * own players, state and {@link DigData} ({@link Crew}); none of their players joins the server. {@link DigGameTests}
- * extends this through {@link NetworkGameTests}.
+ * extends this through {@link NetworkGameTests}; this extends the tunnel ladder's tests ({@link LadderGameTests}).
  */
-public class DigMultiplayerTests {
+public class DigMultiplayerTests extends LadderGameTests {
 	/**
 	 * One network per distinct base: a friend's base within {@code networkShareDistance} shares the founder's network
 	 * (and becomes one of its owners), a far base gets its own after its nights; never one under a base its player

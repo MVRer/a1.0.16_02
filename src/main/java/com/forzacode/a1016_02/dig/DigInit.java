@@ -24,6 +24,10 @@ public final class DigInit {
 		Director.register(new SoundCards.UnderYouSound());
 		Director.register(new SoundCards.UnderYouFootstep());
 		Director.register(new UnderYouStackCard());
+		// Someone behind you, the tunnel ladder (D-072).
+		Director.register(new LadderCards.StepsBehindOnce());
+		Director.register(new LadderCards.StepsBehindComing());
+		Director.register(new LadderCards.StepsBehindGlimpse());
 		DigCommands.register();
 		ServerTickEvents.END_SERVER_TICK.register(DigTicker.INSTANCE::tick);
 		// Sessions (D-062.4, D-062.5): a start remembers the player's base; a stop ends what ran for that player only.
