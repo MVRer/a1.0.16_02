@@ -15,6 +15,7 @@ import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.Container;
+import net.minecraft.world.InteractionHand;
 import net.minecraft.world.entity.item.ItemEntity;
 import net.minecraft.world.entity.player.Inventory;
 import net.minecraft.world.item.BlockItem;
@@ -22,6 +23,7 @@ import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.item.component.CustomData;
+import net.minecraft.world.item.context.BlockPlaceContext;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.Vec3;
@@ -44,8 +46,8 @@ public final class Marks {
 	private record Pending(GlobalPos pos, Item item, String mark, long until) {
 	}
 
-	/** A use of a marked block item: where the block may have been placed (checked next tick). */
-	private record Placing(GlobalPos[] candidates, Item item, String mark, long at) {
+	/** A use of a marked block item: where the block goes if it is placed (checked next tick). */
+	private record Placing(GlobalPos pos, Item item, String mark, long at) {
 	}
 
 	private static final List<Pending> PENDING = new ArrayList<>();
@@ -115,43 +117,47 @@ public final class Marks {
 
 	// --- placing ---
 
-	/** A player used a block item on a block: if it is marked, remember where it may land. Server side. */
+	/**
+	 * A player used a block item on a block: if it is marked, remember where it lands, decided before the use as the
+	 * game decides it: the clicked block itself only if it can be replaced (grass, snow), else the cell against the
+	 * clicked face. A block of the same kind under it, or one that only opens, is never taken for it. Server side.
+	 */
 	static void onUseBlock(ServerPlayer player, ItemStack held, BlockHitResult hit) {
 		Optional<String> mark = mark(held);
 		if (mark.isEmpty() || !(held.getItem() instanceof BlockItem)) {
 			return;
 		}
 		ServerLevel level = player.level();
-		BlockPos clicked = hit.getBlockPos();
-		GlobalPos[] candidates = {GlobalPos.of(level.dimension(), clicked.immutable()),
-				GlobalPos.of(level.dimension(), clicked.relative(hit.getDirection()).immutable())};
-		PLACING.add(new Placing(candidates, held.getItem(), mark.get(), level.getServer().getTickCount()));
+		// The hand only says which hand; where the block goes depends on the stack and the hit.
+		InteractionHand hand = player.getItemInHand(InteractionHand.OFF_HAND) == held ? InteractionHand.OFF_HAND : InteractionHand.MAIN_HAND;
+		BlockPos lands = new BlockPlaceContext(player, hand, held, hit).getClickedPos();
+		PLACING.add(new Placing(GlobalPos.of(level.dimension(), lands.immutable()), held.getItem(), mark.get(), level.getServer().getTickCount()));
 	}
 
 	/** Every tick: drops expire, and uses of marked items become tracked blocks once they are placed. */
 	static void tick(MinecraftServer server) {
 		long now = server.getTickCount();
 		PENDING.removeIf(p -> p.until() < now);
-		if (PLACING.isEmpty()) {
-			return;
+		if (!PLACING.isEmpty()) {
+			placed(server, EndingDState.get(server), now);
 		}
-		EndingDState state = EndingDState.get(server);
+	}
+
+	/** Uses of marked items from before tick {@code now} become blocks tracked in {@code state} where they were placed. */
+	static void placed(MinecraftServer server, EndingDState state, long now) {
 		for (Iterator<Placing> it = PLACING.iterator(); it.hasNext();) {
 			Placing p = it.next();
 			if (p.at() >= now) {
 				continue;
 			}
 			it.remove();
-			for (GlobalPos candidate : p.candidates()) {
-				ServerLevel level = server.getLevel(candidate.dimension());
-				if (level == null || state.trackedAt(candidate).isPresent()) {
-					continue;
-				}
-				BlockState placed = level.getBlockState(candidate.pos());
-				if (placed.getBlock().asItem() == p.item() && Services.watch().wasPlacedByPlayer(level, candidate.pos())) {
-					state.track(candidate, p.mark());
-					break;
-				}
+			ServerLevel level = server.getLevel(p.pos().dimension());
+			if (level == null || state.trackedAt(p.pos()).isPresent()) {
+				continue;
+			}
+			BlockState placed = level.getBlockState(p.pos().pos());
+			if (placed.getBlock().asItem() == p.item() && Services.watch().wasPlacedByPlayer(level, p.pos().pos())) {
+				state.track(p.pos(), p.mark());
 			}
 		}
 	}

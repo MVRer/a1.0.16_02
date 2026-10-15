@@ -77,6 +77,11 @@ public final class EndingDConfig {
 	public int silenceFadeTicks = 80;
 	/** Give up waiting for the player to come out after this long (the rest of the minute still plays). */
 	public double climbTimeoutSeconds = 900;
+	/**
+	 * Who climbs: those in it within this many blocks (horizontally) of the stair's axis. Only they come out of the
+	 * pyramid, and his spot is picked for their eyes (a friend at home under the sky is not climbing).
+	 */
+	public int climbRadius = 40;
 	/** Where he stands: this fraction of the player's full render distance (inside the ticking range). */
 	public double figureDistanceFraction = 0.8;
 	public double figureStareSeconds = 6;

@@ -325,6 +325,9 @@ public final class EndingEngine {
 				setBeat(c, EndingPath.A, A.SIGN, accident ? "the ordinary accident" : "hardcore: this death was the ending");
 			} else if (path == EndingPath.B && (finalDeath || nobodyLeft)) {
 				toRecord(c, finalDeath ? "the final death, inside the copy" : "hardcore: nobody is left in it", player);
+			} else if (path == EndingPath.B && data.progress(EndingPath.B) == B.RECORD.ordinal()) {
+				// B's record is being written (F20 is not down yet): a line finished now is on F10 too, after the ones before.
+				nameFinishedLines(c);
 			} else if (nobodyLeft && path != EndingPath.A && path != EndingPath.B) {
 				commit(c, EndingPath.B, "hardcore: " + c.name(player) + " was the last one in it");
 				toRecord(c, "hardcore: nobody is left in it", player);
@@ -881,7 +884,7 @@ public final class EndingEngine {
 	 * once each). Only finished lines are ever named, never a living friend: in hardcore each marked death finished its
 	 * player's line; B's final death inside the copy finishes the line of whoever died there ({@code victim}, normal mode
 	 * too: "your name is not erased; it is finished"). A friend's line finished in hardcore while others play is only
-	 * {@code ending:line_finished=<uuid>} until then.
+	 * {@code ending:line_finished=<uuid>} until then; one finished while the record is being written is named then.
 	 */
 	private void toRecord(Ctx c, String why, @Nullable UUID victim) {
 		EndingState data = c.data();
@@ -889,11 +892,20 @@ public final class EndingEngine {
 			c.state().setFlag(EndingApi.LINE_FINISHED_FLAG + victim, true);
 			data.log(c.name(victim) + "'s line is finished (B's final death)");
 		}
-		List<UUID> finished = List.copyOf(data.finishedLines());
+		List<UUID> finished = nameFinishedLines(c);
+		setBeat(c, EndingPath.B, B.RECORD, why + (finished.isEmpty() ? "; F10 names nobody (no line is finished)" : "; F10 is finished"));
+	}
+
+	/**
+	 * F10 names every finished line, in the order they were finished (lore's {@code finishF10} keeps one already named
+	 * in its place, so naming them all again only adds the new ones). Returns them.
+	 */
+	private List<UUID> nameFinishedLines(Ctx c) {
+		List<UUID> finished = List.copyOf(c.data().finishedLines());
 		for (UUID player : finished) {
 			ports.finishF10(c.server(), player);
 		}
-		setBeat(c, EndingPath.B, B.RECORD, why + (finished.isEmpty() ? "; F10 names nobody (no line is finished)" : "; F10 is finished"));
+		return finished;
 	}
 
 	/** F20 lies under F10. Then B is done. */

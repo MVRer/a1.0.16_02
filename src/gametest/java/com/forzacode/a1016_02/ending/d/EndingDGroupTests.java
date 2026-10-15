@@ -20,6 +20,7 @@ import com.forzacode.a1016_02.lore.UntouchedGrove;
 import net.fabricmc.fabric.api.gametest.v1.GameTest;
 
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
 import net.minecraft.core.GlobalPos;
 import net.minecraft.gametest.framework.GameTestHelper;
 import net.minecraft.network.chat.Component;
@@ -37,6 +38,7 @@ import net.minecraft.world.level.block.entity.SignBlockEntity;
 import net.minecraft.world.level.block.entity.SignText;
 import net.minecraft.world.level.block.entity.SignTextSlot;
 import net.minecraft.world.level.levelgen.structure.BoundingBox;
+import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.Vec3;
 
 /**
@@ -234,6 +236,8 @@ public class EndingDGroupTests extends EndingDDangerTests {
 		int musicOn;
 		final List<UUID> silenced = new ArrayList<>();
 		final List<UUID> music = new ArrayList<>();
+		/** Whose eyes his far-shore spot was looked for (none is ever found here). */
+		final List<UUID> spotsFor = new ArrayList<>();
 
 		@Override
 		public void complete(MinecraftServer server, EndingDConfig cfg) {
@@ -273,6 +277,12 @@ public class EndingDGroupTests extends EndingDDangerTests {
 		@Override
 		public List<SiteRegistry.Site> groves(ServerLevel level, BlockPos near) {
 			return List.of();
+		}
+
+		@Override
+		public Optional<LastMinute.Spot> farShore(ServerLevel level, ServerPlayer player, BlockPos from, EndingDConfig cfg) {
+			spotsFor.add(player.getUUID());
+			return Optional.empty();
 		}
 	}
 
@@ -353,6 +363,150 @@ public class EndingDGroupTests extends EndingDDangerTests {
 			if (TraceLedger.get(server).entries().contains(taken)) {
 				Services.traces().forced().restoreBlock(level, taken, lost);
 			}
+		}
+		helper.succeed();
+	}
+
+	/**
+	 * MP-7: the climb is theirs who climb it. A friend at home far off, under the open sky, is not coming out of the
+	 * pyramid: the minute waits for the one at bedrock, and plays once they come out at the pyramid.
+	 */
+	@GameTest(structure = EndingDSupport.SHAFT, maxTicks = 40)
+	public void theClimbWaitsForTheOneDownThereNotAFriendUnderTheSky(GameTestHelper helper) {
+		ServerLevel level = helper.getLevel();
+		MinecraftServer server = level.getServer();
+		EndingDSupport.shaftWorld(helper);
+		EndingDState data = new EndingDState();
+		EndingDConfig cfg = new EndingDConfig();
+		EndingDSupport.buildStair(helper, data);
+		Recording ports = new Recording();
+		ServerPlayer placer = EndingDSupport.player(helper, new Vec3(6.5, 2, 6.5), 0, 0);
+		ServerPlayer friend = EndingDSupport.player(helper, new Vec3(EndingDSupport.AX + 0.5, 40, EndingDSupport.AZ + 0.5 + 200), 0, 0);
+		LastMinute.Present both = LastMinute.Present.of(List.of(placer, friend));
+		HerobrineState real = HerobrineState.get(server);
+		boolean flagBefore = real.hasFlag(LastMinute.FLAG);
+		try {
+			LastMinute.use(ports);
+			LastMinute.start(server, data, false, placer.blockPosition());
+			long at = play(server, data, cfg, both, server.getTickCount(), 4000, LastMinute.Phase.CLIMB);
+			helper.assertTrue(LastMinute.phase() == LastMinute.Phase.CLIMB, "the last minute did not reach the climb: " + LastMinute.phase());
+			at = play(server, data, cfg, both, at, 40, LastMinute.Phase.FIGURE);
+			helper.assertTrue(LastMinute.phase() == LastMinute.Phase.CLIMB && ports.fogGone == 0,
+					"the climb ended for a friend under the sky far from the pyramid: " + LastMinute.phase());
+			helper.assertFalse(ports.spotsFor.contains(friend.getUUID()) || LastMinute.spawnedHim(), "his spot was picked for the friend at home");
+			helper.assertTrue(ports.spotsFor.contains(placer.getUUID()), "his spot was not looked for the one climbing");
+
+			// The placer comes out at the pyramid: the rest plays, for them.
+			placer.snapTo(helper.absoluteVec(new Vec3(EndingDSupport.AX + 0.5, 27, EndingDSupport.AZ + 0.5)), 0, 0);
+			play(server, data, cfg, both, at, 2, LastMinute.Phase.FIGURE);
+			helper.assertTrue(LastMinute.phase() == LastMinute.Phase.FIGURE && ports.fogGone == 1, "coming out at the pyramid did not end the climb: "
+					+ LastMinute.phase());
+		} finally {
+			LastMinute.use(LastMinute.Ports.LIVE);
+			LastMinute.reset();
+			real.setFlag(LastMinute.FLAG, flagBefore);
+		}
+		helper.succeed();
+	}
+
+	/**
+	 * MP-7: a debug preview never stops a real last minute (it would save its own end over the real one's phase and
+	 * leave Ending D at step 8 for good), and a save already wedged that way goes on to the afterward.
+	 */
+	@GameTest
+	public void aPreviewNeverStopsTheRealLastMinute(GameTestHelper helper) {
+		MinecraftServer server = helper.getLevel().getServer();
+		EndingDState data = new EndingDState();
+		EndingDConfig cfg = new EndingDConfig();
+		Recording ports = new Recording();
+		ServerPlayer placer = EndingDSupport.player(helper, new Vec3(2.5, 1, 2.5), 0, 0);
+		ServerPlayer op = EndingDSupport.player(helper, new Vec3(6.5, 1, 6.5), 0, 0);
+		LastMinute.Present both = LastMinute.Present.of(List.of(placer, op));
+		HerobrineState real = HerobrineState.get(server);
+		boolean flagBefore = real.hasFlag(LastMinute.FLAG);
+		try {
+			LastMinute.use(ports);
+			LastMinute.start(server, data, false, placer.blockPosition());
+			long at = server.getTickCount();
+			LastMinute.tick(server, data, cfg, both, ++at);
+			helper.assertFalse(LastMinute.preview(server, data, op), "the preview was not refused during the real last minute");
+			helper.assertTrue(LastMinute.running() && !LastMinute.describe().contains("preview") && data.step() == Step.LAST_MINUTE,
+					"a preview took over the real last minute: " + LastMinute.describe());
+			// Nor between a restart and its resume (step 8, nothing running yet).
+			LastMinute.reset();
+			helper.assertFalse(LastMinute.preview(server, data, op) || LastMinute.running(), "a preview played while Ending D is at the last minute: "
+					+ LastMinute.describe());
+
+			// A save a preview already wedged: its phase is done, its step still the last minute. It reaches the afterward.
+			EndingDState wedged = new EndingDState();
+			wedged.setStep(Step.LAST_MINUTE);
+			wedged.setCompleteDay(0);
+			wedged.setLastMinutePhase(LastMinute.Phase.DONE.ordinal());
+			LastMinute.reset();
+			for (int i = 0; i < 6 && wedged.step() == Step.LAST_MINUTE; i++) {
+				if (LastMinute.running()) {
+					LastMinute.tick(server, wedged, cfg, both, ++at);
+				} else {
+					LastMinute.resume(server, wedged);
+				}
+			}
+			helper.assertTrue(wedged.step() == Step.AFTERWARD && !LastMinute.running(), "the wedged save never reached the afterward: " + wedged.step());
+			helper.assertTrue(ports.completions == 1, "the wedged save completed D again: " + ports.completions);
+
+			// Wedged before the real one even completed D: it plays again from the start, and completes D then.
+			EndingDState early = new EndingDState();
+			early.setStep(Step.LAST_MINUTE);
+			early.setLastMinutePhase(LastMinute.Phase.DONE.ordinal());
+			LastMinute.reset();
+			LastMinute.resume(server, early);
+			LastMinute.tick(server, early, cfg, both, ++at);
+			helper.assertTrue(LastMinute.running() && ports.completions == 2 && early.completeDay() >= 0 && early.step() == Step.LAST_MINUTE,
+					"a save wedged before D was completed did not play it: " + LastMinute.describe());
+		} finally {
+			LastMinute.use(LastMinute.Ports.LIVE);
+			LastMinute.reset();
+			real.setFlag(LastMinute.FLAG, flagBefore);
+		}
+		helper.succeed();
+	}
+
+	/**
+	 * MP-7: the marked block is tracked where it was placed. A's ordinary poplar plank, B's grove plank on top of it
+	 * (clicking its top face): the one on top is grove wood, A's is not. Holding a marked block while right-clicking a
+	 * placed block of the same kind places nothing, and tracks nothing.
+	 */
+	@GameTest(structure = EndingDSupport.YARD)
+	public void theMarkedBlockIsTrackedWhereItWentNotWhereItWasClicked(GameTestHelper helper) {
+		ServerLevel level = helper.getLevel();
+		MinecraftServer server = level.getServer();
+		EndingDState data = new EndingDState();
+		ServerPlayer a = EndingDSupport.player(helper, new Vec3(2.5, 1, 2.5), 0, 0);
+		ServerPlayer b = EndingDSupport.player(helper, new Vec3(4.5, 1, 6.5), 0, 0);
+		BlockPos post = helper.absolutePos(new BlockPos(4, 1, 4));
+		BlockPos top = post.above();
+		helper.setBlock(4, 1, 4, Blocks.POPLAR_PLANKS);
+		Services.watch().onPlaced(a, level, post, Blocks.POPLAR_PLANKS.defaultBlockState());
+		try {
+			ItemStack planks = new ItemStack(Items.POPLAR_PLANKS, 4);
+			Marks.set(planks, Marks.GROVE_WOOD);
+			Marks.onUseBlock(b, planks, new BlockHitResult(Vec3.atCenterOf(post).add(0, 0.5, 0), Direction.UP, post, false));
+			helper.setBlock(4, 2, 4, Blocks.POPLAR_PLANKS);
+			Services.watch().onPlaced(b, level, top, Blocks.POPLAR_PLANKS.defaultBlockState());
+			Marks.placed(server, data, server.getTickCount() + 1);
+			helper.assertTrue(data.trackedAt(GlobalPos.of(level.dimension(), top)).equals(Optional.of(Marks.GROVE_WOOD)), "the grove plank on top is not tracked");
+			helper.assertTrue(data.trackedAt(GlobalPos.of(level.dimension(), post)).isEmpty(), "A's ordinary plank under it was tracked as grove wood");
+
+			// B holds a marked first block and right-clicks A's crafting table (it opens; nothing is placed).
+			BlockPos table = helper.absolutePos(new BlockPos(8, 1, 4));
+			helper.setBlock(8, 1, 4, Blocks.CRAFTING_TABLE);
+			Services.watch().onPlaced(a, level, table, Blocks.CRAFTING_TABLE.defaultBlockState());
+			ItemStack first = new ItemStack(Items.CRAFTING_TABLE);
+			Marks.set(first, Marks.FIRST_BLOCK);
+			Marks.onUseBlock(b, first, new BlockHitResult(Vec3.atCenterOf(table).add(0.5, 0, 0), Direction.EAST, table, false));
+			Marks.placed(server, data, server.getTickCount() + 1);
+			helper.assertTrue(data.trackedAt(GlobalPos.of(level.dimension(), table)).isEmpty(), "A's crafting table was tracked as the first block");
+		} finally {
+			Marks.clear();
 		}
 		helper.succeed();
 	}

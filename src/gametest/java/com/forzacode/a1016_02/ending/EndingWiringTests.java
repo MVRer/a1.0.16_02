@@ -94,4 +94,43 @@ public class EndingWiringTests extends EndingGroupTests {
 		helper.assertTrue(r.ports.f10Named.isEmpty() && !r.data.lineFinished(friend.getUUID()), "F10 named a living friend: " + r.ports.f10Named);
 		helper.succeed();
 	}
+
+	/**
+	 * MP-7, D-063 in hardcore: X dies B's final death (B's record names X); Y dies a marked death before F20 lands, so
+	 * Y's line is finished too; Z plays on. When the record is done, F10 names X, then Y, and never Z.
+	 */
+	@GameTest
+	public void hardcoreALineFinishedDuringBsRecordIsNamedOnF10Too(GameTestHelper helper) {
+		Run r = new Run(helper);
+		r.hardcore = true;
+		ServerPlayer x = r.player;
+		ServerPlayer y = r.friend();
+		ServerPlayer z = r.friend();
+		r.ports.copyExists = true;
+		r.ports.copySite = r.at(0, 150, 40);
+		r.ports.copyBounds = EndingBeatTests.copyBox(r);
+		r.commit(EndingPath.B);
+		r.data.setHouse(r.at(0, 150, 0));
+		r.data.setProgress(EndingPath.B, B.FINAL.ordinal(), r.now);
+		r.ports.armable.add("dark_corner");
+		GlobalPos inside = r.at(2, 151, 41);
+		x.snapTo(Vec3.atBottomCenterOf(inside.pos()), 0, 0);
+		y.snapTo(Vec3.atBottomCenterOf(r.at(0, 1, 300).pos()), 0, 0);
+		z.snapTo(Vec3.atBottomCenterOf(r.at(0, 1, 400).pos()), 0, 0);
+		r.engine.bFinal(r.ctx());
+		helper.assertTrue(r.data.finalTrap().isPresent(), "setup: the final trap was not armed");
+		r.die(x, inside);
+		helper.assertTrue(r.beat(B.class, EndingPath.B) == B.RECORD && r.ports.f10Named.equals(List.of(x.getUUID())) && !r.data.ended(),
+				"X's final death did not start B's record naming X: " + r.ports.f10Named);
+		// Y's marked death (the spent trap's grace), before F20 is down.
+		r.die(y, inside);
+		helper.assertTrue(r.data.lineFinished(y.getUUID()) && !r.data.ended() && r.beat(B.class, EndingPath.B) == B.RECORD, "Y's death did not finish Y's line");
+		r.ports.f20Ready = true;
+		r.tick();
+		helper.assertTrue(r.data.ended() && r.beat(B.class, EndingPath.B) == B.DONE, "B's record did not end the story once F20 was down");
+		helper.assertTrue(r.ports.f10Named.stream().distinct().toList().equals(List.of(x.getUUID(), y.getUUID())),
+				"F10 did not name X, then Y: " + r.ports.f10Named);
+		helper.assertFalse(r.ports.f10Named.contains(z.getUUID()), "F10 named Z, who plays on");
+		helper.succeed();
+	}
 }

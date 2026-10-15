@@ -231,6 +231,8 @@ public final class TellingData extends SavedData {
 	private @Nullable UUID lastMarked;
 	/** Whose names F10's Ending B lines finish, in the order they were finished (D-062.2: by UUID). */
 	private final List<UUID> f10Removed = new ArrayList<>();
+	/** Not saved: {@link #migrate} ran on this load (it waits while nobody is known). */
+	private boolean migrated;
 
 	/** A fresh record (tests use their own). */
 	public TellingData() {
@@ -256,32 +258,44 @@ public final class TellingData extends SavedData {
 		this.f10Removed.addAll(lines.f10RemovedAll().isEmpty() ? lines.f10Removed().stream().toList() : lines.f10RemovedAll());
 	}
 
-	/** The world's record; an old save's single list cause is handed to its player first (D-062.8). */
+	/** The world's record; an old save's records are handed to its player first (D-062.8, {@link #migrate}). */
 	public static TellingData get(MinecraftServer server) {
 		TellingData data = server.getDataStorage().computeIfAbsent(TYPE);
-		if (data.legacyCause != null) {
+		if (!data.migrated) {
 			data.migrate(HerobrineState.get(server));
 		}
 		return data;
 	}
 
 	/**
-	 * A v1.0 save kept one list cause, the subject's, and the subject is the first known player now (core's
-	 * migration): it becomes their line's cause, unless they already have a newer one. Waits while nobody is
-	 * known. True if it moved.
+	 * A v1.0 save's records were the subject's, and the subject is the first known player now (core's migration). Its
+	 * one list cause becomes their line's cause, unless they already have a newer one. A world that finished Ending B
+	 * ({@link LiveBooks#F10_FINISHED}) named them on F10 from the flag alone, with no list of names: F10's last line
+	 * keeps naming them. Waits while nobody is known; runs once per load after that. True if anything moved.
 	 */
 	boolean migrate(HerobrineState state) {
-		if (legacyCause == null || state.players().isEmpty()) {
+		if (state.players().isEmpty()) {
 			return false;
 		}
+		migrated = true;
 		UUID first = state.players().getFirst().uuid();
-		listCauses.putIfAbsent(first, legacyCause);
-		if (lastMarked == null) {
-			lastMarked = first;
+		boolean moved = false;
+		if (legacyCause != null) {
+			listCauses.putIfAbsent(first, legacyCause);
+			if (lastMarked == null) {
+				lastMarked = first;
+			}
+			legacyCause = null;
+			moved = true;
 		}
-		legacyCause = null;
-		setDirty();
-		return true;
+		if (f10Removed.isEmpty() && state.hasFlag(LiveBooks.F10_FINISHED)) {
+			f10Removed.add(first);
+			moved = true;
+		}
+		if (moved) {
+			setDirty();
+		}
+		return moved;
 	}
 
 	// --- counting ---
