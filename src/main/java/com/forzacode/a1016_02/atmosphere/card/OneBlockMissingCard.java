@@ -21,7 +21,9 @@ import net.minecraft.server.level.ServerPlayer;
 
 /**
  * One block missing: a single block of the player's house wall is gone, a 1x1 window looking out at the fog.
- * Removed from outside, never the roof; see {@link WorldScan#wallSpot}. Prefers eye-level blocks.
+ * Removed from outside, never the roof; see {@link WorldScan#wallSpot}. Prefers eye-level blocks. Only while this
+ * player is away and nobody at all (a friend at home, a spectator) is within {@code houseAwayBlocks} of the block,
+ * as the door left open.
  */
 public final class OneBlockMissingCard extends AtmosphereCard {
 	public static final String ID = "one_block_missing";
@@ -60,7 +62,8 @@ public final class OneBlockMissingCard extends AtmosphereCard {
 		for (List<WorldScan.WallSpot> pool : List.of(eye, rest)) {
 			while (!pool.isEmpty()) {
 				WorldScan.WallSpot spot = pool.remove(ctx.random().nextInt(pool.size()));
-				if (Services.traces().remove(level, spot.pos(), cause())) {
+				// Nobody near it at all (MP-7): not this player, not a friend inside the house, not a spectator.
+				if (farFromEveryone(level, spot.pos(), cfg().houseAwayBlocks) && Services.traces().remove(level, spot.pos(), cause())) {
 					return FireResult.FIRED;
 				}
 			}

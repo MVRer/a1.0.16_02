@@ -5,6 +5,7 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.function.Consumer;
+import java.util.function.Function;
 import java.util.function.Predicate;
 import java.util.function.Supplier;
 
@@ -20,6 +21,7 @@ import com.forzacode.a1016_02.core.Services;
 import com.forzacode.a1016_02.core.Stage;
 import com.forzacode.a1016_02.core.Tier;
 
+import net.minecraft.core.BlockPos;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
@@ -46,6 +48,8 @@ abstract class AtmosphereCard implements EventCard {
 	Supplier<PlayerWatch> watch = Services::watch;
 	/** Where this card's episodes run. A game test swaps in its own, to step them itself. */
 	Consumer<Tasks.Episode> episodes = Tasks::start;
+	/** Everyone in a level, spectators included, for the "nobody near" rules. A game test swaps in its own, as {@link #sounds}. */
+	Function<ServerLevel, List<ServerPlayer>> everyone = ServerLevel::players;
 
 	private final String id;
 	private final Tier tier;
@@ -118,6 +122,17 @@ abstract class AtmosphereCard implements EventCard {
 		double r2 = (double) radius * radius;
 		for (ServerPlayer other : player.level().players()) {
 			if (!other.getUUID().equals(player.getUUID()) && !other.isSpectator() && other.distanceToSqr(player) <= r2) {
+				return false;
+			}
+		}
+		return true;
+	}
+
+	/** Nobody in the level ({@link #everyone}, spectators included) within {@code blocks} of {@code pos}: not the target, not a friend at home. */
+	protected boolean farFromEveryone(ServerLevel level, BlockPos pos, int blocks) {
+		double r2 = (double) blocks * blocks;
+		for (ServerPlayer player : everyone.apply(level)) {
+			if (player.blockPosition().distSqr(pos) < r2) {
 				return false;
 			}
 		}

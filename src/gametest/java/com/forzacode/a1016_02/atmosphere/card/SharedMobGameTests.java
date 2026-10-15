@@ -11,6 +11,7 @@ import com.forzacode.a1016_02.core.FireContext;
 import com.forzacode.a1016_02.core.FireResult;
 import com.forzacode.a1016_02.core.HerobrineState;
 import com.forzacode.a1016_02.core.PlayerWatch;
+import com.forzacode.a1016_02.core.Services;
 
 import net.fabricmc.fabric.api.gametest.v1.GameTest;
 
@@ -26,11 +27,13 @@ import net.minecraft.world.entity.animal.cow.Cow;
 import net.minecraft.world.entity.monster.skeleton.Skeleton;
 import net.minecraft.world.entity.monster.zombie.Zombie;
 import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.storage.LevelData;
 import net.minecraft.world.phys.Vec3;
 
 /**
  * Mob tricks shared by friends (MP-7, D-060, D-062.5): a trick fired for A with B beside A goes on while either of
- * them is here, A gone (left, or dead), and ends only once neither is, out of view. Each test brings its own online
+ * them is here, A gone (left, or dead), and ends only once neither is, out of view. And a scar at A's house never
+ * happens next to a friend who is there. Each test brings its own online
  * list ({@link PlayerWatch.Source}) for its own card instance and steps the card's episode itself, all within one tick,
  * so the tamper's own check of the server's real players (every 20 ticks) never runs in between. In the End, padded
  * past the cards' search radius, so no other test's mobs are picked. {@code atmosphere.AtmosphereGameTests} extends
@@ -175,6 +178,52 @@ public class SharedMobGameTests extends CardSoundGameTests {
 			release(List.of(zombie));
 		}
 		helper.succeed();
+	}
+
+	/**
+	 * One block missing, fired for A (away from home) while B is inside A's house: no wall block within
+	 * {@code houseAwayBlocks} of B goes (B would hear and see it), as the door left open keeps away from everyone. Once B
+	 * is away too, a block goes. Padded past the house search, so no other test's walls are in reach.
+	 */
+	@GameTest(dimension = "minecraft:the_end", structure = YARD, padding = APART, skyAccess = true)
+	public void oneBlockMissingNeverTakesAWallBlockNearAFriendInside(GameTestHelper helper) {
+		ground(helper);
+		ServerLevel level = helper.getLevel();
+		ServerPlayer builder = at(helper, new Vec3(0.5, 1.0, 0.5));
+		// A 6x6 house of placed planks: walls three high, a roof at y 4.
+		List<BlockPos> walls = new ArrayList<>();
+		for (int x = 1; x <= 6; x++) {
+			for (int z = 1; z <= 6; z++) {
+				placed(helper, builder, new BlockPos(x, 4, z));
+				if (x == 1 || x == 6 || z == 1 || z == 6) {
+					for (int y = 1; y <= 3; y++) {
+						placed(helper, builder, new BlockPos(x, y, z));
+						walls.add(helper.absolutePos(new BlockPos(x, y, z)));
+					}
+				}
+			}
+		}
+		ServerPlayer a = at(helper, new Vec3(22.5, 1.0, 22.5));
+		a.setRespawnPosition(new ServerPlayer.RespawnConfig(LevelData.RespawnData.of(level.dimension(), helper.absolutePos(new BlockPos(3, 1, 3)), 0, 0), false),
+				false);
+		ServerPlayer b = at(helper, new Vec3(3.5, 1.0, 3.5));
+		OneBlockMissingCard card = new OneBlockMissingCard();
+		card.everyone = forLevel -> List.of(a, b);
+		helper.assertTrue(card.fire(new FireContext(a, level, false, true, RandomSource.create(5))) != FireResult.FIRED, "a wall block went with B inside");
+		for (BlockPos wall : walls) {
+			helper.assertTrue(level.getBlockState(wall).is(Blocks.OAK_PLANKS), "a wall block went with B inside: " + helper.relativePos(wall));
+		}
+		// B goes out too, far off: now a block goes.
+		b.snapTo(helper.absoluteVec(new Vec3(22.5, 1.0, 20.5)), 0.0F, 0.0F);
+		helper.assertTrue(card.fire(new FireContext(a, level, false, true, RandomSource.create(5))) == FireResult.FIRED, "no block went with everyone away");
+		helper.assertTrue(walls.stream().filter(wall -> level.getBlockState(wall).isAir()).count() == 1, "not exactly one wall block went");
+		helper.succeed();
+	}
+
+	/** A block {@code builder} placed (the footprint), at a relative position. */
+	private static void placed(GameTestHelper helper, ServerPlayer builder, BlockPos rel) {
+		helper.setBlock(rel, Blocks.OAK_PLANKS);
+		Services.watch().onPlaced(builder, helper.getLevel(), helper.absolutePos(rel), Blocks.OAK_PLANKS.defaultBlockState());
 	}
 
 	/** The patient skeleton, fired for A with B beside A: it watches on for B once A is gone, and is let go once B is too. */
