@@ -4,6 +4,8 @@ A horror mod for Minecraft Java 26.3 "Wilderness Bound" (Fabric). You are suppos
 
 **Best played in hardcore.**
 
+**Multiplayer:** one shared story for everyone in the world. Open it to LAN or run it on a server; everyone needs the mod and Fabric API.
+
 ## What it is
 - A director decides what happens and when, and long stretches of nothing are part of the design. Two worlds never play the same.
 - The land carries scars from the first minute: dead hills, bare forests, straight tunnels, small pyramids in the sea.

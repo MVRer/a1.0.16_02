@@ -23,11 +23,15 @@ public final class EndingApi {
 	 * the cairn's first block in Ending D, "Missing first block"). Whoever needs it first chooses it.
 	 */
 	public static final String FIRST_BLOCKS_OWNER = "story:first_blocks";
-	/** D-061 owner key, chosen by world: whose house the copy elsewhere copies (Ending B empties that house). Read only here. */
+	/**
+	 * D-061 owner key, chosen by world when the copy starts: whose house the copy elsewhere copies. Ending B empties the
+	 * copied house itself ({@code HouseCopyApi.realHouse}); the key only matters while a copy exists. Read only here.
+	 */
 	public static final String HOUSE_COPY_OWNER = "world:house_copy";
 	/**
-	 * D-061 owner key, chosen by the ending: whose base is "your house" for the group (Ending C's house taken apart,
-	 * and Ending B's house when there is no house copy owner).
+	 * D-061 owner key, chosen by the ending among the participants who have a base: whose base is "your house" for the
+	 * group (Ending C's house taken apart, and Ending B's house when there is no house copy). While its owner is away,
+	 * anyone's bigger house far from it becomes the home (D-064).
 	 */
 	public static final String HOME_OWNER = "ending:home";
 	/**

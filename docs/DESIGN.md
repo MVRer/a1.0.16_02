@@ -159,7 +159,7 @@ Density and which scars exist come from the world's profile (see The director), 
 
 ## Hidden story across the map
 
-30 fragments carry the story. Early ones invite pity; late ones (F21 to F27) show what he really is. Found alone, each is ambiguous. Voice is lowercase 2010 forum and dev-note style, no explanations. Sign lines are split with " / " (4 lines, about 15 characters each).
+30 fragments carry the story (plus a few clues past F30 that appear only on Ending D's path: in its chamber, or for players stuck on a step). Early ones invite pity; late ones (F21 to F27) show what he really is. Found alone, each is ambiguous. Voice is lowercase 2010 forum and dev-note style, no explanations. Sign lines are split with " / " (4 lines, about 15 characters each).
 
 | ID | Form | Where / when | Text | Implies |
 | --- | --- | --- | --- | --- |
@@ -429,7 +429,7 @@ He kills with what the world already has: one thing removed or moved at the righ
 | Empty water | No fish or squid in a lake that had them. The water is still |
 | Bat in a sealed room | A bat flapping in a room with no openings |
 
-Tune all of this through the director: one trap at a time, with long quiet in between, and never two deaths' worth of setup in the same session.
+Tune all of this through the director: one trap per player at a time, never two on the same ground, with long quiet in between, and never two deaths' worth of setup in the same session.
 
 ## Triggers
 
@@ -515,7 +515,7 @@ Fabric, singleplayer-first, built in episodes so each video ships a working, sca
 | Sound director | Mining in the dark, chest opening, repeated footstep | Positional sounds sent to that one player |
 | Disc 13 detector | Knows when disc 13 plays below Y 50 | Hook jukebox play |
 | First-block tracker | Remembers the first table, chest and block you placed | Block place event, saved to world data |
-| Accident planner | Finds a spot on the player's routes where one removal turns into a death, sets it up off camera, records the clue | Track frequent paths (mine, bridges, ladders); scan nearby blocks for lava, water, gravel, dripstone; one armed trap at a time |
+| Accident planner | Finds a spot on the player's routes where one removal turns into a death, sets it up off camera, records the clue | Track frequent paths (mine, bridges, ladders); scan nearby blocks for lava, water, gravel, dripstone; one armed trap per player at a time, never two on the same ground |
 | Death marker | On a death he caused: cross from local blocks, cause added to the list, ending checks | Death event plus a flag set by the armed trap |
 | Mob tamperer | Freezes, turns, moves or silences existing mobs | Temporary goal overrides on nearby mobs; teleport only while out of view |
 
