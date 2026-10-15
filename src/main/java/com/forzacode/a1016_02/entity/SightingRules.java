@@ -1,6 +1,9 @@
 package com.forzacode.a1016_02.entity;
 
 import java.util.List;
+import java.util.Optional;
+
+import com.forzacode.a1016_02.core.FogSpell;
 
 import net.minecraft.core.GlobalPos;
 
@@ -37,9 +40,46 @@ public final class SightingRules {
 		return from <= to ? t >= from && t < to : t >= from || t < to;
 	}
 
-	/** Clear daylight: inside the day window and not raining. Never a sighting then. */
+	/** Clear daylight: inside the day window and not raining. Never a sighting then. Without fog weather (see the four-argument form). */
 	public static boolean clearDaylight(long timeOfDay, boolean raining, EntityConfig config) {
 		return !raining && inWindow(timeOfDay, config.clearDayFrom, config.clearDayTo);
+	}
+
+	/**
+	 * Clear daylight with the world's fog weather (D-071): a fog spell over the day window (a fog day, a fog night's
+	 * morning carry-over, a fog night's first ticks before dusk) is not clear daylight. {@code fogWeather}:
+	 * {@link #fogWeather} now.
+	 */
+	public static boolean clearDaylight(long timeOfDay, boolean raining, boolean fogWeather, EntityConfig config) {
+		return !fogWeather && clearDaylight(timeOfDay, raining, config);
+	}
+
+	/**
+	 * Daytime fog (D-071): what would be clear daylight, but a fog spell is on. Only the variants that read in it may come
+	 * then ({@link Variant#inDaytimeFog}).
+	 */
+	public static boolean daytimeFog(long timeOfDay, boolean raining, boolean fogWeather, EntityConfig config) {
+		return fogWeather && clearDaylight(timeOfDay, raining, config);
+	}
+
+	/** True while the world's fog spell is on at this overworld clock tick ({@link FogSpell#activeAt}). */
+	public static boolean fogWeather(Optional<FogSpell> spell, long clockTicks) {
+		return spell.isPresent() && spell.get().activeAt(clockTicks);
+	}
+
+	/**
+	 * The daylight gate for one variant (the overworld's; fixed-time dimensions have none): refused in clear daylight;
+	 * in daytime fog only the variants that read in it ({@link Variant#inDaytimeFog}: not the ridge, which keeps its
+	 * dusk sky, nor the light, which keeps its night). Empty when the variant may come.
+	 */
+	public static Optional<String> daylight(Variant variant, long timeOfDay, boolean raining, boolean fogWeather, EntityConfig config) {
+		if (clearDaylight(timeOfDay, raining, fogWeather, config)) {
+			return Optional.of("clear daylight");
+		}
+		if (daytimeFog(timeOfDay, raining, fogWeather, config) && !variant.inDaytimeFog()) {
+			return Optional.of("not in daytime fog");
+		}
+		return Optional.empty();
 	}
 
 	/** Dusk or dawn, the ridge's sky. Rain counts too: a grey sky works as well as a dusk one. */

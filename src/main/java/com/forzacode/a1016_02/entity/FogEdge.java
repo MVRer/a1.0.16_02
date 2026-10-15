@@ -11,7 +11,9 @@ import net.minecraft.util.Mth;
  *
  * <p>The fog end ({@link #limit}) is the one the player's client reports ({@link ReportedFog}: vanilla fog, the dusk
  * fog and fog surges included) while that report is fresh. Until one arrives it is core's estimate,
- * {@link FogLimits#of(ServerPlayer)}: the render-distance fog end pulled in by the dusk fog, surges left out.
+ * {@link FogLimits#of(ServerPlayer)}: the render-distance fog end pulled in by the dusk fog and the world's fog spell
+ * (D-071: a fog night, its morning, a fog day, on the overworld clock), surges left out. So the band follows a fog
+ * night or a fog day even without a fresh client report.
  *
  * <p>Every variant but the close one stands {@code normalFractionMin..Max} of the fog end away. The close one stands
  * {@code closeFractionMin..Max} of it, clamped to {@code closeMinDistance..closeMaxDistance} blocks. Either band stays

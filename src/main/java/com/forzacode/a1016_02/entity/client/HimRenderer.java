@@ -5,6 +5,7 @@ import com.forzacode.a1016_02.entity.HimEntity;
 import com.mojang.blaze3d.vertex.PoseStack;
 
 import net.minecraft.client.model.geom.ModelLayers;
+import net.minecraft.client.renderer.culling.Frustum;
 import net.minecraft.client.renderer.entity.EntityRendererProvider;
 import net.minecraft.client.renderer.entity.HumanoidMobRenderer;
 import net.minecraft.resources.Identifier;
@@ -12,8 +13,10 @@ import net.minecraft.resources.Identifier;
 /**
  * The figure: the player model with the default Steve skin and pure white eyes painted into the base texture.
  * The skin is lit and fogged like the terrain around him. The eyes on top of it follow the {@code eyeStyle}
- * setting ({@link HimEyesLayer}): FLAT leaves the painted ones, BRIGHT (default) keeps them full white in the dark and
- * lets them fade into fog later than the body. Nothing emits light and he never shows a name.
+ * setting ({@link HimEyesLayer}), unless he has his own (the glimpse's FLAT, D-073): FLAT leaves the painted ones,
+ * BRIGHT (default) keeps them full white in the dark and lets them fade into fog later than the body. Nothing emits
+ * light and he never shows a name. A figure that vanishes in view (the glimpse) stops being drawn, for good, once it
+ * is looked toward ({@link GlimpseHide}).
  */
 public class HimRenderer extends HumanoidMobRenderer<HimEntity, HimRenderState, HimModel> {
 	private static final Identifier TEXTURE = A1016_02.id("textures/entity/him.png");
@@ -31,10 +34,20 @@ public class HimRenderer extends HumanoidMobRenderer<HimEntity, HimRenderState, 
 		return new HimRenderState();
 	}
 
+	/** The glimpse's hide latch comes first, every frame, frustum or not (D-073). */
+	@Override
+	public boolean shouldRender(HimEntity entity, Frustum frustum, double camX, double camY, double camZ, float partialTick) {
+		if (GlimpseHide.hidden(entity, camX, camY, camZ, partialTick)) {
+			return false;
+		}
+		return super.shouldRender(entity, frustum, camX, camY, camZ, partialTick);
+	}
+
 	@Override
 	public void extractRenderState(HimEntity entity, HimRenderState state, float partialTick) {
 		super.extractRenderState(entity, state, partialTick);
 		state.lowAmount = entity.lowAmount(partialTick);
+		state.eyeStyle = entity.eyeStyle().orElse(null);
 	}
 
 	@Override
