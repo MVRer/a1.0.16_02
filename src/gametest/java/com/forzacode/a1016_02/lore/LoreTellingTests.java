@@ -521,7 +521,8 @@ public class LoreTellingTests extends LorePlacementTests {
 				"the cause was not kept as that player's");
 
 		// Live: MARKED_DEATH for someone who never took part (a mock player), then the book is opened. The list names
-		// only the world's known players (nobody, unless a test joined someone), never the mock and never "Steve" (D-061).
+		// only the world's known players (nobody, unless a test joined someone: core's real-join test leaves two known
+		// players who share the mocks' name), never the mock and never "Steve" (D-061).
 		MinecraftServer server = helper.getLevel().getServer();
 		HerobrineEvents.MARKED_DEATH.invoker().onMarkedDeath(player, "drowned", player.blockPosition());
 		List<String> known = LiveBooks.lines(HerobrineState.get(server), TellingData.get(server)).stream().map(LiveBooks.Line::text).toList();
@@ -529,7 +530,9 @@ public class LoreTellingTests extends LorePlacementTests {
 		helper.assertTrue(LiveBooks.refreshForReading(list, player), "opening F23 did not update it");
 		List<String> f23Lines = new ArrayList<>(DESIGN_TEXT.get("F23").subList(0, 6));
 		f23Lines.addAll(known);
-		helper.assertTrue(lines(pages(list)).equals(f23Lines) && !String.join("\n", pages(list)).contains(player.getName().getString()),
+		String mockName = player.getName().getString();
+		boolean aKnownPlayerHasItsName = HerobrineState.get(server).players().stream().anyMatch(p -> p.name().equals(mockName));
+		helper.assertTrue(lines(pages(list)).equals(f23Lines) && (aKnownPlayerHasItsName || !String.join("\n", pages(list)).contains(mockName)),
 				"F23 reads " + pages(list));
 		helper.assertFalse(LiveBooks.refreshForReading(list, player), "an up-to-date F23 changed again");
 		// F06 is the same shared list now (D-063): it follows the known players too, by bare name (D-067).

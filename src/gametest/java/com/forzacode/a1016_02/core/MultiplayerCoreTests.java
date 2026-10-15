@@ -722,4 +722,94 @@ public class MultiplayerCoreTests {
 		helper.assertTrue(new Director.Stub().fire(server, stranger, "no_such_card", false) == FireResult.SKIPPED, "an unknown card fired");
 		helper.succeed();
 	}
+
+	// --- the real join path (MP-8) ---
+
+	/** Every PARTICIPATION the live server fires ("uuid+" or "uuid-"); the real-join test reads its own players' only. */
+	private static final List<String> LIVE_PARTICIPATION = new java.util.concurrent.CopyOnWriteArrayList<>();
+
+	static {
+		HerobrineEvents.PARTICIPATION.register((server, player, participating) -> LIVE_PARTICIPATION.add(player + (participating ? "+" : "-")));
+	}
+
+	private static List<String> participation(UUID player) {
+		return LIVE_PARTICIPATION.stream().filter(e -> e.startsWith(player.toString())).map(e -> e.substring(e.length() - 1)).toList();
+	}
+
+	/** Disconnects a real mock player as a client leaving does: Fabric's DISCONNECT, then the server's list drops them. */
+	private static void disconnect(ServerPlayer player) {
+		if (!player.hasDisconnected()) {
+			player.connection.disconnect(net.minecraft.network.chat.Component.literal("a1016 test done"));
+		}
+	}
+
+	/**
+	 * End to end, with two players really in the server's player list ({@code makeMockServerPlayerInLevel}: the
+	 * server's own placeNewPlayer, so Fabric's JOIN and DISCONNECT): both become participants and known players,
+	 * PARTICIPATION(true) fires once for each, and the director starts a session for each; one disconnecting fires
+	 * PARTICIPATION(false) for them only, and the other's session goes on. It runs in a test environment of its own
+	 * ({@code a1016_02:real_join}), so no other test runs while real players are online, reads only its own players'
+	 * UUIDs, and disconnects both whatever happens (before the timeout too).
+	 */
+	@GameTest(environment = "a1016_02:real_join", maxTicks = 100)
+	public void realPlayersJoinTakePartAndLeaveOneAtATime(GameTestHelper helper) {
+		MinecraftServer server = helper.getLevel().getServer();
+		List<ServerPlayer> joined = new ArrayList<>();
+		Runnable cleanup = () -> joined.forEach(MultiplayerCoreTests::disconnect);
+		ServerPlayer ana;
+		ServerPlayer ben;
+		try {
+			ana = helper.makeMockServerPlayerInLevel();
+			joined.add(ana);
+			ben = helper.makeMockServerPlayerInLevel();
+			joined.add(ben);
+		} catch (RuntimeException e) {
+			cleanup.run();
+			throw e;
+		}
+		helper.runAtTickTime(90, cleanup); // a check that keeps failing never leaves them online
+		UUID a = ana.getUUID();
+		UUID b = ben.getUUID();
+		helper.assertTrue(server.getPlayerList().getPlayer(a) == ana && server.getPlayerList().getPlayer(b) == ben, "not in the server's player list");
+		int[] phase = {0};
+		long[] benSession = {-1};
+		long[] benAt = {-1};
+		helper.succeedWhen(() -> {
+			try {
+				PlayerWatch watch = Services.watch();
+				HerobrineState state = HerobrineState.get(server);
+				if (phase[0] == 0) {
+					helper.assertTrue(participation(a).equals(List.of("+")) && participation(b).equals(List.of("+")),
+							"PARTICIPATION(true) once each: " + participation(a) + " " + participation(b));
+					helper.assertTrue(watch.participant(server, a).orElse(null) == ana && watch.participant(server, b).orElse(null) == ben,
+							"not participants");
+					helper.assertTrue(state.player(a).isPresent() && state.player(b).isPresent(), "not known players");
+					helper.assertTrue(com.forzacode.a1016_02.director.DirectorApi.snapshot(server, a).sessionTicks() >= 0
+							&& com.forzacode.a1016_02.director.DirectorApi.snapshot(server, b).sessionTicks() >= 0, "the director has no session for them");
+					phase[0] = 1;
+					disconnect(ana);
+				}
+				if (phase[0] == 1) {
+					helper.assertTrue(participation(a).equals(List.of("+", "-")) && participation(b).equals(List.of("+")),
+							"Ana's leave: " + participation(a) + ", Ben " + participation(b));
+					helper.assertTrue(watch.participant(server, a).isEmpty() && server.getPlayerList().getPlayer(a) == null, "Ana is still online");
+					helper.assertTrue(com.forzacode.a1016_02.director.DirectorApi.snapshot(server, a).sessionTicks() == -1, "Ana's session did not end");
+					benSession[0] = com.forzacode.a1016_02.director.DirectorApi.snapshot(server, b).sessionTicks();
+					benAt[0] = server.getTickCount();
+					phase[0] = 2;
+				}
+				helper.assertTrue(server.getTickCount() > benAt[0], "waiting a tick to see Ben's session go on");
+				long now = com.forzacode.a1016_02.director.DirectorApi.snapshot(server, b).sessionTicks();
+				helper.assertTrue(watch.participant(server, b).orElse(null) == ben && participation(b).equals(List.of("+")) && now > benSession[0],
+						"Ben's session did not go on: " + benSession[0] + " -> " + now + ", " + participation(b));
+				disconnect(ben);
+				helper.assertTrue(participation(b).equals(List.of("+", "-")) && server.getPlayerList().getPlayer(b) == null, "Ben's leave: " + participation(b));
+			} catch (net.minecraft.gametest.framework.GameTestAssertException e) {
+				throw e;
+			} catch (RuntimeException e) {
+				cleanup.run();
+				throw e;
+			}
+		});
+	}
 }
