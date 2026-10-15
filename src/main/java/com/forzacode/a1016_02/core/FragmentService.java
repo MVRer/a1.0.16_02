@@ -10,7 +10,11 @@ import net.minecraft.server.level.ServerPlayer;
 
 /** Fragment placement and read tracking. The lore workstream installs the real one. */
 public interface FragmentService {
-	/** True if the world profile rolled this fragment ("F01".."F30"). */
+	/**
+	 * True if this fragment may exist in this world ({@link WorldProfile#isEnabled}): one of the 30 story fragments
+	 * ("F01".."F30") the profile rolled or fixed, or one of the clue fragments past F30
+	 * ({@link WorldProfile#CLUE_FRAGMENTS}), which every world has.
+	 */
 	boolean isEnabled(MinecraftServer server, String id);
 
 	/** Places a fragment near {@code hint} (through {@link TraceService#leave}). False if it could not. */
@@ -26,7 +30,7 @@ public interface FragmentService {
 	final class Stub implements FragmentService {
 		@Override
 		public boolean isEnabled(MinecraftServer server, String id) {
-			return HerobrineState.get(server).profile().fragments().contains(id);
+			return HerobrineState.get(server).profile().isEnabled(id);
 		}
 
 		@Override

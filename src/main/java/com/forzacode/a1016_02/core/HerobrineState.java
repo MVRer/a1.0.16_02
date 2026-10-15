@@ -162,6 +162,13 @@ public final class HerobrineState extends SavedData {
 	 * {@link #incrementTellingCount()} for readers of the flag.
 	 */
 	public static final String TELLING_COUNT_FLAG = "lore:telling_count";
+	/**
+	 * D-062.8: the stored owners a v1.0 save's one subject adopts when it loads (if they placed a block): the story's
+	 * first blocks and home ({@code story:first_blocks}, lore's and the ending's) and the group's home
+	 * ({@code ending:home}). Without them the friend who happened to be online first would take over a story that was
+	 * the old player's.
+	 */
+	public static final List<String> V1_OWNER_KEYS = List.of("story:first_blocks", "ending:home");
 
 	private Stage stage = Stage.ALONE;
 	private double attention;
@@ -205,13 +212,20 @@ public final class HerobrineState extends SavedData {
 		for (PlayerRecord record : people.players()) {
 			this.players.putIfAbsent(record.uuid, record);
 		}
+		this.owners.putAll(people.owners());
 		if (this.players.isEmpty()) {
 			// A v1.0 save (D-062.8): its one subject becomes the first known player, with the old first blocks, the
-			// old tension and the world's play ticks (they were the subject's).
-			people.legacySubject().ifPresent(subject -> this.players.put(subject.uuid(), new PlayerRecord(subject.uuid(), subject.name(),
-					people.legacyFirstBlocks().orElse(FirstBlocks.NONE), clock.playTicks(), people.legacyTension().orElse(0.0))));
+			// old tension and the world's play ticks (they were the subject's). The story so far was theirs, so a
+			// subject who placed a block also keeps the story's home (V1_OWNER_KEYS), whoever comes online first.
+			people.legacySubject().ifPresent(subject -> {
+				PlayerRecord record = new PlayerRecord(subject.uuid(), subject.name(), people.legacyFirstBlocks().orElse(FirstBlocks.NONE),
+						clock.playTicks(), people.legacyTension().orElse(0.0));
+				this.players.put(subject.uuid(), record);
+				if (record.firstBlocks.block() != null) {
+					V1_OWNER_KEYS.forEach(key -> this.owners.putIfAbsent(key, subject.uuid()));
+				}
+			});
 		}
-		this.owners.putAll(people.owners());
 		this.playTicks = clock.playTicks();
 		this.warpDays = clock.warpDays();
 		this.stopFired = story.stopFired();
@@ -557,7 +571,7 @@ public final class HerobrineState extends SavedData {
 
 	// --- fragments ---
 
-	/** Read fragment ids ("F01".."F30"). Unmodifiable. */
+	/** Fragment ids read by anyone (one set for the world, D-058): story fragments ("F01".."F30") and clues past F30. Unmodifiable. */
 	public Set<String> fragmentsRead() {
 		return Collections.unmodifiableSet(fragmentsRead);
 	}
@@ -615,6 +629,15 @@ public final class HerobrineState extends SavedData {
 	public FirstBlocks firstBlocks(UUID player) {
 		PlayerRecord record = players.get(player);
 		return record == null ? FirstBlocks.NONE : record.firstBlocks;
+	}
+
+	/**
+	 * True if this known player has placed a block (they have a first block). The one rule for who may become the
+	 * story's first-blocks owner ({@code story:first_blocks}): every workstream that chooses it passes
+	 * {@code state::hasPlacedBlock} to {@code PlayerWatch.ownerFor}, so F13 never waits on someone with no first block.
+	 */
+	public boolean hasPlacedBlock(UUID player) {
+		return firstBlocks(player).block() != null;
 	}
 
 	/** Records one of a known player's first blocks if that slot is still empty. Nothing for someone unknown. */

@@ -214,6 +214,22 @@ public final class PlayerWatch {
 		return best == null ? Optional.empty() : Optional.of(state.setOwner(key, best));
 	}
 
+	/**
+	 * For migrations: stores {@code player} as the owner of {@code key} only if nothing is stored for it yet, online or
+	 * not (an old save whose once-per-world thing already belongs to someone, such as a house copy from before
+	 * multiplayer, keeps that player instead of waiting for {@link #ownerFor}'s rule to pick them). Only a known player
+	 * is stored. Returns the stored owner: the one already there (never replaced), else {@code player}; empty, storing
+	 * nothing, if nothing was stored and {@code player} never took part here.
+	 */
+	public Optional<UUID> adoptOwner(MinecraftServer server, String key, UUID player) {
+		HerobrineState state = source.state(server);
+		Optional<UUID> stored = state.owner(key);
+		if (stored.isPresent() || state.player(player).isEmpty()) {
+			return stored;
+		}
+		return Optional.of(state.setOwner(key, player));
+	}
+
 	// --- live values (per player, per session) ---
 
 	/** Ticks the player has not moved (turning the head does not count as moving). */

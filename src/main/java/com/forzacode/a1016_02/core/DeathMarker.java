@@ -9,11 +9,16 @@ import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerPlayer;
 
 /**
- * Marked deaths: the cross, the cause on the list, and {@link HerobrineEvents#MARKED_DEATH}. The accident
- * workstream installs the real one.
+ * Marked deaths: the cross, the cause on the list, and {@link HerobrineEvents#MARKED_DEATH}. Per player (D-063): one
+ * shared list of deaths in {@link HerobrineState}, each recorded as the victim's, with its own cross and its cause on
+ * that player's own line of the list; the third-death rule counts each player's own. The accident workstream installs
+ * the real one.
  */
 public interface DeathMarker {
-	/** Marks a death: records a {@link MarkedDeath} as that player's in {@link HerobrineState} and fires the event. */
+	/**
+	 * Marks {@code player}'s death: records a {@link MarkedDeath} as theirs in {@link HerobrineState}, builds their
+	 * cross once the spot is out of view, and fires the event.
+	 */
 	void mark(ServerPlayer player, String cause, BlockPos pos);
 
 	/** How many deaths are marked in this world, everyone's together. */
@@ -25,7 +30,7 @@ public interface DeathMarker {
 	}
 
 	/**
-	 * The bottom of the post of the newest cross that stands for a marked death (the cross is built once the spot is
+	 * The bottom of the post of the newest cross that stands for a marked death, anyone's (the cross is built once the spot is
 	 * out of view, so it can come a while after the death), or empty if none stands yet. Default: none.
 	 */
 	default Optional<GlobalPos> lastCrossPos(MinecraftServer server) {

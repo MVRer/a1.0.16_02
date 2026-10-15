@@ -64,9 +64,18 @@ public class MultiplayerCoreTests {
 	/** A test's own online list, state and participation events ({@code "A+"}, {@code "A-"}). */
 	static final class Roster implements PlayerWatch.Source {
 		final List<ServerPlayer> online = new ArrayList<>();
-		final HerobrineState state = new HerobrineState();
+		final HerobrineState state;
 		final List<String> events = new ArrayList<>();
 		final PlayerWatch watch = new PlayerWatch(this);
+
+		Roster() {
+			this(new HerobrineState());
+		}
+
+		/** Over a state the test made (a loaded save). */
+		Roster(HerobrineState state) {
+			this.state = state;
+		}
 
 		@Override
 		public List<ServerPlayer> online(MinecraftServer server) {
@@ -466,6 +475,37 @@ public class MultiplayerCoreTests {
 	}
 
 	/**
+	 * {@code adoptOwner}, for migrations: an old save's owner is stored at once, offline or not and whoever has played
+	 * longer, but only where nothing is stored yet and only for a known player; a stored choice is never replaced, by
+	 * an adoption or by {@code ownerFor}.
+	 */
+	@GameTest
+	public void migrationsAdoptAnOwnerOnlyWhereNoneIsStored(GameTestHelper helper) {
+		MinecraftServer server = helper.getLevel().getServer();
+		Roster r = new Roster();
+		PlayerWatch w = r.watch;
+		TestPlayer a = player(helper, "A", GameType.SURVIVAL, new Vec3(1.5, 1, 1.5));
+		TestPlayer b = player(helper, "B", GameType.SURVIVAL, new Vec3(2.5, 1, 1.5));
+		r.join(a);
+		r.join(b);
+		r.tick(server, 1);
+		r.leave(a);
+		r.state.addPlayTicks(b.getUUID(), 5_000); // B is online and has played far longer
+		helper.assertTrue(w.adoptOwner(server, "test:old", a.getUUID()).equals(Optional.of(a.getUUID()))
+				&& w.owner(server, "test:old").equals(Optional.of(a.getUUID())), "the offline old owner was not adopted at once");
+		helper.assertTrue(w.adoptOwner(server, "test:old", b.getUUID()).equals(Optional.of(a.getUUID()))
+				&& w.ownerFor(server, "test:old").equals(Optional.of(a.getUUID())), "the adopted owner was replaced");
+		// A choice core already made is kept too.
+		helper.assertTrue(w.ownerFor(server, "test:chosen").equals(Optional.of(b.getUUID()))
+				&& w.adoptOwner(server, "test:chosen", a.getUUID()).equals(Optional.of(b.getUUID())), "an adoption replaced a stored choice");
+		// Someone who never took part here is never stored.
+		UUID stranger = UUID.randomUUID();
+		helper.assertTrue(w.adoptOwner(server, "test:nobody", stranger).isEmpty() && w.owner(server, "test:nobody").isEmpty(),
+				"a stranger was adopted");
+		helper.succeed();
+	}
+
+	/**
 	 * The profile (D-066 M0, M2): F08 is fixed now, and the clue fragments past F30 are always enabled, old saves
 	 * included: a v1.0 profile without F08 loads with it, and never lists the clues yet enables them.
 	 */
@@ -551,6 +591,48 @@ public class MultiplayerCoreTests {
 		nobody.remove("firstBlocks");
 		HerobrineState empty = HerobrineState.CODEC.parse(ops, nobody).getOrThrow();
 		helper.assertTrue(empty.players().isEmpty() && empty.tension(alex) == 0.0 && empty.markedDeaths().getFirst().player() == null, "nobody's save");
+		helper.succeed();
+	}
+
+	/**
+	 * D-062.8 (MP-7 #5): a v1.0 save carries no owners, but the story so far was its one subject's: they keep the
+	 * story's first blocks and home and the group's home ({@link HerobrineState#V1_OWNER_KEYS}), so a friend who is
+	 * online alone first (Ben) never takes them over. A subject who never placed a block keeps none.
+	 */
+	@GameTest
+	public void v1SaveKeepsTheStorysHomesWithItsOldPlayer(GameTestHelper helper) {
+		MinecraftServer server = helper.getLevel().getServer();
+		RegistryOps<Tag> ops = helper.getLevel().registryAccess().createSerializationContext(NbtOps.INSTANCE);
+		UUID alex = UUID.randomUUID();
+		PlacedBlock table = new PlacedBlock(GlobalPos.of(Level.OVERWORLD, new BlockPos(10, 64, 10)), Blocks.CRAFTING_TABLE.defaultBlockState());
+		CompoundTag v1 = new CompoundTag();
+		v1.putLong("salt", 99L);
+		v1.put("profile", WorldProfile.CODEC.encodeStart(ops, WorldProfile.roll(1L, 99L)).getOrThrow());
+		v1.put("subject", HerobrineState.Subject.CODEC.encodeStart(ops, new HerobrineState.Subject(alex, "Alex")).getOrThrow());
+		v1.put("firstBlocks", HerobrineState.FirstBlocks.CODEC.encodeStart(ops, new HerobrineState.FirstBlocks(table, table, null)).getOrThrow());
+		HerobrineState loaded = HerobrineState.CODEC.parse(ops, v1).getOrThrow();
+		for (String key : HerobrineState.V1_OWNER_KEYS) {
+			helper.assertTrue(loaded.owner(key).equals(Optional.of(alex)), key + " is not the old player's: " + loaded.owners());
+		}
+
+		// Only Ben online, with a first block and far more play: every choice still answers Alex.
+		Roster r = new Roster(loaded);
+		TestPlayer ben = player(helper, "Ben", GameType.SURVIVAL, new Vec3(1.5, 1, 1.5));
+		r.join(ben);
+		r.tick(server, 1);
+		r.watch.onPlaced(ben, helper.getLevel(), helper.absolutePos(new BlockPos(1, 1, 3)), Blocks.CRAFTING_TABLE.defaultBlockState());
+		r.state.addPlayTicks(ben.getUUID(), 50_000);
+		helper.assertTrue(r.watch.ownerFor(server, "story:first_blocks", r.state::hasPlacedBlock).equals(Optional.of(alex))
+				&& r.watch.ownerFor(server, "ending:home").equals(Optional.of(alex)), "Ben took over the old story: " + r.state.owners());
+		// Saved and loaded again (now in the new format), the choices hold.
+		HerobrineState again = HerobrineState.CODEC.parse(ops, HerobrineState.CODEC.encodeStart(ops, loaded).getOrThrow()).getOrThrow();
+		helper.assertTrue(again.owner("story:first_blocks").equals(Optional.of(alex)) && again.owner("ending:home").equals(Optional.of(alex)),
+				"the owners did not round-trip: " + again.owners());
+
+		// A v1.0 subject who never placed a block keeps no owner: the rule chooses later.
+		CompoundTag noBlock = v1.copy();
+		noBlock.remove("firstBlocks");
+		helper.assertTrue(HerobrineState.CODEC.parse(ops, noBlock).getOrThrow().owners().isEmpty(), "an owner without a first block");
 		helper.succeed();
 	}
 
