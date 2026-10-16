@@ -1,6 +1,7 @@
 package com.forzacode.a1016_02.atmosphere.client;
 
 import java.util.List;
+import java.util.Optional;
 
 import com.forzacode.a1016_02.atmosphere.AtmosphereConfig;
 import com.forzacode.a1016_02.atmosphere.CompassDriftPayload;
@@ -9,8 +10,11 @@ import com.forzacode.a1016_02.atmosphere.DeadMountains;
 import com.forzacode.a1016_02.atmosphere.DeadMountainsPayload;
 import com.forzacode.a1016_02.atmosphere.DuskLevel;
 import com.forzacode.a1016_02.atmosphere.WeatherFog;
+import com.forzacode.a1016_02.atmosphere.sc.EmptyNight;
+import com.forzacode.a1016_02.atmosphere.sc.EmptyNightPayload;
 import com.forzacode.a1016_02.core.ClientEffects;
 import com.forzacode.a1016_02.core.FogLimits;
+import com.forzacode.a1016_02.core.SelfCreated;
 import com.forzacode.a1016_02.core.client.ClientEffectsClient;
 
 import net.minecraft.client.Camera;
@@ -24,6 +28,7 @@ import net.minecraft.sounds.SoundSource;
 import net.minecraft.world.entity.ItemOwner;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.LightLayer;
+import net.minecraft.world.level.MoonPhase;
 import net.minecraft.world.level.material.FogType;
 
 import org.joml.Vector3f;
@@ -39,6 +44,11 @@ import org.jspecify.annotations.Nullable;
  * <p>Dead mountains: while the player stands on the dead ground of one of the circles the server sent, ambience (birds, wind loops,
  * cave mood, ambient additions, every {@code AMBIENT} sound) and music fade out, and no new music track starts; they
  * come back gradually after leaving. Footsteps, blocks, mobs and weather are untouched.
+ *
+ * <p>The layer (docs/SELF_CREATED.md), while it is switched on here ({@code SelfCreated.enabled}): the world's fog
+ * places (10) go into the frame's weather fog with the spell ({@link WeatherFog#frame(long, boolean, int, double,
+ * ResourceKey, net.minecraft.world.phys.Vec3)} at the camera); and 04's sky window ({@link EmptyNightPayload}) gives the
+ * moon drawn in the overworld ({@link #moonPhase}). Both reset on disconnect.
  */
 public final class ClientAtmosphere implements ClientEffectsClient.Handler {
 	static final ClientAtmosphere INSTANCE = new ClientAtmosphere();
@@ -73,6 +83,8 @@ public final class ClientAtmosphere implements ClientEffectsClient.Handler {
 	private long frameClock;
 	/** The level the sky weight was last stepped in: a new one takes its weight at once. */
 	private @Nullable ResourceKey<Level> skyDimension;
+	/** 04's sky window on the overworld clock, as the server last sent it. */
+	private Optional<EmptyNight.Window> emptyNight = Optional.empty();
 
 	private ClientEffects.@Nullable FogSurge surge;
 	private long surgeStart;
@@ -123,10 +135,19 @@ public final class ClientAtmosphere implements ClientEffectsClient.Handler {
 	}
 
 	@Override
+	public void fogPlaces(ClientEffects.FogPlaces effect) {
+		weather.receive(effect);
+	}
+
+	@Override
 	public void sync(ClientEffects.Sync effect) {
 		setMusicOff(effect.musicOff());
 		setDusk(effect.duskFogLevel());
 		weather.receive(effect);
+	}
+
+	void emptyNight(EmptyNightPayload payload) {
+		emptyNight = payload.window();
 	}
 
 	/** The first level after joining applies at once; later ones ease in over {@code duskLevelChangeSeconds}. */
@@ -160,6 +181,7 @@ public final class ClientAtmosphere implements ClientEffectsClient.Handler {
 		weather.reset();
 		frameSpell = 0.0;
 		skyDimension = null;
+		emptyNight = Optional.empty();
 		surge = null;
 		silence = null;
 		compass = null;
@@ -310,7 +332,20 @@ public final class ClientAtmosphere implements ClientEffectsClient.Handler {
 		}
 		self.frameClock = level.getDefaultClockTime();
 		self.frameSpell = self.weather.frame(self.frameClock, level.dimensionType().hasFixedTime(),
-				level.getBrightness(LightLayer.SKY, camera.blockPosition()), self.ticks + partialTick);
+				level.getBrightness(LightLayer.SKY, camera.blockPosition()), self.ticks + partialTick, level.dimension(), camera.position());
+	}
+
+	/**
+	 * The moon to draw ({@code SkyMoonMixin}, after vanilla filled it): the new moon in the overworld while 04's window
+	 * holds the level's clock ({@link EmptyNight#moonFor}), else vanilla's; vanilla's always while the layer is
+	 * switched off here.
+	 */
+	public static MoonPhase moonPhase(ClientLevel level, MoonPhase vanilla) {
+		ClientAtmosphere self = INSTANCE;
+		if (self.emptyNight.isEmpty() || level.dimension() != Level.OVERWORLD || !SelfCreated.enabled()) {
+			return vanilla;
+		}
+		return EmptyNight.moonFor(level.getDefaultClockTime(), self.emptyNight, vanilla);
 	}
 
 	/**

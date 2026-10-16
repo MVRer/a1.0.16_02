@@ -2,6 +2,7 @@ package com.forzacode.a1016_02.atmosphere;
 
 import com.forzacode.a1016_02.atmosphere.card.FootstepLateCard;
 import com.forzacode.a1016_02.atmosphere.mob.MobTamperImpl;
+import com.forzacode.a1016_02.atmosphere.sc.AtmosphereSc;
 import com.forzacode.a1016_02.core.ClientEffects;
 import com.forzacode.a1016_02.core.HerobrineEvents;
 import com.forzacode.a1016_02.core.HerobrineState;
@@ -47,11 +48,13 @@ public final class AtmosphereServer {
 				ActiveEffects.onParticipating(server, player);
 			} else {
 				FootstepLateCard.onLeave(player);
+				AtmosphereSc.onLeave(player);
 				MobTamperImpl.INSTANCE.releaseFor(server, player, Services.watch());
 			}
 		});
 		ServerLifecycleEvents.SERVER_STOPPED.register(server -> {
 			Tasks.clear(server);
+			AtmosphereSc.clear(server);
 			MobTamperImpl.INSTANCE.clear();
 			ActiveEffects.clear();
 			FootstepLateCard.clear();
@@ -64,6 +67,7 @@ public final class AtmosphereServer {
 		MobTamperImpl.INSTANCE.tick(server);
 		Tasks.tick(server);
 		FootstepLateCard.tick(server);
+		AtmosphereSc.tick(server);
 		DeadMountains.tick(server);
 		if (server.getTickCount() % CHECK_TICKS == 0) {
 			checkFirstNight(server);

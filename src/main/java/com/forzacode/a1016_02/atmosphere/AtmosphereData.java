@@ -6,6 +6,7 @@ import java.util.Optional;
 import java.util.UUID;
 
 import com.forzacode.a1016_02.A1016_02;
+import com.forzacode.a1016_02.atmosphere.sc.EmptyNight;
 import com.mojang.serialization.Codec;
 import com.mojang.serialization.codecs.RecordCodecBuilder;
 
@@ -26,6 +27,10 @@ import net.minecraft.world.level.saveddata.SavedDataType;
  * It loads as everyone's count for that night, and is dropped (no longer written) once any player's mining is
  * recorded on another night. A file from before fog weather (v1.1) has no {@code fogWeather} and loads at
  * {@link FogWeather.Memory#START}: its next night is the first night rolled, so it is clear.
+ *
+ * <p>The layer (docs/SELF_CREATED.md): {@code sc04} ({@link EmptyNight.Memory}) and {@code sc07} ({@link Sc07}), each
+ * optional and read leniently (a value that cannot be read loads as none and never stops the file loading), not
+ * written while at their start; a file from before has none, and v1.3 skips both keys.
  */
 public final class AtmosphereData extends SavedData {
 	/** One player's mining sounds on one night (the in-game day number). */
@@ -65,6 +70,15 @@ public final class AtmosphereData extends SavedData {
 		}
 	}
 
+	/** 07's world record: how many names were taken and the in-game day of the last ({@code GameClock.day}; -1: never). */
+	public record Sc07(int count, long lastDay) {
+		public static final Sc07 START = new Sc07(0, -1L);
+		static final Codec<Sc07> CODEC = RecordCodecBuilder.create(i -> i.group(
+				Codec.INT.optionalFieldOf("count", 0).forGetter(Sc07::count),
+				Codec.LONG.optionalFieldOf("lastDay", -1L).forGetter(Sc07::lastDay)
+		).apply(i, Sc07::new));
+	}
+
 	public static final Codec<AtmosphereData> CODEC = RecordCodecBuilder.create(i -> i.group(
 			Codec.BOOL.optionalFieldOf("musicOffDone", false).forGetter(d -> d.musicOffDone),
 			Codec.INT.optionalFieldOf("duskStage", -1).forGetter(d -> d.duskStage),
@@ -74,7 +88,10 @@ public final class AtmosphereData extends SavedData {
 			Codec.unboundedMap(UUIDUtil.STRING_CODEC, Mining.CODEC).optionalFieldOf("mining", Map.of()).forGetter(d -> d.mining),
 			Codec.unboundedMap(UUIDUtil.STRING_CODEC, Transient.CODEC).optionalFieldOf("transients", Map.of()).forGetter(d -> d.transients),
 			// v1.2's fog weather (D-071); a save from before has none and starts from the first night.
-			FogWeather.Memory.CODEC.optionalFieldOf("fogWeather", FogWeather.Memory.START).forGetter(d -> d.fogWeather)
+			FogWeather.Memory.CODEC.optionalFieldOf("fogWeather", FogWeather.Memory.START).forGetter(d -> d.fogWeather),
+			// The layer's (self-created): optional and lenient, so a bad value never stops the file loading.
+			EmptyNight.Memory.CODEC.lenientOptionalFieldOf("sc04", EmptyNight.Memory.START).forGetter(d -> d.emptyNight),
+			Sc07.CODEC.lenientOptionalFieldOf("sc07", Sc07.START).forGetter(d -> d.sc07)
 	).apply(i, AtmosphereData::new));
 
 	public static final SavedDataType<AtmosphereData> TYPE = new SavedDataType<>(A1016_02.id("atmosphere"), AtmosphereData::new, CODEC, null);
@@ -87,12 +104,14 @@ public final class AtmosphereData extends SavedData {
 	private final Map<UUID, Mining> mining = new HashMap<>();
 	private final Map<UUID, Transient> transients = new HashMap<>();
 	private FogWeather.Memory fogWeather = FogWeather.Memory.START;
+	private EmptyNight.Memory emptyNight = EmptyNight.Memory.START;
+	private Sc07 sc07 = Sc07.START;
 
 	public AtmosphereData() {
 	}
 
 	private AtmosphereData(boolean musicOffDone, int duskStage, long legacyMiningNight, int legacyMiningCount, Map<UUID, Mining> mining,
-			Map<UUID, Transient> transients, FogWeather.Memory fogWeather) {
+			Map<UUID, Transient> transients, FogWeather.Memory fogWeather, EmptyNight.Memory emptyNight, Sc07 sc07) {
 		this.musicOffDone = musicOffDone;
 		this.duskStage = duskStage;
 		this.legacyMiningNight = legacyMiningCount > 0 ? legacyMiningNight : -1;
@@ -100,6 +119,37 @@ public final class AtmosphereData extends SavedData {
 		this.mining.putAll(mining);
 		this.transients.putAll(transients);
 		this.fogWeather = fogWeather;
+		this.emptyNight = emptyNight;
+		this.sc07 = sc07;
+	}
+
+	/** 04's memory ({@link EmptyNight}). */
+	public EmptyNight.Memory emptyNight() {
+		return emptyNight;
+	}
+
+	public void setEmptyNight(EmptyNight.Memory memory) {
+		if (!memory.equals(emptyNight)) {
+			emptyNight = memory;
+			setDirty();
+		}
+	}
+
+	/** 07's world record. */
+	public Sc07 sc07() {
+		return sc07;
+	}
+
+	/** One more name taken on {@code day} (saved in the tick it happens). */
+	public void recordSc07(long day) {
+		sc07 = new Sc07(sc07.count() + 1, day);
+		setDirty();
+	}
+
+	/** Debug: forgets 07's record. */
+	public void resetSc07() {
+		sc07 = Sc07.START;
+		setDirty();
 	}
 
 	/** The live fog weather's memory (D-071): the rules' history and the last night and day rolled. */

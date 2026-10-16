@@ -32,7 +32,8 @@
 			"com.forzacode.a1016_02.director.SelfCreatedDirectorTests",
 			"com.forzacode.a1016_02.dig.SelfCreatedDigTests",
 			"com.forzacode.a1016_02.accident.SelfCreatedAccidentTests",
-			"com.forzacode.a1016_02.world.SelfCreatedWorldTests"
+			"com.forzacode.a1016_02.world.SelfCreatedWorldTests",
+			"com.forzacode.a1016_02.atmosphere.card.SelfCreatedAtmosphereTests"
 		]
 	},
 	"depends": {

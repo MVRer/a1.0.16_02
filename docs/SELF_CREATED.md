@@ -401,6 +401,40 @@ Only with friends.
 - Tests: pure `WeatherFog` tests (a place adds nothing outside its radius or time, grows toward its centre, combines
   with a spell); server and client `FogLimits` agree with a place.
 
+#### As built (SC-1, `SelfCreatedAtmosphereTests` with its half `SelfCreatedAtmosphereNightTests`, 25 tests)
+- **Wiring.** `atmosphere.sc.AtmosphereSc` (from `AtmosphereInit`/`AtmosphereServer`): the four sections (`Sc04Config`
+  to `Sc07Config`, v1), the payload, `/a1016 sc 04|05|06|07` (`ScCommands`; no `executes` on `sc` itself, SC-5's
+  index), the reverts, the ticks. Common gates in `ScGates` (switch, the six stop flags, overworld, 30 s of combat); a
+  forced fire skips a card's fit, never the story or the overworld. Debug lines go only to the op (`ScDebug`).
+- **04** (`sc.EmptyNight`, `EmptyNightPayload`). Rolled by `FogWeather.check` right after tonight's fog roll, only while
+  the clock is before 11000 of that day (a late fog roll gives no night), with the phase read from vanilla's
+  `MOON_PHASE` attribute (on the default timeline, phase index = clock day mod 8; a test pins it). A forced night counts
+  like a rolled one. The quiet is `MobCategory.CREATURE` only, `MobTamper.silence` for 220 ticks every 200, capped at
+  23500, never on a mob something else holds. `PhantomSpawnerMixin` also holds `VillageSiege` (both are
+  `CustomSpawner.tick`); the spawn rule reads a snapshot (window and participants) refreshed every second. Memory
+  `sc04` in `atmosphere.dat` (lenient, not written at start).
+- **05** (`card.ComingHome`, `SomeoneHomeCard`, `TheyWereWaitingCard`, `sc.Home`). Away timers every 20 ticks; a
+  base's survey (house, animals) cached 600 ticks, taken only while loaded, and the cards fit only on a survey. The
+  band plays only after the player was out of it (past `maxDistance` of the door, or past 30 of the base) and is 0.2
+  closer than 10 ticks before. The walk starts 2 to 3 in (nearer in a shallow house) and never steps back toward the
+  door; the close plays only with a player-placed chest, barrel, shulker box or ender chest in the house's box. The
+  animals' spot is the base block's centre (a bed respawn is the bed's block); sitting pets are tame ones ordered to
+  sit; they go at 3 blocks, a look within 20 degrees for `lookSeconds`, or `holdSecondsMax`. Too few animals keeps the
+  arm (leave and come back).
+- **06** (`sc.InStep`, `InStepCard`, `EntityStepMixin` at the head of vanilla's private `Entity.walkingStepSound`,
+  which the server reaches for a player's own move packets; sneaking has no movement emission, tested). Fog is a dusk
+  fog of 0.1 or more or a counting spell; the night key is the clock's 24000-tick period from 12000; walking is 2 blocks
+  over 60 ticks by 10-tick samples; a fired episode waits 2 minutes for its walk. The ground behind is the highest
+  walkable cell 2 above to 4 below; leaving the ground is no longer on foot or off the surface.
+- **07** (`NameGoneCard`, `MobTamperImpl.unname`). Known bases are `world.Bases.all`; the owner is `OwnableEntity`'s;
+  a forced fire skips the world's caps. Record `sc07` in `atmosphere.dat`.
+- **Fog places** (`WeatherFog.frame(..., dimension, camera)`): the place amount at the camera joins the spell in
+  `FogLimits.weatherAmount`, so the haze and tint follow; none while this client's switch is off.
+- **Reverts.** sc04 drops the night (count kept), tells everyone, clears the snapshot, lets its quiet animals go; sc05
+  drops arms and timers and lets held animals go; sc06 ends the episodes; sc07 gives names back through the ledger's
+  undo, retried every 30 s while the switch stays off.
+- **Client check.** Dev client launched and joined with the new client mixins (no visual pass of the moon yet).
+
 ---
 
 ### world
