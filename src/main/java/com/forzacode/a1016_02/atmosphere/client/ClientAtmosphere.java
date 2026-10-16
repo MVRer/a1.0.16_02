@@ -47,8 +47,9 @@ import org.jspecify.annotations.Nullable;
  *
  * <p>The layer (docs/SELF_CREATED.md), while it is switched on here ({@code SelfCreated.enabled}): the world's fog
  * places (10) go into the frame's weather fog with the spell ({@link WeatherFog#frame(long, boolean, int, double,
- * ResourceKey, net.minecraft.world.phys.Vec3)} at the camera); and 04's sky window ({@link EmptyNightPayload}) gives the
- * moon drawn in the overworld ({@link #moonPhase}). Both reset on disconnect.
+ * ResourceKey, net.minecraft.world.phys.Vec3)} at the camera) and, seen along the view, bring the far fog in
+ * ({@link WeatherFog#seen}); and 04's sky window ({@link EmptyNightPayload}) gives the moon drawn in the overworld
+ * ({@link #moonPhase}), vanilla's while a shaderpack draws the frame. Both reset on disconnect.
  */
 public final class ClientAtmosphere implements ClientEffectsClient.Handler {
 	static final ClientAtmosphere INSTANCE = new ClientAtmosphere();
@@ -79,6 +80,12 @@ public final class ClientAtmosphere implements ClientEffectsClient.Handler {
 	private final Vector3f tinted = new Vector3f();
 	/** The spell's fog this frame at the camera: its amount times the smoothed sky weight ({@link #beginFog}). */
 	private double frameSpell;
+	/** The fog places seen along the view this frame ({@link #beginFog}; none without places). */
+	private List<WeatherFog.Seen> frameSeen = List.of();
+	/** The weather amount the frame's fog color follows ({@link WeatherFog#tintAmount}). */
+	private double frameTint;
+	/** Where a seen place's fog is shaped this frame. */
+	private final Curves.Fog seenFrame = new Curves.Fog();
 	/** The level clock this frame (the tint's time of day). */
 	private long frameClock;
 	/** The level the sky weight was last stepped in: a new one takes its weight at once. */
@@ -180,6 +187,8 @@ public final class ClientAtmosphere implements ClientEffectsClient.Handler {
 		dusk.reset();
 		weather.reset();
 		frameSpell = 0.0;
+		frameSeen = List.of();
+		frameTint = 0.0;
 		skyDimension = null;
 		emptyNight = Optional.empty();
 		surge = null;
@@ -318,11 +327,15 @@ public final class ClientAtmosphere implements ClientEffectsClient.Handler {
 	 * camera. The spell's amount (its own ease, on the level's clock; none where time is fixed) times the sky weight at
 	 * the camera's block ({@link WeatherFog#sky}: core's {@code FogLimits.skyFactor} of the sky light there, smoothed as
 	 * vanilla smooths its rain fog), stepped every frame so it is right when a spell comes. A spell is outside weather:
-	 * a tunnel, a cave or a closed house gets none of it. The tint and the fog shape of the same frame use it.
+	 * a tunnel, a cave or a closed house gets none of it. The tint and the fog shape of the same frame use it, and the
+	 * fog places seen along the camera's yaw ({@link WeatherFog#seen}), with the color's amount
+	 * ({@link WeatherFog#tintAmount}, against the camera's own fog end at this render distance).
 	 */
-	public static void beginFog(Camera camera, @Nullable ClientLevel level, float partialTick) {
+	public static void beginFog(Camera camera, @Nullable ClientLevel level, int renderDistanceInChunks, float partialTick) {
 		ClientAtmosphere self = INSTANCE;
 		self.frameSpell = 0.0;
+		self.frameSeen = List.of();
+		self.frameTint = 0.0;
 		if (level == null) {
 			return;
 		}
@@ -331,21 +344,41 @@ public final class ClientAtmosphere implements ClientEffectsClient.Handler {
 			self.weather.resetSky();
 		}
 		self.frameClock = level.getDefaultClockTime();
-		self.frameSpell = self.weather.frame(self.frameClock, level.dimensionType().hasFixedTime(),
-				level.getBrightness(LightLayer.SKY, camera.blockPosition()), self.ticks + partialTick, level.dimension(), camera.position());
+		boolean fixedTime = level.dimensionType().hasFixedTime();
+		self.frameSpell = self.weather.frame(self.frameClock, fixedTime, level.getBrightness(LightLayer.SKY, camera.blockPosition()), self.ticks + partialTick,
+				level.dimension(), camera.position());
+		self.frameTint = self.frameSpell;
+		self.frameSeen = self.weather.seen(level.dimension(), camera.position(), camera.yRot(), self.frameClock, fixedTime);
+		if (!self.frameSeen.isEmpty()) {
+			AtmosphereConfig cfg = AtmosphereConfig.get();
+			double dusk = self.duskAmount(self.ticks + partialTick, self.frameClock, fixedTime, cfg);
+			double cameraEnd = FogLimits.fogEnd(Math.max(2, renderDistanceInChunks) * 16.0, cfg.duskMinFogBlocks, WeatherFog.combined(dusk, self.frameSpell));
+			self.frameTint = WeatherFog.tintAmount(self.frameSpell, self.frameSeen, cameraEnd);
+		}
+	}
+
+	/** The dusk fog's amount drawn now (0 where time is fixed): core's {@code FogLimits} does the same math on the server. */
+	private double duskAmount(double now, long time, boolean fixedTime, AtmosphereConfig cfg) {
+		double duskLevel = dusk.level(now);
+		return duskLevel > 0.0 && !fixedTime ? Curves.duskAmount(duskLevel, time, cfg.fogShape()) : 0.0;
 	}
 
 	/**
 	 * The moon to draw ({@code SkyMoonMixin}, after vanilla filled it): the new moon in the overworld while 04's window
 	 * holds the level's clock ({@link EmptyNight#moonFor}), else vanilla's; vanilla's always while the layer is
-	 * switched off here.
+	 * switched off here, and while an Iris shaderpack draws the frame ({@link ShaderPacks#inUse}: a pack's moon and
+	 * night light come from the game's own phase, which a new moon in the sky would contradict).
 	 */
 	public static MoonPhase moonPhase(ClientLevel level, MoonPhase vanilla) {
 		ClientAtmosphere self = INSTANCE;
 		if (self.emptyNight.isEmpty() || level.dimension() != Level.OVERWORLD || !SelfCreated.enabled()) {
 			return vanilla;
 		}
-		return EmptyNight.moonFor(level.getDefaultClockTime(), self.emptyNight, vanilla);
+		long clock = level.getDefaultClockTime();
+		if (!self.emptyNight.get().contains(clock)) {
+			return vanilla;
+		}
+		return EmptyNight.moonFor(clock, self.emptyNight, vanilla, ShaderPacks.inUse());
 	}
 
 	/**
@@ -359,14 +392,14 @@ public final class ClientAtmosphere implements ClientEffectsClient.Handler {
 	 */
 	public static Vector3fc tintFogColor(Vector3fc base, Camera camera) {
 		ClientAtmosphere self = INSTANCE;
-		if (!(self.frameSpell > 0.0) || camera.getFluidInCamera() != FogType.NONE) {
+		if (!(self.frameTint > 0.0) || camera.getFluidInCamera() != FogType.NONE) {
 			return base;
 		}
 		float[] rgb = self.rgb;
 		rgb[0] = base.x();
 		rgb[1] = base.y();
 		rgb[2] = base.z();
-		WeatherFog.color(rgb, self.frameSpell, Math.floorMod(self.frameClock, Curves.DAY), AtmosphereConfig.get());
+		WeatherFog.color(rgb, self.frameTint, Math.floorMod(self.frameClock, Curves.DAY), AtmosphereConfig.get());
 		return self.tinted.set(rgb[0], rgb[1], rgb[2]);
 	}
 
@@ -375,7 +408,9 @@ public final class ClientAtmosphere implements ClientEffectsClient.Handler {
 	 * vanilla sets it up. Atmospheric fog only (not water, lava, snow). The dusk fog and the spell grow continuously out
 	 * of vanilla's ({@link Curves#applyDusk}, their amounts combined as core's {@code FogLimits} does, so the server's
 	 * fog end is this one under open sky: game test serverFogMatchesClientFogWithASpell); surges keep their v0.4 shape
-	 * on top. The color was tinted before vanilla darkened it ({@link #tintFogColor}).
+	 * on top. A fog place seen along the view brings the far fog in from where the view enters it
+	 * ({@link WeatherFog#shape(Curves.Fog, double, double, double, double, List, Curves.Fog, AtmosphereConfig)}, the
+	 * server's {@code FogLimits.of(player)} end). The color was tinted before vanilla darkened it ({@link #tintFogColor}).
 	 */
 	public static void applyFog(FogData fog, Camera camera, @Nullable ClientLevel level, float partialTick) {
 		if (level == null || camera.getFluidInCamera() != FogType.NONE) {
@@ -404,7 +439,7 @@ public final class ClientAtmosphere implements ClientEffectsClient.Handler {
 		}
 		Curves.Fog f = self.frame.set(fog.environmentalStart, fog.environmentalEnd, fog.renderDistanceStart, fog.renderDistanceEnd, fog.skyEnd,
 				fog.cloudEnd);
-		if (!WeatherFog.shape(f, dusk, haze, spell, surgeAmount, cfg)) {
+		if (!WeatherFog.shape(f, dusk, haze, spell, surgeAmount, self.frameSeen, self.seenFrame, cfg)) {
 			return;
 		}
 		fog.environmentalStart = (float) f.environmentalStart;

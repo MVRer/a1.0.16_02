@@ -156,6 +156,24 @@ public final class Curves {
 		public double end() {
 			return Math.min(environmentalEnd, renderDistanceEnd);
 		}
+
+		/**
+		 * A fog seen from {@code near} blocks out along the view (a fog place seen from outside it, {@code WeatherFog}):
+		 * the render-distance fog's start and end and the sky's end come in to {@code view}'s plus {@code near} wherever
+		 * that is nearer; the environmental fog, which starts at the camera, stays, so nothing nearer than the seen fog
+		 * gets more fog. The shader draws the larger of the two world fogs, so the result is never less fog than either.
+		 * Continuous in {@code near} and {@code view}. Returns whether anything moved.
+		 */
+		public boolean seen(Fog view, double near) {
+			double start = Math.min(renderDistanceStart, near + view.renderDistanceStart);
+			double end = Math.min(renderDistanceEnd, near + view.renderDistanceEnd);
+			double sky = Math.min(skyEnd, near + view.skyEnd);
+			boolean moved = start != renderDistanceStart || end != renderDistanceEnd || sky != skyEnd;
+			renderDistanceStart = start;
+			renderDistanceEnd = end;
+			skyEnd = sky;
+			return moved;
+		}
 	}
 
 	/**

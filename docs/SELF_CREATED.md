@@ -436,6 +436,35 @@ Only with friends.
   undo, retried every 30 s while the switch stays off.
 - **Client check.** Dev client launched and joined with the new client mixins (no visual pass of the moon yet).
 
+#### Fixed in review (FIX-SC-D: R8 L5, R8 L6's Iris part)
+- **10's fog place seen from outside (R8 L5).** The place's amount was only taken at the camera, so from outside its
+  radius (from the house) nothing showed. A place is now also seen along the view. Core (pure, both sides):
+  `FogLimits.placeViews(places, dim, eye, yaw, clock)`: per place giving fog, the line of sight within
+  `VIEW_CONE_DEGREES` 20 of the yaw that passes nearest its centre; when that passes inside the radius and ahead of the
+  eye, `PlaceView(near, amount)`, `near` where it enters the place (0 inside) and `amount` all the places' amount at
+  that nearest point; and `FogLimits.seen(eye, views, ...)`: the nearest of the eye's fog end and each view's `near`
+  plus the fog end with its amount in place of the eye's (as if one stood where the view enters it). The client
+  (`WeatherFog.seen` along the camera's yaw, `WeatherFog.shape(..., seen, scratch, cfg)`, `Curves.Fog.seen`) shapes the
+  same fog with each view's amount and moves only the render-distance fog and the sky's end in to it, `near` blocks
+  further out, wherever nearer: nothing nearer than the place gets more fog, the fog stands over the spot and hides
+  what is behind it; inside, the view toward the centre is the thicker, and looking away from it inside is exactly as
+  before. Sky-weighted like the rest (none in a tunnel or a closed house). The frame's color follows a seen place by
+  `1 - near / cameraEnd` (`WeatherFog.tintAmount`), so at night it reads as a pale wall. The server's
+  `FogLimits.of(player)` takes the same views along the player's yaw, so the figure's band and the screenshot's fog end
+  are the drawn end (test: every stage, view distance, yaw and place time, with a spell). Numbers (16 chunks, noon,
+  the place at full, its centre 100 off): clear to 110, complete at 148 (its far side 140); whole within 20 degrees of
+  it, thinning out to nothing by about 43; walking in toward it the fog end comes in a block per block, never back, no
+  pop at the radius. Dev client (1708 x 960, 16 chunks, 50 above the ground): looking at the place from 100 off at
+  noon, the water and the island behind it are gone in fog where they showed without it; 50 degrees aside the view is
+  the plain one; from 60 off thicker; at midnight a faint pale wall that way where the plain night is dark. Tests
+  `aFogPlaceIsSeenFromOutsideItAsAFogStandingOverIt`, `theSeenFogPlaceIsTheServersFogEndAndHasNoPop`.
+- **04 under an Iris shaderpack (R8 L6).** A pack lights and draws the night from the game's own phase (its uniform
+  reads the `MOON_PHASE` attribute, not `SkyRenderState`), so the new moon would hang over a full moon's light. While a
+  pack is in use (`atmosphere.client.ShaderPacks`: Iris's API by reflection, as the screenshot's `IrisShaders`; unknown
+  counts as in use) the sky keeps vanilla's moon (`EmptyNight.moonFor(clock, window, vanilla, shaderPack)`); the
+  night's quiet stays. Test `theSkyKeepsVanillasMoonWhileAShaderpackDrawsTheNight`. Not run with Iris (not in the dev
+  setup).
+
 ---
 
 ### world
