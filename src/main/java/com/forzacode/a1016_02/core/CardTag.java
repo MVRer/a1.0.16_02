@@ -18,5 +18,12 @@ public enum CardTag {
 	 * and a held PERSONAL card goes back into its deck as soon as a sharer comes close, so it never blocks its tier while
 	 * friends stand together. The card's own alone check still runs when it fires.
 	 */
-	PERSONAL
+	PERSONAL,
+	/**
+	 * A card whose moment is a blind moment (D-077): it happens while the player has a menu open
+	 * ({@link PlayerWatch#blindTicks} &gt; 0; dig's blind step, torch and door). A menu comes often, so a held BLIND card
+	 * keeps the normal hold (60 minutes) instead of the 5-minute unfit give-back, and the director rechecks it first when
+	 * core calls {@link Director#recheck} during a blind moment. The card's own blind check still runs when it fires.
+	 */
+	BLIND
 }

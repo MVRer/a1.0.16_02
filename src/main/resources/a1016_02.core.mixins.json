@@ -3,7 +3,8 @@
 	"package": "com.forzacode.a1016_02.core.mixin",
 	"compatibilityLevel": "JAVA_25",
 	"mixins": [
-		"BlockItemMixin"
+		"BlockItemMixin",
+		"ServerPlayerGameModeMixin"
 	],
 	"client": [],
 	"server": [],
