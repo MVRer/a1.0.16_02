@@ -186,6 +186,29 @@ public final class EntityConfig implements ModConfig.Versioned {
 	/** Server: unseen this long in a row, he is gone, out of view. Tunable live. */
 	public double glimpseWaitSeconds = 10;
 
+	// --- the screenshot (D-078; new fields of version 4, no default changed) ---
+	/** Server: {@code the_screenshot} arms that player's client for this many in-game days (or until they leave). */
+	public double screenshotArmDays = 2;
+	/**
+	 * Server: a dusk fog or fog spell this strong at the player's eyes (the amount {@code FogLimits} pulls the fog in
+	 * by, 0 to 1) counts as "the fog is on", whatever the fog end.
+	 */
+	public double screenshotFogOnAmount = 0.1;
+	/** Client: a fog end nearer than this many blocks counts as fog by itself. */
+	public double screenshotMaxFogEnd = 160;
+	/** Client: the sky light at the eyes (raw, 0 to 15) at least this: outside. */
+	public int screenshotMinSkyLight = 10;
+	/** Client: he stands this share of the fog end away (from the camera to his middle, in 3D). */
+	public double screenshotFogShareMin = 0.6;
+	public double screenshotFogShareMax = 0.75;
+	/** Client: his middle lands this share of the frame's width from the left or the right edge: inside it, off the middle. */
+	public double screenshotEdgeShareMin = 0.15;
+	public double screenshotEdgeShareMax = 0.35;
+	/** Client: his feet and the top of his head stay at least this share of the frame's height inside it. */
+	public double screenshotFrameMargin = 0.03;
+	/** Client: spots tried before the arm waits for the next screenshot. */
+	public int screenshotSpotTries = 64;
+
 	/** Section version, so changed defaults reach files written before the change ({@link #upgrade}). */
 	public int version = 0;
 	static final int CURRENT_VERSION = 4;
@@ -211,7 +234,8 @@ public final class EntityConfig implements ModConfig.Versioned {
 	 * from before versioned config (D-075) give way unconditionally, as they always did: version 2 (playtest): approach
 	 * 10 blocks (was 6), stare cone 8 degrees (was 6), stare back 2 s (was 1); version 3 (D-035): the close clamp is 16
 	 * to 28 blocks (was 24 to 36). Version 4 (v1.2, D-073) only adds the glimpse's values, which a section without them
-	 * takes from the defaults by itself; no default changed, so nothing the player set is touched. Every later default
+	 * takes from the defaults by itself; no default changed, so nothing the player set is touched. v1.3's screenshot
+	 * values (D-078) are new fields too, without a step. Every later default
 	 * change adds a step with {@link ModConfig.Upgrades#keepOrNew}.
 	 */
 	@Override
@@ -286,6 +310,18 @@ public final class EntityConfig implements ModConfig.Versioned {
 	/** {@link #glimpseServerDegrees} in 0 to 90 (35 if NaN). */
 	public double glimpseServerDegrees() {
 		return angle(glimpseServerDegrees, 35.0);
+	}
+
+	/** {@link #screenshotArmDays} in ticks of in-game time, at least one tick (2 days if NaN). */
+	public long screenshotArmTicks() {
+		double days = Double.isNaN(screenshotArmDays) ? 2.0 : Math.clamp(screenshotArmDays, 0.0, 10_000.0);
+		return Math.max(1L, Math.round(days * 24000.0));
+	}
+
+	/** The screenshot spot's rules ({@link ScreenshotSpot.Settings}, normalized there). */
+	public ScreenshotSpot.Settings screenshotSpot() {
+		return new ScreenshotSpot.Settings(screenshotFogShareMin, screenshotFogShareMax, screenshotEdgeShareMin, screenshotEdgeShareMax,
+				screenshotFrameMargin, screenshotSpotTries);
 	}
 
 	private static double angle(double degrees, double fallback) {
