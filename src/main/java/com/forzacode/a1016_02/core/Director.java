@@ -68,6 +68,18 @@ public interface Director {
 	/** Lines for {@code /a1016 state}. */
 	List<String> debugLines(MinecraftServer server);
 
+	/**
+	 * A blind moment's recheck (D-077): {@code player}'s client has had a counting screen open
+	 * ({@link PlayerWatch#blindTicks} &gt; 0). Core calls it {@link PlayerWatch#BLIND_FIRST_RECHECK_TICKS} (30) ticks after
+	 * the moment starts and every {@link PlayerWatch#BLIND_RECHECK_EVERY_TICKS} (20) while it lasts, at most
+	 * {@link PlayerWatch#BLIND_MAX_RECHECKS} (10) times, on the server thread, from the end of the server tick before
+	 * {@link #tick}. For that player only: fire their held or parked card if its moment fits now ({@code contextFits}) and
+	 * every gate the normal decision uses passes, {@link CardTag#BLIND} cards first; never roll or draw. Default: nothing
+	 * (the stub); the director implements it.
+	 */
+	default void recheck(MinecraftServer server, ServerPlayer player) {
+	}
+
 	/** The default until the director workstream installs its own: fires cards directly, nothing on its own. */
 	final class Stub implements Director {
 		private final Map<CardTag, Long> lastFired = new EnumMap<>(CardTag.class);

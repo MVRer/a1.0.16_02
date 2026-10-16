@@ -1,9 +1,12 @@
 package com.forzacode.a1016_02.core;
 
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.Iterator;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -14,15 +17,25 @@ import java.util.function.Predicate;
 
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.GlobalPos;
+import net.minecraft.resources.ResourceKey;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.tags.TagKey;
+import net.minecraft.world.Container;
+import net.minecraft.world.inventory.AbstractContainerMenu;
 import net.minecraft.world.level.ChunkPos;
+import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.ChestBlock;
+import net.minecraft.world.level.block.DoorBlock;
+import net.minecraft.world.level.block.EnderChestBlock;
+import net.minecraft.world.level.block.FenceGateBlock;
+import net.minecraft.world.level.block.TrapDoorBlock;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.block.state.properties.BlockStateProperties;
+import net.minecraft.world.level.block.state.properties.DoubleBlockHalf;
 import net.minecraft.world.phys.Vec3;
 
 import org.jspecify.annotations.Nullable;
@@ -31,7 +44,8 @@ import org.jspecify.annotations.Nullable;
  * Who takes part and what each player is doing and has done. Everyone takes part in the one story (D-058): a
  * participant is an online player who is not a spectator. A dead player on the death screen still takes part (so a death does not flap
  * sessions or clocks) but is not {@linkplain #isTargetable targetable}; a hardcore death makes them a spectator,
- * and then they stop. Live values (stillness, combat, join time) are per player and per session; the footprint
+ * and then they stop. Live values (stillness, combat, join time, {@linkplain #recentActions recent actions} and
+ * {@linkplain #blindTicks blind moments}, v1.3) are per player and per session; the footprint
  * (blocks placed and dug by players) and per-chunk visits persist; personal records live in
  * {@link HerobrineState} by UUID (D-061).
  * <p>
@@ -62,6 +76,11 @@ public final class PlayerWatch {
 		HerobrineState state(MinecraftServer server);
 
 		void participation(MinecraftServer server, UUID player, boolean participating);
+
+		/** The director a blind moment's rechecks go to ({@link Director#recheck}, D-077). The live one by default. */
+		default Director director() {
+			return Services.director();
+		}
 	}
 
 	/** The live server, the world's state and {@link HerobrineEvents#PARTICIPATION}. */
@@ -87,6 +106,15 @@ public final class PlayerWatch {
 		}
 	};
 
+	/** How many actions {@link #recentActions} keeps per player (D-076): a mining run of up to six breaks is one. */
+	public static final int RECENT_ACTIONS = 64;
+	/** A blind moment's first recheck comes this many ticks after it starts (D-077: 1.5 s, the blind cards' own wait). */
+	public static final int BLIND_FIRST_RECHECK_TICKS = 30;
+	/** Then one every this many ticks while it lasts. */
+	public static final int BLIND_RECHECK_EVERY_TICKS = 20;
+	/** At most this many rechecks per blind moment (the last at 210 ticks). */
+	public static final int BLIND_MAX_RECHECKS = 10;
+
 	private static final class Live {
 		Vec3 lastPos = Vec3.ZERO;
 		long stillTicks;
@@ -94,8 +122,23 @@ public final class PlayerWatch {
 		long lastCombatTick = Long.MIN_VALUE;
 	}
 
+	/** One blind moment: where it started, how long it has lasted (counted each tick), how many rechecks it had. */
+	private static final class Blind {
+		final ResourceKey<Level> dimension;
+		long ticks;
+		int rechecks;
+
+		Blind(ResourceKey<Level> dimension) {
+			this.dimension = dimension;
+		}
+	}
+
 	private final Source source;
 	private final Map<UUID, Live> live = new HashMap<>();
+	/** Each participant's recent actions, newest first (session only). */
+	private final Map<UUID, ArrayDeque<PlayerAction>> actions = new HashMap<>();
+	/** Who is blind now, in the order their moments started (session only). */
+	private final Map<UUID, Blind> blind = new LinkedHashMap<>();
 	/** Who core saw join and not leave yet. A joining player is not in the player list while Fabric's JOIN runs. */
 	private final Set<UUID> connected = new HashSet<>();
 	/** Who was a participant at the last {@link #tickParticipation}, in the order they started. */
@@ -264,6 +307,138 @@ public final class PlayerWatch {
 		return first == null ? Optional.empty() : Optional.of(first.pos());
 	}
 
+	// --- recent actions (D-076, per player, session only) ---
+
+	/**
+	 * What this player did lately, newest first, at most {@link #RECENT_ACTIONS} (64): mining runs
+	 * ({@link PlayerAction.Mining}: each block they broke, with its state, position and tick, grouped while each break comes
+	 * less than 3 s after the last, up to six to an entry), doors, trapdoors and fence gates they opened or closed by hand
+	 * ({@link PlayerAction.DoorUse}) and containers they opened ({@link PlayerAction.ContainerOpen}). Only a participant's
+	 * actions are kept, and only for their session: forgotten when they stop taking part (PARTICIPATION false: they left or
+	 * turned spectator) and when the server stops; a death keeps them. A new list each call; empty for someone with none.
+	 */
+	public List<PlayerAction> recentActions(ServerPlayer player) {
+		ArrayDeque<PlayerAction> ring = actions.get(player.getUUID());
+		return ring == null ? List.of() : List.copyOf(ring);
+	}
+
+	/** The mining bursts among {@link #recentActions} (2 to 6 breaks, {@link PlayerAction.Mining#isBurst}), newest first. */
+	public List<PlayerAction.Mining> recentBursts(ServerPlayer player) {
+		ArrayDeque<PlayerAction> ring = actions.get(player.getUUID());
+		if (ring == null) {
+			return List.of();
+		}
+		List<PlayerAction.Mining> bursts = new ArrayList<>();
+		for (PlayerAction action : ring) {
+			if (action instanceof PlayerAction.Mining mining && mining.isBurst()) {
+				bursts.add(mining);
+			}
+		}
+		return bursts;
+	}
+
+	/**
+	 * Tests and debug: a break of {@code state} at {@code pos} at {@code tick}, kept as core's break hook keeps one: it goes
+	 * on the newest entry if that is mining in the same level, less than {@link PlayerAction.Mining#GAP_TICKS} before and
+	 * not full, else it starts a new one. Ignored for someone who is not a participant.
+	 */
+	public void addBreak(ServerPlayer player, ResourceKey<Level> dimension, BlockPos pos, BlockState state, long tick) {
+		if (!isParticipant(player)) {
+			return;
+		}
+		ArrayDeque<PlayerAction> ring = actions.computeIfAbsent(player.getUUID(), k -> new ArrayDeque<>());
+		PlayerAction.Break next = new PlayerAction.Break(pos, state, tick);
+		if (ring.peekFirst() instanceof PlayerAction.Mining run && run.continuedBy(dimension, next)) {
+			ring.pollFirst();
+			ring.addFirst(run.with(next));
+			return;
+		}
+		push(ring, new PlayerAction.Mining(dimension, List.of(next)));
+	}
+
+	/**
+	 * Tests and debug: puts {@code action} in front of the player's recent actions as it is (a mining entry stays whole and
+	 * a later break never joins it unless it continues it by the hook's rule), dropping the oldest past
+	 * {@link #RECENT_ACTIONS}. Ignored for someone who is not a participant.
+	 */
+	public void addAction(ServerPlayer player, PlayerAction action) {
+		if (isParticipant(player)) {
+			push(actions.computeIfAbsent(player.getUUID(), k -> new ArrayDeque<>()), action);
+		}
+	}
+
+	private static void push(ArrayDeque<PlayerAction> ring, PlayerAction action) {
+		ring.addFirst(action);
+		while (ring.size() > RECENT_ACTIONS) {
+			ring.pollLast();
+		}
+	}
+
+	// --- blind moments (D-077, per player, session only) ---
+
+	/**
+	 * How long this player has been blind: ticks since their client said a counting screen opened (a container or the
+	 * inventory, a book or sign, the advancements, the pause menu; core's client decides which, D-077), at least 1 from the
+	 * moment it starts; 0 when not blind. It ends when their client says the screen closed, and is reset when they
+	 * disconnect, stop taking part, die or change dimension (a screen still open then counts again only once the client
+	 * says so again). The server takes the signal from participants who are alive only. Counted at the end of each server
+	 * tick, before the director's tick.
+	 */
+	public long blindTicks(ServerPlayer player) {
+		Blind moment = blind.get(player.getUUID());
+		return moment == null || !stillBlind(player, moment) ? 0 : Math.max(1, moment.ticks);
+	}
+
+	/**
+	 * Internal: core's {@link BlindState} receiver (the player's client opened or closed a counting screen); tests call it
+	 * as the client would. A start is ignored from someone who is not a participant or is dead, and a start while already
+	 * blind keeps the moment going (its ticks and rechecks); an end always ends it.
+	 */
+	public void onBlindState(ServerPlayer player, boolean nowBlind) {
+		UUID uuid = player.getUUID();
+		Blind moment = blind.get(uuid);
+		if (!nowBlind) {
+			blind.remove(uuid);
+		} else if (moment == null || !stillBlind(player, moment)) {
+			if (isParticipant(player) && player.isAlive()) {
+				blind.put(uuid, new Blind(player.level().dimension()));
+			} else {
+				blind.remove(uuid);
+			}
+		}
+	}
+
+	/**
+	 * Tests and debug: makes the player blind as if their client said so {@code ticks} ago (the rechecks those ticks would
+	 * have had count as done). Ignored, as the payload is, for someone who is not a participant or is dead.
+	 */
+	public void markBlind(ServerPlayer player, long ticks) {
+		if (!isParticipant(player) || !player.isAlive()) {
+			return;
+		}
+		Blind moment = new Blind(player.level().dimension());
+		moment.ticks = Math.max(0, ticks);
+		moment.rechecks = rechecksBy(moment.ticks);
+		blind.put(player.getUUID(), moment);
+	}
+
+	/** True if a blind moment's {@code ticks}-th tick brings a recheck (30, 50, 70 ...; the cap is the caller's). */
+	static boolean recheckDue(long ticks) {
+		return ticks >= BLIND_FIRST_RECHECK_TICKS && (ticks - BLIND_FIRST_RECHECK_TICKS) % BLIND_RECHECK_EVERY_TICKS == 0;
+	}
+
+	/** How many rechecks a blind moment has had by its {@code ticks}-th tick. */
+	static int rechecksBy(long ticks) {
+		if (ticks < BLIND_FIRST_RECHECK_TICKS) {
+			return 0;
+		}
+		return (int) Math.min(BLIND_MAX_RECHECKS, 1 + (ticks - BLIND_FIRST_RECHECK_TICKS) / BLIND_RECHECK_EVERY_TICKS);
+	}
+
+	private boolean stillBlind(ServerPlayer player, Blind moment) {
+		return isParticipant(player) && player.isAlive() && player.level().dimension().equals(moment.dimension);
+	}
+
 	// --- footprint (all players) ---
 
 	/** The in-game day ({@link GameClock#day}) a participant was last in or next to this chunk, or -1 if never. */
@@ -335,11 +510,15 @@ public final class PlayerWatch {
 		}
 	}
 
-	/** Fabric's DISCONNECT (the player is still listed while it runs). Ends that player's participation only. */
+	/**
+	 * Fabric's DISCONNECT (the player is still listed while it runs). Ends that player's participation only, and forgets
+	 * their recent actions and blind moment.
+	 */
 	void onLeave(ServerPlayer player) {
 		UUID uuid = player.getUUID();
 		live.remove(uuid);
 		connected.remove(uuid);
+		forgetSession(uuid);
 		if (participating.remove(uuid)) {
 			source.participation(player.level().getServer(), uuid, false);
 		}
@@ -350,6 +529,14 @@ public final class PlayerWatch {
 		live.clear();
 		connected.clear();
 		participating.clear();
+		actions.clear();
+		blind.clear();
+	}
+
+	/** A player's session ended (they left, or stopped taking part): their recent actions and blind moment go. */
+	private void forgetSession(UUID uuid) {
+		actions.remove(uuid);
+		blind.remove(uuid);
 	}
 
 	void onCombat(ServerPlayer player) {
@@ -384,6 +571,7 @@ public final class PlayerWatch {
 		}
 		participating.removeAll(stopped);
 		participating.addAll(started);
+		stopped.forEach(this::forgetSession);
 		GameClock.advance(state, uuids);
 		stopped.forEach(uuid -> source.participation(server, uuid, false));
 		started.forEach(uuid -> source.participation(server, uuid, true));
@@ -404,6 +592,36 @@ public final class PlayerWatch {
 				recordVisit(player);
 			}
 		}
+		tickBlind(server);
+	}
+
+	/**
+	 * Counts each blind moment on, ends those whose player is gone, dead, no longer taking part or in another dimension,
+	 * and asks the director to recheck (D-077) {@link #BLIND_FIRST_RECHECK_TICKS} after a moment starts and every
+	 * {@link #BLIND_RECHECK_EVERY_TICKS} while it lasts, at most {@link #BLIND_MAX_RECHECKS} times. A few UUIDs a tick.
+	 */
+	void tickBlind(MinecraftServer server) {
+		if (blind.isEmpty()) {
+			return;
+		}
+		List<ServerPlayer> due = new ArrayList<>();
+		Iterator<Map.Entry<UUID, Blind>> moments = blind.entrySet().iterator();
+		while (moments.hasNext()) {
+			Map.Entry<UUID, Blind> entry = moments.next();
+			ServerPlayer player = source.online(server, entry.getKey());
+			Blind moment = entry.getValue();
+			if (player == null || !stillBlind(player, moment)) {
+				moments.remove();
+				continue;
+			}
+			moment.ticks++;
+			if (recheckDue(moment.ticks) && moment.rechecks < BLIND_MAX_RECHECKS) {
+				moment.rechecks++;
+				due.add(player);
+			}
+		}
+		Director director = source.director();
+		due.forEach(player -> director.recheck(server, player));
 	}
 
 	private void recordVisit(ServerPlayer player) {
@@ -469,6 +687,57 @@ public final class PlayerWatch {
 			footprint.dug.add(pos.asLong(), ModConfig.pacing().footprintMaxPerDimension);
 		}
 		data.setDirty();
+	}
+
+	/**
+	 * Internal: core's break hook (Fabric's {@code PlayerBlockBreakEvents.AFTER}): the participant broke {@code state} at
+	 * {@code pos} now. Goes into their recent actions ({@link #addBreak}); any block counts, a player-placed one too.
+	 */
+	public void onMined(ServerPlayer player, ServerLevel level, BlockPos pos, BlockState state) {
+		addBreak(player, level.dimension(), pos, state, now(player));
+	}
+
+	/**
+	 * Internal: core's use hook (a mixin on {@code ServerPlayerGameMode.useItemOn}), after the player used the block at
+	 * {@code pos}; {@code before} is its state and {@code menuBefore} the player's open menu just before. A door, trapdoor
+	 * or fence gate whose open state changed is a {@link PlayerAction.DoorUse} (a door at its lower half); a container whose
+	 * menu opened is a {@link PlayerAction.ContainerOpen}. Anything else, a use that changed nothing (an iron door by hand)
+	 * or a player who is not a participant, records nothing.
+	 */
+	public void onUsedBlock(ServerPlayer player, ServerLevel level, BlockPos pos, @Nullable BlockState before, @Nullable AbstractContainerMenu menuBefore) {
+		if (before == null || !isParticipant(player)) {
+			return;
+		}
+		BlockState after = level.getBlockState(pos);
+		if (isDoorLike(after) && after.getBlock() == before.getBlock() && after.hasProperty(BlockStateProperties.OPEN)
+				&& before.hasProperty(BlockStateProperties.OPEN)
+				&& after.getValue(BlockStateProperties.OPEN) != before.getValue(BlockStateProperties.OPEN)) {
+			BlockPos at = pos;
+			if (after.getBlock() instanceof DoorBlock && after.getValue(DoorBlock.HALF) == DoubleBlockHalf.UPPER) {
+				BlockState lower = level.getBlockState(pos.below());
+				if (lower.is(after.getBlock())) {
+					at = pos.below();
+					after = lower;
+				}
+			}
+			addAction(player, new PlayerAction.DoorUse(level.dimension(), at, after, now(player)));
+			return;
+		}
+		AbstractContainerMenu menu = player.containerMenu;
+		if (menu != menuBefore && menu != player.inventoryMenu && isContainer(level, pos, after)) {
+			addAction(player, new PlayerAction.ContainerOpen(level.dimension(), pos, after, now(player)));
+		}
+	}
+
+	/** A door, trapdoor or fence gate. */
+	static boolean isDoorLike(BlockState state) {
+		Block block = state.getBlock();
+		return block instanceof DoorBlock || block instanceof TrapDoorBlock || block instanceof FenceGateBlock;
+	}
+
+	/** A block whose block entity is a container, or an ender chest. */
+	static boolean isContainer(ServerLevel level, BlockPos pos, BlockState state) {
+		return state.getBlock() instanceof EnderChestBlock || level.getBlockEntity(pos) instanceof Container;
 	}
 
 	/**

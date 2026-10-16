@@ -17,6 +17,7 @@ public final class CoreInit {
 	public static void init() {
 		ModConfig.load();
 		ClientEffects.registerPayloads();
+		BlindState.register();
 		CommandHooks.install();
 
 		ServerLifecycleEvents.SERVER_STARTING.register(server -> {
@@ -47,6 +48,9 @@ public final class CoreInit {
 		PlayerBlockBreakEvents.AFTER.register((level, player, pos, state, blockEntity) -> {
 			if (level instanceof ServerLevel serverLevel) {
 				Services.watch().onBroken(serverLevel, pos);
+				if (player instanceof ServerPlayer serverPlayer) {
+					Services.watch().onMined(serverPlayer, serverLevel, pos, state);
+				}
 			}
 		});
 

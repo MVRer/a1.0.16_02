@@ -62,12 +62,14 @@ public class MultiplayerCoreTests extends FogWeatherTests {
 		}
 	}
 
-	/** A test's own online list, state and participation events ({@code "A+"}, {@code "A-"}). */
+	/** A test's own online list, state, participation events ({@code "A+"}, {@code "A-"}) and director (blind rechecks). */
 	static final class Roster implements PlayerWatch.Source {
 		final List<ServerPlayer> online = new ArrayList<>();
 		final HerobrineState state;
 		final List<String> events = new ArrayList<>();
 		final PlayerWatch watch = new PlayerWatch(this);
+		/** Where this watch's blind rechecks go: a stub that does nothing, never the live director. */
+		Director director = new Director.Stub();
 
 		Roster() {
 			this(new HerobrineState());
@@ -94,6 +96,11 @@ public class MultiplayerCoreTests extends FogWeatherTests {
 			// On a start the player must already be findable; mark it if not.
 			boolean found = !participating || watch.participant(server, player).isPresent();
 			events.add(name + (participating ? "+" : "-") + (found ? "" : "(not found)"));
+		}
+
+		@Override
+		public Director director() {
+			return director;
 		}
 
 		/** Joins like the server does: Fabric's JOIN runs before the player list has the player. */
