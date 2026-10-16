@@ -21,9 +21,12 @@ public enum CardTag {
 	PERSONAL,
 	/**
 	 * A card whose moment is a blind moment (D-077): it happens while the player has a menu open
-	 * ({@link PlayerWatch#blindTicks} &gt; 0; dig's blind step, torch and door). A menu comes often, so a held BLIND card
-	 * keeps the normal hold (60 minutes) instead of the 5-minute unfit give-back, and the director rechecks it first when
-	 * core calls {@link Director#recheck} during a blind moment. The card's own blind check still runs when it fires.
+	 * ({@link PlayerWatch#blindTicks} &gt; 0; dig's blind step, torch and door). A menu comes often but never lasts, so a
+	 * held BLIND card waits the director's {@code blindHoldMinutes} (15) of looks instead of the 5-minute unfit give-back,
+	 * then goes back into its deck parked like any card whose moment did not come ({@code unfitParkMinutes}, 30), so a
+	 * player who never opens a menu, or a client without the blind signal, never freezes a tier. The director rechecks
+	 * BLIND cards first, held or parked, when core calls {@link Director#recheck} during a blind moment. The card's own
+	 * blind check still runs when it fires.
 	 */
 	BLIND
 }

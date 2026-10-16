@@ -267,22 +267,22 @@ The goal is surprise built across many sessions, starting in the first hour (D-0
 - On a fog night or day that is not quiet (D-071), while the fog is at least half in, ambient and minor odds are 3.5 times higher, sightings 3 times as likely to be picked, and a major due within the hour may come now. The gaps between events take part of it back: such an hour holds a little over twice a clear hour's events.
 - Friends together share one moment and roll 1.5 times one player's rate between them; apart, each has their own pace (D-074). The tunnel ladder only happens to a player alone.
 
-What the director's dry runs show (registered deck, 192 seeds of 20 hours per tempo; "active" leaves out quiets and empty sessions, which take 43 to 45% of Proximity; main after the v1.2 final fixes):
+What the director's dry runs show (registered deck, every v1.3 card in it, 192 seeds of 20 hours per tempo, each player opening a menu 20 times an hour; "active" leaves out quiets and empty sessions, which take 42 to 44% of Proximity; v1.3 after INT-2):
 
 | | Early | Slow burn | Very late |
 | --- | --- | --- | --- |
 | Alone lasts | 0.49 h | 0.65 h | 0.81 h |
-| Alone: ambients per hour | 2.86 | 3.09 | 3.05 |
-| Traces: ambients per hour | 2.24 | 2.29 | 2.22 |
-| Traces: minors per hour | 0.82 | 0.83 | 0.82 |
-| Proximity: ambients per hour | 1.39 | 1.43 | 1.45 |
-| Proximity: minors per hour (active) | 1.04 (1.88) | 1.06 (1.89) | 1.10 (1.94) |
-| Proximity: a major every | 1.78 h | 2.24 h | 2.75 h |
-| First accident: median (earliest) | 4.21 h (2.63 h) | 5.13 h (3.52 h) | 6.39 h (4.40 h) |
-| First hour: first event by 30 / 45 minutes | 81% / 94% | 83% / 96% | 83% / 97% |
-| First hour: two or more events | 91% | 94% | 97% |
+| Alone: ambients per hour | 2.66 | 2.86 | 2.85 |
+| Traces: ambients per hour | 2.19 | 2.20 | 2.20 |
+| Traces: minors per hour | 0.86 | 0.82 | 0.78 |
+| Proximity: ambients per hour | 1.38 | 1.39 | 1.46 |
+| Proximity: minors per hour (active) | 1.03 (1.85) | 1.05 (1.89) | 1.09 (1.88) |
+| Proximity: a major every | 1.78 h | 2.23 h | 2.73 h |
+| First accident: median (earliest) | 4.18 h (2.64 h) | 5.13 h (3.52 h) | 6.43 h (4.39 h) |
+| First hour: first event by 30 / 45 minutes | 80% / 94% | 81% / 95% | 81% / 95% |
+| First hour: two or more events | 91% | 92% | 95% |
 
-In every tempo the median first event comes 15.5 minutes in, and no first hour holds more than five. A fog spell that counts and is not quiet holds 2.1 to 2.2 times a clear hour's events while the director may act; a quiet one about a clear hour's. A card whose moment never comes for this player (the tunnel steps for someone who never digs a long tunnel) is set aside for half an hour of play instead of holding its tier, so Traces' and Proximity's rates stay within 10% of these; one set aside whose moment comes back (the ridge at dusk) is let in again as soon as it fits.
+In every tempo the median first event comes 16 minutes in, and no first hour holds more than five. A fog spell that counts and is not quiet holds 2.1 to 2.2 times a clear hour's events while the director may act; a quiet one about a clear hour's. The blind cards (a step, a torch, a door while a menu is open) come only in those moments, about 0.2 an hour, and waiting for them costs Alone about 7% of its ambients (2.85 to 3.09 an hour without them). A card whose moment never comes for this player (the tunnel steps for someone who never digs a long tunnel, a blind card for someone who never opens a menu) is set aside for half an hour of play instead of holding its tier, so Traces' and Proximity's rates stay within 5% of these; one set aside whose moment comes back (the ridge at dusk) is let in again as soon as it fits.
 
 ### 5. False positives
 
@@ -366,19 +366,19 @@ These are the cards in the director's decks. Each one is a removal, a sound with
 | Distant cave sound | Ambient | Alone | A vanilla cave ambience sound, timed when the player is alone (and still, on the surface) | Pure false positive. It's just the game |
 | Far in the rock | Ambient | Alone | Underground, one stone or deepslate hit, or a gravel slide, 18 to 28 blocks off, inside solid rock below or beside you. Faint | No other player within 24 blocks. Fake: the vanilla cave sound |
 | Steps behind you | Ambient | Alone | In a long straight tunnel you dug, one or two footsteps 10 to 12 blocks behind you, then nothing | Once per player. Underground, 16+ blocks of straight dug tunnel behind you, alone (no friend within 48 blocks). The floor's own step sound. Never a block change (D-072). Fake: your own step, late |
-| Your mining, again | Ambient | Alone | Minutes after you mined, the same burst plays again: the same number of hits and breaks, the same gaps, the block's own sounds, from inside solid rock 14 to 24 blocks below or beside you, where nobody can see the spot | One of your own bursts (2 to 6 breaks less than 3 s apart) from 5 to 30 minutes of your play ago. Only sound; nothing changes. Never within 30 s of combat. Fake: a burst with another rhythm and block (D-076) |
-| A step while you look away | Ambient | Alone | While a menu is open (your inventory, a chest, a crafting table, a furnace, trading, a book or sign you are writing, the advancements, the pause menu on a server), one or two footsteps 3 to 5 blocks behind you, the floor's own step sound | After 1.5 s in the menu, alone (no other player, spectators included, within 48 blocks). Only for you. Fake: your own step, late (D-077) |
+| Your mining, again | Ambient | Alone | Minutes after you mined, the same burst plays again: the same number of hits and breaks, the same gaps, the block's own sounds, from inside solid rock 14 to 24 blocks below or beside you, where nobody can see the spot | One of your own bursts (2 to 6 blocks dug with a pickaxe or shovel, less than 3 s apart) from 5 to 30 minutes of your play ago. A hit every 4 ticks while each block is dug, as the game does; a pause stays quiet. Only sound; nothing changes. Never within 30 s of combat. Fake: a burst with another rhythm and block (D-076) |
+| A step while you look away | Ambient | Alone | While a menu is open (your inventory, a chest, a crafting table, a furnace, trading, a book or sign you are writing, the advancements, the pause menu on a server), one or two footsteps 3 to 5 blocks behind you, the floor's own step sound | After 1.5 s in the menu, alone (no other player, spectators included, within 48 blocks), never within 30 s of combat. Half a normal step's volume, a slab or carpet sounding as itself; none with a wall at your back. Only for you. Fake: your own step, late (D-077) |
 | Silence | Minor | Traces | All ambient sound and music cut out for about 60 seconds | Comes back gradually, not all at once |
 | Light on the mountain | Minor | Traces | At night, one torch visible on a far hilltop that wasn't there. Next day it's gone, no trace | Only visible from 100+ blocks |
 | New scar out of view | Minor | Traces | A hill you crossed days ago is now dead, or a grove is bare | Only in areas unloaded for 2+ in-game days |
 | Mining in the dark | Minor | Proximity | In bed or standing still at night: one block-break sound nearby. Nothing broken when checked | Max once per night |
 | Chest opens | Minor | Traces | Chest open and close sound from a chest within 16 blocks, out of sight | Contents unchanged, or one stack missing. Prefers the container you opened last, if it is out of sight and in range (D-076) |
-| Your door, again | Minor | Traces | A door, trapdoor or gate you used 5 to 60 minutes ago, now 6 to 16 blocks away and out of view, opens and closes again: its own sounds, with the gap you left between them | The block never moves. Anyone in range hears it. Never within 30 s of combat (D-076) |
-| A torch while you look away | Minor | Traces | While a menu is open, a torch or lantern you placed 6 to 20 blocks away, out of everyone's view, is gone. Its support stays | Alone, only for you. Never the last light within 6 blocks of your bed, never the only light keeping a room spawn-proof (another light within 8 blocks) (D-077) |
-| A door while you look away | Minor | Traces | While a menu is open, a door, trapdoor or gate 4 to 12 blocks away and out of view opens and closes. Nothing has moved when you look | Alone, only for you. Its own sounds (D-077) |
+| Your door, again | Minor | Traces | A door, trapdoor or gate you used 5 to 60 minutes ago, now 6 to 16 blocks away and out of view, opens and closes again: its own sounds, with the gap you left between them | The block never moves; a door standing open now closes, then opens again, so it ends as it stands. Anyone in range hears it. Never within 30 s of combat (D-076) |
+| A torch while you look away | Minor | Traces | While a menu is open, a torch or lantern you placed 6 to 20 blocks away, out of everyone's view, is gone. Its support stays | Alone, only for you. A torch, wall torch or lantern (soul and copper ones too), never a redstone torch. Never the last light within 6 blocks of any player's bed or base, never the only light keeping a room spawn-proof (another light of 7 or more within 8 blocks) (D-077) |
+| A door while you look away | Minor | Traces | While a menu is open, a door, trapdoor or gate 4 to 12 blocks away and out of view opens and closes. Nothing has moved when you look | Alone, only for you. Its own sounds, the close 1 to 2 s after the open, never an iron door (D-077) |
 | Someone coming | Minor | Traces | Six to ten footsteps walk up your tunnel from about 15 blocks back, closing to 4 to 6, then silence. Sometimes slower and quieter, sneaking. Turn around and they stop | Only after steps behind you, at most one tunnel event per 25 minutes of play, never the same tunnel twice. Alone, never with a friend near (D-072). Fake: a few far steps that fade |
 | The glimpse | Minor | Traces | The steps come up the tunnel and stop 14 to 20 blocks back, past your last torch. Something stands there in the dark, flat-eyed. Look toward it, step toward it or wait, and it is gone | Only after someone came, 20+ minutes of play later. At most once per in-game day and 2 hours of play apart. Counts as the day's sighting. The one time he vanishes in view (D-073) |
-| The screenshot | Minor | Traces | Once, a screenshot you take (F2) shows him at the fog edge, standing on the ground off to one side, facing the camera, even though he was never on your screen | Once per world, in the overworld, outdoors in fog. Only in the saved image, never on screen. Counts as your sighting for the day; no message, no sound (D-078). A direct nod to the one canon screenshot |
+| The screenshot | Minor | Traces | Once, a screenshot you take (F2) shows him at the fog edge, standing on the ground off to one side, facing the camera, even though he was never on your screen | Once per world, in the overworld, outdoors in fog, within 2 in-game days of the card (it waits while he is out anywhere). His head and chest in plain sight. Only in the saved image, never on screen. Counts as your sighting for the day; no message, no sound (D-078). A direct nod to the one canon screenshot |
 | Door left open | Minor | Proximity | A door you closed is open when you come back | Only doors you placed and closed |
 | One block missing | Minor | Proximity | A single block of your house wall is gone, making a 1x1 window that looks out at the fog | Removed from outside. Never the roof |
 | Torches gone | Minor | Proximity | Torches removed from a cave you lit, support blocks left | Only in places you have left |
@@ -511,7 +511,7 @@ He is only ever seen at the edge of the fog, for a few seconds, and he always le
 - **Frequency:** Alone, a tiny chance per day. Traces, rare. Proximity, a few per week of play. Telling, almost none. Never two in one in-game day, and never the same variant twice in a row.
 - **Never:** indoors with you, inside your base, in clear daylight, or during combat. A fog day or a grey morning is not clear daylight (D-071): in daytime fog the cow, walks into nothing, between trunks, across the water and close may come; the ridge keeps its dusk sky and in the light its night.
 - **Model:** default Steve skin, pure white eyes with no glow, no name tag, no particles. Tinted with the fog like the terrain, so he reads as part of the haze.
-- **The screenshot** (D-078): once per world, the next screenshot a player takes outdoors in the fog (overworld, sky above, a fog night, dusk fog or a short render distance, no menu, not under water, first person) shows him at 0.6 to 0.75 of the fog end, off the middle of the frame, facing the camera. He is only in the saved image, never on screen, and nothing is spawned. It counts as that player's sighting for the day.
+- **The screenshot** (D-078): once per world, the next screenshot a player takes outdoors in the fog (overworld, sky above, a fog night, dusk fog or a short render distance, no menu, not under water, first person) shows him at 0.6 to 0.75 of the fog end, off the middle of the frame, facing the camera, his head and chest in plain sight. He is only in the saved image, never on screen, and nothing is spawned. The card arms that player for 2 in-game days; the arm waits while he is out anywhere, and the card counts as their sighting for the day.
 
 **Sighting variants** (the director picks one, weighted by the world's habits)
 

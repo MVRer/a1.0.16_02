@@ -2,6 +2,66 @@
 
 One entry per merge, newest first. Run the game from the main checkout (this folder, on `main`).
 
+## READY TO TRY: v1.3  (branch feat/v13-int; jar build/libs/a1016_02-1.3.0-26.3.jar after ./gradlew build)
+```
+Restart needed: full game restart. Everyone who plays needs the same jar plus Fabric API (the client sends when a menu
+  is open, and draws the screenshot).
+What changed, in plain words ("he knows"):
+  - Echoes: minutes after you mined with a pickaxe or shovel, your own mining plays again from inside the rock below or
+    beside you, the same hits and breaks with the same gaps. A door, trapdoor or gate you used plays its own open and
+    close again later, from where you can't see it; the block never moves. A chest you hear opening is likely the one
+    you opened last.
+  - Blind moments: while a menu is open (the inventory, a chest, crafting, a furnace, a book or sign you are writing,
+    the advancements, the pause menu on a LAN or server world), and only when you are alone: a footstep behind you, a
+    torch of yours far off gone when you look, a door out of view that opens and closes. Never in the first 1.5 s of
+    the menu, never within 30 s of a fight, never with anyone (spectators too) within 48 blocks.
+  - The screenshot: once per world, a screenshot you take (F2) outdoors in the fog shows him standing at the fog
+    edge, off to one side, facing you. He is only in the saved picture, never on your screen. No message, no sound.
+  - Pacing: a deck with several cards that can't happen for you (the tunnel steps on the surface, a blind card for
+    someone who never opens a menu) no longer loses a tenth of its moments; the first hour is as in v1.2.
+See it now (Dev Client; /a1016 debug overlay on shows each player's "blind" line, the last echo or blind card that
+  fired for them, and who is armed for the screenshot):
+  1. echo_mining: /gamemode survival, take a pickaxe and mine 3 to 6 stone blocks one after another (each within 3 s
+     of the last), then /a1016 fire echo_mining. Within a second your burst plays again from the rock 14 to 24 blocks
+     below or beside you: the hits, then each break, with your gaps (a forced fire takes your newest burst whatever its
+     age; the real card waits 5 to 30 minutes). /a1016 fire echo_mining fake plays a burst that is not yours.
+  2. echo_door: open and close a wooden door (or trapdoor, or fence gate) by hand, walk 6 to 16 blocks away and turn
+     so it is out of view (behind a wall or behind you), then /a1016 fire echo_door: its own open, then close, with
+     the gap you left. Walk back: it never moved.
+  3. chest_opens: open a chest, walk away until it is out of sight (within 16 blocks), /a1016 fire chest_opens: that
+     chest is the one you hear.
+  4. blind_step: stand with open floor behind you, /a1016 dig blind arm blind_step, then open the inventory (E) and
+     wait 2 s: one or two steps 3 to 5 blocks behind you. /a1016 dig blind arm blind_step fake: your own step, late.
+  5. blind_torch: place two torches about 4 blocks apart, 6 to 20 blocks from you and more than 6 from your bed (or
+     your first placed blocks, if you have no bed), turn your back to them, /a1016 dig blind arm blind_torch, open the
+     inventory for 2 s, close it and look: one torch is gone, its wall or floor still there. A lone torch never goes.
+  6. blind_door: a closed wooden door, trapdoor or fence gate 4 to 12 blocks away and out of view,
+     /a1016 dig blind arm blind_door, open the inventory: its open, then its close 1 to 2 s later. Close the menu
+     before the close and it does not play.
+  7. /a1016 dig blind prints your blind moment and why each blind card would or would not happen now; the arm waits
+     up to 2 minutes for your next menu. /a1016 director shows your blind line (rechecks and how many fired).
+  8. The screenshot: /a1016 fire the_screenshot arms you (/a1016 entity screenshot shows it: days left, ready or
+     paused, fog on or off). Go outdoors in the overworld in fog: /a1016 fog night then /time add 2500, or a short
+     render distance (the fog end under 160 blocks: 8 chunks or less), sky above you, first person (F5 back to
+     it), no menu open, not in water. Press F2 and open the picture in run/screenshots: he stands at the fog edge, off
+     the middle, head and chest in plain sight. The screen never showed him. It waits (and he does not appear) while a
+     figure is out anywhere or no ground spot fits. Once per world: /a1016 entity screenshot reset to try again.
+  9. The real way: a NEW world, play normally: mine, use doors, open your inventory now and then. The echoes need 5
+     minutes or more to pass; the blind cards need you alone with a menu open; the screenshot comes once, from Traces.
+What to look for: whether an echo reads as your own rhythm coming back, whether a step behind you in the inventory
+  makes you close it and turn, whether the torch is missed, and whether the picture surprises you later.
+Multiplayer: the echoes are heard by anyone in range; the blind cards and the screenshot are personal (nobody, not
+  even a spectator, within 48 blocks for the blind ones). The menu signal only ever makes things happen to the player
+  who opened the menu.
+Existing worlds and config files are upgraded automatically: the director section steps to version 3 (it only adds
+  blindHoldMinutes 15 and simBlindPerHour 20); the echo, blind and screenshot numbers are new fields with defaults.
+Still to check in the Dev Client (the game tests cannot hear or see a frame):
+  - the echoed mining sounds like digging inside the rock (hits then a break), not like blocks breaking next to you;
+  - a blind step at 50% master volume is noticeable but not loud;
+  - the screenshot's figure is tinted by the fog like the terrain around him, and is never on the window, not for one
+    frame, before or after F2.
+```
+
 ## READY TO TRY: v1.2  (jar dist/a1016_02-1.2.0-preview.1-26.3.jar)
 ```
 Restart needed: full game restart. Everyone who plays needs the same jar plus Fabric API.
