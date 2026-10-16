@@ -12,6 +12,7 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.function.Predicate;
+import java.util.function.ToDoubleFunction;
 
 import com.forzacode.a1016_02.core.CardTag;
 import com.forzacode.a1016_02.core.FireResult;
@@ -132,6 +133,12 @@ public final class DirectorSim {
 		 * fit, whatever {@link #fits} or the dice say, so the run plays their holds, give-backs and parks. None by default.
 		 */
 		public Predicate<CardInfo> neverFits;
+		/**
+		 * Cards whose moment comes rarely (a cave passage of the right shape, a friend at the fog's edge): each look at a
+		 * card fits with this chance instead of {@link #fitChance}, on the same dice, so the rest of the run's draws are
+		 * unchanged. Null (the default): every card at {@link #fitChance}.
+		 */
+		public @Nullable ToDoubleFunction<CardInfo> fitChanceOf;
 		/**
 		 * Hours into the run at which someone names him: lore's naming {@code HerobrineEvents.TELLING}, so the
 		 * run reaches Telling and Stage 3's pacing is exercised. Negative: never (the director alone never gets there).
@@ -1197,7 +1204,11 @@ public final class DirectorSim {
 				// Every other card's moment is looked at on director ticks; a recheck gives it nothing in a dry run.
 				return false;
 			}
-			return table.params.fits != null ? table.params.fits.test(card) : table.random.nextDouble() < table.params.fitChance;
+			if (table.params.fits != null) {
+				return table.params.fits.test(card);
+			}
+			double chance = table.params.fitChanceOf != null ? table.params.fitChanceOf.applyAsDouble(card) : table.params.fitChance;
+			return table.random.nextDouble() < chance;
 		}
 
 		@Override

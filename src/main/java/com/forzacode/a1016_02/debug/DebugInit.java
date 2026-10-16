@@ -6,7 +6,8 @@ import net.fabricmc.loader.api.FabricLoader;
 
 /**
  * Common entrypoint of the debug workstream: the core {@code /a1016} commands, the {@code debug_ping} card (in a
- * development environment only), the scripted playthrough and the dev overlay.
+ * development environment only), the scripted playthrough, the dev overlay and the self-created layer's index
+ * ({@code /a1016 sc}).
  */
 public final class DebugInit {
 	private DebugInit() {
@@ -20,6 +21,7 @@ public final class DebugInit {
 		}
 		DebugCommands.register();
 		PlaytestCommands.register();
+		ScIndex.register();
 		DebugOverlay.init();
 	}
 }

@@ -35,7 +35,10 @@
 			"com.forzacode.a1016_02.world.SelfCreatedWorldTests",
 			"com.forzacode.a1016_02.atmosphere.card.SelfCreatedAtmosphereTests",
 			"com.forzacode.a1016_02.entity.SelfCreatedEntityTests",
-			"com.forzacode.a1016_02.lore.SelfCreatedLoreTests"
+			"com.forzacode.a1016_02.lore.SelfCreatedLoreTests",
+			"com.forzacode.a1016_02.core.SelfCreatedIntegrationTests",
+			"com.forzacode.a1016_02.director.SelfCreatedPacingTests",
+			"com.forzacode.a1016_02.debug.SelfCreatedDebugTests"
 		]
 	},
 	"depends": {

@@ -525,6 +525,17 @@ public final class InStep {
 		return episode + armed + "; now: " + refusal(player, now, false, false).orElse("fits");
 	}
 
+	/** Server ticks the player's debug arm has left, or -1 if they have none. */
+	public long armTicksLeft(MinecraftServer server, UUID player) {
+		Arm arm = arms.get(player);
+		return arm == null ? -1L : Math.max(0L, arm.deadline() - ticks.applyAsLong(server));
+	}
+
+	/** True if the player already had it in the night that holds this overworld clock. */
+	public boolean spent(UUID player, long clock) {
+		return nightUsed.getOrDefault(player, Long.MIN_VALUE) == nightKey(clock);
+	}
+
 	/** That player stopped taking part: their episode, samples and arm go (their night stays). */
 	public void onLeave(UUID player) {
 		episodes.remove(player);

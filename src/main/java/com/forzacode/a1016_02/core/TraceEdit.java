@@ -58,7 +58,11 @@ final class TraceEdit {
 	/** More broken neighbours than this and the edit is refused. */
 	static final int MAX_DEPENDENTS = 64;
 
-	private record Record(TraceLedger.Kind kind, BlockPos pos, @Nullable BlockPos to, BlockState state, @Nullable CompoundTag blockEntity, String cause) {
+	private record Record(TraceLedger.Kind kind, BlockPos pos, @Nullable BlockPos to, BlockState state, @Nullable CompoundTag blockEntity, String cause,
+			@Nullable BlockState after) {
+		Record(TraceLedger.Kind kind, BlockPos pos, @Nullable BlockPos to, BlockState state, @Nullable CompoundTag blockEntity, String cause) {
+			this(kind, pos, to, state, blockEntity, cause, null);
+		}
 	}
 
 	private final ServerLevel level;
@@ -109,7 +113,7 @@ final class TraceEdit {
 			case TraceBatch.Convert(BlockPos pos, BlockState state) -> {
 				BlockState old = current(pos);
 				if (old != state) {
-					records.add(new Record(TraceLedger.Kind.CONVERT, pos, null, old, blockEntity(pos), cause));
+					records.add(new Record(TraceLedger.Kind.CONVERT, pos, null, old, blockEntity(pos), cause, state));
 					changes.put(pos, state);
 				}
 				yield true;
@@ -323,7 +327,7 @@ final class TraceEdit {
 		List<TraceLedger.Entry> written = new ArrayList<>(records.size());
 		for (Record r : records) {
 			written.add(ledger.add(new TraceLedger.Entry(r.kind(), r.cause(), day, GlobalPos.of(level.dimension(), r.pos()), Optional.ofNullable(r.to()),
-					Optional.of(r.state()), Optional.ofNullable(r.blockEntity()), Optional.empty(), -1, -1)));
+					Optional.of(r.state()), Optional.ofNullable(r.blockEntity()), Optional.empty(), -1, -1, Optional.empty(), Optional.ofNullable(r.after()))));
 		}
 		// The game does the falling: the lowest falling block ticks, finds nothing under it and drops; each block
 		// above follows when the one under it leaves.

@@ -145,9 +145,8 @@ final class TraceUndo {
 			ledger.remove(entry);
 			return TraceService.UndoResult.DONE;
 		}
-		PlayerWatch watch = Services.watch();
-		if (watch.wasPlacedByPlayer(level, at) || now.isAir() && watch.wasDugByPlayer(level, at) || level.getBlockEntity(at) != null && !old.hasBlockEntity()) {
-			// The player has built or dug there since: theirs now.
+		if (changedSince(level, at, entry, old, now)) {
+			// The block is not what the conversion left (built, dug or changed there since): theirs now.
 			return TraceService.UndoResult.BLOCKED;
 		}
 		int before = ledger.entries().size();
@@ -156,6 +155,23 @@ final class TraceUndo {
 		}
 		close(ledger, entry, before, cause);
 		return TraceService.UndoResult.DONE;
+	}
+
+	/**
+	 * A CONVERT's block changed after the conversion: with the block the conversion left ({@code after}), anything but
+	 * exactly that block now (a block a player placed is taken back while it is still what he left, so a turned block
+	 * goes back); a block entity there now that the old block never had blocks it either way. An entry ledgered before
+	 * {@code after} was kept falls back to the old rule: a block a player placed or a cell they dug is theirs.
+	 */
+	private static boolean changedSince(ServerLevel level, BlockPos at, TraceLedger.Entry entry, BlockState old, BlockState now) {
+		if (level.getBlockEntity(at) != null && !old.hasBlockEntity()) {
+			return true;
+		}
+		if (entry.after().isPresent()) {
+			return now != entry.after().get();
+		}
+		PlayerWatch watch = Services.watch();
+		return watch.wasPlacedByPlayer(level, at) || now.isAir() && watch.wasDugByPlayer(level, at);
 	}
 
 	private static TraceService.UndoResult signText(TraceService traces, ServerLevel level, TraceLedger ledger, TraceLedger.Entry entry, String cause) {

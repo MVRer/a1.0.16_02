@@ -131,6 +131,8 @@ public class SelfCreatedDirectorTests {
 	@GameTest
 	public void theFactorCountsNearPlacesDecaysCapsAndForgets(GameTestHelper helper) {
 		Sc01Config cfg = new Sc01Config();
+		// The places' own math: away from every place exactly 1 (the away factor's own check is below).
+		cfg.awayFactor = 1.0;
 		PlaceMemory m = new PlaceMemory();
 		BlockPos at = new BlockPos(100, 64, 100);
 		Places.remember(m, OVERWORLD, at, minor("m"), 0, 0, cfg);
@@ -165,6 +167,7 @@ public class SelfCreatedDirectorTests {
 	@GameTest
 	public void theTrustedChunkNeedsAnHourOfDwellAndNoPlaceNearIt(GameTestHelper helper) {
 		Sc01Config cfg = new Sc01Config();
+		cfg.awayFactor = 1.0;
 		long hour = 72_000;
 		long interval = 600;
 		PlaceMemory m = new PlaceMemory();
@@ -434,15 +437,30 @@ public class SelfCreatedDirectorTests {
 		helper.succeed();
 	}
 
-	/** {@code sections.sc01} is version 1 with the design's numbers. */
+	/**
+	 * {@code sections.sc01} is version 2 with the design's numbers; the step from version 1 lowers {@code awayFactor} from
+	 * 1.0 to 0.9 (SC-5's tuning) and keeps a value someone set.
+	 */
 	@GameTest
-	public void theSectionIsVersionOneWithTheDesignsNumbers(GameTestHelper helper) {
+	public void theSectionIsVersionTwoWithTheDesignsNumbers(GameTestHelper helper) {
 		Sc01Config cfg = ModConfig.readSection(new JsonObject(), Sc01Config.SECTION, Sc01Config.class, Sc01Config::new);
-		helper.assertTrue(cfg.version == 1 && cfg.maxPlaces == 24 && cfg.radius == 32 && cfg.maxFactor == 1.8 && cfg.halfLifeDays == 4
+		helper.assertTrue(cfg.version == 2 && cfg.maxPlaces == 24 && cfg.radius == 32 && cfg.maxFactor == 1.8 && cfg.halfLifeDays == 4
 				&& cfg.weightAmbient == 0.15 && cfg.weightMinor == 0.3 && cfg.weightMajor == 0.5 && cfg.weightSighting == 0.2 && cfg.trustedFactor == 1.6
-				&& cfg.trustedMinHours == 1 && cfg.awayFactor == 1.0 && cfg.simDreadShare == 0.3 && cfg.simDreadFactor == 1.4 && cfg.simTrustedShare == 0.05,
+				&& cfg.trustedMinHours == 1 && cfg.awayFactor == 0.9 && cfg.simDreadShare == 0.3 && cfg.simDreadFactor == 1.4 && cfg.simTrustedShare == 0.05,
 				"the section's numbers");
+		helper.assertTrue(versionOne(1.0).version == 2 && versionOne(1.0).awayFactor == 0.9, "version 1's default was not lowered");
+		helper.assertTrue(versionOne(1.2).awayFactor == 1.2 && versionOne(0.5).awayFactor == 0.5, "a value someone set was not kept");
 		helper.succeed();
+	}
+
+	/** A version 1 section as a file holds it, with this {@code awayFactor}, read and upgraded. */
+	private static Sc01Config versionOne(double awayFactor) {
+		JsonObject section = new JsonObject();
+		section.addProperty("version", 1);
+		section.addProperty("awayFactor", awayFactor);
+		JsonObject sections = new JsonObject();
+		sections.add(Sc01Config.SECTION, section);
+		return ModConfig.readSection(sections, Sc01Config.SECTION, Sc01Config.class, Sc01Config::new);
 	}
 
 	/** The switch's revert takes every debug trust away; the debug lines say the factor, the places and the trusted chunk. */

@@ -233,12 +233,17 @@ public final class RecordRules {
 	/**
 	 * (d): whether this ledgered edit counts in anyone's statistics, by its cause: never what others left
 	 * ({@link TraceLedger#isLeftByOthers}), the figure's own dig (entity's only ledgered edits, {@code entity:}), Ending D's
-	 * ({@code ending:}) or a give-back ({@link TraceService#GIVE_BACK_CAUSE}).
+	 * ({@code ending:}) or a give-back ({@link TraceService#GIVE_BACK_CAUSE}); nor an undo's own edits and their dependents
+	 * ({@link TraceService#UNDO_CAUSE}, the switch's give-backs) or 08's turning back ({@link #TURNED_BACK}). t0rch's shaft
+	 * ({@code world:left/t0rch/shaft}) is what others left.
 	 */
 	public static boolean causeCounts(String cause) {
 		return cause != null && !TraceLedger.isLeftByOthers(cause) && !cause.startsWith("entity:") && !cause.startsWith("ending:")
-				&& !cause.startsWith(TraceService.GIVE_BACK_CAUSE);
+				&& !cause.startsWith(TraceService.GIVE_BACK_CAUSE) && !cause.startsWith(TraceService.UNDO_CAUSE) && !cause.startsWith(TURNED_BACK);
 	}
+
+	/** 08's own turning back when the layer is switched off (world's {@code WorldSc.turnBack}), never his trace. */
+	public static final String TURNED_BACK = "world:sc08/back";
 
 	/** One participant (d) may credit: who, where, and their base (in the same dimension), or null. */
 	public record Candidate(UUID player, Vec3 at, @Nullable Vec3 base) {
