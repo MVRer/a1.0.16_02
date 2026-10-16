@@ -40,7 +40,7 @@ public final class ShaderPacks {
 			return Boolean.TRUE.equals(inUse.invoke(getInstance.invoke(null)));
 		} catch (ReflectiveOperationException | RuntimeException | LinkageError e) {
 			broken = true;
-			A1016_02.LOGGER.warn("[a1016] Iris is loaded but its API cannot be read; the sky keeps vanilla's moon while it is", e);
+			A1016_02.LOGGER.warn("[a1016] Iris is loaded but its API cannot be read; a shader pack counts as in use", e);
 			return true;
 		}
 	}

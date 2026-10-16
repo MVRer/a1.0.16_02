@@ -198,6 +198,37 @@ public class SelfCreatedDigTests {
 	}
 
 	/**
+	 * FIX-SC-FINAL: the bed is matched by either half. A respawn point on the bed's foot fits and arms (the network is
+	 * under that bed), and the attempt, which vanilla names by the head, is refused; an arm on the head refuses an attempt
+	 * named by the foot; another bed's half is not that bed.
+	 */
+	@GameTest
+	public void theArmedBedIsMatchedByEitherHalf(GameTestHelper helper) {
+		Bedroom room = new Bedroom(helper, 145);
+		ServerPlayer player = room.sleeper(room.head);
+		BlockPos otherHead = room.ground.at(12, 1, 7);
+		BlockPos otherFoot = room.ground.at(12, 1, 6);
+		room.bed(otherHead, otherFoot);
+		try {
+			player.setRespawnPosition(new ServerPlayer.RespawnConfig(LevelData.RespawnData.of(room.level.dimension(), room.foot, 0, 0), false), false);
+			helper.assertTrue(RestRefusal.why(player, room.env(), false) == null, "a respawn on the foot did not fit: " + RestRefusal.why(player, room.env(), false));
+			DigScMemory.RestArm arm = RestRefusal.arm(player, room.env(), false);
+			helper.assertTrue(arm != null && arm.bed().pos().equals(room.foot), "not armed on the foot: " + arm);
+			helper.assertFalse(RestRefusal.refuse(player, otherHead, room.env()), "another bed's head was refused as this bed");
+			helper.assertFalse(RestRefusal.refuse(player, otherFoot, room.env()), "another bed's foot was refused as this bed");
+			helper.assertTrue(RestRefusal.refuse(player, room.head, room.env()), "the head of the bed armed by its foot was not refused");
+
+			room.data.sc().reset();
+			player.setRespawnPosition(new ServerPlayer.RespawnConfig(LevelData.RespawnData.of(room.level.dimension(), room.head, 0, 0), false), false);
+			helper.assertTrue(RestRefusal.arm(player, room.env(), false) != null, "not armed on the head");
+			helper.assertTrue(RestRefusal.refuse(player, room.foot, room.env()), "the foot of the bed armed by its head was not refused");
+		} finally {
+			RestRefusal.useFor(player.getUUID(), null);
+		}
+		helper.succeed();
+	}
+
+	/**
 	 * A friend whose bed is within 8 of the refused one is refused the same way for 20 s, a bed farther off is not, and
 	 * the refused player's own next attempt is vanilla's.
 	 */
@@ -269,7 +300,7 @@ public class SelfCreatedDigTests {
 		helper.succeed();
 	}
 
-	/** dig.dat keeps the layer's part only when there is one, and an old file loads with none; the sections are version 1. */
+	/** dig.dat keeps the layer's part only when there is one, and an old file loads with none; the sections are version 2. */
 	@GameTest
 	public void theLayersPartOfDigDataRoundTripsAndOldFilesLoadWithNone(GameTestHelper helper) {
 		DigData data = new DigData();
@@ -286,9 +317,9 @@ public class SelfCreatedDigTests {
 		helper.assertTrue(old.sc().isEmpty(), "an old file loaded a part");
 		Sc12Config sc12 = ModConfig.readSection(new JsonObject(), Sc12Config.SECTION, Sc12Config.class, Sc12Config::new);
 		Sc13Config sc13 = ModConfig.readSection(new JsonObject(), Sc13Config.SECTION, Sc13Config.class, Sc13Config::new);
-		helper.assertTrue(sc12.version == 1 && sc12.shaftBelowMax == 2 && sc12.armNights == 3 && sc12.sharedBedRadius == 8 && sc12.sharedSeconds == 20
+		helper.assertTrue(sc12.version == 2 && sc12.shaftBelowMax == 2 && sc12.armNights == 3 && sc12.sharedBedRadius == 8 && sc12.sharedSeconds == 20
 				&& sc12.maxPerWorld == 3, "sc12's numbers");
-		helper.assertTrue(sc13.version == 1 && sc13.pastBlocks == 40 && sc13.trailSampleTicks == 20 && sc13.trailLength == 96 && sc13.nextTorchWithin == 6
+		helper.assertTrue(sc13.version == 2 && sc13.pastBlocks == 40 && sc13.trailSampleTicks == 20 && sc13.trailLength == 96 && sc13.nextTorchWithin == 6
 				&& sc13.nobodyWithin == 16 && sc13.maxPerWorld == 1, "sc13's numbers");
 		helper.succeed();
 	}

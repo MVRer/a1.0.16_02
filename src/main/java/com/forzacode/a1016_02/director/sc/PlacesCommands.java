@@ -29,7 +29,7 @@ import org.jspecify.annotations.Nullable;
 
 /**
  * {@code /a1016 sc 01 [player]}: the factor where that player stands, their nearest places and the trusted chunk;
- * {@code /a1016 sc 01 trust}: the chunk you stand in is the trusted place for an hour of your play (the place rule still
+ * {@code /a1016 sc 01 a}: the chunk you stand in is the trusted place for an hour of your play (the place rule still
  * holds). Lines go to the op who ran it only. The layer's switch puts the debug trusts away ({@link #revert}).
  */
 public final class PlacesCommands {
@@ -39,7 +39,7 @@ public final class PlacesCommands {
 	public static void register() {
 		CommandHooks.register((root, context) -> root.then(Commands.literal("sc").then(Commands.literal("01")
 				.executes(ctx -> show(ctx, null))
-				.then(Commands.literal("trust").executes(PlacesCommands::trust))
+				.then(Commands.literal("a").executes(PlacesCommands::trust))
 				.then(Commands.argument("player", EntityArgument.player()).executes(ctx -> show(ctx, EntityArgument.getPlayer(ctx, "player")))))));
 	}
 

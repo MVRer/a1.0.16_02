@@ -16,6 +16,7 @@ import com.forzacode.a1016_02.core.ModConfig;
 import com.forzacode.a1016_02.core.Stage;
 import com.forzacode.a1016_02.core.Tier;
 import com.forzacode.a1016_02.core.TraceBatch;
+import com.google.gson.annotations.SerializedName;
 
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
@@ -57,18 +58,26 @@ public final class Turned {
 	public static final String CAUSE = "world:sc08";
 	public static final String SECTION = "sc08";
 
-	/** {@code sections.sc08}. Version 1. */
+	/** {@code sections.sc08}. Version 2. */
 	public static final class Config implements ModConfig.Versioned {
-		public static final int CURRENT = 1;
+		public static final int CURRENT = 2;
 
 		public int version = 0;
+		@SerializedName(value = "a", alternate = "baseRadius")
 		public int baseRadius = 12;
+		@SerializedName(value = "b", alternate = "nobodyWithin")
 		public double nobodyWithin = 16.0;
+		@SerializedName(value = "c", alternate = "awayDistance")
 		public double awayDistance = 32.0;
+		@SerializedName(value = "d", alternate = "perFireTraces")
 		public int perFireTraces = 1;
+		@SerializedName(value = "e", alternate = "perFireLater")
 		public int perFireLater = 2;
+		@SerializedName(value = "f", alternate = "minDaysApart")
 		public int minDaysApart = 2;
+		@SerializedName(value = "g", alternate = "maxPerBase")
 		public int maxPerBase = 8;
+		@SerializedName(value = "h", alternate = "signs")
 		public boolean signs = true;
 
 		@Override
@@ -76,6 +85,8 @@ public final class Turned {
 			if (version >= CURRENT) {
 				return false;
 			}
+			// 1 to 2 (D-080): the keys are opaque letters; a value under an old key is read into its field (its
+			// @SerializedName alternate) and only the new key is written back.
 			version = CURRENT;
 			return true;
 		}

@@ -334,7 +334,7 @@ public final class TheRecord {
 
 	// --- (c): /seed ---
 
-	/** Debug ({@code /a1016 sc 14 seed}): the next {@code /seed} answers the canon seed, whatever the stage. */
+	/** Debug ({@code /a1016 sc 14 c}): the next {@code /seed} answers the canon seed, whatever the stage. */
 	public void forceSeed() {
 		seedForced = true;
 	}

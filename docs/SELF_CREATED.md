@@ -38,23 +38,32 @@ The point is that he finds these by playing. So nothing he sees in normal play o
 - Card ids are `sc_NN` (and `sc_NNb` for a second card), never descriptive. They show in `/a1016 state`,
   `/a1016 director`, `/a1016 fire` completion and the log.
 - Debug commands live under `/a1016 sc <NN> ...` (each workstream adds its numbers to the same `sc` literal; Brigadier
-  merges children of one literal). Chat lines from these commands say what happened in plain words, as the dig arms do,
-  but only to the op who ran them.
+  merges children of one literal). Under a number, only letters and the plain verbs `arm`, `force`, `fake`, `here`,
+  `reset`, `clear` (FIX-SC-FINAL: `tonight`, `noshaft`, `nogap`, `anytime`, `trust`, `circle`, `last`, `version` and
+  `seed` were renamed). Chat lines from these commands say what happened in plain words, as the dig arms do, but only to
+  the op who ran them.
 - Config: one section per feature, `sections.scNN`, owned by that feature's workstream (a `ModConfig.Versioned` class in
-  `<ws>.sc`). Field names are numbers and plain rules (`minDistance`, `chance`, `maxPerWorld`), never the thing
-  (`bed`, `moon`, `name`).
+  `<ws>.sc`). The keys written are opaque letters (`a`, `b`, ...; each feature's Config line below maps them), never the
+  thing (`bed`, `moon`, `name`); only the switch's `enabled` and each `version` are words. FIX-SC-FINAL renamed them:
+  each field carries `@SerializedName(value = "<letter>", alternate = "<old key>")` and its section's version rose by
+  one (`sc01` and `sc15` to 3, the others to 2), so a dev config keeps its hand edits under the old keys and is written
+  back with the new ones.
 - Docs: this file only. No rows in DESIGN.md, TRY_IT.md, DECISIONS.md or ARCHITECTURE.md until he has played it; SC-0
   adds one line to ARCHITECTURE: "Self-created layer (branch `self-created`): contracts and features in
   `docs/SELF_CREATED.md` (spoilers)". The core contracts below are documented here and in Javadoc.
 - The debug overlay shows the layer's lines only after `/a1016 debug overlay sc` (dev only, SC-5).
-- Log lines at INFO name only `sc_NN`. Game test classes are `SelfCreated<Ws>Tests` with method names that describe the
-  rule; that is fine, he does not read test names.
+- Log lines at INFO and above name only `sc_NN`. Game test classes are `SelfCreated<Ws>Tests` with method names that
+  describe the rule; that is fine, he does not read test names.
+- Held by `core.VerifyScSpoilerTests` with the layer's list of words that name a feature (`SelfCreatedDebugTests.NAMES`
+  and a few more): every config key written (the class defaults and the file the test server wrote), every literal,
+  argument and usage line under `/a1016 sc`, and every INFO, WARN and ERROR log line of the layer, read from the sources
+  (its `sc` packages, its files outside them, and any line that names an `sc` id).
 
 ## Guardrails: held and bent
 
 | Rule | In this layer |
 | --- | --- |
-| DESIGN 1, he never strikes | Held. Nothing damages the player. 15 removes a block only once nobody is on or near it, and only over a short drop onto plain ground (3 or less from their feet: no fall damage), never over or beside lava or water, never onto dripstone, magma or the like, never while they are hurt: it is never lethal on its own (review R9) |
+| DESIGN 1, he never strikes | Held. Nothing damages the player. 15 removes a block only once nobody is on or near it, and only over a short drop onto plain ground (3 or less from their feet: no fall damage), never over or beside lava or water, never onto dripstone, magma or the like, never while they are hurt: it is never lethal on its own (review R9). 11's shaft is at a dead end only its trail reaches, past its sign, and a fall into it lands in water (FIX-SC-FINAL) |
 | DESIGN 2, he never speaks or writes | Held. The only new in-world text is t0rch's sign, "brb", left by a person (11). The world list, `/seed` and the bed message are vanilla's own strings around the canon version and seed (D-081, D-082) |
 | DESIGN 3, default Steve, no glow | Held. 02 hides a friend's name tag (canon: "no name over him"); it never changes anyone's skin or eyes |
 | DESIGN 4, never in front of the camera | Held. 03 renders a frame from where he stood, never presented on screen |
@@ -170,10 +179,10 @@ target's combat; UUIDs across ticks (D-062).
     the refractory wait (D-074's place). Traces and later only; never the first hour (no places yet), never a gap, cap,
     major slot or hard limit. `awayFactor` (1.0) multiplies the rate where the factor is exactly 1, for tuning.
 - **Friends.** Each player's own places and dwell; a felt fire records at the sharer's own position.
-- **Config `sc01` (v2).** `maxPlaces` 24, `radius` 32, `maxFactor` 1.8, `halfLifeDays` 4, `weightAmbient` 0.15,
-  `weightMinor` 0.3, `weightMajor` 0.5, `weightSighting` 0.2, `trustedFactor` 1.6, `trustedMinHours` 1,
-  `awayFactor` 0.9 (1.0 in v1; SC-5's step lowers it where it is still 1.0, see "As built (SC-5)"), `simDreadShare`
-  0.3, `simDreadFactor` 1.4, `simTrustedShare` 0.05.
+- **Config `sc01` (v3; keys `a` to `n`).** `a` maxPlaces 24, `b` radius 32, `c` maxFactor 1.8, `d` halfLifeDays 4,
+  `e` weightAmbient 0.15, `f` weightMinor 0.3, `g` weightMajor 0.5, `h` weightSighting 0.2, `i` trustedFactor 1.6,
+  `j` trustedMinHours 1, `k` awayFactor 0.9 (1.0 in v1; SC-5's step lowers it where it is still 1.0, see "As built
+  (SC-5)"), `l` simDreadShare 0.3, `m` simDreadFactor 1.4, `n` simTrustedShare 0.05. Step 2 to 3: the keys opaque.
 - **Build.** `director.sc.Places` (pure: weights, decay, factor, trusted chunk); `PacingMemory.places` and `dwell`
   (saved, optional; old `director.dat` loads empty); `DirectorBrain.Env.placeFactor()` (default 1.0; live env reads the
   player's position); `DirectorSim` models a dread share (`simDreadShare` of ticks at `simDreadFactor`,
@@ -183,7 +192,7 @@ target's combat; UUIDs across ticks (D-062).
   spots; fakes and forced fires don't; the trusted chunk needs 1 h and no place near; `due` multiplies only ambient
   and minor from Traces; first-hour cap and gaps unchanged; old `director.dat` loads; sims with the factor keep D-070's
   first-hour targets and Traces/Proximity rates within 15% of DESIGN 4b (else lower `awayFactor`).
-- **Force it.** `/a1016 sc 01 [player]` prints the factor now, the places and the trusted chunk; `/a1016 sc 01 trust`
+- **Force it.** `/a1016 sc 01 [player]` prints the factor now, the places and the trusted chunk; `/a1016 sc 01 a`
   makes the chunk you stand in the trusted place for an hour.
 
 ---
@@ -210,8 +219,8 @@ Only with friends.
     client-side position moved under 0.1 blocks) for `stillSeconds` 1.5. They move, come inside 24 or out of the fog,
     and the name is back at once.
 - **Friends.** That is the feature; never for a player alone.
-- **Config `sc02` (v1).** `friendMinAtFire` 48, `minDistance` 24, `maxDistance` 64, `fogShare` 0.5, `stillSeconds` 1.5,
-  `armMinutes` 20, `hideSecondsTotal` 30.
+- **Config `sc02` (v2; keys `a` to `g`).** `a` friendMinAtFire 48, `b` minDistance 24, `c` maxDistance 64, `d` fogShare
+  0.5, `e` stillSeconds 1.5, `f` armMinutes 20, `g` hideSecondsTotal 30.
 - **Build.** `entity.sc.NamelessCard`, arm memory like `TheScreenshot.LIVE`; payload `a1016_02:entity/sc02`
   (armed ticks left, or off); client `entity.client.NamelessClient` (still timers per remote player UUID) and mixin
   `entity.mixin.client.AvatarRendererMixin` on `AvatarRenderer.shouldShowName(AvatarlikeEntity, double)` returning
@@ -244,8 +253,8 @@ Only with friends.
   - Ending D's afterward (`ending:d_complete`) puts `sc03_before.png` back as `icon.png` (server side, the world
     folder; once).
 - **Friends.** Host only; a guest has no world list for this world.
-- **Config `sc03` (v1).** `fromStage` 2, `maxBaseDistance` 96, `hostBaseDistance` 48, `standSeconds` 1.0,
-  `iconSize` 64.
+- **Config `sc03` (v2; keys `a` to `e`).** `a` fromStage 2, `b` maxBaseDistance 96, `c` hostBaseDistance 48, `d`
+  standSeconds 1.0, `e` iconSize 64.
 - **Build.** Server `entity.sc.HisView` (arm on spawn, report, restore); client `entity.client.HisViewClient` and mixin
   `entity.mixin.client.CameraMixin` (override the camera's position and rotation for that one frame; detached).
   Section culling may lag for a camera 40 blocks off: render up to 3 unpresented frames, or turn smart culling off for
@@ -281,8 +290,9 @@ Only with friends.
     they are, and are never silenced (a silent creeper would be an unmarked death).
   - A clock set back past the roll undoes it, as `FogWeather.Undo` does for fog.
 - **Friends.** One sky for the world; the spawn rule around every participant.
-- **Config `sc04` (v1).** `chanceByStage` {0, 0.2, 0.25, 0.25, 0.15}, `minNightsApart` 6, `maxPerWorld` 5,
-  `brightPhasesOnly` true, `spawnRadius` 96, `quietRadius` 48, `quietAnimals` true, `noPhantoms` true.
+- **Config `sc04` (v2; keys `a` to `h`).** `a` chanceByStage {0, 0.2, 0.25, 0.25, 0.15}, `b` minNightsApart 6, `c`
+  maxPerWorld 5, `d` brightPhasesOnly true, `e` spawnRadius 96, `f` quietRadius 48, `g` quietAnimals true, `h`
+  noPhantoms true.
 - **Build.** `atmosphere.sc.EmptyNight` (pure roll and window; memory in `AtmosphereData`: nights rolled, last one,
   count; old files load with none); payload `a1016_02:atmosphere/sc04` (`Optional` from and until clock), sent on
   change and on join to everyone, spectators included; client mixin on the sky's extraction where vanilla fills
@@ -294,7 +304,7 @@ Only with friends.
 - **Tests.** The roll (never a fog night, never Alone, bright phases only, spacing, cap); a monster spawn within 96
   refused in the window, allowed outside it and after; phantoms refused; animals within 48 silenced and released at
   23500; the payload on join; the window math; an undo on `/time set` back.
-- **Force it.** `/a1016 sc 04 tonight [force]` (tonight, or now if it is night; `force` skips fog and phase),
+- **Force it.** `/a1016 sc 04 arm [force]` (tonight, or now if it is night; `force` skips fog and phase),
   `/a1016 sc 04 clear`, `/a1016 sc 04` (state and the next eligible night).
 
 #### 05 Coming home (cards `sc_05` someone home: MINOR, Traces, SOUND + PERSONAL, VISITOR + WATCHER, fake; `sc_05b` they were waiting: AMBIENT, Traces, MOB, WATCHER + VISITOR, fake; `sections.sc05`)
@@ -327,10 +337,10 @@ Only with friends.
     `lookSeconds` 2 or the time runs out (`MobTamperImpl.bind` to the target and everyone sharing the moment).
 - **Friends.** sc_05 is PERSONAL (a friend inside would know). sc_05b is a shared moment: friends arriving together see
   the same animals.
-- **Config `sc05` (v1).** `awayDistance` 48, `awayMinutes` 10, `armMinutes` 60, `houseRadius` 6, `minCoveredCells` 4,
-  `minDistance` 6, `maxDistance` 16, `stepsMin` 3, `stepsMax` 5, `stepTicks` 8, `stepVolume` 1.6, `closeDelayMin` 15,
-  `closeDelayMax` 30, `closeVolume` 1.6, `approachDistance` 32, `mobRadius` 24, `minMobs` 3, `holdSecondsMax` 12,
-  `lookSeconds` 2.
+- **Config `sc05` (v2; keys `a` to `s`).** `a` awayDistance 48, `b` awayMinutes 10, `c` armMinutes 60, `d` houseRadius
+  6, `e` minCoveredCells 4, `f` minDistance 6, `g` maxDistance 16, `h` stepsMin 3, `i` stepsMax 5, `j` stepTicks 8,
+  `k` stepVolume 1.6, `l` closeDelayMin 15, `m` closeDelayMax 30, `n` closeVolume 1.6, `o` approachDistance 32, `p`
+  mobRadius 24, `q` minMobs 3, `r` holdSecondsMax 12, `s` lookSeconds 2.
 - **Build.** `atmosphere.card.SomeoneHomeCard`, `TheyWereWaitingCard`, `atmosphere.sc.Home`, an approach watcher in
   atmosphere's tick (every 10 ticks, armed players only); episodes like `EchoCard`'s; `AnimalsFaceFogCard`'s facing.
 - **Cost and saves.** Distance checks for armed players only; nothing saved but the away timers (memory).
@@ -361,8 +371,8 @@ Only with friends.
     step, so the follower is silent too. It ends at once if the player looks within `lookBackDegrees` 70 of behind,
     anyone comes within 48, or they leave the ground.
 - **Friends.** PERSONAL.
-- **Config `sc06` (v1).** `walkSecondsBeforeStart` 3, `behindMin` 6, `behindMax` 9, `lagTicksMin` 4, `lagTicksMax` 6,
-  `stepsMin` 6, `stepsMax` 14, `stepVolume` 1.2, `lookBackDegrees` 70.
+- **Config `sc06` (v2; keys `a` to `i`).** `a` walkSecondsBeforeStart 3, `b` behindMin 6, `c` behindMax 9, `d`
+  lagTicksMin 4, `e` lagTicksMax 6, `f` stepsMin 6, `g` stepsMax 14, `h` stepVolume 1.2, `i` lookBackDegrees 70.
 - **Build.** `atmosphere.card.InStepCard`; common mixin `atmosphere.mixin.EntityStepMixin` at `Entity.playStepSound`
   (reached through `walkingStepSound` from `applyMovementEmissionAndPlaySound`; check on 26.3 that the server reaches
   it for a player's own movement, else count the walk distance the server sees, as vanilla's `moveDist` and
@@ -371,7 +381,7 @@ Only with friends.
 - **Tests.** Each own step is answered with the lag, behind, on the ground's own sound; looking back ends it; one more
   after a stop; no follower while sneaking; underground, daylight without fog, riding refuse; a spectator within 48
   refuses; once per night; the fake is the late own step.
-- **Force it.** `/a1016 sc 06 arm [fake] [anytime]` (the next 2 minutes; `anytime` skips night and fog), then walk.
+- **Force it.** `/a1016 sc 06 arm [fake] [force]` (the next 2 minutes; `force` skips night and fog), then walk.
 
 #### 07 The name is gone (card `sc_07`; MINOR, Proximity; MOB; COLLECTOR + STRIPPER; no fake; `sections.sc07`)
 - **Experience.** The dog you named is just a wolf again. No name over it. The name tag is not on the ground. Nothing
@@ -387,7 +397,8 @@ Only with friends.
   a mob whose owner is online within 48 of it. `MobTamper.unname(mob, "atmosphere:sc07")`. At most `maxPerWorld` 3,
   `minDaysApart` 3 in-game days (world-wide, saved in the tick it happens).
 - **Friends.** One world record; a friend's pet only when the friend is away too.
-- **Config `sc07` (v1).** `baseRadius` 64, `nobodyWithin` 16, `awayDistance` 48, `maxPerWorld` 3, `minDaysApart` 3.
+- **Config `sc07` (v2; keys `a` to `e`).** `a` baseRadius 64, `b` nobodyWithin 16, `c` awayDistance 48, `d` maxPerWorld
+  3, `e` minDaysApart 3.
 - **Build.** `atmosphere.card.NameGoneCard`; `MobTamperImpl.unname` (clears `CustomName` and `CustomNameVisible`,
   calls `TraceLedger.recordName`).
 - **Cost and saves.** One entity query near the base per look; count and day in `AtmosphereData`.
@@ -484,8 +495,8 @@ Only with friends.
   - Out of every player's view, nobody within `nobodyWithin` 16, the target at least `awayDistance` 32 away or asleep.
     `perFireTraces` 1 block in Traces, `perFireLater` 2 from Proximity, `minDaysApart` 2 per base, `maxPerBase` 8.
 - **Friends.** The target's base; never a block within 16 of anyone.
-- **Config `sc08` (v1).** `baseRadius` 12, `nobodyWithin` 16, `awayDistance` 32, `perFireTraces` 1, `perFireLater` 2,
-  `minDaysApart` 2, `maxPerBase` 8, `signs` true.
+- **Config `sc08` (v2; keys `a` to `h`).** `a` baseRadius 12, `b` nobodyWithin 16, `c` awayDistance 32, `d`
+  perFireTraces 1, `e` perFireLater 2, `f` minDaysApart 2, `g` maxPerBase 8, `h` signs true.
 - **Build.** `world.sc.Turned` + card in `WorldInit`; `world.Bases` for the base and bed; one `TraceService.batch`
   (`world:sc08`).
 - **Tests.** Turns a placed furnace to face the bed (ledgered CONVERT); never a double chest or a redstone part; a sign
@@ -515,13 +526,13 @@ Only with friends.
   - One `TraceService.batch` (`world:sc09`), all out of view, nobody within `nobodyWithin` 16 of a print, the target
     at least `awayDistance` 32 from the door, asleep, or inside the house. `minDaysApart` 2 per base, `maxPerBase` 4.
 - **Friends.** The target's base; nobody near any print.
-- **Config `sc09` (v1).** `lengthMin` 14, `lengthMax` 28, `stride` 2, `minPrints` 5, `circleChance` 0.4,
-  `nobodyWithin` 16, `awayDistance` 32, `minDaysApart` 2, `maxPerBase` 4.
+- **Config `sc09` (v2; keys `a` to `i`).** `a` lengthMin 14, `b` lengthMax 28, `c` stride 2, `d` minPrints 5, `e`
+  circleChance 0.4, `f` nobodyWithin 16, `g` awayDistance 32, `h` minDaysApart 2, `i` maxPerBase 4.
 - **Build.** `world.sc.Prints` (pure plan: which edit a surface cell takes), `world.sc.Tracks` + card; `LiveTerrain` for
   surface tops.
 - **Tests.** The path ends at the door's outside cell; prints alternate; each surface's print; stone skipped; refused in
   view; all or nothing; the loop goes round the house; the fake is short and curved.
-- **Force it.** `/a1016 fire sc_09 [fake]`; `/a1016 sc 09 circle` (the loop).
+- **Force it.** `/a1016 fire sc_09 [fake]`; `/a1016 sc 09 b` (the loop).
 
 #### 10 Where he stood (no card; on `FIGURE_LEFT`; `sections.sc10`)
 - **Experience.** After you see him, if you walk out to where he stood: the grass under his feet is bare dirt in two
@@ -543,9 +554,9 @@ Only with friends.
     `maxFogPlaces` 4 at once. Ending D's last minute takes them with the rest of the fog: each fades out over its own
     fade, and none comes again (review R9).
 - **Friends.** World-wide like weather; everyone sees the place.
-- **Config `sc10` (v1).** `standChance` 0.7, `runChance` 0.35, `clearRadius` 2, `maxRunPrints` 12, `retryMinutes` 10,
-  `fogChance` 0.6, `fogRadius` 40, `fogLevel` 0.45, `fogRampTicks` 1200, `fogDaysMin` 1, `fogDaysMax` 3,
-  `maxFogPlaces` 4.
+- **Config `sc10` (v2; keys `a` to `l`).** `a` standChance 0.7, `b` runChance 0.35, `c` clearRadius 2, `d`
+  maxRunPrints 12, `e` retryMinutes 10, `f` fogChance 0.6, `g` fogRadius 40, `h` fogLevel 0.45, `i` fogRampTicks 1200,
+  `j` fogDaysMin 1, `k` fogDaysMax 3, `l` maxFogPlaces 4.
 - **Build.** `world.sc.WhereHeStood` (listener, pending list in memory: losing it on a restart is fine), `Prints` from
   09. Entity's one call is in SC-4; atmosphere's render is in SC-1.
 - **Tests.** A synthetic event gives prints at the spot and the cleared plants, only once out of view, dropped after 10
@@ -557,35 +568,46 @@ Only with friends.
 #### 11 t0rch's torches (card `sc_11`; MINOR, Traces; LIGHT + SCAR; MOURNER + CARVER; no fake; once per world; `sections.sc11`)
 - **Experience.** In a cave you are exploring for the first time, there are torches already. On the right-hand wall,
   every ten blocks or so, going deeper, into a branch you have not been down. You follow them. A few steps before the
-  end, on the wall, a sign: "brb". They end at a 1x1 hole straight down in the floor, a torch on the floor beside it.
-  Far down, lava. No torches come back out.
+  end, on the wall, a sign: "brb". They end in a dead end at a 1x1 hole straight down in the floor, a torch on the
+  floor before it. Far down, the dark. No torches come back out. (FIX-SC-FINAL: whoever falls in lands in water at the
+  bottom, t0rch's own landing; the lava is under its floor.)
 - **Why scary.** "This is singleplayer." Someone was here before you and did not come back. The list says
   "t0rch . lava" (F23; F06 "t0rch . gone"). After this, every cave might have someone's torches in it.
 - **Deniable.** It reads as an old player's mine, a used world. Alone it names nobody (guardrail 8).
-- **Guardrails.** Left by others (D-088): torches, the shaft and the sign are a person's, `world:left/t0rch/...`, never
-  his trace, never undone. "brb" is human text, lowercase.
+- **Guardrails.** Left by others (D-088): torches, the shaft, its water and the sign are a person's,
+  `world:left/t0rch/...`, never his trace, never undone. Never an unmarked death (guardrail 1; see the rules). "brb" is human text, lowercase.
 - **Rules.**
   - From a cave spot a participant stood in (world's `LoneTorch.trackCaves` spots), a natural cave branch nobody visited
     (chunks with `lastVisitDay` -1), at least `minDepthBelowSurface` 12 under the surface: walk natural cave air (not
     player-dug, walkable floor, bounded at 6000 cells) `pathMin` 30 to `pathMax` 90 cells to a floor cell under which
-    natural stone runs straight down `shaftMin` 8 to `shaftMax` 30 blocks to lava (a source within 3 below the shaft's
-    end, or a lava lake). Never within `baseClearance` 64 of any known base, nobody within `nobodyWithin` 32, all out
-    of view, loaded, not protected.
+    natural stone runs straight down `shaftMin` 8 to `shaftMax` 30 blocks to lava (a source within 3 below the
+    column's end, or a lava lake). Never within `baseClearance` 64 of any known base, nobody within `nobodyWithin` 32,
+    all out of view, loaded, not protected.
+  - Never an unmarked death (DESIGN guardrail 1, FIX-SC-FINAL). The hole is at a dead end only the trail reaches: from
+    the sign's walk cell on, every cell of the walk to the hole is walled in at its feet and head on every side but the
+    walk's, and roofed (`TorchTrail.enclosedFrom`), so nobody comes on it from the cave's far side, from above or from
+    beside it, and whoever reaches it passed the sign. The fall is survived: the column's last stone stays as the
+    shaft's floor over the lava and the lowest dug cell holds a water source (vanilla asks for water before a fall's
+    damage, so one block of it saves any height). From above it is the same dark 1x1 drop.
   - Leave wall torches on the right-hand wall going in (from the known spot), every `spacingMin` 8 to `spacingMax` 12
-    path cells, the first within 6 cells of the branch mouth (seen from the known cave); dig the shaft
-    (`world:left/t0rch/shaft`); a floor torch beside the hole; an oak wall sign 2 to 5 cells before the hole (never
-    read from the hole's lip) with line 1 "brb", not waxed (`world:left/t0rch/sign`). Text from
+    path cells, the first within 6 cells of the branch mouth (seen from the known cave); dig the shaft down to the
+    column's last stone and leave water at its foot (`world:left/t0rch/shaft`); a floor torch beside the hole (at a
+    dead end, the cell before it); an oak wall sign 2 to 5 cells before the hole (never read from the hole's lip) with
+    line 1 "brb", not waxed (`world:left/t0rch/sign`). Text from
     `data/a1016_02/world/sc/t0rch.json`, word for word.
   - Once per world (`maxPerWorld` 1, saved in the tick it is left). Not a site in `SiteRegistry` (lore must not fill it).
 - **Friends.** World-wide once.
-- **Config `sc11` (v1).** `pathMin` 30, `pathMax` 90, `spacingMin` 8, `spacingMax` 12, `shaftMin` 8, `shaftMax` 30,
-  `minDepthBelowSurface` 12, `nobodyWithin` 32, `baseClearance` 64, `maxPerWorld` 1.
+- **Config `sc11` (v2; keys `a` to `j`).** `a` pathMin 30, `b` pathMax 90, `c` spacingMin 8, `d` spacingMax 12, `e`
+  shaftMin 8, `f` shaftMax 30, `g` minDepthBelowSurface 12, `h` nobodyWithin 32, `i` baseClearance 64, `j` maxPerWorld
+  1.
 - **Build.** `world.sc.TorchTrail` + card; `LoneTorch`'s cave spots; `TraceService.leave` and `remove` with left-by-others
   causes; one batch.
 - **Cost and saves.** One bounded search per fire; the spot in `WorldData`.
-- **Tests.** In a built cave corridor over a lava pocket: torches on the right wall at the spacing, the shaft reaches
-  lava, the sign reads "brb", every cause is left by others; once per world; refused near a base, in a player-dug
-  tunnel, without lava in reach, in view.
+- **Tests.** In a built cave corridor over a lava pocket: torches on the right wall at the spacing, the shaft goes down
+  to its floor over the lava with water at its foot, the sign reads "brb", every cause is left by others; once per
+  world; refused near a base, in a player-dug tunnel, without lava in reach, in view; the hole reached from nowhere
+  but the trail through the sign's cell, and an end open beside, past or over the hole, or beside the cell before it,
+  refused; a cow that falls in is unhurt in the water while the same dry fall hurts.
 - **Force it.** `/a1016 sc 11 here` (from the cave spot nearest you, the visit rule skipped, view rules kept);
   `/a1016 fire sc_11`.
 
@@ -646,16 +668,20 @@ As built (SC-3, `SelfCreatedWorldTests` and `SelfCreatedWorldTrailTests`, struct
   - Fire arms the target for `armNights` 3 in-game nights (`GameClock.dayTicks`). While armed, their next attempt to
     sleep in that bed that vanilla would allow (night or thunder, near, not obstructed, and vanilla's own monster check
     finds none) is refused with `BedSleepingProblem.NOT_SAFE`, vanilla's message where vanilla shows it. The arm is
-    spent; the next attempt is vanilla's. At most `maxPerWorld` 3.
+    spent; the next attempt is vanilla's. At most `maxPerWorld` 3. The bed is matched by either half (FIX-SC-FINAL:
+    the respawn point may be the foot while vanilla's attempt names the head, `RestRefusal.sameBed`,
+    `Network.isBed`).
 - **Friends.** Everyone whose bed is within `sharedBedRadius` 8 of that bed is refused the same way for
   `sharedSeconds` 20 after the first refusal (one monster would refuse them all).
-- **Config `sc12` (v1).** `shaftBelowMax` 2, `armNights` 3, `sharedBedRadius` 8, `sharedSeconds` 20, `maxPerWorld` 3.
+- **Config `sc12` (v2; keys `a` to `e`).** `a` shaftBelowMax 2, `b` armNights 3, `c` sharedBedRadius 8, `d`
+  sharedSeconds 20, `e` maxPerWorld 3.
 - **Build.** `dig.sc.RestRefusal` + card; mixin `dig.mixin.ServerPlayerSleepMixin` on `ServerPlayer.startSleepInBed`
   at vanilla's monster check (make the list of monsters read as not empty while armed, so vanilla returns NOT_SAFE
   itself); arm in `DigData` per UUID (until, bed pos, count; old files load with none).
 - **Tests.** Armed, shaft done, night: NOT_SAFE once, then sleep; no shaft: the card does not fit; a real monster:
   vanilla's refusal, arm kept; a friend's bed within 8 refused within 20 s; the arm runs out after 3 nights.
-- **Force it.** `/a1016 sc 12 arm [noshaft] [player]`; grow the network with `/a1016 dig network grow <nights>`.
+- **Force it.** `/a1016 sc 12 arm [force] [player]` (`force` skips the shaft); grow the network with `/a1016 dig network
+  grow <nights>`.
 
 #### 13 The way back (card `sc_13`; MAJOR, Proximity; DIG + PERSONAL; CARVER + STRIPPER; no fake; `sections.sc13`)
 - **Experience.** Deep in a natural cave you lit on the way in, you turn back. Your torch trail leads to a stone wall
@@ -673,8 +699,8 @@ As built (SC-3, `SelfCreatedWorldTests` and `SelfCreatedWorldTrailTests`, struct
   - The player carries a pickaxe. Alone (`Ladder.alone`), nobody within `nobodyWithin` 16 of the point, the four cells
     out of view; one `TraceService.batch` (`dig:sc13`) of two moves. `maxPerWorld` 1.
 - **Friends.** PERSONAL.
-- **Config `sc13` (v1).** `pastBlocks` 40, `trailSampleTicks` 20, `trailLength` 96, `nextTorchWithin` 6,
-  `nobodyWithin` 16, `maxPerWorld` 1.
+- **Config `sc13` (v2; keys `a` to `f`).** `a` pastBlocks 40, `b` trailSampleTicks 20, `c` trailLength 96, `d`
+  nextTorchWithin 6, `e` nobodyWithin 16, `f` maxPerWorld 1.
 - **Build.** `dig.sc.WayBack` + card; the trail ring in `DigTicker` (underground participants only); `Blind.isBlindLight`
   and `wasPlacedByPlayer` for the torches.
 - **Tests.** A built 1x2 corridor with torches: after 40 past, it closes with the wall's own blocks and leaves the
@@ -717,8 +743,8 @@ The game's own records lie, once each (D-081).
   holds the world then). On load the server reads `sc14_seen.dat`: a shown beat is done, else it stays armed. The fake
   time is a pure function of the nonce, the real last played and now. (c) and (d) work on any server.
 - **Friends.** (a) and (b) are the host's; (c) the world's once; (d) per credited player.
-- **Config `sc14` (v1).** `gapHours` 6, `nightFrom` "01:00", `nightTo` "04:30", `versionFromStage` 3,
-  `versionAfterDays` 2, `seedFromStage` 2, `stats` true, `statsRadius` 64.
+- **Config `sc14` (v2; keys `a` to `h`).** `a` gapHours 6, `b` nightFrom "01:00", `c` nightTo "04:30", `d`
+  versionFromStage 3, `e` versionAfterDays 2, `f` seedFromStage 2, `g` stats true, `h` statsRadius 64.
 - **Build.** Server `lore.sc.TheRecord` (files, arms, `HerobrineEvents.TRACED` listener awarding `Stats.BLOCK_MINED` /
   `Stats.ITEM_DROPPED`), mixin `lore.mixin.SeedCommandMixin` (the success component); client `lore.client.WorldListMarks`
   and mixin `lore.mixin.client.LevelSummaryMixin` (`getLastPlayed`, `getWorldVersionName`, `backupStatus` as
@@ -728,8 +754,8 @@ The game's own records lie, once each (D-081).
   prefers 01:00 to 04:30, deterministic); `/seed` gives the canon seed once from Proximity, then the real one; stats
   credited to the right player for a REMOVE of a placed torch and REMOVE_STACK, never for left-by-others or give-back
   causes. Dev client checklist for the list.
-- **Force it.** `/a1016 sc 14 arm last|version [nogap]` (`nogap` skips the 6 hours and the night), `/a1016 sc 14 seed`,
-  `/a1016 sc 14 reset`; then quit to the title and open Singleplayer.
+- **Force it.** `/a1016 sc 14 arm a|b [force]` ((a) or (b); `force` skips the 6 hours and the night), `/a1016 sc 14 c`
+  ((c)), `/a1016 sc 14 reset`; then quit to the title and open Singleplayer.
 
 As built (SC-4: 02, 03, 10's call, 14; `SelfCreatedEntityTests`, `SelfCreatedLoreTests`):
 - **10's call.** `HimEntity` keeps where he stood (his feet each tick he is IDLE, RISING or STARE_BACK on the ground) and
@@ -748,8 +774,8 @@ As built (SC-4: 02, 03, 10's call, 14; `SelfCreatedEntityTests`, `SelfCreatedLor
   `entity/sc03_taken` (host only, after an arm). Put back by Ending D's afterward (`afterward`, every 100 ticks), the
   switch and `sc 03 reset`. Client: `CameraMixin` at the end of `alignWithEntity`; `SectionOcclusionGraphAccessor`. Three
   frames left holes in the dev client (sections the player never saw were not compiled), so the frames draw with
-  `smartCull` off and no fade-in and go on until nothing is left to compile (3 to 40 frames, at most 1.5 s; the dev client:
-  8 frames, 0.7 s, once per world). `iconSize` reads as 64 whatever its value (vanilla's `FaviconTexture` takes only 64).
+  `smartCull` off and no fade-in and go on until nothing is left to compile (3 to 40 frames, at most 1.5 s with the frame
+  back to the player's camera, FIX-SC-FINAL's `HisViewRules.Settle`; the dev client: 8 frames, 0.7 s, once per world). `iconSize` reads as 64 whatever its value (vanilla's `FaviconTexture` takes only 64).
   Checked in the dev client: the frame is from his eyes with the host at the middle, the copy is vanilla's old icon (kept
   across a reset and a second picture), and the world list shows his view.
 - **14.** `lore.sc`: `TheRecord`, `RecordCard`, `RecordRules` (pure), `RecordData` (`data/a1016_02/lore_sc.dat`, opaque
@@ -758,7 +784,7 @@ As built (SC-4: 02, 03, 10's call, 14; `SelfCreatedEntityTests`, `SelfCreatedLor
   it so). `WorldListMarks` (client) rereads a world's files every 2 s; a beat shown once keeps showing for the rest of that
   run until the world is opened; it is marked seen when vanilla first builds that summary, which `WorldOpenFlows` also
   does when a world is opened another way (the dev client's direct open asked vanilla's question too). The debug's
-  `nogap` (a) picks its time as if the host had been away a day (last night shows at once). (b) for good: hardcore,
+  `force` (a) (was `nogap`) picks its time as if the host had been away a day (last night shows at once). (b) for good: hardcore,
   `ending:ended` and `ending:line_finished=<host>`; no question then. (c) `SeedCommandMixin` wraps
   `ComponentUtils.copyOnClickText` in `/seed`'s lambda: only the shown text changes (the result stays the real seed); a
   player's `/seed` only. (d) on `TRACED`: a REMOVE of a placed block adds 1 to "Times Mined", a REMOVE_STACK its count
@@ -838,9 +864,9 @@ As built (SC-4: 02, 03, 10's call, 14; `SelfCreatedEntityTests`, `SelfCreatedLor
   - Alone (`SoundCues.alone(target, 48)`), nobody within `nobodyWithin` 16 of the cell. `TraceService.remove`
     (`accident:sc15`). At most once per in-game day per player, `maxPerWorld` 6.
 - **Friends.** PERSONAL; never with anyone within 16 of the cell.
-- **Config `sc15` (v2).** `armMinutes` 20, `minPasses` 3, `delaySecondsMin` 3, `delaySecondsMax` 8, `behindMin` 5,
-  `airDropMax` 3, `minHealth` 10, `nobodyWithin` 16, `maxPerWorld` 6 (step 1 to 2: `airDropMax` 6 to 3 where still
-  v1's; `cavityDepthMax` is gone).
+- **Config `sc15` (v3; keys `a` to `i`).** `a` armMinutes 20, `b` minPasses 3, `c` delaySecondsMin 3, `d`
+  delaySecondsMax 8, `e` behindMin 5, `f` airDropMax 3, `g` minHealth 10, `h` nobodyWithin 16, `i` maxPerWorld 6 (step 1
+  to 2: airDropMax 6 to 3 where still v1's, the old `cavityDepthMax` is gone; step 2 to 3: the keys opaque).
 - **Build.** `accident.sc.StoodOn` + card; a short ring of the last 10 s of standing cells per armed player in
   `RouteSampler`.
 - **Tests.** Removes a natural block over a short drop 5+ behind after the delay (ledgered); refused for a placed
@@ -1025,18 +1051,18 @@ in 78 to 79% of runs, by 45 in 93 to 95%. Fitting 2% a look: Proximity's ambient
 0.96 / 1.02 / 1.07, a major every 1.81 / 2.28 / 2.72 h. No hard limit is broken in any run.
 
 ### Verifier checklist (SC-7; dev client, a LAN pair for 02)
-Not seen in a client yet, each with its debug: 04's sky and quiet (`/a1016 sc 04 tonight force` before 11000: no moon
+Not seen in a client yet, each with its debug: 04's sky and quiet (`/a1016 sc 04 arm force` before 11000: no moon
 from 11000 to 1000, no monster spawning within 96 from 12000, animals silent, the next night as vanilla); 10's fog place
 (`/a1016 sc 10 here` on open ground: the fog thickens toward it over a minute, its haze and tint, none in a tunnel or a
 closed house, gone after its days; `/a1016 sc` line 10 counts it); 02 with two clients (`/a1016 sc 02 arm` on one, the
 other 24 to 64 off in a fog night standing still 1.5 s: no name tag and no locator dot; moves or comes within 24: both
 back). Seen by their workers and worth a second look: 03 (`/a1016 sc 03 arm`, `/a1016 entity spawn close` near the base at night: the world
-list's picture, the host's 0.7 s pause once), 14 (`/a1016 sc 14 arm last nogap` and `version nogap`, quit to the title:
-last night's time, the italic version and vanilla's backup question; `/a1016 sc 14 seed` then `/seed`), 12 (`/a1016 sc
-12 arm noshaft`, sleep at night: vanilla's message once, then sleep). The switch: `/a1016 sc off` puts back 08 (a
+list's picture, the host's 0.7 s pause once), 14 (`/a1016 sc 14 arm a force` and `arm b force`, quit to the title:
+last night's time, the italic version and vanilla's backup question; `/a1016 sc 14 c` then `/seed`), 12 (`/a1016 sc
+12 arm force`, sleep at night: vanilla's message once, then sleep). The switch: `/a1016 sc off` puts back 08 (a
 turned block a player turned again stays), 09, 10, 07's names, 03's picture, 14's statistics and record, the empty
 night and every arm; `/a1016 sc` then says off; `/a1016 sc on`. The spoiler grep: no feature words in card ids, command
-literals, section names, `/a1016 sc`'s index or INFO logs.
+literals and usage, section names and config keys, `/a1016 sc`'s index or INFO and WARN logs (`VerifyScSpoilerTests`).
 
 #### Verified (SC-7, `verify/sc` from `dd4680f`)
 - **Dev client** (1708 x 960, 12 chunks, a temporary uncommitted hook, no mixin error): 04 (full moon, then the new
@@ -1054,6 +1080,48 @@ literals, section names, `/a1016 sc`'s index or INFO logs.
   real `/a1016 sc off` runs every revert (08, 09, 10, 07's name, the fog place, 04's night, 03's picture, the arms),
   again is "already off" and changes nothing, an off switch at a server start reverts; the cost of the hot hooks.
   `core.VerifyScSpoilerTests` fails: config field names and `/a1016 sc` literals name features (D-080's own list).
+  (The commands above are the ones run then; FIX-SC-FINAL renamed them: `sc 04 arm force`, `sc 14 arm a|b force`,
+  `sc 14 c`, `sc 12 arm force`.)
+
+#### Fixed in review (FIX-SC-FINAL: the spoiler rule, 11's shaft, R8 and R9 lows; `fix/sc-final` from `verify/sc`)
+- **The spoiler rule (D-080, blocking).** The config keys written are opaque letters per section (each Config line above
+  maps them); the fields keep their names in the code with `@SerializedName(value = "<letter>", alternate = "<old
+  key>")`, and core's lenient reading takes a field's key, else its first alternate the file has (ARCHITECTURE's
+  config section), so a dev config's hand edits under the old keys are carried and only the new keys are written back;
+  every section's version rose by one with that step (`sc01` and `sc15` 3, the others 2; `sc` keeps `enabled`). The
+  literals that named a part are letters or the plain verbs: `sc 01 a` (was `trust`), `sc 04 arm [force]` (`tonight`),
+  `sc 06 arm [fake] [force]` (`anytime`), `sc 09 b` (`circle`), `sc 12 arm [force]` (`noshaft`), `sc 14 arm a|b
+  [force]` (`last`, `version`, `nogap`), `sc 14 c` (`seed`). Log lines: 04's "set (n)", 11's text file lines by its
+  id, 03's report no longer logs the restore's words, Iris' unreadable API "a shader pack counts as in use".
+  `VerifyScSpoilerTests` holds the keys (defaults and the file the server wrote, after every section is read), every
+  old key's hand edit carried (`everyOldKeyIsCarriedToItsNewKey`), every literal, argument and usage line, and every
+  INFO, WARN and ERROR line of the layer read from the sources, to the list and a few more words (`sky`, `trust`,
+  `circle`, `loop`, `phantom`, `sign`, `spawn`, `mob`, `gap`, `behind`, `hollow`, `list`, `water`, `landing`);
+  planting a moon in a log line, `noshaft` under `sc 04` and `bedRadius` in `sc12` made all three fail.
+- **11 was an unmarked death (guardrail 1, medium).** Its 1x1 shaft could open in the middle of a cave, so a player
+  coming from its far side could step in: an 8 to 30 block fall into lava with no clue. Now the hole is at a dead end
+  (the walk's cells from the sign's on walled in on every side but the walk's at feet and head, and roofed:
+  `TorchTrail.walledIn`, `enclosedFrom`; an end open anywhere else is refused, "can be walked into from beside the
+  trail", and the sign must hang before that dead end), and the fall is survived: the stone column's last block stays
+  as the floor over the lava and the lowest dug cell is a water source left with the trail (`Plan.water`, `floor`;
+  `MIN_COLUMN` 3). Tests `t0rchsHoleIsADeadEndOnlyTheTrailReaches` (a walk from the hole without the sign's cell
+  reaches only the trail's last cells; open beside, past, over the hole or beside the cell before it: refused) and
+  `aFallIntoT0rchsShaftIsSurvived` (a cow falls in and is unhurt in the water; the same dry fall hurts one).
+- **12 by either half (R9 low).** The arm's bed and the network's bed match either half of the bed vanilla's attempt
+  names (`RestRefusal.sameBed`, `Network.isBed`); test `theArmedBedIsMatchedByEitherHalf`.
+- **03's picture when the server never heard (R8 low).** `HisView.writePicture` sets the world's marker
+  `data/a1016_02/sc03_taken` ("1") before it writes the picture, and the restore turns it to "0"; the switch's revert
+  (live or at the next start), Ending D's afterward and the arm's once-per-world rule read it as taken
+  (`HisView.marked`, `taken`), so a picture whose report was lost is still put back and counted. Tests
+  `hisViewPutsBackAPictureTheServerNeverHeardOf` and the files test.
+- **Lenient flags (low).** `EntityData`'s `sc03Done` and `sc03Restored` are read leniently like the layer's other saved
+  parts (`entityDataReadsTheLayersFlagsLeniently`).
+- **The capture's cap (low).** The frames, their waits and the frame back to the player's camera keep to 1.5 s
+  (`HisViewRules.Settle`: every wait cut to what is left, no frame past the minimum after 1.3 s, the last graph wait cut
+  to the cap) while each frame renders in under 100 ms; slower frames add their own time. Test
+  `hisViewCaptureKeepsToItsCap` (the client's loop on a clock, every wait at its bound).
+- **ARCHITECTURE.** The layer's section is the D-080 pointer with its contracts in neutral words (no backup button, UI
+  or files named; the sections' versions point here); `CardTag.UNSHARED` without "client or files".
 
 ## Considered and left out
 - A mannequin or any player-shaped entity: spawning one breaks ARCH 2; it is also fanon.
@@ -1068,7 +1136,7 @@ literals, section names, `/a1016 sc`'s index or INFO logs.
 
 | ID | Decision | Why |
 | --- | --- | --- |
-| D-080 | The self-created layer is a surprise: it lives on `self-created`, every player-visible id is opaque (`sc_NN` cards, `/a1016 sc <NN>`, `sections.scNN`), its docs are this file only, no DESIGN, TRY_IT, DECISIONS or ARCHITECTURE rows (one pointer line) until Mariano has played it | He asked not to know. He reads `/a1016` output, the config and the log |
+| D-080 | The self-created layer is a surprise: it lives on `self-created`, every player-visible id is opaque (`sc_NN` cards, `/a1016 sc <NN>` with letters and plain verbs under it, `sections.scNN` with letter keys), its docs are this file only, no DESIGN, TRY_IT, DECISIONS or ARCHITECTURE rows (one pointer line) until Mariano has played it | He asked not to know. He reads `/a1016` output, the config and the log |
 | D-081 | Out-of-world records may lie: the world list's last played time and version (with vanilla's own backup prompt), the world icon, `/seed` and the statistics. The mod itself writes only in the host's own world folder (vanilla's own backup button may write vanilla's zip to vanilla's backups folder), only vanilla strings and the canon version and seed, never a deletion, each once (the version for good only after a finished hardcore line), the old icon kept and put back by Ending D | "What would make someone afraid to open their world again?" A haunted world file, a version that should not be |
 | D-082 | Vanilla UI may say something untrue only when it is true in the story: the bed's "monsters nearby" only once the Under-you shaft stands under that bed; a friend's name tag hidden only at the fog edge, where he could be | The game admitting he is there, without the mod ever writing |
 | D-083 | No new in-world text by him. The only new text is "brb" on t0rch's sign, left by a person | Guardrail 2 |
@@ -1076,7 +1144,7 @@ literals, section names, `/a1016 sc`'s index or INFO logs.
 | D-085 | Fog places: a fog over one spot for 1 to 3 in-game days after he stood there, a core contract beside the fog spell, weather-like (sky-weighted, clears underground), counted where `FogLimits` counts | The spot you saw him becomes a spot you can see from home |
 | D-086 | Names are removable things: `MobTamper.unname`, ledger kind NAME, undone by Ending D | He has no name; he takes them |
 | D-087 | Entity fires `FIGURE_LEFT` with where he stood and the way he left; world leaves prints and the fog place | He was really there; one event, no cross-workstream call |
-| D-088 | t0rch's torches [ours]: once per world, a trail of torches on the right-hand wall into an unexplored branch, ending at a 1x1 shaft to lava with a sign "brb". Left by others, never undone, not a SiteRegistry site | F23 "t0rch . lava"; "this is singleplayer" |
+| D-088 | t0rch's torches [ours]: once per world, a trail of torches on the right-hand wall into an unexplored branch, ending at a 1x1 shaft toward lava with a sign "brb" before it. Left by others, never undone, not a SiteRegistry site. The hole is at a dead end only the trail reaches, and its foot is water on the stone over the lava, so a fall is survived (FIX-SC-FINAL, guardrail 1) | F23 "t0rch . lava"; "this is singleplayer" |
 | D-089 | The bed refusal is armed only while the network's shaft top is within 2 blocks under that bed, and refuses once per arm; friends' beds within 8 are refused for 20 s | The monster is real; one monster refuses every bed near it |
 | D-090 | The empty night: on a bright-moon clear night from Traces, the moon is drawn new and nothing hostile spawns within 96 of anyone, phantoms included; animals near players are silent; monsters alive are left as they are | Absence in the sky; a silent creeper would be unfair |
 | D-091 | A card whose moment cannot be waited for by the director (coming home, the block you stood on, the bed, a friend in the fog, the world list) arms the player and counts when it arms, as `the_screenshot` does | The director ticks every 30 s; these moments last seconds, or happen outside the game |

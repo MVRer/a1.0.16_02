@@ -26,6 +26,11 @@ public final class HisViewRules {
 	public static final String ICON = "icon.png";
 	/** Where the picture from before is kept (once), relative to the world's folder. */
 	public static final String BEFORE = "data/a1016_02/sc03_before.png";
+	/**
+	 * The world's own marker, relative to its folder: written "1" right before the picture replaces {@link #ICON} and "0"
+	 * once the picture from before is back, so the picture is put back even when the server never heard it was taken.
+	 */
+	public static final String TAKEN = "data/a1016_02/sc03_taken";
 	/** Night for the arm, in-game time of day: from... */
 	public static final long NIGHT_FROM = 13000L;
 	/** ...to (exclusive). */
@@ -113,6 +118,58 @@ public final class HisViewRules {
 		float yaw = h < 1.0E-9 ? 0.0F : Mth.wrapDegrees((float) (Mth.atan2(dz, dx) * Mth.RAD_TO_DEG) - 90.0F);
 		float pitch = (float) -(Mth.atan2(dy, h) * Mth.RAD_TO_DEG);
 		return new float[] {yaw, pitch};
+	}
+
+	/**
+	 * The capture's time budget on the host's client (the game waits through it once per world): the unpresented frames
+	 * and the waits between them, then a normal frame and the wait for the section graph of the player's own camera, all
+	 * within {@link #CAP_MS} of the start. Every wait is cut to what is left: between frames to {@link #framesUntil} (the
+	 * cap less one graph wait, kept for the frame back), the last one to the cap. At least {@link #MIN_FRAMES} frames,
+	 * at most {@link #MAX_FRAMES}; past the minimum a frame starts only before {@code framesUntil} and only while something
+	 * is still to be drawn. So the capture ends within the cap while each frame renders in under half a graph wait
+	 * (100 ms): the last frame starts before {@code framesUntil} and the frame back follows it. Slower frames add their own
+	 * time (the minimum and the frame back are always drawn): at most {@code CAP_MS + (MIN_FRAMES + 1)} frames' time.
+	 *
+	 * @param start the capture's start (milliseconds)
+	 */
+	public record Settle(long start) {
+		/** The whole capture's cap, milliseconds. */
+		public static final long CAP_MS = 1500L;
+		/** The longest wait for vanilla's section graph, milliseconds. */
+		public static final long GRAPH_WAIT_MS = 200L;
+		/** The longest wait for the sections in view to compile between frames, milliseconds. */
+		public static final long SECTIONS_WAIT_MS = 40L;
+		/** At least this many frames, so the section graph is rebuilt for his camera and its sections are drawn. */
+		public static final int MIN_FRAMES = 3;
+		/** At most this many; the last one is the picture. */
+		public static final int MAX_FRAMES = 40;
+
+		/** No frame starts past this, nor a wait between frames lasts past it: the cap less one graph wait. */
+		public long framesUntil() {
+			return start + CAP_MS - GRAPH_WAIT_MS;
+		}
+
+		/** A wait between frames at {@code now}: at most {@code bound}, cut to {@link #framesUntil} (0 once that passed). */
+		public long frameWait(long now, long bound) {
+			return Math.clamp(framesUntil() - now, 0L, Math.max(0L, bound));
+		}
+
+		/** The last wait (the graph for the player's camera) at {@code now}: at most {@code bound}, cut to the cap. */
+		public long cleanWait(long now, long bound) {
+			return Math.clamp(start + CAP_MS - now, 0L, Math.max(0L, bound));
+		}
+
+		/**
+		 * After {@code done} frames, at {@code now}: another one? Up to {@link #MIN_FRAMES} always, never past
+		 * {@link #MAX_FRAMES}, else only while something is still to be drawn ({@code drawn} false) and before
+		 * {@link #framesUntil}.
+		 */
+		public boolean another(int done, boolean drawn, long now) {
+			if (done >= MAX_FRAMES) {
+				return false;
+			}
+			return done < MIN_FRAMES || !drawn && now < framesUntil();
+		}
 	}
 
 	/**

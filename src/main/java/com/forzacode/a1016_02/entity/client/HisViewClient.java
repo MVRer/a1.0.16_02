@@ -49,8 +49,10 @@ import org.jspecify.annotations.Nullable;
  * leaves them out (the dev client showed holes after 3 frames), so these frames draw without occlusion culling
  * ({@code Minecraft.smartCull} off for them), every section whole (no fade-in), and go on, waiting between them for vanilla's
  * section graph to be rebuilt for that camera ({@link SectionOcclusionGraphAccessor}) and for the sections in view to compile,
- * from {@link #MIN_FRAMES} until nothing is left to compile, at most {@link #FRAMES} or {@link #SETTLE_MS} (the dev client:
- * 8 frames, about 0.7 s, a pause the game makes once per world). It grabs the last one ({@code Screenshot.takeScreenshot}),
+ * from {@link HisViewRules.Settle#MIN_FRAMES} until nothing is left to compile, at most
+ * {@link HisViewRules.Settle#MAX_FRAMES}, every wait within the capture's cap of {@link HisViewRules.Settle#CAP_MS}, the frame
+ * back to the player's camera included ({@link HisViewRules.Settle}; the dev client: 8 frames, about 0.7 s, a pause the
+ * game makes once per world). It grabs the last one ({@code Screenshot.takeScreenshot}),
  * then renders a normal frame again and waits for the graph once more, so the next frame on the screen is the player's own. The grab is cropped and scaled as vanilla's world icon (the middle square, 64 x
  * 64, {@code NativeImage.resizeSubRectTo}); off the render thread the world's current {@code icon.png} is copied to
  * {@link HisViewRules#BEFORE} (only if that copy does not exist), the picture written as {@code icon.png}, both through
@@ -59,16 +61,6 @@ import org.jspecify.annotations.Nullable;
  * next such sighting arms it again); a screen open waits while he stands. Render thread only.
  */
 public final class HisViewClient {
-	/** At most this many unpresented frames are rendered from his eyes; the last one is the picture. */
-	public static final int FRAMES = 40;
-	/** At least this many, so the section graph is rebuilt for his camera and its sections are drawn. */
-	static final int MIN_FRAMES = 3;
-	/** The frames stop once this long has passed (milliseconds), whatever is still compiling: the game waits that long at most. */
-	static final long SETTLE_MS = 1500L;
-	/** The longest wait for vanilla's section graph between frames, milliseconds. */
-	static final long GRAPH_WAIT_MS = 200L;
-	/** The longest wait for the sections in view to compile between frames, milliseconds. */
-	static final long SECTIONS_WAIT_MS = 40L;
 	/** A figure not on this client this many ticks after the arm is not coming: the arm ends. */
 	static final int FIGURE_WAIT_TICKS = 600;
 	/** He stands still while he moved less than this (blocks) since the anchor. */
@@ -232,7 +224,7 @@ public final class HisViewClient {
 	private static boolean shoot(Minecraft minecraft, View view, int figureId, Consumer<NativeImage> out) {
 		GameRenderer renderer = minecraft.gameRenderer;
 		boolean smartCull = minecraft.smartCull;
-		long start = Util.getMillis();
+		HisViewRules.Settle settle = new HisViewRules.Settle(Util.getMillis());
 		override = view;
 		hidingId = figureId;
 		try {
@@ -240,21 +232,19 @@ public final class HisViewClient {
 			// No occlusion culling for these frames: the sections the player never saw from where he stands have no compiled
 			// visibility yet, and a culled graph would leave them out (the dev client showed holes).
 			minecraft.smartCull = false;
-			for (int frame = 0; frame < FRAMES; frame++) {
-				lastFrames = frame + 1;
-				if (frame > 0) {
-					waitForGraph(minecraft);
-					waitForSections(minecraft);
+			int frames = 0;
+			do {
+				if (frames > 0) {
+					waitForGraph(minecraft, settle.frameWait(Util.getMillis(), HisViewRules.Settle.GRAPH_WAIT_MS));
+					waitForSections(minecraft, settle.frameWait(Util.getMillis(), HisViewRules.Settle.SECTIONS_WAIT_MS));
 				}
+				lastFrames = frames + 1;
 				if (!frameFromHim(minecraft)) {
 					return false;
 				}
-				if (frame + 1 >= MIN_FRAMES && (graphDone(minecraft) && minecraft.levelRenderer.hasRenderedAllSections()
-						|| Util.getMillis() - start >= SETTLE_MS)) {
-					break;
-				}
-			}
-			lastMillis = Util.getMillis() - start;
+				frames++;
+			} while (settle.another(frames, graphDone(minecraft) && minecraft.levelRenderer.hasRenderedAllSections(), Util.getMillis()));
+			lastMillis = Util.getMillis() - settle.start();
 			Screenshot.takeScreenshot(renderer.mainRenderTarget(), out);
 			return true;
 		} finally {
@@ -262,7 +252,7 @@ public final class HisViewClient {
 			hidingId = 0;
 			minecraft.smartCull = smartCull;
 			renderer.setRenderBlockOutline(true); // as vanilla's panorama leaves it
-			clean(minecraft);
+			clean(minecraft, settle);
 		}
 	}
 
@@ -300,27 +290,30 @@ public final class HisViewClient {
 		}
 	}
 
-	/** A normal frame into the main target, then the graph rebuilt for the player's camera before the next frame is shown. */
-	private static void clean(Minecraft minecraft) {
+	/**
+	 * A normal frame into the main target, then the graph rebuilt for the player's camera before the next frame is shown
+	 * (that wait cut to the capture's cap, {@link HisViewRules.Settle#cleanWait}).
+	 */
+	private static void clean(Minecraft minecraft, HisViewRules.Settle settle) {
 		try {
 			extract(minecraft);
 			try (Gizmos.TemporaryCollection ignored = minecraft.levelRenderer.collectPerFrameRenderThreadGizmos()) {
 				minecraft.gameRenderer.render();
 			}
-			waitForGraph(minecraft);
+			waitForGraph(minecraft, settle.cleanWait(Util.getMillis(), HisViewRules.Settle.GRAPH_WAIT_MS));
 		} catch (RuntimeException e) {
 			A1016_02.LOGGER.warn("[a1016] sc_03: the normal frame after it failed", e);
 		}
 	}
 
-	/** Waits (at most {@link #GRAPH_WAIT_MS}) for vanilla's background rebuild of the section graph, if one runs. */
-	private static void waitForGraph(Minecraft minecraft) {
+	/** Waits (at most {@code millis}) for vanilla's background rebuild of the section graph, if one runs. */
+	private static void waitForGraph(Minecraft minecraft, long millis) {
 		Future<?> task = ((SectionOcclusionGraphAccessor) minecraft.levelRenderer.sectionOcclusionGraph()).a1016_02$fullUpdateTask();
-		if (task == null || task.isDone()) {
+		if (millis <= 0L || task == null || task.isDone()) {
 			return;
 		}
 		try {
-			task.get(GRAPH_WAIT_MS, TimeUnit.MILLISECONDS);
+			task.get(millis, TimeUnit.MILLISECONDS);
 		} catch (TimeoutException | ExecutionException ignored) {
 			// The frame goes on with the graph there is; the wait is only for a cleaner picture.
 		} catch (InterruptedException e) {
@@ -328,9 +321,9 @@ public final class HisViewClient {
 		}
 	}
 
-	/** Waits (at most {@link #SECTIONS_WAIT_MS}) for the sections waiting to compile; the next frame uploads them. */
-	private static void waitForSections(Minecraft minecraft) {
-		long until = Util.getMillis() + SECTIONS_WAIT_MS;
+	/** Waits (at most {@code millis}) for the sections waiting to compile; the next frame uploads them. */
+	private static void waitForSections(Minecraft minecraft, long millis) {
+		long until = Util.getMillis() + millis;
 		while (!minecraft.levelRenderer.hasRenderedAllSections() && Util.getMillis() < until) {
 			try {
 				Thread.sleep(5L);

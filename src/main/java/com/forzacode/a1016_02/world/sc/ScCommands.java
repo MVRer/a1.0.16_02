@@ -30,7 +30,7 @@ import org.jspecify.annotations.Nullable;
  * the same literal). Each answers only the op who ran it, in plain words:
  * <ul>
  *   <li>{@code sc 08 [player]}: the base, its bed, its marks, each placed block that could turn and why it does not;</li>
- *   <li>{@code sc 09 [player]}: the base, the door, the marks; {@code sc 09 circle [player]}: the tracks now, round the
+ *   <li>{@code sc 09 [player]}: the base, the door, the marks; {@code sc 09 b [player]}: the tracks now, round the
  *   house (forced: the gaps and the target's distance skipped, the view and the caps kept);</li>
  *   <li>{@code sc 10}: what waits; {@code sc 10 here}: as if he stood, seen, on the block you look at (prints there and
  *   along a way out from you, and the fog place; the prints wait until nobody sees them);</li>
@@ -52,7 +52,7 @@ final class ScCommands {
 		CommandHooks.register((root, context) -> root.then(Commands.literal("sc")
 				.then(withPlayer(Commands.literal("08"), (ctx, player) -> lines(ctx, Turned.describe(env(ctx), player))))
 				.then(withPlayer(Commands.literal("09"), (ctx, player) -> lines(ctx, Tracks.describe(env(ctx), player)))
-						.then(withPlayer(Commands.literal("circle"), ScCommands::circle)))
+						.then(withPlayer(Commands.literal("b"), ScCommands::circle)))
 				.then(Commands.literal("10").executes(ScCommands::pending)
 						.then(Commands.literal("here").executes(ScCommands::here)))
 				.then(withPlayer(Commands.literal("11"), (ctx, player) -> lines(ctx, TorchTrail.describe(env(ctx), player)))

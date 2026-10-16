@@ -22,9 +22,9 @@ import net.minecraft.server.level.ServerPlayer;
 import org.jspecify.annotations.Nullable;
 
 /**
- * {@code /a1016 sc 12 [player] | sc 12 arm [noshaft] [player] | sc 13 [player] | sc 13 arm [player]}. The player is
+ * {@code /a1016 sc 12 [player] | sc 12 arm [force] [player] | sc 13 [player] | sc 13 arm [player]}. The player is
  * the one named, else whoever runs it, else (the console) the first participant. Lines go to the op who ran it only, in
- * plain words. 12's arm skips the card's fit (its {@code noshaft} the shaft too); the bed's rules stay vanilla's (survival,
+ * plain words. 12's arm skips the card's fit (its {@code force} the shaft too); the bed's rules stay vanilla's (survival,
  * night or thunder). 13's arm fires {@code sc_13} through the director, forced, at the first point that fits within
  * {@link WayBack#ARM_TICKS}.
  */
@@ -38,7 +38,7 @@ public final class DigScCommands {
 		CommandHooks.register((root, context) -> root.then(Commands.literal("sc")
 				.then(Commands.literal("12").executes(ctx -> show12(ctx, null))
 						.then(Commands.literal("arm").executes(ctx -> arm12(ctx, false, null))
-								.then(Commands.literal("noshaft").executes(ctx -> arm12(ctx, true, null))
+								.then(Commands.literal("force").executes(ctx -> arm12(ctx, true, null))
 										.then(Commands.argument(PLAYER, EntityArgument.player()).executes(ctx -> arm12(ctx, true, named(ctx)))))
 								.then(Commands.argument(PLAYER, EntityArgument.player()).executes(ctx -> arm12(ctx, false, named(ctx)))))
 						.then(Commands.argument(PLAYER, EntityArgument.player()).executes(ctx -> show12(ctx, named(ctx)))))

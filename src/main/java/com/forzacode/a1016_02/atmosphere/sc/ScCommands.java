@@ -28,12 +28,12 @@ import org.jspecify.annotations.Nullable;
  * Atmosphere's numbers under {@code /a1016 sc} (D-080: the same {@code sc} literal every workstream adds to; Brigadier
  * merges the children). Every line goes only to whoever ran the command, in plain words.
  * <ul>
- * <li>{@code sc 04}: the memory, the night set now, tonight's answer, the next eligible night; {@code sc 04 tonight
+ * <li>{@code sc 04}: the memory, the night set now, tonight's answer, the next eligible night; {@code sc 04 arm
  * [force]} sets tonight (or now, at night; {@code force} skips the fog and the moon's phase); {@code sc 04 clear}.</li>
  * <li>{@code sc 05 [player]}: the arm, the time away and each card's answer; {@code sc 05 arm [b] [fake] [player]}
  * fires {@code sc_05} (or {@code sc_05b}) through the director, forced: it skips the time away, the band and the view
  * rules stay (walk away and come back).</li>
- * <li>{@code sc 06 [player]}; {@code sc 06 arm [fake] [anytime]}: within two minutes, the first moment it fits (anytime:
+ * <li>{@code sc 06 [player]}; {@code sc 06 arm [fake] [force]}: within two minutes, the first moment it fits (force:
  * night and fog skipped) it fires through the director; then walk.</li>
  * <li>{@code sc 07 [player]}: the world's caps and every named mob near a known base with why it is refused (fire it
  * with {@code /a1016 fire sc_07}).</li>
@@ -48,7 +48,7 @@ public final class ScCommands {
 		CommandHooks.register((root, context) -> root.then(Commands.literal("sc")
 				.then(Commands.literal("04")
 						.executes(ScCommands::status04)
-						.then(Commands.literal("tonight")
+						.then(Commands.literal("arm")
 								.executes(ctx -> tonight(ctx, false))
 								.then(Commands.literal("force").executes(ctx -> tonight(ctx, true))))
 						.then(Commands.literal("clear").executes(ScCommands::clear04)))
@@ -60,10 +60,10 @@ public final class ScCommands {
 				.then(withPlayer(Commands.literal("06"), ScCommands::status06)
 						.then(Commands.literal("arm")
 								.executes(ctx -> arm06(ctx, false, false))
-								.then(Commands.literal("anytime").executes(ctx -> arm06(ctx, false, true)))
+								.then(Commands.literal("force").executes(ctx -> arm06(ctx, false, true)))
 								.then(Commands.literal("fake")
 										.executes(ctx -> arm06(ctx, true, false))
-										.then(Commands.literal("anytime").executes(ctx -> arm06(ctx, true, true))))))
+										.then(Commands.literal("force").executes(ctx -> arm06(ctx, true, true))))))
 				.then(withPlayer(Commands.literal("07"), ScCommands::status07))));
 	}
 
@@ -154,7 +154,7 @@ public final class ScCommands {
 	private static int arm06(CommandContext<CommandSourceStack> ctx, boolean fake, boolean anytime) throws CommandSyntaxException {
 		return run(ctx, (c, player) -> {
 			InStep.LIVE.arm(player, fake, anytime, op(c.getSource()));
-			return ok(c, "sc 06: armed for " + player.getPlainTextName() + (fake ? " (fake)" : "") + (anytime ? " (anytime)" : "")
+			return ok(c, "sc 06: armed for " + player.getPlainTextName() + (fake ? " (fake)" : "") + (anytime ? " (forced)" : "")
 					+ " for two minutes; walk");
 		}, null);
 	}

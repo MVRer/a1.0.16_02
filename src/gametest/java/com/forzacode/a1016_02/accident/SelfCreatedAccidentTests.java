@@ -348,9 +348,9 @@ public class SelfCreatedAccidentTests {
 		helper.assertTrue(back.count() == 1 && back.lastDay(new UUID(1, 2)) == 7, "not round-tripped");
 		helper.assertTrue(StoodOnData.CODEC.parse(NbtOps.INSTANCE, new CompoundTag()).getOrThrow().count() == 0, "an empty file loaded a count");
 		Sc15Config cfg = ModConfig.readSection(new JsonObject(), Sc15Config.SECTION, Sc15Config.class, Sc15Config::new);
-		helper.assertTrue(cfg.version == 2 && cfg.armMinutes == 20 && cfg.minPasses == 3 && cfg.delaySecondsMin == 3 && cfg.delaySecondsMax == 8
+		helper.assertTrue(cfg.version == 3 && cfg.armMinutes == 20 && cfg.minPasses == 3 && cfg.delaySecondsMin == 3 && cfg.delaySecondsMax == 8
 				&& cfg.behindMin == 5 && cfg.airDropMax == 3 && cfg.minHealth == 10 && cfg.nobodyWithin == 16 && cfg.maxPerWorld == 6, "the numbers");
-		helper.assertTrue(versionOne(6).airDropMax == 3 && versionOne(6).version == 2, "version 1's default drop was kept: " + versionOne(6).airDropMax);
+		helper.assertTrue(versionOne(6).airDropMax == 3 && versionOne(6).version == 3, "version 1's default drop was kept: " + versionOne(6).airDropMax);
 		helper.assertTrue(versionOne(2).airDropMax == 2, "a drop of their own was not kept: " + versionOne(2).airDropMax);
 		helper.succeed();
 	}

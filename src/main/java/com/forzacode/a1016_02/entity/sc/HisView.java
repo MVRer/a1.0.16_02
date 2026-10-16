@@ -4,6 +4,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.nio.file.Path;
+import java.util.Arrays;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -195,7 +196,7 @@ public final class HisView {
 		if (common.isPresent()) {
 			return common;
 		}
-		return HisViewRules.armRefusal(hooks.integrated(server), hooks.isHost(host), hooks.data(server).sc03Done(), hooks.stage(server), him.variant(),
+		return HisViewRules.armRefusal(hooks.integrated(server), hooks.isHost(host), taken(server), hooks.stage(server), him.variant(),
 				level.dimension() == Level.OVERWORLD, hooks.base(host), him.position(), host.position(), hooks.timeOfDay(server), hooks.fogCounts(server),
 				HisViewConfig.get(), forceNext);
 	}
@@ -229,7 +230,8 @@ public final class HisView {
 		armedFigure = 0;
 		A1016_02.LOGGER.info("[a1016] {}: done", LOG_ID);
 		if (!hooks.enabled()) {
-			A1016_02.LOGGER.info("[a1016] {}: switched off meanwhile, {}", LOG_ID, restore(server));
+			// Switched off meanwhile: put back at once (restore logs what it did).
+			restore(server);
 		}
 		return true;
 	}
@@ -276,20 +278,47 @@ public final class HisView {
 		return Optional.ofNullable(lastRefusal);
 	}
 
+	/** The world's picture was taken: the server heard it ({@link EntityData#sc03Done}), or the world's own marker says so. */
+	public boolean taken(MinecraftServer server) {
+		return hooks.data(server).sc03Done() || marked(hooks.worldFolder(server));
+	}
+
+	/**
+	 * The world's marker ({@link HisViewRules#TAKEN}) says its icon is the picture now: written right before the picture,
+	 * so a picture whose report never reached the server (the game closed first, the switch went off, a lost packet) is
+	 * still put back by the switch, Ending D's afterward or the next start's revert, and counts as the world's one. Never
+	 * throws.
+	 */
+	public static boolean marked(Path folder) {
+		try {
+			Optional<Path> marker = SelfCreated.inWorld(folder, HisViewRules.TAKEN);
+			return marker.isPresent() && Files.isRegularFile(marker.get(), LinkOption.NOFOLLOW_LINKS)
+					&& Arrays.equals(Files.readAllBytes(marker.get()), MARK_TAKEN);
+		} catch (IOException | RuntimeException e) {
+			return false;
+		}
+	}
+
+	/** The marker's two states: the picture is the icon, and the picture from before is back. */
+	static final byte[] MARK_TAKEN = {'1'};
+	static final byte[] MARK_BACK = {'0'};
+
 	/**
 	 * Puts the picture from before back as the world's {@code icon.png} ({@link SelfCreated#writeInWorld}), once: only after
-	 * the picture was taken, and only while it was not put back yet. Returns what happened, in a few words. Never deletes
-	 * anything; a copy that cannot be read leaves the picture as it is.
+	 * the picture was taken (the server heard it, or the world's marker says so: {@link #marked}), and only while it was not
+	 * put back yet. Returns what happened, in a few words. Never deletes anything; a copy that cannot be read leaves the
+	 * picture as it is. Once back, the marker reads "0" and the world's flags say taken and put back.
 	 */
 	public String restore(MinecraftServer server) {
 		EntityData data = hooks.data(server);
-		if (!data.sc03Done()) {
+		Path folder = hooks.worldFolder(server);
+		boolean marked = marked(folder);
+		if (!data.sc03Done() && !marked) {
 			return "not taken";
 		}
-		if (data.sc03Restored()) {
+		if (data.sc03Restored() && !marked) {
 			return "already put back";
 		}
-		Path folder = hooks.worldFolder(server);
 		Optional<Path> before = SelfCreated.inWorld(folder, HisViewRules.BEFORE);
 		if (before.isEmpty() || !Files.isRegularFile(before.get())) {
 			return "no picture from before";
@@ -304,6 +333,9 @@ public final class HisView {
 		if (!SelfCreated.writeInWorld(folder, HisViewRules.ICON, bytes)) {
 			return "the picture could not be written";
 		}
+		// A marker that cannot be turned only means the next revert copies the same bytes again.
+		SelfCreated.writeInWorld(folder, HisViewRules.TAKEN, MARK_BACK);
+		data.setSc03Done(true);
 		data.setSc03Restored(true);
 		A1016_02.LOGGER.info("[a1016] {}: put back", LOG_ID);
 		return "put back";
@@ -311,9 +343,11 @@ public final class HisView {
 
 	/**
 	 * The host's files (any thread; {@code entity.client.HisViewClient} after its grab): the world's current {@code icon.png}
-	 * copied to {@link HisViewRules#BEFORE} only if that copy does not exist yet, then {@code png} written as {@code icon.png};
-	 * each whole or not at all, inside the world's folder only ({@link SelfCreated#writeInWorld}). Nothing is written without
-	 * an {@code icon.png} to keep (so putting it back never needs a deletion). Empty when done, else why not.
+	 * copied to {@link HisViewRules#BEFORE} only if that copy does not exist yet, the world's marker
+	 * ({@link HisViewRules#TAKEN}) set, then {@code png} written as {@code icon.png}; each whole or not at all, inside the
+	 * world's folder only ({@link SelfCreated#writeInWorld}). Nothing is written without an {@code icon.png} to keep (so
+	 * putting it back never needs a deletion), and no picture without its marker (so it is put back even if the server
+	 * never hears of it). Empty when done, else why not.
 	 */
 	public static Optional<String> writePicture(Path folder, byte[] png) {
 		Optional<Path> icon = SelfCreated.inWorld(folder, HisViewRules.ICON);
@@ -332,6 +366,9 @@ public final class HisView {
 				return Optional.of("the picture could not be kept");
 			}
 		}
+		if (!SelfCreated.writeInWorld(folder, HisViewRules.TAKEN, MARK_TAKEN)) {
+			return Optional.of("the picture could not be marked");
+		}
 		if (!SelfCreated.writeInWorld(folder, HisViewRules.ICON, png)) {
 			return Optional.of("the picture could not be written");
 		}
@@ -347,8 +384,12 @@ public final class HisView {
 
 	/** Ending D's afterward ({@code ending:d_complete}) puts the old picture back, once. True if it did now. */
 	public boolean afterward(MinecraftServer server) {
+		if (!hooks.dComplete(server)) {
+			return false;
+		}
 		EntityData data = hooks.data(server);
-		return data.sc03Done() && !data.sc03Restored() && hooks.dComplete(server) && "put back".equals(restore(server));
+		boolean pending = data.sc03Done() && !data.sc03Restored() || marked(hooks.worldFolder(server));
+		return pending && "put back".equals(restore(server));
 	}
 
 	/** Debug ({@code /a1016 sc 03 reset}): the old picture back, then the world forgets it, so it can happen again. */
@@ -373,7 +414,8 @@ public final class HisView {
 	/** One line for debug. */
 	public String line(MinecraftServer server) {
 		EntityData data = hooks.data(server);
-		return "03: " + (data.sc03Done() ? "done" + (data.sc03Restored() ? ", put back" : "") : armedFigure != 0 ? "armed" : "waiting")
+		return "03: " + (taken(server) ? "done" + (data.sc03Restored() && !marked(hooks.worldFolder(server)) ? ", put back" : "") : armedFigure != 0
+				? "armed" : "waiting")
 				+ (forceNext ? ", next sighting forced" : "");
 	}
 }

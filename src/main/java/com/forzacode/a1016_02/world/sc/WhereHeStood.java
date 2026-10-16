@@ -10,6 +10,7 @@ import com.forzacode.a1016_02.A1016_02;
 import com.forzacode.a1016_02.core.FogPlace;
 import com.forzacode.a1016_02.core.ModConfig;
 import com.forzacode.a1016_02.core.TraceBatch;
+import com.google.gson.annotations.SerializedName;
 
 import net.minecraft.core.BlockPos;
 import net.minecraft.resources.ResourceKey;
@@ -49,22 +50,34 @@ public final class WhereHeStood {
 	/** His path's samples are this far apart. */
 	private static final int PATH_STEP = 2;
 
-	/** {@code sections.sc10}. Version 1. */
+	/** {@code sections.sc10}. Version 2. */
 	public static final class Config implements ModConfig.Versioned {
-		public static final int CURRENT = 1;
+		public static final int CURRENT = 2;
 
 		public int version = 0;
+		@SerializedName(value = "a", alternate = "standChance")
 		public double standChance = 0.7;
+		@SerializedName(value = "b", alternate = "runChance")
 		public double runChance = 0.35;
+		@SerializedName(value = "c", alternate = "clearRadius")
 		public int clearRadius = 2;
+		@SerializedName(value = "d", alternate = "maxRunPrints")
 		public int maxRunPrints = 12;
+		@SerializedName(value = "e", alternate = "retryMinutes")
 		public double retryMinutes = 10.0;
+		@SerializedName(value = "f", alternate = "fogChance")
 		public double fogChance = 0.6;
+		@SerializedName(value = "g", alternate = "fogRadius")
 		public float fogRadius = 40.0F;
+		@SerializedName(value = "h", alternate = "fogLevel")
 		public float fogLevel = 0.45F;
+		@SerializedName(value = "i", alternate = "fogRampTicks")
 		public int fogRampTicks = 1200;
+		@SerializedName(value = "j", alternate = "fogDaysMin")
 		public double fogDaysMin = 1.0;
+		@SerializedName(value = "k", alternate = "fogDaysMax")
 		public double fogDaysMax = 3.0;
+		@SerializedName(value = "l", alternate = "maxFogPlaces")
 		public int maxFogPlaces = 4;
 
 		@Override
@@ -72,6 +85,8 @@ public final class WhereHeStood {
 			if (version >= CURRENT) {
 				return false;
 			}
+			// 1 to 2 (D-080): the keys are opaque letters; a value under an old key is read into its field (its
+			// @SerializedName alternate) and only the new key is written back.
 			version = CURRENT;
 			return true;
 		}

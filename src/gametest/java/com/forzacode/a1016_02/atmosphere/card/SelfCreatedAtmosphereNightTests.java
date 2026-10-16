@@ -214,17 +214,17 @@ public class SelfCreatedAtmosphereNightTests {
 		helper.assertTrue(c5.stepVolume * 16 > c5.maxDistance + c5.houseRadius && c5.stepVolume * 16 < 48 && c5.closeVolume * 16 < 48
 				&& c6.stepVolume * 16 > c6.behindMax && c6.stepVolume * 16 < 48, "a sound falls short of its band or past the alone radius");
 
-		// Version 1: an old file's section (version 0, a value changed by hand) is stamped 1 and keeps the value.
+		// Version 2: an old file's section (version 0, a value changed by hand under its old key) is stamped 2 and keeps the value.
 		JsonObject sections = JsonParser.parseString("{\"sc04\": {\"maxPerWorld\": 2}, \"sc05\": {\"stepVolume\": 1.2}, \"sc06\": {\"behindMax\": 8},"
 				+ " \"sc07\": {\"minDaysApart\": 5}}").getAsJsonObject();
 		Sc04Config r4 = ModConfig.readSection(sections, Sc04Config.SECTION, Sc04Config.class, Sc04Config::new);
 		Sc05Config r5 = ModConfig.readSection(sections, Sc05Config.SECTION, Sc05Config.class, Sc05Config::new);
 		Sc06Config r6 = ModConfig.readSection(sections, Sc06Config.SECTION, Sc06Config.class, Sc06Config::new);
 		Sc07Config r7 = ModConfig.readSection(sections, Sc07Config.SECTION, Sc07Config.class, Sc07Config::new);
-		helper.assertTrue(r4.version == 1 && r4.maxPerWorld == 2 && r5.version == 1 && r5.stepVolume == 1.2 && r6.version == 1 && r6.behindMax == 8
-				&& r7.version == 1 && r7.minDaysApart == 5, "a section's upgrade lost a value or its version");
-		helper.assertTrue(!r4.upgrade() && Sc04Config.get().version == 1 && Sc05Config.get().version == 1 && Sc06Config.get().version == 1
-				&& Sc07Config.get().version == 1, "the live sections are not version 1");
+		helper.assertTrue(r4.version == 2 && r4.maxPerWorld == 2 && r5.version == 2 && r5.stepVolume == 1.2 && r6.version == 2 && r6.behindMax == 8
+				&& r7.version == 2 && r7.minDaysApart == 5, "a section's upgrade lost a value or its version");
+		helper.assertTrue(!r4.upgrade() && Sc04Config.get().version == 2 && Sc05Config.get().version == 2 && Sc06Config.get().version == 2
+				&& Sc07Config.get().version == 2, "the live sections are not version 2");
 		helper.succeed();
 	}
 

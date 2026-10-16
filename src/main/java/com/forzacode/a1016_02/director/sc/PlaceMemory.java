@@ -63,7 +63,7 @@ public final class PlaceMemory {
 		}
 	}
 
-	/** A debug trust ({@code /a1016 sc 01 trust}): this chunk is the trusted one until this play tick of the player's. */
+	/** A debug trust ({@code /a1016 sc 01 a}): this chunk is the trusted one until this play tick of the player's. */
 	public record Trust(Chunk chunk, long untilPlayTicks) {
 	}
 

@@ -36,8 +36,11 @@ import net.minecraft.resources.ResourceKey;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.level.BlockGetter;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.AbstractBedBlock;
+import net.minecraft.world.level.block.HorizontalDirectionalBlock;
+import net.minecraft.world.level.block.state.BlockState;
 
 import org.jspecify.annotations.Nullable;
 
@@ -130,7 +133,7 @@ public final class RestRefusal {
 	 */
 	public static Optional<Network> shaftUnder(DigData data, GlobalPos bed, Sc12Config config) {
 		for (Network net : data.networks()) {
-			if (!net.dimension().equals(bed.dimension()) || !net.shaftDone() || net.bed().filter(bed.pos()::equals).isEmpty()) {
+			if (!net.dimension().equals(bed.dimension()) || !net.shaftDone() || !net.isBed(bed.pos())) {
 				continue;
 			}
 			Optional<BlockPos> top = net.shaftTop();
@@ -212,6 +215,19 @@ public final class RestRefusal {
 		return arm;
 	}
 
+	/**
+	 * One bed, by either half: the same cell, or {@code at} is a half of a bed whose other half is {@code armed} (the arm
+	 * keeps the respawn point's half, which need not be the half vanilla's attempt names).
+	 */
+	static boolean sameBed(BlockGetter level, BlockPos armed, BlockPos at) {
+		if (armed.equals(at)) {
+			return true;
+		}
+		BlockState state = level.getBlockState(at);
+		return state.getBlock() instanceof AbstractBedBlock && state.hasProperty(AbstractBedBlock.PART) && state.hasProperty(HorizontalDirectionalBlock.FACING)
+				&& at.relative(AbstractBedBlock.getConnectedDirection(state)).equals(armed);
+	}
+
 	/** The mixin's question, once vanilla found no monster near this bed: true refuses as vanilla would (NOT_SAFE). */
 	public static boolean refuse(ServerPlayer player, BlockPos bed) {
 		try {
@@ -233,7 +249,7 @@ public final class RestRefusal {
 		Sc12Config config = env.config();
 		DigScMemory sc = env.data().sc();
 		Optional<DigScMemory.RestArm> arm = sc.restArm(uuid);
-		if (arm.isEmpty() || !arm.get().bed().pos().equals(bed) || !arm.get().bed().dimension().equals(dimension)) {
+		if (arm.isEmpty() || !arm.get().bed().dimension().equals(dimension) || !sameBed(player.level(), arm.get().bed().pos(), bed)) {
 			Windows.Window window = env.windows().near(dimension, bed, config.sharedBedRadius, now, uuid);
 			if (window != null) {
 				A1016_02.LOGGER.info("[a1016] {}: fired (shared) for {}", CARD_ID, player.getName().getString());

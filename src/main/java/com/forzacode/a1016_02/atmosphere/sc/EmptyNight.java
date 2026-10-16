@@ -351,7 +351,7 @@ public final class EmptyNight {
 			MoonPhase phase = overworld.environmentAttributes().getDimensionValue(EnvironmentAttributes.MOON_PHASE);
 			m = roll(m, now, night, state.stage(), phase, fogOver(state.effects().fogSpell(), night), cfg, overworld.getRandom());
 			if (m.night() == night) {
-				A1016_02.LOGGER.info("[a1016] sc_04: night {}", night);
+				A1016_02.LOGGER.info("[a1016] sc_04: set ({})", night);
 			}
 		}
 		if (!SelfCreated.enabled() && m.night() != NEVER) {
@@ -475,7 +475,7 @@ public final class EmptyNight {
 		Memory m = forced(data.emptyNight(), now, night);
 		data.setEmptyNight(m);
 		sendAll(server, m.window());
-		A1016_02.LOGGER.info("[a1016] sc_04: night {} (debug)", night);
+		A1016_02.LOGGER.info("[a1016] sc_04: set ({}, debug)", night);
 		return Optional.empty();
 	}
 

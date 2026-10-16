@@ -5,33 +5,42 @@ import java.time.format.DateTimeParseException;
 
 import com.forzacode.a1016_02.A1016_02;
 import com.forzacode.a1016_02.core.ModConfig;
+import com.google.gson.annotations.SerializedName;
 
 /**
- * {@code sections.sc14} (version 1), lore's (docs/SELF_CREATED.md, 14). The client's world list reads its own copy (in
+ * {@code sections.sc14} (version 2), lore's (docs/SELF_CREATED.md, 14). The client's world list reads its own copy (in
  * singleplayer the same file).
  */
 public final class RecordConfig implements ModConfig.Versioned {
 	public static final String SECTION = "sc14";
-	public static final int CURRENT = 1;
+	public static final int CURRENT = 2;
 	static final LocalTime DEFAULT_NIGHT_FROM = LocalTime.of(1, 0);
 	static final LocalTime DEFAULT_NIGHT_TO = LocalTime.of(4, 30);
 
 	public int version = 0;
 	/** (a) shows only after at least this many real hours away. */
+	@SerializedName(value = "a", alternate = "gapHours")
 	public double gapHours = 6.0;
 	/** (a) prefers a local time from... */
+	@SerializedName(value = "b", alternate = "nightFrom")
 	public String nightFrom = "01:00";
 	/** ...to (HH:mm). */
+	@SerializedName(value = "c", alternate = "nightTo")
 	public String nightTo = "04:30";
 	/** (b) from this stage on ({@code Stage.level()}: 3 is Telling)... */
+	@SerializedName(value = "d", alternate = "versionFromStage")
 	public int versionFromStage = 3;
 	/** ...at least this many in-game days after (a) was shown. */
+	@SerializedName(value = "e", alternate = "versionAfterDays")
 	public double versionAfterDays = 2.0;
 	/** (c) from this stage on (2 is Proximity). */
+	@SerializedName(value = "f", alternate = "seedFromStage")
 	public int seedFromStage = 2;
 	/** (d) on or off. */
+	@SerializedName(value = "g", alternate = "stats")
 	public boolean stats = true;
 	/** (d) the credited player's base (else the player) within this many blocks (horizontal). */
+	@SerializedName(value = "h", alternate = "statsRadius")
 	public double statsRadius = 64.0;
 
 	@Override
@@ -39,6 +48,8 @@ public final class RecordConfig implements ModConfig.Versioned {
 		if (version >= CURRENT) {
 			return false;
 		}
+		// 1 to 2 (D-080): the keys are opaque letters; a value under an old key is read into its field (its
+		// @SerializedName alternate) and only the new key is written back.
 		version = CURRENT;
 		return true;
 	}
@@ -49,12 +60,12 @@ public final class RecordConfig implements ModConfig.Versioned {
 
 	/** {@link #nightFrom}, or 01:00 if it cannot be read. */
 	public LocalTime nightFromTime() {
-		return time(nightFrom, DEFAULT_NIGHT_FROM, "nightFrom");
+		return time(nightFrom, DEFAULT_NIGHT_FROM, "b");
 	}
 
 	/** {@link #nightTo}, or 04:30 if it cannot be read. */
 	public LocalTime nightToTime() {
-		return time(nightTo, DEFAULT_NIGHT_TO, "nightTo");
+		return time(nightTo, DEFAULT_NIGHT_TO, "c");
 	}
 
 	/** {@link #gapHours} in milliseconds. */

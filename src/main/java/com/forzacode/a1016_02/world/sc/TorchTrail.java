@@ -30,6 +30,7 @@ import com.forzacode.a1016_02.world.SignatureData;
 import com.forzacode.a1016_02.world.live.NewScarPlacer;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonParser;
+import com.google.gson.annotations.SerializedName;
 
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
@@ -60,20 +61,25 @@ import org.jspecify.annotations.Nullable;
 
 /**
  * 11 ({@code docs/SELF_CREATED.md}, D-088): someone's torches go deeper into a cave branch nobody visited, on the
- * right-hand wall going in, and end at a 1x1 hole straight down to lava, a torch on the floor beside it and a sign on
- * the wall a few cells before it, never read from the hole's lip ({@link #sign}; "brb", from {@value #TEXT_FILE}, not
- * waxed). From a cave spot a participant stood in (world's cave
+ * right-hand wall going in, and end at a 1x1 hole straight down toward lava, a torch on the floor before it and a sign
+ * on the wall a few cells before that, never read from the hole's lip ({@link #sign}; "brb", from {@value #TEXT_FILE},
+ * not waxed). From a cave spot a participant stood in (world's cave
  * spots, {@code LoneTorch.trackCaves}): a walk over natural cave air (not player-dug, a sturdy natural floor, two
  * cells high, at least {@code minDepthBelowSurface} under the surface, at most {@value #MAX_CELLS} cells looked at)
  * {@code pathMin} to {@code pathMax} cells to a floor cell under which natural stone runs straight down
- * {@code shaftMin} to {@code shaftMax} blocks (its sides solid and dry) and opens on lava, a source within
- * {@value #LAVA_REACH} below. From the branch's mouth (the walk's first cell in a chunk nobody ever visited; every
- * cell on from there too) a wall torch every {@code spacingMin} to {@code spacingMax} cells, the first within
+ * {@code shaftMin} to {@code shaftMax} blocks (its sides solid and dry) to lava, a source within {@value #LAVA_REACH}
+ * below. Never an unmarked death (DESIGN guardrail 1, FIX-SC-FINAL): the hole is at a dead end that only the trail
+ * reaches, the walk's last cells from the sign's on walled in on every side but the walk's and roofed
+ * ({@link #enclosedFrom}), so nobody comes on it from anywhere else; and the fall is survived: the stone column's last
+ * block stays as the shaft's floor over the lava and the lowest dug cell holds a water source (t0rch's own landing;
+ * from above, the same dark 1x1 drop). From the branch's mouth (the walk's first cell in a chunk nobody ever visited;
+ * every cell on from there too) a wall torch every {@code spacingMin} to {@code spacingMax} cells, the first within
  * {@value #MOUTH_TORCH} of it. Never within {@code baseClearance} of any known base, nobody within
  * {@code nobodyWithin}, every cell loaded, unprotected and out of view. A search that finds nothing says why: the
- * reason most ends gave among those that got furthest (a shaft, then a branch nobody visited, then the rest). Left by others ({@code world:left/t0rch/...}):
- * one batch whose only ledgered edits are the shaft's ({@value #CAUSE}, never undone); never a site. At most
- * {@code maxPerWorld} per world, saved in the tick it is left. Server thread.
+ * reason most ends gave among those that got furthest (a shaft, then a dead end, then a branch nobody visited, then the
+ * rest). Left by others ({@code world:left/t0rch/...}): one batch whose only ledgered edits are the shaft's
+ * ({@value #CAUSE}, never undone; the water is left like the torches); never a site. At most {@code maxPerWorld} per
+ * world, saved in the tick it is left. Server thread.
  */
 public final class TorchTrail {
 	public static final String ID = "sc_11";
@@ -100,6 +106,8 @@ public final class TorchTrail {
 	public static final int SIGN_BACK_MAX = 5;
 	/** The sign's column and the one it faces are at least this many cells (either way) from the hole's. */
 	public static final int SIGN_CLEAR = 2;
+	/** The stone column under the hole is at least this long whatever the config: dug cells, the water's, and the floor. */
+	public static final int MIN_COLUMN = 3;
 	/** Ends looked at per walk. */
 	private static final int MAX_ENDS = 256;
 	/** Cave spots tried per fire, nearest the target first. */
@@ -107,20 +115,30 @@ public final class TorchTrail {
 	/** A cave spot this far from the target is not tried (it would not be loaded). */
 	private static final int SPOT_REACH = 160;
 
-	/** {@code sections.sc11}. Version 1. */
+	/** {@code sections.sc11}. Version 2. */
 	public static final class Config implements ModConfig.Versioned {
-		public static final int CURRENT = 1;
+		public static final int CURRENT = 2;
 
 		public int version = 0;
+		@SerializedName(value = "a", alternate = "pathMin")
 		public int pathMin = 30;
+		@SerializedName(value = "b", alternate = "pathMax")
 		public int pathMax = 90;
+		@SerializedName(value = "c", alternate = "spacingMin")
 		public int spacingMin = 8;
+		@SerializedName(value = "d", alternate = "spacingMax")
 		public int spacingMax = 12;
+		@SerializedName(value = "e", alternate = "shaftMin")
 		public int shaftMin = 8;
+		@SerializedName(value = "f", alternate = "shaftMax")
 		public int shaftMax = 30;
+		@SerializedName(value = "g", alternate = "minDepthBelowSurface")
 		public int minDepthBelowSurface = 12;
+		@SerializedName(value = "h", alternate = "nobodyWithin")
 		public double nobodyWithin = 32.0;
+		@SerializedName(value = "i", alternate = "baseClearance")
 		public double baseClearance = 64.0;
+		@SerializedName(value = "j", alternate = "maxPerWorld")
 		public int maxPerWorld = 1;
 
 		@Override
@@ -128,6 +146,8 @@ public final class TorchTrail {
 			if (version >= CURRENT) {
 				return false;
 			}
+			// 1 to 2 (D-080): the keys are opaque letters; a value under an old key is read into its field (its
+			// @SerializedName alternate) and only the new key is written back.
 			version = CURRENT;
 			return true;
 		}
@@ -143,14 +163,24 @@ public final class TorchTrail {
 	 * @param path      the walk, from the known spot to the hole's floor cell
 	 * @param mouth     the index of the branch's mouth in it
 	 * @param torches   the wall torches, going in
-	 * @param shaft     the shaft's cells, top first
-	 * @param lava      the lava it opens on
-	 * @param floorTorch the torch beside the hole
+	 * @param shaft     the shaft's dug cells, top first: the stone column under the hole but its last block (the floor)
+	 * @param lava      the lava under the column
+	 * @param floorTorch the torch beside the hole (the walk's cell before it at a dead end)
 	 * @param sign      the wall sign a few cells before the hole
 	 */
 	public record Plan(List<BlockPos> path, int mouth, List<Left> torches, List<BlockPos> shaft, BlockPos lava, Left floorTorch, Left sign) {
 		public BlockPos hole() {
 			return path.getLast();
+		}
+
+		/** The shaft's lowest dug cell: a water source, so a fall into it is survived. */
+		public BlockPos water() {
+			return shaft.getLast();
+		}
+
+		/** The column's last stone, left as the shaft's floor between the water and the lava. */
+		public BlockPos floor() {
+			return shaft.getLast().below();
 		}
 
 		/** Every cell it changes. */
@@ -163,8 +193,8 @@ public final class TorchTrail {
 		}
 
 		public String summary() {
-			return torches.size() + " torches over " + (path.size() - 1 - mouth) + " cells from the mouth, a shaft of " + shaft.size() + " to lava at "
-					+ lava.toShortString();
+			return torches.size() + " torches over " + (path.size() - 1 - mouth) + " cells from the mouth, a shaft of " + shaft.size()
+					+ " with water at its foot over lava at " + lava.toShortString();
 		}
 	}
 
@@ -188,7 +218,7 @@ public final class TorchTrail {
 	public static List<String> lines(MinecraftServer server) {
 		Optional<Resource> resource = server.getResourceManager().getResource(TEXT_ID);
 		if (resource.isEmpty()) {
-			A1016_02.LOGGER.warn("[a1016] world: {} is missing", TEXT_FILE);
+			A1016_02.LOGGER.warn("[a1016] world: {}'s text is missing", ID);
 			return FALLBACK_LINES;
 		}
 		try (Reader reader = resource.get().openAsReader()) {
@@ -200,7 +230,7 @@ public final class TorchTrail {
 			}
 			return List.copyOf(lines.subList(0, SignText.LINES));
 		} catch (Exception e) {
-			A1016_02.LOGGER.warn("[a1016] world: could not read {}", TEXT_FILE, e);
+			A1016_02.LOGGER.warn("[a1016] world: {}'s text could not be read", ID, e);
 			return FALLBACK_LINES;
 		}
 	}
@@ -254,14 +284,21 @@ public final class TorchTrail {
 		return state.is(BlockTags.BASE_STONE_OVERWORLD) || state.is(BlockTags.STONE_ORE_REPLACEABLES) || state.is(BlockTags.DEEPSLATE_ORE_REPLACEABLES);
 	}
 
-	/** The shaft under a floor cell: its cells (top first) and the lava it opens on; null if there is none. */
+	/**
+	 * The stone column under a floor cell: its cells (top first) and the lava under it; null if there is none. All but
+	 * its last cell are dug ({@link #dug}); the last stays as the floor.
+	 */
 	record Shaft(List<BlockPos> cells, BlockPos lava) {
+		/** The cells dug, top first: the column but its last block. */
+		List<BlockPos> dug() {
+			return cells.subList(0, cells.size() - 1);
+		}
 	}
 
 	/**
 	 * Under {@code hole}: natural stone straight down, not placed or dug by a player, its four sides solid and dry,
-	 * {@code shaftMin} to {@code shaftMax} blocks, then open cells (air or lava) down to a lava source within
-	 * {@value #LAVA_REACH}. Null if not.
+	 * {@code shaftMin} (at least {@value #MIN_COLUMN}) to {@code shaftMax} blocks, then open cells (air or lava) down to a
+	 * lava source within {@value #LAVA_REACH}. Null if not.
 	 */
 	static @Nullable Shaft shaft(ServerLevel level, PlayerWatch watch, BlockPos hole, Config config) {
 		List<BlockPos> cells = new ArrayList<>();
@@ -290,7 +327,7 @@ public final class TorchTrail {
 			}
 			cells.add(at.immutable());
 		}
-		if (cells.size() < config.shaftMin) {
+		if (cells.size() < Math.max(config.shaftMin, MIN_COLUMN)) {
 			return null;
 		}
 		for (int k = 1; k <= LAVA_REACH; k++) {
@@ -426,8 +463,9 @@ public final class TorchTrail {
 		Util.shuffle(ends, random);
 		List<BlockPos> bases = env.bases().all(level.dimension());
 		List<ServerPlayer> people = env.people().in(level);
-		// Why each end failed, by how far it got: 0 no shaft, 1 not a branch nobody visited, 2 the torches, sign or a rule.
-		List<Map<String, Integer>> why = List.of(new HashMap<>(), new HashMap<>(), new HashMap<>());
+		// Why each end failed, by how far it got: 0 no shaft, 1 not a dead end, 2 not a branch nobody visited, 3 the torches,
+		// sign or a rule.
+		List<Map<String, Integer>> why = List.of(new HashMap<>(), new HashMap<>(), new HashMap<>(), new HashMap<>());
 		int looked = 0;
 		for (BlockPos end : ends) {
 			if (looked++ >= MAX_ENDS) {
@@ -446,16 +484,22 @@ public final class TorchTrail {
 				}
 			}
 			Collections.reverse(path);
-			int mouth = mouth(level, path, visits);
-			if (mouth < 0) {
-				why.get(1).merge("the way there is not a branch nobody visited", 1, Integer::sum);
+			// Guardrail 1: only the trail leads to the hole, through the sign's cell at the latest.
+			int enclosed = enclosedFrom(level, path);
+			if (enclosed > path.size() - SIGN_BACK_MIN) {
+				why.get(1).merge("the end can be walked into from beside the trail", 1, Integer::sum);
 				continue;
 			}
-			Result built = build(env, level, path, mouth, shaft, config, bases, people);
+			int mouth = mouth(level, path, visits);
+			if (mouth < 0) {
+				why.get(2).merge("the way there is not a branch nobody visited", 1, Integer::sum);
+				continue;
+			}
+			Result built = build(env, level, path, mouth, enclosed, shaft, config, bases, people);
 			if (built.plan() != null) {
 				return built;
 			}
-			why.get(2).merge(built.reason(), 1, Integer::sum);
+			why.get(3).merge(built.reason(), 1, Integer::sum);
 		}
 		int tried = Math.min(looked, ends.size());
 		for (int stage = why.size() - 1; stage >= 0; stage--) {
@@ -492,18 +536,62 @@ public final class TorchTrail {
 		return Math.max(Math.abs(a.getX() - b.getX()), Math.abs(a.getZ() - b.getZ()));
 	}
 
+	/** A cell nobody passes through: loaded, a full block, no fluid. */
+	static boolean closed(ServerLevel level, BlockPos pos) {
+		if (!level.isLoaded(pos)) {
+			return false;
+		}
+		BlockState state = level.getBlockState(pos);
+		return state.getFluidState().isEmpty() && state.isCollisionShapeFullBlock(level, pos);
+	}
+
+	/**
+	 * The walk cell at {@code i} is walled in but for the walk: at its feet and head, every side but the ones toward the
+	 * walk's cells before and after it is closed, and so is the cell over its head (no way in from above, nor up from it).
+	 */
+	static boolean walledIn(ServerLevel level, List<BlockPos> path, int i) {
+		BlockPos at = path.get(i);
+		Set<Direction> along = new LinkedHashSet<>();
+		if (i > 0) {
+			along.add(heading(at, path.get(i - 1)));
+		}
+		if (i < path.size() - 1) {
+			along.add(heading(at, path.get(i + 1)));
+		}
+		for (Direction side : Direction.Plane.HORIZONTAL) {
+			if (!along.contains(side) && (!closed(level, at.relative(side)) || !closed(level, at.relative(side).above()))) {
+				return false;
+			}
+		}
+		return closed(level, at.above(2));
+	}
+
+	/**
+	 * Where the dead end at the walk's end begins (FIX-SC-FINAL, guardrail 1): the first index from which every cell on to
+	 * the hole is {@link #walledIn}, so the hole is reached only along the walk through that cell; the walk's size if the
+	 * hole's own cell is open on a side other than the way in (or over its head).
+	 */
+	static int enclosedFrom(ServerLevel level, List<BlockPos> path) {
+		int from = path.size();
+		while (from > 1 && walledIn(level, path, from - 1)) {
+			from--;
+		}
+		return from;
+	}
+
 	/**
 	 * The sign (review R9: reading it never puts you at the shaft's lip): at head height over a walk cell
 	 * {@value #SIGN_BACK_MIN} to {@value #SIGN_BACK_MAX} cells before the hole, past the mouth, on a sturdy wall, the
 	 * left-hand one going in first (the torches are on the right), else the right, else one ahead, facing the walk; its
 	 * own column and the one it faces at least {@value #SIGN_CLEAR} cells from the hole's, so whoever walks up to read it
-	 * stands on the walk's floor, never beside the hole. Null if there is none.
+	 * stands on the walk's floor, never beside the hole. Every cell after the sign's is walled in ({@code enclosed}, from
+	 * {@link #enclosedFrom}): whoever reaches the hole passed the sign. Null if there is none.
 	 */
-	static @Nullable Left sign(ServerLevel level, List<BlockPos> path, int mouth, Set<BlockPos> taken) {
+	static @Nullable Left sign(ServerLevel level, List<BlockPos> path, int mouth, int enclosed, Set<BlockPos> taken) {
 		BlockPos hole = path.getLast();
 		for (int back = SIGN_BACK_MIN; back <= SIGN_BACK_MAX; back++) {
 			int i = path.size() - 1 - back;
-			if (i <= mouth) {
+			if (i <= mouth || i + 1 < enclosed) {
 				break;
 			}
 			BlockPos at = path.get(i).above();
@@ -525,8 +613,8 @@ public final class TorchTrail {
 	}
 
 	/** The torches, the sign and the floor torch for one end, with every safety rule; a plan or why not. */
-	static Result build(ScEnv env, ServerLevel level, List<BlockPos> path, int mouth, Shaft shaft, Config config, List<BlockPos> bases,
-			List<ServerPlayer> people) {
+	static Result build(ScEnv env, ServerLevel level, List<BlockPos> path, int mouth, int enclosed, Shaft shaft, Config config,
+			List<BlockPos> bases, List<ServerPlayer> people) {
 		BlockPos hole = path.getLast();
 		for (Direction side : Direction.Plane.HORIZONTAL) {
 			if (!level.isLoaded(hole.relative(side))) {
@@ -536,9 +624,9 @@ public final class TorchTrail {
 		Direction in = heading(path.get(path.size() - 2), hole);
 		Set<BlockPos> taken = new LinkedHashSet<>(shaft.cells());
 		taken.add(hole);
-		Left sign = sign(level, path, mouth, taken);
+		Left sign = sign(level, path, mouth, enclosed, taken);
 		if (sign == null) {
-			return Result.none("no wall " + SIGN_BACK_MIN + " to " + SIGN_BACK_MAX + " cells before the hole for the sign");
+			return Result.none("no wall " + SIGN_BACK_MIN + " to " + SIGN_BACK_MAX + " cells before the hole for the sign, with only the trail on from it");
 		}
 		taken.add(sign.pos());
 		// The floor torch: beside the hole, a side first, else the cell one came from.
@@ -558,7 +646,7 @@ public final class TorchTrail {
 		if (torches == null) {
 			return Result.none("no right-hand wall for a torch every " + config.spacingMin + " to " + config.spacingMax + " cells");
 		}
-		Plan plan = new Plan(List.copyOf(path), mouth, List.copyOf(torches), shaft.cells(), shaft.lava(), floor, sign);
+		Plan plan = new Plan(List.copyOf(path), mouth, List.copyOf(torches), List.copyOf(shaft.dug()), shaft.lava(), floor, sign);
 		Set<BlockPos> cells = plan.cells();
 		if (!ScEnv.loaded(level, cells)) {
 			return Result.none("not loaded");
@@ -581,12 +669,16 @@ public final class TorchTrail {
 		return new Result(plan, plan.summary());
 	}
 
-	/** Leaves the plan in one batch, left by others; false (nothing left) if it was refused. */
+	/**
+	 * Leaves the plan in one batch, left by others: the shaft dug down to its floor, the water at its foot, the torches and
+	 * the sign; false (nothing left) if it was refused.
+	 */
 	static boolean leave(ScEnv env, ServerLevel level, Plan plan, List<String> lines) {
 		TraceBatch batch = env.traces().batch(level, CAUSE);
 		for (BlockPos cell : plan.shaft()) {
 			batch.remove(cell);
 		}
+		batch.leave(plan.water(), Blocks.WATER.defaultBlockState());
 		for (Left torch : plan.torches()) {
 			batch.leave(torch.pos(), torch.state());
 		}

@@ -20,6 +20,7 @@ import com.forzacode.a1016_02.core.ModConfig;
 import com.forzacode.a1016_02.core.Stage;
 import com.forzacode.a1016_02.core.Tier;
 import com.forzacode.a1016_02.core.TraceBatch;
+import com.google.gson.annotations.SerializedName;
 
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
@@ -72,19 +73,28 @@ public final class Tracks {
 	/** Turns tried away from the door's outward side, degrees. */
 	private static final int[] TURNS = {0, 25, -25, 50, -50};
 
-	/** {@code sections.sc09}. Version 1. */
+	/** {@code sections.sc09}. Version 2. */
 	public static final class Config implements ModConfig.Versioned {
-		public static final int CURRENT = 1;
+		public static final int CURRENT = 2;
 
 		public int version = 0;
+		@SerializedName(value = "a", alternate = "lengthMin")
 		public int lengthMin = 14;
+		@SerializedName(value = "b", alternate = "lengthMax")
 		public int lengthMax = 28;
+		@SerializedName(value = "c", alternate = "stride")
 		public int stride = 2;
+		@SerializedName(value = "d", alternate = "minPrints")
 		public int minPrints = 5;
+		@SerializedName(value = "e", alternate = "circleChance")
 		public double circleChance = 0.4;
+		@SerializedName(value = "f", alternate = "nobodyWithin")
 		public double nobodyWithin = 16.0;
+		@SerializedName(value = "g", alternate = "awayDistance")
 		public double awayDistance = 32.0;
+		@SerializedName(value = "h", alternate = "minDaysApart")
 		public int minDaysApart = 2;
+		@SerializedName(value = "i", alternate = "maxPerBase")
 		public int maxPerBase = 4;
 
 		@Override
@@ -92,6 +102,8 @@ public final class Tracks {
 			if (version >= CURRENT) {
 				return false;
 			}
+			// 1 to 2 (D-080): the keys are opaque letters; a value under an old key is read into its field (its
+			// @SerializedName alternate) and only the new key is written back.
 			version = CURRENT;
 			return true;
 		}

@@ -40,8 +40,8 @@ public final class EntityData extends SavedData {
 			Codec.INT.optionalFieldOf("glimpses", 0).forGetter(d -> d.glimpses),
 			Codec.LONG.optionalFieldOf("screenshotDay", -1L).forGetter(d -> d.screenshotDay),
 			UUIDUtil.CODEC.optionalFieldOf("screenshotBy").forGetter(d -> Optional.ofNullable(d.screenshotBy)),
-			Codec.BOOL.optionalFieldOf("sc03Done", false).forGetter(d -> d.sc03Done),
-			Codec.BOOL.optionalFieldOf("sc03Restored", false).forGetter(d -> d.sc03Restored)
+			Codec.BOOL.lenientOptionalFieldOf("sc03Done", false).forGetter(d -> d.sc03Done),
+			Codec.BOOL.lenientOptionalFieldOf("sc03Restored", false).forGetter(d -> d.sc03Restored)
 	).apply(i, EntityData::new));
 
 	public static final SavedDataType<EntityData> TYPE = new SavedDataType<>(A1016_02.id("entity"), EntityData::new, CODEC, null);
@@ -61,7 +61,11 @@ public final class EntityData extends SavedData {
 	/** The in-game day the world's one screenshot happened (D-078), -1 if not yet, and whose screenshot it was. */
 	private long screenshotDay = -1;
 	private @Nullable UUID screenshotBy;
-	/** The self-created layer's 03: the world's picture was taken (once per world), and the old one put back. Old files load without. */
+	/**
+	 * The self-created layer's 03: the world's picture was taken (once per world), and the old one put back. Old files load
+	 * without; read leniently like the layer's other saved parts (a value that cannot be read loads as false, never failing
+	 * the file).
+	 */
 	private boolean sc03Done;
 	private boolean sc03Restored;
 

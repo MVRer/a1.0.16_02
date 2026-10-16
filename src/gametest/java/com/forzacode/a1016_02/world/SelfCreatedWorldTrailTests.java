@@ -48,6 +48,8 @@ public class SelfCreatedWorldTrailTests {
 	static final int CORRIDOR_Z = 4;
 	static final int END_X = 40;
 	static final int LAVA_Y = 5;
+	/** The shaft's foot: the column runs from 13 to 6 over the lava at 5; its last stone (6) stays, the water is at 7. */
+	static final int WATER_Y = LAVA_Y + 2;
 
 	/** Small numbers for the small cave (the shaft from y 13 to 6 is 8 deep). */
 	static TorchTrail.Config caveConfig() {
@@ -140,12 +142,17 @@ public class SelfCreatedWorldTrailTests {
 			helper.assertTrue(x < hole.getX(), "a torch past the hole");
 			previous = x;
 		}
-		// The shaft: straight down through the stone, opening on the lava.
-		for (int y = FEET_Y - 1; y > LAVA_Y; y--) {
+		// The shaft: straight down through the stone toward the lava; its foot a water source on the column's last stone,
+		// the lava under that (FIX-SC-FINAL: a fall into it is survived).
+		for (int y = FEET_Y - 1; y > WATER_Y; y--) {
 			helper.assertBlockPresent(Blocks.AIR, new BlockPos(END_X, y, CORRIDOR_Z));
 		}
+		BlockState water = level.getBlockState(helper.absolutePos(new BlockPos(END_X, WATER_Y, CORRIDOR_Z)));
+		helper.assertTrue(water.is(Blocks.WATER) && water.getFluidState().isSource(), "no water source at the shaft's foot: " + water);
+		helper.assertBlockPresent(Blocks.STONE, new BlockPos(END_X, WATER_Y - 1, CORRIDOR_Z));
 		helper.assertBlockPresent(Blocks.LAVA, new BlockPos(END_X, LAVA_Y, CORRIDOR_Z));
-		helper.assertTrue(plan.shaft().size() == FEET_Y - 1 - LAVA_Y, "the shaft is " + plan.shaft().size() + " deep");
+		helper.assertTrue(plan.shaft().size() == FEET_Y - 1 - WATER_Y + 1 && plan.water().equals(helper.absolutePos(new BlockPos(END_X, WATER_Y, CORRIDOR_Z)))
+				&& plan.floor().equals(helper.absolutePos(new BlockPos(END_X, WATER_Y - 1, CORRIDOR_Z))), "the shaft is " + plan.shaft().size() + " deep");
 		// The floor torch beside the hole; the sign 2 cells before it on the left-hand wall (review R9: never read from
 		// the hole's lip), facing the corridor: "brb", not waxed.
 		helper.assertBlockPresent(Blocks.TORCH, new BlockPos(END_X - 1, FEET_Y, CORRIDOR_Z));
@@ -233,27 +240,132 @@ public class SelfCreatedWorldTrailTests {
 		helper.succeed();
 	}
 
-	/** Each section is version 1 with the design's numbers. */
+	/**
+	 * FIX-SC-FINAL (DESIGN guardrail 1): the hole is at a dead end only the trail reaches. Walking from the hole's cell over
+	 * every cell one could stand in, without the sign's own cell, reaches nothing but the trail's last cells (and the cell
+	 * over the hole's head is stone): whoever comes to the hole came along the trail and passed the sign. An end open on a
+	 * side, at its far end, over its head, or beside the cell before it is refused.
+	 */
+	@GameTest(structure = CAVE, maxTicks = 40)
+	public void t0rchsHoleIsADeadEndOnlyTheTrailReaches(GameTestHelper helper) {
+		ServerLevel level = helper.getLevel();
+		BlockPos spot = cave(helper, null, true);
+		Friends friends = friends(helper, new BlockPos(20, FEET_Y, 400));
+		ScEnv env = env(friends, false);
+		TorchTrail.Config config = caveConfig();
+		TorchTrail.Result result = TorchTrail.search(env, level, spot, config, onlySpot(spot), RandomSource.create(3));
+		helper.assertTrue(result.plan() != null, "setup: no plan: " + result.reason());
+		TorchTrail.Plan plan = result.plan();
+		List<BlockPos> path = plan.path();
+		int signCell = -1;
+		for (int i = 0; i < path.size(); i++) {
+			if (path.get(i).above().equals(plan.sign().pos())) {
+				signCell = i;
+			}
+		}
+		helper.assertTrue(signCell > 0 && signCell < path.size() - 1, "the sign is not over a walk cell before the hole: " + plan.sign());
+		List<BlockPos> after = path.subList(signCell + 1, path.size());
+		java.util.Set<BlockPos> reached = new java.util.HashSet<>();
+		java.util.ArrayDeque<BlockPos> queue = new java.util.ArrayDeque<>(List.of(plan.hole()));
+		reached.add(plan.hole());
+		while (!queue.isEmpty()) {
+			BlockPos at = queue.poll();
+			for (Direction side : Direction.Plane.HORIZONTAL) {
+				for (BlockPos next : List.of(at.relative(side), at.relative(side).above(), at.relative(side).below())) {
+					if (!next.equals(path.get(signCell)) && passable(level, next) && passable(level, next.above()) && reached.add(next)) {
+						queue.add(next);
+					}
+				}
+			}
+			helper.assertTrue(reached.size() < 64, "the hole opens onto the cave: " + reached.size() + " cells reached without the sign's");
+		}
+		helper.assertTrue(after.containsAll(reached), "the hole is reached without passing the sign: " + reached.stream().filter(p -> !after.contains(p))
+				.map(BlockPos::toShortString).toList());
+		helper.assertFalse(passable(level, plan.hole().above(2)), "open over the hole's head");
+
+		// Each way in besides the trail is refused: beside the hole, past it, over its head, beside the cell before it.
+		List<List<BlockPos>> openings = List.of(List.of(new BlockPos(END_X, FEET_Y, CORRIDOR_Z + 1), new BlockPos(END_X, FEET_Y + 1, CORRIDOR_Z + 1)),
+				List.of(new BlockPos(END_X + 1, FEET_Y, CORRIDOR_Z), new BlockPos(END_X + 1, FEET_Y + 1, CORRIDOR_Z)),
+				List.of(new BlockPos(END_X, FEET_Y + 2, CORRIDOR_Z)),
+				List.of(new BlockPos(END_X - 1, FEET_Y, CORRIDOR_Z - 1), new BlockPos(END_X - 1, FEET_Y + 1, CORRIDOR_Z - 1)));
+		for (List<BlockPos> opening : openings) {
+			opening.forEach(rel -> helper.setBlock(rel, Blocks.AIR));
+			TorchTrail.Result open = TorchTrail.search(env, level, spot, config, onlySpot(spot), RandomSource.create(3));
+			helper.assertTrue(open.plan() == null && open.reason().contains("beside the trail"), "an end open at " + opening + " was not refused: "
+					+ open.reason());
+			opening.forEach(rel -> helper.setBlock(rel, Blocks.STONE));
+		}
+		helper.assertTrue(TorchTrail.search(env, level, spot, config, onlySpot(spot), RandomSource.create(3)).plan() != null, "closed again, no plan");
+		helper.succeed();
+	}
+
+	/** A cell a player can stand or walk in: no full block, no fluid. */
+	private static boolean passable(ServerLevel level, BlockPos pos) {
+		BlockState state = level.getBlockState(pos);
+		return state.getFluidState().isEmpty() && !state.isCollisionShapeFullBlock(level, pos);
+	}
+
+	/**
+	 * FIX-SC-FINAL (guardrail 1): a fall into t0rch's shaft is survived. A cow (the same fall rule as a player's:
+	 * {@code LivingEntity.checkFallDamage} asks for water before the damage, which is why a single water block saves any
+	 * fall) that steps into the hole lands in the water at its foot unhurt; the same fall into a dry shaft of the same depth
+	 * hurts. The lava stays under the floor, out of reach.
+	 */
+	@GameTest(structure = CAVE, maxTicks = 160)
+	public void aFallIntoT0rchsShaftIsSurvived(GameTestHelper helper) {
+		ServerLevel level = helper.getLevel();
+		BlockPos spot = cave(helper, null, true);
+		Friends friends = friends(helper, new BlockPos(20, FEET_Y, 400));
+		TorchTrail.Result result = TorchTrail.leaveFor(env(friends, false), target(friends), List.of(spot), onlySpot(spot), caveConfig(),
+				RandomSource.create(3), false);
+		helper.assertTrue(result.plan() != null, "setup: nothing left: " + result.reason());
+		// The control: the same shaft without water, a column of its own (stone around it, open from the same height).
+		int controlX = 6;
+		int controlZ = 1;
+		for (int y = WATER_Y; y <= FEET_Y + 1; y++) {
+			helper.setBlock(new BlockPos(controlX, y, controlZ), Blocks.AIR);
+		}
+		net.minecraft.world.entity.animal.cow.Cow saved = helper.spawn(net.minecraft.world.entity.EntityTypes.COW, new BlockPos(END_X, FEET_Y, CORRIDOR_Z));
+		net.minecraft.world.entity.animal.cow.Cow control = helper.spawn(net.minecraft.world.entity.EntityTypes.COW, new BlockPos(controlX, FEET_Y, controlZ));
+		helper.runAfterDelay(80, () -> {
+			try {
+				double bottom = helper.absolutePos(new BlockPos(END_X, WATER_Y, CORRIDOR_Z)).getY();
+				helper.assertTrue(saved.isAlive() && saved.getY() < bottom + 1.5 && saved.isInWater(), "the cow is not in the water at the foot: y "
+						+ saved.getY() + ", alive " + saved.isAlive());
+				helper.assertTrue(saved.getHealth() == saved.getMaxHealth(), "the fall into the water hurt: " + saved.getHealth() + " of " + saved.getMaxHealth());
+				helper.assertTrue(control.getY() < helper.absolutePos(new BlockPos(controlX, WATER_Y, controlZ)).getY() + 0.5
+						&& control.getHealth() < control.getMaxHealth(), "setup: the dry fall did not hurt: " + control.getHealth() + " at y " + control.getY());
+				helper.assertBlockPresent(Blocks.LAVA, new BlockPos(END_X, LAVA_Y, CORRIDOR_Z));
+				helper.assertBlockPresent(Blocks.STONE, new BlockPos(END_X, WATER_Y - 1, CORRIDOR_Z));
+			} finally {
+				saved.discard();
+				control.discard();
+			}
+			helper.succeed();
+		});
+	}
+
+	/** Each section is version 2 (its keys opaque, D-080) with the design's numbers; an old key's hand edit is kept. */
 	@GameTest
-	public void theSectionsAreVersionOneWithTheDesignsNumbers(GameTestHelper helper) {
+	public void theSectionsAreVersionTwoWithTheDesignsNumbers(GameTestHelper helper) {
 		JsonObject none = new JsonObject();
 		Turned.Config turned = ModConfig.readSection(none, Turned.SECTION, Turned.Config.class, Turned.Config::new);
-		helper.assertTrue(turned.version == 1 && turned.baseRadius == 12 && turned.nobodyWithin == 16 && turned.awayDistance == 32 && turned.perFireTraces == 1
+		helper.assertTrue(turned.version == 2 && turned.baseRadius == 12 && turned.nobodyWithin == 16 && turned.awayDistance == 32 && turned.perFireTraces == 1
 				&& turned.perFireLater == 2 && turned.minDaysApart == 2 && turned.maxPerBase == 8 && turned.signs, "sc08");
 		Tracks.Config tracks = ModConfig.readSection(none, Tracks.SECTION, Tracks.Config.class, Tracks.Config::new);
-		helper.assertTrue(tracks.version == 1 && tracks.lengthMin == 14 && tracks.lengthMax == 28 && tracks.stride == 2 && tracks.minPrints == 5
+		helper.assertTrue(tracks.version == 2 && tracks.lengthMin == 14 && tracks.lengthMax == 28 && tracks.stride == 2 && tracks.minPrints == 5
 				&& tracks.circleChance == 0.4 && tracks.nobodyWithin == 16 && tracks.awayDistance == 32 && tracks.minDaysApart == 2 && tracks.maxPerBase == 4, "sc09");
 		WhereHeStood.Config stood = ModConfig.readSection(none, WhereHeStood.SECTION, WhereHeStood.Config.class, WhereHeStood.Config::new);
-		helper.assertTrue(stood.version == 1 && stood.standChance == 0.7 && stood.runChance == 0.35 && stood.clearRadius == 2 && stood.maxRunPrints == 12
+		helper.assertTrue(stood.version == 2 && stood.standChance == 0.7 && stood.runChance == 0.35 && stood.clearRadius == 2 && stood.maxRunPrints == 12
 				&& stood.retryMinutes == 10 && stood.fogChance == 0.6 && stood.fogRadius == 40 && stood.fogLevel == 0.45F && stood.fogRampTicks == 1200
 				&& stood.fogDaysMin == 1 && stood.fogDaysMax == 3 && stood.maxFogPlaces == 4, "sc10");
 		TorchTrail.Config trail = ModConfig.readSection(none, TorchTrail.SECTION, TorchTrail.Config.class, TorchTrail.Config::new);
-		helper.assertTrue(trail.version == 1 && trail.pathMin == 30 && trail.pathMax == 90 && trail.spacingMin == 8 && trail.spacingMax == 12
+		helper.assertTrue(trail.version == 2 && trail.pathMin == 30 && trail.pathMax == 90 && trail.spacingMin == 8 && trail.spacingMax == 12
 				&& trail.shaftMin == 8 && trail.shaftMax == 30 && trail.minDepthBelowSurface == 12 && trail.nobodyWithin == 32 && trail.baseClearance == 64
 				&& trail.maxPerWorld == 1, "sc11");
 		JsonObject old = JsonParser.parseString("{\"sc11\": {\"pathMin\": 40}}").getAsJsonObject();
 		TorchTrail.Config kept = ModConfig.readSection(old, TorchTrail.SECTION, TorchTrail.Config.class, TorchTrail.Config::new);
-		helper.assertTrue(kept.version == 1 && kept.pathMin == 40, "a hand edit was not kept");
+		helper.assertTrue(kept.version == 2 && kept.pathMin == 40, "a hand edit under the old key was not kept");
 		helper.succeed();
 	}
 }

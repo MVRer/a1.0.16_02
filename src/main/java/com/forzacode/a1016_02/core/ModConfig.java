@@ -24,6 +24,7 @@ import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParseException;
 import com.google.gson.JsonParser;
+import com.google.gson.annotations.SerializedName;
 
 import net.fabricmc.loader.api.FabricLoader;
 
@@ -80,6 +81,10 @@ public final class ModConfig {
 	 *     return true;
 	 * }
 	 * }</pre>
+	 *
+	 * <p>A key renamed in a step: {@code @SerializedName(value = "newKey", alternate = "oldKey")} on the field. Reading
+	 * carries a value under the old key to the field when the new key is missing (a hand edit is kept), and only the new
+	 * key is written back.
 	 */
 	public interface Versioned {
 		/** Brings this section up to its current version. Returns true if anything changed (the version included). */
@@ -291,7 +296,8 @@ public final class ModConfig {
 	/**
 	 * Lenient reading (the game always starts, a typo costs one value): a JSON object read field by field into an object
 	 * that already holds its defaults, with Gson's rules for each value (unknown keys skipped, the fields Gson would
-	 * fill: not static, not transient, the class's and its superclasses'). A value that cannot be read (a string in a
+	 * fill: not static, not transient, the class's and its superclasses'; a field's key is its {@link SerializedName}, else
+	 * its name, and its alternate names are read when that key is missing). A value that cannot be read (a string in a
 	 * number field, a fraction in an int, a list where a number goes, null) keeps that field's default and logs one
 	 * warning naming its key; a field holding one of the mod's own config objects ({@link Pacing}) is read the same way,
 	 * value by value.
@@ -307,13 +313,34 @@ public final class ModConfig {
 					if (Modifier.isStatic(modifiers) || Modifier.isTransient(modifiers) || field.isSynthetic()) {
 						continue;
 					}
-					String key = field.getName();
-					if (!json.has(key)) {
+					String key = key(json, field);
+					if (key == null) {
 						continue;
 					}
 					readField(json.get(key), target, field, where.isEmpty() ? key : where + "." + key);
 				}
 			}
+		}
+
+		/**
+		 * The key this field is read from: its own ({@link SerializedName#value}, else its name), else the first of its
+		 * {@link SerializedName#alternate} names the object has (a key renamed by a section's upgrade step: the value under
+		 * the old key is carried to the new one, and only the new one is written back), else null.
+		 */
+		private static @Nullable String key(JsonObject json, Field field) {
+			SerializedName named = field.getAnnotation(SerializedName.class);
+			String key = named != null ? named.value() : field.getName();
+			if (json.has(key)) {
+				return key;
+			}
+			if (named != null) {
+				for (String old : named.alternate()) {
+					if (json.has(old)) {
+						return old;
+					}
+				}
+			}
+			return null;
 		}
 
 		private static void readField(JsonElement value, Object target, Field field, String key) {

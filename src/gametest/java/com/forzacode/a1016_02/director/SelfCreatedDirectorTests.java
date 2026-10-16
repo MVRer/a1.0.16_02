@@ -438,17 +438,17 @@ public class SelfCreatedDirectorTests {
 	}
 
 	/**
-	 * {@code sections.sc01} is version 2 with the design's numbers; the step from version 1 lowers {@code awayFactor} from
+	 * {@code sections.sc01} is version 3 with the design's numbers; the step from version 1 lowers {@code awayFactor} from
 	 * 1.0 to 0.9 (SC-5's tuning) and keeps a value someone set.
 	 */
 	@GameTest
 	public void theSectionIsVersionTwoWithTheDesignsNumbers(GameTestHelper helper) {
 		Sc01Config cfg = ModConfig.readSection(new JsonObject(), Sc01Config.SECTION, Sc01Config.class, Sc01Config::new);
-		helper.assertTrue(cfg.version == 2 && cfg.maxPlaces == 24 && cfg.radius == 32 && cfg.maxFactor == 1.8 && cfg.halfLifeDays == 4
+		helper.assertTrue(cfg.version == 3 && cfg.maxPlaces == 24 && cfg.radius == 32 && cfg.maxFactor == 1.8 && cfg.halfLifeDays == 4
 				&& cfg.weightAmbient == 0.15 && cfg.weightMinor == 0.3 && cfg.weightMajor == 0.5 && cfg.weightSighting == 0.2 && cfg.trustedFactor == 1.6
 				&& cfg.trustedMinHours == 1 && cfg.awayFactor == 0.9 && cfg.simDreadShare == 0.3 && cfg.simDreadFactor == 1.4 && cfg.simTrustedShare == 0.05,
 				"the section's numbers");
-		helper.assertTrue(versionOne(1.0).version == 2 && versionOne(1.0).awayFactor == 0.9, "version 1's default was not lowered");
+		helper.assertTrue(versionOne(1.0).version == 3 && versionOne(1.0).awayFactor == 0.9, "version 1's default was not lowered");
 		helper.assertTrue(versionOne(1.2).awayFactor == 1.2 && versionOne(0.5).awayFactor == 0.5, "a value someone set was not kept");
 		helper.succeed();
 	}

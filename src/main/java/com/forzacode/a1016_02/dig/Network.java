@@ -156,6 +156,11 @@ public final class Network {
 		return Optional.ofNullable(bedHead);
 	}
 
+	/** Either half of the bed this network is under (its head or its foot). */
+	public boolean isBed(BlockPos pos) {
+		return pos.equals(bedHead) || pos.equals(bedFoot);
+	}
+
 	public int nights() {
 		return nights;
 	}

@@ -468,14 +468,14 @@ public class SelfCreatedEntityTests {
 		helper.succeed();
 	}
 
-	/** The sections read fresh as version 1 with the design's numbers. */
+	/** The sections read fresh as version 2 with the design's numbers. */
 	@GameTest
 	public void theSectionsReadFreshAtVersion1(GameTestHelper helper) {
 		NamelessConfig n = ModConfig.readSection(new JsonObject(), NamelessConfig.SECTION, NamelessConfig.class, NamelessConfig::new);
-		helper.assertTrue(n.version == 1 && n.friendMinAtFire == 48.0 && n.minDistance == 24.0 && n.maxDistance == 64.0 && n.fogShare == 0.5
+		helper.assertTrue(n.version == 2 && n.friendMinAtFire == 48.0 && n.minDistance == 24.0 && n.maxDistance == 64.0 && n.fogShare == 0.5
 				&& n.stillSeconds == 1.5 && n.armMinutes == 20.0 && n.hideSecondsTotal == 30.0, "sc02");
 		HisViewConfig h = ModConfig.readSection(new JsonObject(), HisViewConfig.SECTION, HisViewConfig.class, HisViewConfig::new);
-		helper.assertTrue(h.version == 1 && h.fromStage == 2 && h.maxBaseDistance == 96.0 && h.hostBaseDistance == 48.0 && h.standSeconds == 1.0
+		helper.assertTrue(h.version == 2 && h.fromStage == 2 && h.maxBaseDistance == 96.0 && h.hostBaseDistance == 48.0 && h.standSeconds == 1.0
 				&& h.iconSize == 64 && h.iconSize() == 64, "sc03");
 		helper.assertTrue(HisViewConfig.SECTION.equals("sc03") && NamelessConfig.SECTION.equals("sc02"), "the section names");
 		helper.succeed();
@@ -714,8 +714,9 @@ public class SelfCreatedEntityTests {
 
 	/**
 	 * The files: the picture is written only over an existing {@code icon.png}, the old one kept once as the copy (never
-	 * replaced by a later picture), all inside the world's folder; putting it back writes the copy as {@code icon.png} once,
-	 * only after the picture was taken; Ending D's afterward does it once; the reset puts it back and forgets.
+	 * replaced by a later picture), the world's marker set before it, all inside the world's folder; putting it back writes
+	 * the copy as {@code icon.png} once, only after the picture was taken (FIX-SC-FINAL: the marker counts as taken when
+	 * the server never heard); Ending D's afterward does it once; the reset puts it back and forgets.
 	 */
 	@GameTest
 	public void hisViewKeepsTheOldPictureOnceAndPutsItBackOnce(GameTestHelper helper) throws Exception {
@@ -736,17 +737,19 @@ public class SelfCreatedEntityTests {
 			helper.assertTrue(Arrays.equals(Files.readAllBytes(icon), first) && Arrays.equals(Files.readAllBytes(before), old), "icon or copy wrong");
 			helper.assertTrue(HisView.writePicture(folder, second).isEmpty() && Arrays.equals(Files.readAllBytes(before), old)
 					&& Arrays.equals(Files.readAllBytes(icon), second), "the copy was replaced by a later picture");
+			helper.assertTrue(HisView.marked(folder) && view.taken(server) && !hooks.data.sc03Done(), "the picture's marker was not set");
 
-			helper.assertTrue(view.restore(server).equals("not taken") && Arrays.equals(Files.readAllBytes(icon), second), "put back before it was taken");
-			hooks.data.setSc03Done(true);
+			// The server never heard (no report): Ending D's afterward still puts it back, once, and the world counts it.
 			helper.assertFalse(view.afterward(server), "put back before Ending D's afterward");
 			hooks.dComplete = true;
-			helper.assertTrue(view.afterward(server) && Arrays.equals(Files.readAllBytes(icon), old) && hooks.data.sc03Restored(), "not put back");
+			helper.assertTrue(view.afterward(server) && Arrays.equals(Files.readAllBytes(icon), old) && hooks.data.sc03Restored() && hooks.data.sc03Done()
+					&& !HisView.marked(folder), "not put back");
 			SelfCreated.writeInWorld(folder, HisViewRules.ICON, second); // a picture vanilla took since
 			helper.assertFalse(view.afterward(server), "put back twice");
 			helper.assertTrue(view.restore(server).equals("already put back") && Arrays.equals(Files.readAllBytes(icon), second), "the revert ran twice");
 
 			helper.assertTrue(view.reset(server).equals("already put back") && !hooks.data.sc03Done() && !hooks.data.sc03Restored(), "the reset");
+			helper.assertTrue(view.restore(server).equals("not taken") && Arrays.equals(Files.readAllBytes(icon), second), "put back before it was taken");
 			hooks.data.setSc03Done(true);
 			helper.assertTrue(view.restore(server).equals("put back") && Arrays.equals(Files.readAllBytes(icon), old), "after a reset");
 			try (Stream<Path> files = Files.walk(folder)) {
@@ -755,6 +758,96 @@ public class SelfCreatedEntityTests {
 		} finally {
 			deleteTree(folder);
 		}
+		helper.succeed();
+	}
+
+	/**
+	 * FIX-SC-FINAL: a picture whose report never reached the server (the game closed first, a lost packet, a new server
+	 * run that forgot the arm) is still the world's one and is still put back. The client sets the world's marker before it
+	 * writes the picture, so the switch's revert at the next start puts it back once and the world counts it taken, in a
+	 * world whose {@code entity.dat} never heard of it.
+	 */
+	@GameTest
+	public void hisViewPutsBackAPictureTheServerNeverHeardOf(GameTestHelper helper) throws Exception {
+		MinecraftServer server = helper.getLevel().getServer();
+		Path folder = testFolder(helper, "unheard");
+		Path icon = folder.resolve(HisViewRules.ICON);
+		byte[] old = {9, 8, 7};
+		byte[] his = HisViewRules.png(1, 1, new int[] {0x445566});
+		try {
+			helper.assertTrue(SelfCreated.writeInWorld(folder, HisViewRules.ICON, old), "the test's own icon");
+			helper.assertTrue(HisView.writePicture(folder, his).isEmpty() && Arrays.equals(Files.readAllBytes(icon), his), "the picture was not written");
+			// The next run: a new 03 with nothing in memory and a world flag never set.
+			ViewHooks hooks = new ViewHooks(folder);
+			HisView view = new HisView(hooks);
+			helper.assertTrue(view.taken(server) && view.line(server).startsWith("03: done"), "the world does not count the picture: " + view.line(server));
+			helper.assertTrue(view.restore(server).equals("put back") && Arrays.equals(Files.readAllBytes(icon), old), "the revert did not put it back");
+			helper.assertTrue(hooks.data.sc03Done() && hooks.data.sc03Restored() && !HisView.marked(folder), "the flags or the marker after the revert");
+			helper.assertTrue(view.restore(server).equals("already put back") && new HisView(new ViewHooks(folder)).restore(server).equals("not taken"),
+					"put back twice");
+		} finally {
+			deleteTree(folder);
+		}
+		helper.succeed();
+	}
+
+	/**
+	 * FIX-SC-FINAL: the capture keeps to its cap. With every wait running to its bound and nothing ever drawn, the frames,
+	 * the waits and the frame back to the player's camera end within {@code CAP_MS} (1.5 s) while a frame renders in up to
+	 * 100 ms; a slower frame adds only its own time. At least the minimum of frames, at most the maximum; a world drawn at
+	 * once stops at the minimum.
+	 */
+	@GameTest
+	public void hisViewCaptureKeepsToItsCap(GameTestHelper helper) {
+		for (long frameMs : new long[] {0, 5, 25, 60, 100, 400, 700}) {
+			long[] run = captureRun(frameMs, false);
+			// Slow frames: the minimum and the frame back are always drawn, so each adds its own time.
+			long allowed = frameMs <= 100 ? HisViewRules.Settle.CAP_MS : HisViewRules.Settle.CAP_MS + (HisViewRules.Settle.MIN_FRAMES + 1) * frameMs;
+			helper.assertTrue(run[0] <= allowed, frameMs + " ms frames: the capture took " + run[0] + " ms (" + run[1] + " frames), over " + allowed);
+			helper.assertTrue(run[1] >= HisViewRules.Settle.MIN_FRAMES && run[1] <= HisViewRules.Settle.MAX_FRAMES, frameMs + " ms frames: " + run[1] + " frames");
+		}
+		long[] drawn = captureRun(20, true);
+		helper.assertTrue(drawn[1] == HisViewRules.Settle.MIN_FRAMES, "a world drawn at once took " + drawn[1] + " frames");
+		helper.succeed();
+	}
+
+	/**
+	 * The client's capture loop ({@code HisViewClient.shoot} and {@code clean}) on a clock: each frame takes {@code frameMs},
+	 * each wait its whole allowed time. {milliseconds in all, frames}.
+	 */
+	private static long[] captureRun(long frameMs, boolean drawn) {
+		long now = 1_000L;
+		HisViewRules.Settle settle = new HisViewRules.Settle(now);
+		int frames = 0;
+		do {
+			if (frames > 0) {
+				now += settle.frameWait(now, HisViewRules.Settle.GRAPH_WAIT_MS);
+				now += settle.frameWait(now, HisViewRules.Settle.SECTIONS_WAIT_MS);
+			}
+			now += frameMs;
+			frames++;
+		} while (settle.another(frames, drawn, now));
+		now += frameMs; // the frame back to the player's camera
+		now += settle.cleanWait(now, HisViewRules.Settle.GRAPH_WAIT_MS);
+		return new long[] {now - settle.start(), frames};
+	}
+
+	/** FIX-SC-FINAL: 03's two flags in {@code entity.dat} are read leniently like the layer's other saved parts. */
+	@GameTest
+	public void entityDataReadsTheLayersFlagsLeniently(GameTestHelper helper) {
+		EntityData data = new EntityData();
+		data.recordGlimpse(4);
+		data.setSc03Done(true);
+		data.setSc03Restored(true);
+		net.minecraft.nbt.CompoundTag tag = (net.minecraft.nbt.CompoundTag) EntityData.CODEC.encodeStart(net.minecraft.nbt.NbtOps.INSTANCE, data).getOrThrow();
+		EntityData back = EntityData.CODEC.parse(net.minecraft.nbt.NbtOps.INSTANCE, tag).getOrThrow();
+		helper.assertTrue(back.sc03Done() && back.sc03Restored() && back.glimpses() == 1, "not round-tripped");
+		tag.putString("sc03Done", "yes");
+		tag.putIntArray("sc03Restored", new int[] {1, 2});
+		var read = EntityData.CODEC.parse(net.minecraft.nbt.NbtOps.INSTANCE, tag);
+		helper.assertTrue(read.isSuccess(), "an unreadable flag failed the file: " + read.error());
+		EntityData lenient = read.getOrThrow();
+		helper.assertTrue(!lenient.sc03Done() && !lenient.sc03Restored() && lenient.glimpses() == 1, "the rest of the file was not kept");
 		helper.succeed();
 	}
 

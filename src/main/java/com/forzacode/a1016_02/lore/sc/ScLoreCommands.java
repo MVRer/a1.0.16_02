@@ -11,8 +11,8 @@ import net.minecraft.server.MinecraftServer;
 
 /**
  * Lore's debug number under {@code /a1016 sc} (D-080: numbers only; the lines say what happened in plain words, only to the
- * op who ran them): {@code 14 [arm last|version [nogap] | seed | reset]}. After an arm, quit to the title and open
- * Singleplayer.
+ * op who ran them): {@code 14 [arm a|b [force] | c | reset]} ((a), (b) and (c) of 14; {@code force} skips the hours
+ * away and the night). After an arm, quit to the title and open Singleplayer.
  */
 final class ScLoreCommands {
 	private ScLoreCommands() {
@@ -22,11 +22,11 @@ final class ScLoreCommands {
 		CommandHooks.register((root, context) -> root.then(Commands.literal("sc")
 				.then(Commands.literal("14").executes(ScLoreCommands::state)
 						.then(Commands.literal("arm")
-								.then(Commands.literal("last").executes(ctx -> armLast(ctx, false))
-										.then(Commands.literal("nogap").executes(ctx -> armLast(ctx, true))))
-								.then(Commands.literal("version").executes(ctx -> armVersion(ctx, false))
-										.then(Commands.literal("nogap").executes(ctx -> armVersion(ctx, true)))))
-						.then(Commands.literal("seed").executes(ScLoreCommands::seed))
+								.then(Commands.literal("a").executes(ctx -> armLast(ctx, false))
+										.then(Commands.literal("force").executes(ctx -> armLast(ctx, true))))
+								.then(Commands.literal("b").executes(ctx -> armVersion(ctx, false))
+										.then(Commands.literal("force").executes(ctx -> armVersion(ctx, true)))))
+						.then(Commands.literal("c").executes(ScLoreCommands::seed))
 						.then(Commands.literal("reset").executes(ScLoreCommands::reset)))));
 	}
 
