@@ -53,8 +53,8 @@ public final class PacingMemory {
 	/**
 	 * Cards given back because their moment did not come and not fired since, by id, with this player's clock until
 	 * which each is parked: never drawn, and out of its deck for the run-out rule. Once the park is over the entry stays
-	 * until the card fires or is felt: a hold of it then goes back at its first look that does not fit. At most one
-	 * entry per registered card.
+	 * until the card fires or is felt, or its moment fits at a passing look (which also ends a park early): a hold of it
+	 * then goes back at its first look that does not fit. At most one entry per registered card.
 	 */
 	final Map<String, Long> parkedUntil = new LinkedHashMap<>();
 
@@ -154,7 +154,7 @@ public final class PacingMemory {
 
 	/**
 	 * This player's clock until which the card is (or was) parked, given back because its moment did not come and not
-	 * fired since, or -1.
+	 * fired, felt or seen fitting since, or -1.
 	 */
 	public long parkedUntil(String cardId) {
 		return parkedUntil.getOrDefault(cardId, -1L);

@@ -63,9 +63,10 @@ import net.minecraft.util.RandomSource;
  * deck whose only undrawn cards wait on a moment that never comes (the tunnel ladder for someone who never walks a long
  * dug tunnel) refills with the cards that can fire instead of drawing the same one again and again. After its park it
  * is drawn as any other card and fires once its moment comes; until it fires, a hold of it goes back (parked again) at
- * its first look that does not fit. An ambient or minor card parked as it goes back hands the roll that drew it to the
- * next card in the same tick, so a card whose moment never comes costs its tier one five-minute hold, never a
- * fire.</li>
+ * its first look that does not fit. Every director tick each parked card's moment is looked at in passing: one that
+ * fits ends its park and that strike there, so a card whose moment is a short stretch of every day (the ridge's dusk)
+ * keeps its whole holds. An ambient or minor card parked as it goes back hands the roll that drew it to the next card
+ * in the same tick, so a card whose moment never comes costs its tier one five-minute hold, never a fire.</li>
  * <li>Gates: the silence flag ({@link DirectorFlags}: nothing at all fires), join grace, forced quiet, empty
  * sessions (rolled from {@code emptySessionMinStage} on, Proximity), a small gap between any two fires, at most
  * {@code firstHourMaxFires} (5) moments in the player's own first hour (D-070), the minor and major gaps (never
@@ -437,6 +438,7 @@ public final class DirectorBrain {
 		checkQuiet(m, c, env, random, rec);
 		Stage stage = env.stage();
 		endParks(m);
+		releaseFitting(m, env);
 		releaseStaleHolds(w, m, c, stage, rec);
 		List<Sharer> sharers = env.sharers();
 		shareMood(m, c, sharers, random, rec);
@@ -1020,7 +1022,8 @@ public final class DirectorBrain {
 	 * (R1, v1.2): never drawn, and ruled out for the run-out rule, so its deck refills with the cards that can fire
 	 * instead of drawing it again and again while its moment never comes (a tunnel card for a surface player). It comes
 	 * back after the park, and fires once its moment does; until it fires, a hold of it goes back at its first look that
-	 * does not fit ({@link #unfitGoesBack}), and hands its roll on, so it costs its tier no fire.
+	 * does not fit ({@link #unfitGoesBack}), and hands its roll on, so it costs its tier no fire. A passing look at
+	 * which its moment fits ends the park and the strike ({@link #releaseFitting}).
 	 */
 	private void park(PacingMemory m, Clock c, String id) {
 		if (rules.unfitPark > 0) {
@@ -1045,8 +1048,8 @@ public final class DirectorBrain {
 
 	/**
 	 * True when a held ambient or minor card whose moment does not fit at this look goes back: after
-	 * {@code heldUnfitGiveBack} of play looked at all along ({@link #unfitAllAlong}), or at once for one that went back
-	 * so before and has not fired since (its park over): one look, then back.
+	 * {@code heldUnfitGiveBack} of play looked at all along ({@link #unfitAllAlong}), or at once for a struck one
+	 * ({@link #struck}): one look, then back.
 	 */
 	private boolean unfitGoesBack(PacingMemory m, Clock c, Tier tier, CardInfo card) {
 		if (struck(m, card)) {
@@ -1063,14 +1066,18 @@ public final class DirectorBrain {
 		return rules.unfitPark > 0 && (struck(m, card) || unfitAllAlong(m, tier));
 	}
 
-	/** True if this card already went back because its moment did not come and has not fired since ({@link #park}). */
+	/**
+	 * True if this card already went back because its moment did not come ({@link #park}) and since then has neither
+	 * fired, nor been felt, nor fitted at a passing look ({@link #releaseFitting}).
+	 */
 	private boolean struck(PacingMemory m, CardInfo card) {
 		return rules.unfitPark > 0 && m.parkedUntil.containsKey(card.id());
 	}
 
 	/**
-	 * Park entries stay until their card fires (an ended park still means one look, then back); those of cards no
-	 * longer registered are dropped, and every one when parking is off.
+	 * Park entries stay until their card fires or is felt, or its moment fits at a passing look ({@link #releaseFitting});
+	 * an ended park still means one look, then back. Those of cards no longer registered are dropped, and every one
+	 * when parking is off.
 	 */
 	private void endParks(PacingMemory m) {
 		if (!m.parkedUntil.isEmpty()) {
@@ -1079,6 +1086,24 @@ public final class DirectorBrain {
 			} else {
 				m.parkedUntil.keySet().removeIf(id -> !byId.containsKey(id));
 			}
+		}
+	}
+
+	/**
+	 * Every director tick, each parked or struck card's moment is looked at in passing, whatever the gates (FIX-FINAL,
+	 * v1.2): a card whose moment fits at such a look is not one whose moment never comes, so its park and its strike end
+	 * there, and it is drawn again as any other card, with whole holds. A card whose moment is a short stretch of every
+	 * day (the ridge's dusk sky, about 15% of it) is drawn mostly outside it and parked; without these looks it stayed
+	 * struck until it fired, went back at its first look on nearly every later draw, and fired about a third less often
+	 * than with no park at all. A card whose moment never comes is never released and costs its tier no more than
+	 * before. The looks are only {@code contextFits} (cheap by contract), at most one per registered card.
+	 */
+	private void releaseFitting(PacingMemory m, Env env) {
+		if (!m.parkedUntil.isEmpty()) {
+			m.parkedUntil.keySet().removeIf(id -> {
+				CardInfo card = card(id);
+				return card != null && env.contextFits(card);
+			});
 		}
 	}
 

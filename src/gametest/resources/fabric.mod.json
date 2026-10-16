@@ -17,7 +17,10 @@
 			"com.forzacode.a1016_02.ending.EndingGameTests",
 			"com.forzacode.a1016_02.debug.DebugGameTests",
 			"com.forzacode.a1016_02.atmosphere.R2FogReviewTests",
-			"com.forzacode.a1016_02.entity.R2SightingReviewTests"
+			"com.forzacode.a1016_02.entity.R2SightingReviewTests",
+			"com.forzacode.a1016_02.core.VerifyV12Tests",
+			"com.forzacode.a1016_02.dig.VerifyV12DigTests",
+			"com.forzacode.a1016_02.director.VerifyV12DirectorTests"
 		]
 	},
 	"depends": {
