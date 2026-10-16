@@ -28,7 +28,8 @@
 			"com.forzacode.a1016_02.entity.VerifyV13ScreenshotTests",
 			"com.forzacode.a1016_02.dig.GlimpseFeedbackTests",
 			"com.forzacode.a1016_02.core.SelfCreatedCoreTests",
-			"com.forzacode.a1016_02.entity.ScreenshotPlainTests"
+			"com.forzacode.a1016_02.entity.ScreenshotPlainTests",
+			"com.forzacode.a1016_02.world.SelfCreatedWorldTests"
 		]
 	},
 	"depends": {
