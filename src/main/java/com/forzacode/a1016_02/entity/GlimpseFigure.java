@@ -69,8 +69,23 @@ public final class GlimpseFigure implements Figure {
 
 	@Override
 	public boolean canGlimpse(ServerPlayer player, Vec3 feet) {
+		return glimpseRefusal(player, feet).isEmpty();
+	}
+
+	@Override
+	public Optional<String> glimpseRefusal(ServerPlayer player, Vec3 feet) {
+		return refusal(player, feet, false);
+	}
+
+	@Override
+	public Optional<String> glimpseRefusalOnceDark(ServerPlayer player, Vec3 feet) {
+		return refusal(player, feet, true);
+	}
+
+	private static Optional<String> refusal(ServerPlayer player, Vec3 feet, boolean lightAside) {
 		ServerLevel level = player.level();
-		return check(player, feet, Watchers.of(level), FigureApi.anyOut(level.getServer()), ticking(level)).ok();
+		Check check = check(player, feet, Watchers.of(level), FigureApi.anyOut(level.getServer()), ticking(level), lightAside);
+		return check.ok() ? Optional.empty() : Optional.of(check.why());
 	}
 
 	@Override
@@ -84,47 +99,58 @@ public final class GlimpseFigure implements Figure {
 		return feet -> level.isPositionEntityTicking(BlockPos.containing(feet)) && HimEntity.tickingAround(level, feet, HimEntity.EDGE_TICK_MARGIN);
 	}
 
+	/** {@link #check(ServerPlayer, Vec3, Watchers, boolean, Predicate, boolean)} with the light counted. */
+	static Check check(ServerPlayer player, Vec3 feet, Watchers watchers, boolean out, Predicate<Vec3> ticking) {
+		return check(player, feet, watchers, out, ticking, false);
+	}
+
 	/**
 	 * {@link #canGlimpse} with what the world would say given here (game tests: mock players are in no level list, and
-	 * other tests' figures are out at the same time).
+	 * other tests' figures are out at the same time), and why not, in the words {@link #glimpseRefusal} gives: "player
+	 * busy" (dead, spectating or asleep), "not the overworld", "the last minute" (Ending D's), "he is out", "not
+	 * loaded", "no room", "too lit (light N)" (the brighter of his feet and eyes), "too close (N blocks)" (the nearest
+	 * player's eyes, whole blocks) or "in someone's view: NAME" (the first player who sees him).
 	 *
-	 * @param watchers everyone who could see him (every player in the level, spectators included)
-	 * @param out      whether he is out anywhere
-	 * @param ticking  whether the spot is far enough inside the entity-ticking range
+	 * @param watchers   everyone who could see him (every player in the level, spectators included)
+	 * @param out        whether he is out anywhere
+	 * @param ticking    whether the spot is far enough inside the entity-ticking range
+	 * @param lightAside the light at the spot is not checked ({@link #glimpseRefusalOnceDark}: the caller darkens it)
 	 */
-	static Check check(ServerPlayer player, Vec3 feet, Watchers watchers, boolean out, Predicate<Vec3> ticking) {
+	static Check check(ServerPlayer player, Vec3 feet, Watchers watchers, boolean out, Predicate<Vec3> ticking, boolean lightAside) {
 		ServerLevel level = player.level();
 		MinecraftServer server = level.getServer();
 		if (!player.isAlive() || player.isSpectator() || player.isSleeping()) {
 			return Check.skipped("player busy");
 		}
 		if (level.dimension() != Variant.GLIMPSE.dimension()) {
-			return Check.skipped("not in the overworld");
+			return Check.skipped("not the overworld");
 		}
 		if (HerobrineState.get(server).hasFlag(TraceService.LAST_MINUTE_FLAG)) {
-			return Check.skipped("Ending D's last minute");
+			return Check.skipped("the last minute");
 		}
 		if (!Double.isFinite(feet.x) || !Double.isFinite(feet.y) || !Double.isFinite(feet.z)) {
 			return Check.noSpot("not a place");
 		}
 		if (out) {
-			return Check.noSpot("he is already out");
+			return Check.noSpot("he is out");
 		}
 		if (!ticking.test(feet)) {
-			return Check.noSpot("not loaded and ticking");
+			return Check.noSpot("not loaded");
 		}
 		EntityConfig config = EntityConfig.get();
 		if (!room(level, feet)) {
-			return Check.noSpot("no room (two cells of air on a solid floor)");
+			return Check.noSpot("no room");
 		}
-		if (!dark(level, feet, config.glimpseMaxLight)) {
-			return Check.noSpot("too light");
+		if (!lightAside && !dark(level, feet, config.glimpseMaxLight)) {
+			return Check.noSpot("too lit (light " + brightest(level, feet) + ")");
 		}
-		if (!farFromEveryone(watchers, feet, config.glimpseMinDistance())) {
-			return Check.noSpot("too close to someone");
+		double nearest = nearestEye(watchers, feet);
+		if (nearest < config.glimpseMinDistance()) {
+			return Check.noSpot("too close (" + (int) Math.floor(nearest) + " blocks)");
 		}
-		if (watchers.sees(level, HimEntity.viewBox(feet))) {
-			return Check.noSpot("in someone's view");
+		Optional<String> seer = watchers.seenBy(level, HimEntity.viewBox(feet));
+		if (seer.isPresent()) {
+			return Check.noSpot("in someone's view: " + seer.get());
 		}
 		return Check.OK;
 	}
@@ -186,6 +212,13 @@ public final class GlimpseFigure implements Figure {
 		return GlimpseRules.darkEnough(atFeet, atEyes, max);
 	}
 
+	/** The brighter of the light at his feet and at his eyes ({@link #light}). */
+	static int brightest(ServerLevel level, Vec3 feet) {
+		EntityDimensions size = ModEntities.HIM.getDimensions();
+		return Math.max(light(level, BlockPos.containing(feet.x, feet.y + 1.0E-4, feet.z)),
+				light(level, BlockPos.containing(feet.x, feet.y + size.eyeHeight(), feet.z)));
+	}
+
 	/**
 	 * The light he would stand in there, 0 to 15: vanilla's raw brightness ({@code getMaxLocalRawBrightness}), the
 	 * larger of block light and sky light less the level's sky darkening ({@code getSkyDarken}, 0 at noon, up to 11 at
@@ -197,11 +230,15 @@ public final class GlimpseFigure implements Figure {
 
 	/** True if every watcher's eyes are at least {@code min} from his feet, in 3D (D-073: 14 blocks from every player). */
 	static boolean farFromEveryone(Watchers watchers, Vec3 feet, double min) {
+		return nearestEye(watchers, feet) >= min;
+	}
+
+	/** How far the nearest watcher's eyes are from his feet, in 3D ({@link Double#POSITIVE_INFINITY} with nobody there). */
+	static double nearestEye(Watchers watchers, Vec3 feet) {
+		double nearest = Double.POSITIVE_INFINITY;
 		for (Vec3 eye : watchers.eyes()) {
-			if (eye.distanceToSqr(feet) < min * min) {
-				return false;
-			}
+			nearest = Math.min(nearest, eye.distanceTo(feet));
 		}
-		return true;
+		return nearest;
 	}
 }

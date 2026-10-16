@@ -1,14 +1,20 @@
 package com.forzacode.a1016_02.dig;
 
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
+import java.util.function.Function;
 import java.util.function.Predicate;
 
 import com.forzacode.a1016_02.core.Figure;
 import com.forzacode.a1016_02.core.FireContext;
 import com.forzacode.a1016_02.core.FireResult;
 import com.forzacode.a1016_02.core.ModConfig;
+import com.forzacode.a1016_02.core.Pacing;
+import com.forzacode.a1016_02.core.Services;
+import com.forzacode.a1016_02.core.TraceService;
 
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Holder;
@@ -24,10 +30,11 @@ import net.minecraft.world.phys.Vec3;
 /**
  * A tunnel ladder of a test's own (D-072): its own crew ({@link Crew}: its players never join the server, so nobody
  * else's is a sharer or a listener), its own memory, numbers, clock and day, and a recorder that is both the sound out
- * and the figure ({@link Figure}: it records every {@code canGlimpse} and {@code glimpse} and never spawns anything).
- * Nothing global is installed, so tests running side by side never see each other's figure.
+ * and the figure ({@link Figure}: it records every {@code canGlimpse} and {@code glimpse} and never spawns anything),
+ * and the view (every crew member online, by core's own geometry; rung 3's lights go through the real trace service,
+ * which sees no player here). Nothing global is installed, so tests running side by side never see each other's figure.
  */
-final class LadderRig implements Ladder.Sounds, Figure {
+final class LadderRig implements Ladder.Sounds, Figure, Blind.View {
 	/** A step played: when (server tick), what, where, how loud. */
 	record Heard(long tick, Holder<SoundEvent> sound, SoundSource source, Vec3 pos, float volume, float pitch) {
 	}
@@ -52,6 +59,8 @@ final class LadderRig implements Ladder.Sounds, Figure {
 	/** What {@code canGlimpse} answers: {@code figureCan} for the feet {@code figureWhere} accepts. */
 	boolean figureCan = true;
 	Predicate<Vec3> figureWhere = feet -> true;
+	/** When set, the figure's reason for these feet (empty: he could), asked instead of {@link #figureCan}. */
+	Function<Vec3, Optional<String>> figureWhy;
 	/** Every crew member's own clock (a large start, so "never" stays far from it). */
 	long playTicks = 10_000_000L;
 	long day;
@@ -65,7 +74,7 @@ final class LadderRig implements Ladder.Sounds, Figure {
 	}
 
 	Ladder.Env env() {
-		return new Ladder.Env(crew.watch, crew.data, this, config, uuid -> playTicks, () -> day, player -> underground, this);
+		return new Ladder.Env(crew.watch, crew.data, this, config, uuid -> playTicks, () -> day, player -> underground, this, this, Services.traces());
 	}
 
 	/** A straight 1-wide, 2-high tunnel the player dug along x on row {@code z}, feet at {@code y}, from {@code x0} to {@code x1}. */
@@ -143,8 +152,38 @@ final class LadderRig implements Ladder.Sounds, Figure {
 
 	@Override
 	public boolean canGlimpse(ServerPlayer player, Vec3 feet) {
+		return glimpseRefusal(player, feet).isEmpty();
+	}
+
+	@Override
+	public Optional<String> glimpseRefusal(ServerPlayer player, Vec3 feet) {
 		asked.add(new Asked(server.getTickCount(), feet, false, 0.0F));
-		return figureCan && figureWhere.test(feet);
+		if (figureWhy != null) {
+			return figureWhy.apply(feet);
+		}
+		return figureCan && figureWhere.test(feet) ? Optional.empty() : Optional.of("refused");
+	}
+
+	/** Out of view of every crew member online in that level, spectators included, by core's own geometry and numbers. */
+	@Override
+	public boolean outOfView(ServerLevel level, Collection<BlockPos> positions) {
+		int chunks = server.getPlayerList().getViewDistance();
+		List<TraceService.Viewer> viewers = listeners(level).stream().map(player -> TraceService.Viewer.of(player, chunks)).toList();
+		Pacing pacing = ModConfig.pacing();
+		return TraceService.positionsOutOfView(level, positions, viewers, pacing.viewNearBlocks, pacing.viewConeDegrees);
+	}
+
+	/** A debug arm of this rung for the player, reporting into {@code told} and firing through this rig (forced). */
+	LadderSteps.Arm arm(Ladder.Rung rung, ServerPlayer player, long ticks, List<String> told) {
+		LadderSteps.Arm arm = new LadderSteps.Arm(rung, false, player, server.getTickCount(), ticks, env(), LadderSteps.Out.recording(env(), told));
+		DigTicker.INSTANCE.ladder().arm(arm);
+		return arm;
+	}
+
+	/** The player walked east along x to where they stand now: their heading (the detector's samples) is east whatever they look at. */
+	static void walkedEast(ServerPlayer player) {
+		Vec3 at = player.position();
+		DigTicker.INSTANCE.ladder().samples(player, List.of(at.add(-4.0, 0.0, 0.0), at.add(-2.0, 0.0, 0.0), at));
 	}
 
 	@Override

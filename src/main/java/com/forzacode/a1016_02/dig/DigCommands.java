@@ -5,6 +5,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
 
+import com.forzacode.a1016_02.A1016_02;
 import com.forzacode.a1016_02.core.CommandHooks;
 import com.forzacode.a1016_02.core.HerobrineState;
 import com.forzacode.a1016_02.core.ModConfig;
@@ -33,13 +34,14 @@ import org.jspecify.annotations.Nullable;
 
 /**
  * {@code /a1016 dig network grow <nights> [player] | network info [player] | network reveal [player] | network chest [player]
- * | tunnel <card> [player] | steps [player] | blind [player] | blind arm <card> [fake]}. The network is the one under that player's base: the named player, else the player
+ * | tunnel <card> [player] | steps [player] | steps arm <once|coming|glimpse> [fake] [player] | blind [player] | blind arm <card> [fake]}. The network is the one under that player's base: the named player, else the player
  * running the command, else (the console) the first participant (D-062.9); {@code info} lists every network. Debug
  * only: the growth and the tunnels still respect the out-of-view rule. Numbers use {@link Locale#ROOT} (D-031).
  */
 final class DigCommands {
 	static final List<String> TUNNELS = List.of("plain", ScarCards.TunnelThatGrows.ID, ScarCards.TunnelIntoMine.ID);
 	static final List<String> BLIND_CARDS = List.of(BlindCards.BlindStep.ID, BlindCards.BlindTorch.ID, BlindCards.BlindDoor.ID);
+	static final List<String> RUNGS = List.of(Ladder.Rung.ONCE.word, Ladder.Rung.COMING.word, Ladder.Rung.GLIMPSE.word);
 	private static final String PLAYER = "player";
 
 	private DigCommands() {
@@ -59,7 +61,14 @@ final class DigCommands {
 								.suggests((ctx, builder) -> SharedSuggestionProvider.suggest(TUNNELS, builder))
 								.executes(ctx -> tunnel(ctx, false))
 								.then(named().executes(ctx -> tunnel(ctx, true)))))
-				.then(Commands.literal("steps").executes(ctx -> steps(ctx, false)).then(named().executes(ctx -> steps(ctx, true))))
+				.then(Commands.literal("steps").executes(ctx -> steps(ctx, false))
+						.then(Commands.literal("arm")
+								.then(Commands.argument("rung", StringArgumentType.word())
+										.suggests((ctx, builder) -> SharedSuggestionProvider.suggest(RUNGS, builder))
+										.executes(ctx -> armSteps(ctx, false, false))
+										.then(Commands.literal("fake").executes(ctx -> armSteps(ctx, true, false)).then(named().executes(ctx -> armSteps(ctx, true, true))))
+										.then(named().executes(ctx -> armSteps(ctx, false, true)))))
+						.then(named().executes(ctx -> steps(ctx, true))))
 				.then(Commands.literal("blind").executes(ctx -> blind(ctx, false))
 						.then(Commands.literal("arm")
 								.then(Commands.argument("card", StringArgumentType.word())
@@ -94,9 +103,57 @@ final class DigCommands {
 			return fail(ctx, "[a1016] dig: not a blind card: " + card + " (" + String.join(", ", BLIND_CARDS) + ")");
 		}
 		DigTicker.INSTANCE.blind().arm(ctx.getSource().getServer(), player.getUUID(), card, fake);
+		if (ctx.getSource().getPlayer() != player) {
+			tell(player, String.format(Locale.ROOT, "[a1016] dig: %s%s armed for you: open a menu (the inventory) within %d s", card, fake ? " (fake)" : "",
+					BlindCues.ARM_TICKS / 20));
+		}
 		say(ctx, String.format(Locale.ROOT, "[a1016] dig: %s%s armed for %s: open a menu (the inventory) within %d s", card, fake ? " (fake)" : "",
 				player.getName().getString(), BlindCues.ARM_TICKS / 20));
 		return 1;
+	}
+
+	/**
+	 * {@code /a1016 dig steps arm <once|coming|glimpse> [fake] [player]}: that rung fires for the player through the
+	 * director (as {@code /a1016 fire}: the rung order and the spacing skipped) the first moment its own context fits by
+	 * the real card's rules (every gate, alone, the look back: facing away from the tunnel behind; rung 3 its spot),
+	 * within 2 minutes ({@link LadderSteps#ARM_TICKS}). The player is told when it is armed, when it fires and when it
+	 * runs out, with the last reason it did not fit.
+	 */
+	private static int armSteps(CommandContext<CommandSourceStack> ctx, boolean fake, boolean named) throws CommandSyntaxException {
+		ServerPlayer player = player(ctx, named);
+		if (player == null) {
+			return fail(ctx, "[a1016] dig: no player");
+		}
+		String name = StringArgumentType.getString(ctx, "rung");
+		Optional<Ladder.Rung> rung = Ladder.Rung.byName(name);
+		if (rung.isEmpty()) {
+			return fail(ctx, "[a1016] dig: not a rung: " + name + " (" + String.join(", ", RUNGS) + ")");
+		}
+		MinecraftServer server = ctx.getSource().getServer();
+		Ladder.Env env = Ladder.Env.live(server);
+		long now = server.getTickCount();
+		DigTicker.INSTANCE.ladder().arm(new LadderSteps.Arm(rung.get(), fake, player, now, LadderSteps.ARM_TICKS, env, LadderSteps.Out.live()));
+		String line = armedLine(rung.get(), fake, player, Ladder.check(rung.get(), player, env, true, true), LadderSteps.ARM_TICKS);
+		say(ctx, line);
+		if (ctx.getSource().getPlayer() != player) {
+			tell(player, line);
+		}
+		return 1;
+	}
+
+	/** What {@code /a1016 dig steps arm} answers: armed, for how long, how to give it its moment, and what it would say now. */
+	static String armedLine(Ladder.Rung rung, boolean fake, ServerPlayer player, Ladder.Check now, long ticks) {
+		return String.format(Locale.ROOT, "[a1016] dig: %s%s armed for %s for %d s: face forward, away from the tunnel behind you, and it fires the moment "
+				+ "its own moment comes (now: %s)", rung.id, fake ? rung == Ladder.Rung.GLIMPSE ? " (rung 3 has no fake: the real one)" : " (fake)" : "",
+				player.getName().getString(), ticks / 20, Ladder.reason(now, player));
+	}
+
+	/** A line in this player's chat (and the log): a debug answer that comes later than the command, or for another player. */
+	static void tell(ServerPlayer player, String line) {
+		A1016_02.LOGGER.info("[a1016] to {}: {}", player.getName().getString(), line);
+		if (player.connection != null) {
+			player.sendSystemMessage(Component.literal(line));
+		}
 	}
 
 	/** {@code /a1016 dig steps [player]}: that player's tunnel ladder (D-072) and whether the detector sees a run now. */

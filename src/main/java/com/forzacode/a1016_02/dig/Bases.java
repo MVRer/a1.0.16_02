@@ -102,6 +102,40 @@ final class Bases {
 		return bases;
 	}
 
+	/**
+	 * Every real bed dig knows in this level, for {@code blind_torch}'s bed rule (FIX-GLIMPSE): each participant's
+	 * respawn point (a bed, an anchor, a spawn set for them), and for a known player not taking part now the last base dig
+	 * saw for them unless it is only their first placed block. Never {@link PlayerWatch#base}'s fallback to the first
+	 * placed block: in a new world that is often a cave torch, and its rule would keep that torch for good.
+	 */
+	List<BlockPos> beds(ServerLevel level) {
+		ResourceKey<Level> dimension = level.dimension();
+		List<BlockPos> beds = new ArrayList<>();
+		List<UUID> online = new ArrayList<>();
+		for (ServerPlayer player : participants()) {
+			online.add(player.getUUID());
+			ServerPlayer.RespawnConfig respawn = player.getRespawnConfig();
+			if (respawn != null) {
+				GlobalPos pos = respawn.respawnData().globalPos();
+				if (pos.dimension().equals(dimension) && !beds.contains(pos.pos())) {
+					beds.add(pos.pos());
+				}
+			}
+		}
+		for (HerobrineState.Subject known : state.players()) {
+			if (online.contains(known.uuid())) {
+				continue;
+			}
+			Optional<GlobalPos> last = data.base(known.uuid());
+			PlacedBlock first = state.firstBlocks(known.uuid()).block();
+			if (last.isPresent() && last.get().dimension().equals(dimension) && (first == null || !first.pos().equals(last.get()))
+					&& !beds.contains(last.get().pos())) {
+				beds.add(last.get().pos());
+			}
+		}
+		return beds;
+	}
+
 	/** True if any of {@code positions} is within {@code radius} blocks of {@code pos}, horizontally. */
 	static boolean near(List<BlockPos> positions, BlockPos pos, double radius) {
 		for (BlockPos other : positions) {
