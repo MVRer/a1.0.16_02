@@ -1038,6 +1038,23 @@ turned block a player turned again stays), 09, 10, 07's names, 03's picture, 14'
 night and every arm; `/a1016 sc` then says off; `/a1016 sc on`. The spoiler grep: no feature words in card ids, command
 literals, section names, `/a1016 sc`'s index or INFO logs.
 
+#### Verified (SC-7, `verify/sc` from `dd4680f`)
+- **Dev client** (1708 x 960, 12 chunks, a temporary uncommitted hook, no mixin error): 04 (full moon, then the new
+  moon from `sc 04 tonight force`, then full again on `clear`), 03 (armed by a close sighting, 10 frames in 445 ms, the
+  list shows his picture), 10 (`sc 10 here`: haze toward the place), 12 (once its respawn is the bed's head, as sleeping
+  sets it: vanilla's "monsters nearby" once, then sleep), 14 (the canon seed once, then the real one; the list's
+  3:07 a.m. and italic `a1.0.16_02`; vanilla's backup question; on the next start both read as shown), the switch (the
+  list's old picture, real time and 26.3 while this client's switch is off; `sc off` puts the picture back, says
+  "already off" the second time). Not seen: 02 (needs a LAN pair), anything under Iris or Sodium (not in the dev setup).
+- **No test, and why.** R8 M2 (the hide time counts on screen only) and R8 M3 (the locator dot) live in client mixins
+  (`AvatarRendererMixin`, `ClientWaypointManagerMixin`) that the server-side game tests cannot load, and need a second
+  client: left to 02's LAN checklist. R8 L6's Sodium part (03's settle loop trusting `hasRenderedAllSections`) is not
+  addressed: Sodium is not in the dev setup; at worst the picture has holes (03's capture is caught and ends the arm).
+- **Tests added** (`core.VerifyScSwitchTests` and `VerifyScCostTests` in test environments of their own, green): the
+  real `/a1016 sc off` runs every revert (08, 09, 10, 07's name, the fog place, 04's night, 03's picture, the arms),
+  again is "already off" and changes nothing, an off switch at a server start reverts; the cost of the hot hooks.
+  `core.VerifyScSpoilerTests` fails: config field names and `/a1016 sc` literals name features (D-080's own list).
+
 ## Considered and left out
 - A mannequin or any player-shaped entity: spawning one breaks ARCH 2; it is also fanon.
 - Deleting or adding screenshots, or any file outside the world folder: the player's own data is never touched.
