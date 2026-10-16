@@ -606,16 +606,16 @@ public class GlimpseGameTests extends TwoPlayerFigureGameTests {
 	// --- config (D-075) ---
 
 	/**
-	 * A version 3 section (v1.1) reads as version 4: the glimpse's new values at their defaults, every value the player
-	 * set kept; a fresh section changes nothing but its version.
+	 * A version 3 section (v1.1) reads as the current version (4 for v1.2, 5 since the trunk fix): the glimpse's new values
+	 * at their defaults, every value the player set kept; a fresh section changes nothing but its version.
 	 */
 	@GameTest
-	public void aVersion3EntitySectionUpgradesToVersion4(GameTestHelper helper) {
+	public void aVersion3EntitySectionUpgradesToTheCurrentVersion(GameTestHelper helper) {
 		JsonObject sections = JsonParser.parseString("{\"entity\": {\"version\": 3, \"approachBlocks\": 7.0, \"closeMinDistance\": 20.0,"
 				+ " \"eyeStyle\": \"GLOW\", \"minDistance\": 10.0}}").getAsJsonObject();
 		EntityConfig read = ModConfig.readSection(sections, "entity", EntityConfig.class, EntityConfig::new);
 		EntityConfig defaults = new EntityConfig();
-		helper.assertTrue(read.version == EntityConfig.CURRENT_VERSION && EntityConfig.CURRENT_VERSION == 4, "version " + read.version);
+		helper.assertTrue(read.version == EntityConfig.CURRENT_VERSION && EntityConfig.CURRENT_VERSION == 5, "version " + read.version);
 		helper.assertTrue(read.approachBlocks == 7.0 && read.closeMinDistance == 20.0 && read.eyeStyle() == EyeStyle.GLOW && read.minDistance == 10.0,
 				"a value the player set was lost: " + read.approachBlocks + " " + read.closeMinDistance + " " + read.eyeStyle());
 		helper.assertTrue(read.glimpseMinDistance == 14 && read.glimpseHideDegrees == 28 && read.glimpseHideBlocks == 10 && read.glimpseServerDegrees == 35
@@ -623,7 +623,7 @@ public class GlimpseGameTests extends TwoPlayerFigureGameTests {
 				"the glimpse's defaults are missing");
 		helper.assertTrue(read.glimpseMinDistance == defaults.glimpseMinDistance && read.stareSeconds == defaults.stareSeconds, "a default moved");
 		EntityConfig fresh = new EntityConfig();
-		helper.assertTrue(fresh.upgrade() && fresh.version == 4 && fresh.approachBlocks == defaults.approachBlocks
+		helper.assertTrue(fresh.upgrade() && fresh.version == EntityConfig.CURRENT_VERSION && fresh.approachBlocks == defaults.approachBlocks
 				&& fresh.closeMinDistance == defaults.closeMinDistance, "a fresh section changed");
 		helper.assertFalse(read.upgrade(), "upgraded twice");
 		// Never under 8 blocks, whatever the file says.

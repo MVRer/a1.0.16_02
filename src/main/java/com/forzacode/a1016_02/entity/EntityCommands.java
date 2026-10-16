@@ -150,7 +150,7 @@ final class EntityCommands {
 			return 0;
 		}
 		boolean wasOut = FigureApi.anyOut(ctx.getSource().getServer());
-		FogEdge edge = FogEdge.of(player, variant.get() == Variant.CLOSE);
+		FogEdge edge = FogEdge.of(player, variant.get());
 		FigureApi.Spawned spawned = FigureApi.spawnAtFogEdge(player, variant.get(), RandomSource.create(), true);
 		String where = spawned.figure() == null ? (wasOut ? ", he was out: told him to walk away, try again once he is gone" : "")
 				: String.format(Locale.ROOT, " at %s, %d blocks out", spawned.figure().blockPosition().toShortString(),
@@ -240,14 +240,15 @@ final class EntityCommands {
 			HerobrineState state = HerobrineState.get(server);
 			FogEdge edge = FogEdge.of(player, false);
 			FogEdge close = FogEdge.of(player, true);
+			FogEdge trunks = FogEdge.of(player, Variant.BETWEEN_TRUNKS);
 			ReportedFog.Entry report = ReportedFog.latest(player);
 			String reported = report == null ? "none yet"
 					: String.format(Locale.ROOT, "%.1f (%.1fs ago)", report.blocks(), ReportedFog.ageTicks(player) / 20.0);
 			lines.add(String.format(Locale.ROOT, "fog: view=%d chunks, render end=%.1f, client fog end=%s, server estimate=%.1f (duskFog %.2f), using %.1f (%s)",
 					edge.chunks(), edge.renderLimit(), reported, edge.estimate(), state.effects().duskFogLevel(), edge.limit(), source(edge)));
-			lines.add(String.format(Locale.ROOT, "band %.1f..%.1f, close %.1f..%.1f, minDistance=%.1f%s, time=%d base=%s", edge.inner(), edge.outer(),
-					close.inner(), close.outer(), config.minDistance(), edge.seeable() ? "" : " (fog too thick to see him)",
-					SightingGates.timeOfDay(server), Services.watch().base(player).map(b -> b.pos().toShortString()).orElse("-")));
+			lines.add(String.format(Locale.ROOT, "band %.1f..%.1f, close %.1f..%.1f, between trunks %.1f..%.1f, minDistance=%.1f%s, time=%d base=%s",
+					edge.inner(), edge.outer(), close.inner(), close.outer(), trunks.inner(), trunks.outer(), config.minDistance(),
+					edge.seeable() ? "" : " (fog too thick to see him)", SightingGates.timeOfDay(server), Services.watch().base(player).map(b -> b.pos().toShortString()).orElse("-")));
 			StringBuilder gates = new StringBuilder("gates:");
 			for (Variant variant : Variant.cards()) {
 				gates.append(' ').append(variant.shortName()).append('=')

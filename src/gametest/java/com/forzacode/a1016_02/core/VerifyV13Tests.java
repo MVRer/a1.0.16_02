@@ -53,7 +53,7 @@ public class VerifyV13Tests {
 
 	private static final List<Part> VERSIONED = List.of(new Part("director", DirectorConfig.class, DirectorConfig::new, 3),
 			new Part("atmosphere", AtmosphereConfig.class, AtmosphereConfig::new, 2), new Part("dig", DigConfig.class, DigConfig::new, 2),
-			new Part("entity", EntityConfig.class, EntityConfig::new, 4));
+			new Part("entity", EntityConfig.class, EntityConfig::new, 5));
 
 	private static JsonObject file(String name) throws IOException {
 		Path path = FabricLoader.getInstance().getModContainer("a1016_02_gametest").orElseThrow().findPath("review/" + name).orElseThrow();
@@ -104,7 +104,7 @@ public class VerifyV13Tests {
 	/**
 	 * v1.2's file with hand edits in every versioned section: each section reaches v1.3's version (director 2 to 3,
 	 * which only adds two fields; atmosphere 1 to 2, which only steps the preview's {@code echoDoorVolume}, a key v1.2's
-	 * file does not have; dig 1 to 2, FIX-GLIMPSE's louder steps, {@link #DIG_STEPPED}), every other value the file had
+	 * file does not have; dig 1 to 2, FIX-GLIMPSE; entity 4 to 5 since the trunk fix, which only adds the trunk band's two fields's louder steps, {@link #DIG_STEPPED}), every other value the file had
 	 * is kept (defaults and edits alike), and every field new in v1.3 is at its default.
 	 */
 	@GameTest
