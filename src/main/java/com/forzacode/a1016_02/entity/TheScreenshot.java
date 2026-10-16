@@ -3,10 +3,12 @@ package com.forzacode.a1016_02.entity;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 
+import com.forzacode.a1016_02.A1016_02;
 import com.forzacode.a1016_02.core.FireResult;
 import com.forzacode.a1016_02.core.FogLimits;
 import com.forzacode.a1016_02.core.GameClock;
@@ -193,7 +195,14 @@ public final class TheScreenshot {
 			}
 		}
 		arms.put(player.getUUID(), new Arm(hooks.dayTicks(server) + EntityConfig.get().screenshotArmTicks(), id, state));
+		A1016_02.LOGGER.info("[a1016] screenshot: {} armed (arm {}), {}", player.getName().getString(), id, describe(state));
 		return FireResult.FIRED;
+	}
+
+	/** The state in words for the log and {@code /a1016 entity screenshot}: ready or paused (and why), the fog flag, the weather's fog end. */
+	public static String describe(ScreenshotStatePayload state) {
+		String ready = state.armed() ? "ready" : "paused" + (state.paused().isEmpty() ? "" : ": " + state.paused());
+		return String.format(Locale.ROOT, "%s; fog weather %s, the weather's fog end %.1f", ready, state.fogOn() ? "on" : "off", state.fogEnd());
 	}
 
 	public boolean isArmed(UUID player) {
@@ -273,6 +282,9 @@ public final class TheScreenshot {
 			}
 			ScreenshotStatePayload state = state(server, player.get(), arm.id());
 			if (changed(arm.sent(), state) && hooks.send(player.get(), state)) {
+				if (arm.sent().armed() != state.armed() || !arm.sent().paused().equals(state.paused())) {
+					A1016_02.LOGGER.info("[a1016] screenshot: {}'s arm {} is {}", player.get().getName().getString(), arm.id(), describe(state));
+				}
 				arms.put(uuid, new Arm(arm.untilDayTicks(), arm.id(), state));
 			}
 		}
@@ -314,23 +326,34 @@ public final class TheScreenshot {
 	}
 
 	/**
-	 * An arm that lasts may show him now: he is not out anywhere (one being, D-060.4), and today has room for a sighting
-	 * in entity's world-wide day record ({@link EntityData#dayAllows} with {@code Pacing.sightingsPerDayMax}, the rule
-	 * every sighting card's gate keeps: "already one today"), so a figure seen and gone earlier today is never followed by
-	 * the screenshot the same day; the arm waits for the next day.
+	 * An arm that lasts may show him now ({@link #paused} is empty): he is not out anywhere (one being, D-060.4), and today
+	 * has room for a sighting in entity's world-wide day record ({@link EntityData#dayAllows} with
+	 * {@code Pacing.sightingsPerDayMax}, the rule every sighting card's gate keeps: "already one today"), so a figure seen
+	 * and gone earlier today is never followed by the screenshot the same day; the arm waits for the next day.
 	 */
 	private boolean mayShowHim(MinecraftServer server) {
+		return paused(server).isEmpty();
+	}
+
+	/**
+	 * Why an arm that lasts may not show him now ({@link ScreenshotRules#paused}: he is out anywhere, or today already
+	 * had its sighting), or empty if it may. Sent to the client with the state, and printed by
+	 * {@code /a1016 entity screenshot}.
+	 */
+	public Optional<String> paused(MinecraftServer server) {
 		long today = Math.floorDiv(hooks.dayTicks(server), DAY_TICKS);
-		return !hooks.heIsOut(server) && hooks.data(server).dayAllows(today, ModConfig.pacing().sightingsPerDayMax);
+		EntityData data = hooks.data(server);
+		return ScreenshotRules.paused(hooks.heIsOut(server), today, data.lastDay(), data.countOnLastDay(), ModConfig.pacing().sightingsPerDayMax);
 	}
 
 	private ScreenshotStatePayload state(MinecraftServer server, ServerPlayer player, int id) {
-		return new ScreenshotStatePayload(mayShowHim(server), hooks.fogOn(player), hooks.weatherFogEnd(player), id);
+		Optional<String> paused = paused(server);
+		return new ScreenshotStatePayload(paused.isEmpty(), hooks.fogOn(player), hooks.weatherFogEnd(player), id, paused.orElse(""));
 	}
 
 	/** True if the client should be told {@code now} after {@code sent}. */
 	static boolean changed(ScreenshotStatePayload sent, ScreenshotStatePayload now) {
-		if (sent.armed() != now.armed() || sent.fogOn() != now.fogOn() || sent.arm() != now.arm()) {
+		if (sent.armed() != now.armed() || sent.fogOn() != now.fogOn() || sent.arm() != now.arm() || !sent.paused().equals(now.paused())) {
 			return true;
 		}
 		float a = sent.fogEnd();
