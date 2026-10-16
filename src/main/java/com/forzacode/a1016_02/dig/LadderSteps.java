@@ -164,12 +164,13 @@ final class LadderSteps {
 		}
 
 		/**
-		 * The floor block's own step sound (stone if it is not solid), PLAYERS, at {@code pos} on the cell's floor, for
-		 * everyone in range: louder as it nears, at most 1 (vanilla's 16 blocks), except rung 3's reaching steps
-		 * ({@link Ladder#reachingVolume}).
+		 * The floor block's own step sound (stone if it is not solid), or what covers it where vanilla's step plays the
+		 * cover ({@link SoundCards#stepSound}: a snow layer or leaf litter someone placed in the tunnel, glow lichen at the
+		 * player's feet), PLAYERS, at {@code pos} on the cell's floor, for everyone in range: louder as it nears, at most 1
+		 * (vanilla's 16 blocks), except rung 3's reaching steps ({@link Ladder#reachingVolume}).
 		 */
 		private void play(ServerPlayer target, ServerLevel level, Vec3 pos, BlockPos cell, Step step) {
-			SoundType type = SoundCards.soundAt(level, cell.below());
+			SoundType type = SoundCards.stepSound(level, cell.below(), SoundCards.soundAt(level, cell.below()));
 			double distance = pos.distanceTo(target.position());
 			float volume;
 			if (own) {

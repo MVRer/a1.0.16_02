@@ -19,6 +19,7 @@ import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.sounds.SoundEvents;
 import net.minecraft.sounds.SoundSource;
+import net.minecraft.tags.BlockTags;
 import net.minecraft.util.Mth;
 import net.minecraft.util.RandomSource;
 import net.minecraft.world.level.block.SoundType;
@@ -38,6 +39,19 @@ final class SoundCards {
 	static SoundType soundAt(ServerLevel level, BlockPos pos) {
 		BlockState state = level.getBlockState(pos);
 		return state.isSolidRender() ? state.getSoundType() : SoundType.STONE;
+	}
+
+	/**
+	 * The sounds of a step on {@code floor} (the block that holds the walker up), as vanilla 26.3 picks them
+	 * ({@code Player.playStepSound} through {@code Entity.getPrimaryStepSoundBlockPos}): the block over the floor when it
+	 * is in {@code #inside_step_sound_blocks} (leaf litter, pink petals, glow lichen ...) or
+	 * {@code #combination_step_sound_blocks} (one snow layer, a carpet ...), so a step on natural snow cover sounds like
+	 * snow, not the grass under it; else {@code own}, the floor's sounds as the caller reads them. Vanilla's muffled second
+	 * step of a combination block (the floor at a third of the volume) is left out.
+	 */
+	static SoundType stepSound(ServerLevel level, BlockPos floor, SoundType own) {
+		BlockState cover = level.getBlockState(floor.above());
+		return cover.is(BlockTags.INSIDE_STEP_SOUND_BLOCKS) || cover.is(BlockTags.COMBINATION_STEP_SOUND_BLOCKS) ? cover.getSoundType() : own;
 	}
 
 	/** Two hits and a break: someone mining one block. */
