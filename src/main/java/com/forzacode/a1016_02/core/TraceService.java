@@ -49,7 +49,8 @@ import org.jspecify.annotations.Nullable;
  * {@link TraceVeto} objects to any position it would change. Edits are silent: no drops, particles or sounds,
  * containers never spill, and neighbours that would break (a torch on a removed block, the other door half) are
  * removed silently too and written to the ledger. Removals, moves, conversions, sign edits and stack changes go to
- * the {@link TraceLedger} so Ending D can undo them; {@link #leave} and {@link #leaveStack} place things "left by
+ * the {@link TraceLedger} so Ending D can undo them, and each entry is announced once it is ledgered
+ * ({@link HerobrineEvents#TRACED}, after the whole edit); {@link #leave} and {@link #leaveStack} place things "left by
  * others" and are never undone. The only changes allowed in view are {@link #figureDig} and {@link #figureFill}
  * (D-030), the fall the game makes after {@link #removeLettingFall} (D-038), and Ending D's last minute giving things
  * back ({@link #restoreVisibly}, {@link #regrowVisibly}, only while {@link #LAST_MINUTE_FLAG} is set, D-048).
@@ -554,15 +555,17 @@ public final class TraceService {
 			return false;
 		}
 		BlockState state = level.getBlockState(pos);
+		boolean placed = Services.watch().wasPlacedByPlayer(level, pos);
 		CompoundTag before = sign.saveCustomOnly(level.registryAccess());
 		sign.setText(withLines(sign.getText(SignTextSlot.FRONT), frontLines), SignTextSlot.FRONT);
 		sign.setText(withLines(sign.getText(SignTextSlot.BACK), backLines), SignTextSlot.BACK);
 		sign.setChanged();
 		level.sendBlockUpdated(pos, state, state, Block.UPDATE_CLIENTS);
 		MinecraftServer server = level.getServer();
-		TraceLedger.get(server).add(new TraceLedger.Entry(TraceLedger.Kind.BLOCK_ENTITY, cause, GameClock.day(server), GlobalPos.of(level.dimension(), pos.immutable()),
-				Optional.empty(), Optional.of(state), Optional.of(before), Optional.empty(), -1, -1));
+		TraceLedger.Entry entry = TraceLedger.get(server).add(new TraceLedger.Entry(TraceLedger.Kind.BLOCK_ENTITY, cause, GameClock.day(server),
+				GlobalPos.of(level.dimension(), pos.immutable()), Optional.empty(), Optional.of(state), Optional.of(before), Optional.empty(), -1, -1));
 		A1016_02.LOGGER.debug("[a1016] trace sign text at {} ({})", pos, cause);
+		traced(level, entry, placed);
 		return true;
 	}
 
@@ -815,11 +818,29 @@ public final class TraceService {
 	 * and sign text (BLOCK_ENTITY) by the reverse edit under {@code cause}; the undone entry and the entry the reverse
 	 * edit wrote are both dropped (neighbours it broke stay ledgered as {@code <cause>/dependent}). Nothing is created:
 	 * a moved block or stack goes back only while it is still where it was moved; a conversion is not undone where the
-	 * player has built or dug since. EQUIP is never undone. Never loads a chunk. Which entries to undo (and which to
-	 * keep, like what others left) is the caller's choice.
+	 * player has built or dug since. NAME (D-086) gives the mob its name back wherever it is in this level, out of view
+	 * (BLOCKED once it has a name again, or once the entities of the chunk it was in are loaded and it is not in the
+	 * level; UNLOADED while they are not). EQUIP is never undone. Never loads a chunk. Which entries to undo (and which
+	 * to keep, like what others left) is the caller's choice. {@link HerobrineEvents#TRACED} fires afterwards only for
+	 * what the undo leaves in the ledger (its broken neighbours), never for its closed reverse edits.
 	 */
 	public UndoResult undo(ServerLevel level, TraceLedger.Entry entry, String cause) {
-		return TraceUndo.undo(this, level, entry, cause);
+		List<Traced> outer = heldBack;
+		List<Traced> mine = new ArrayList<>();
+		heldBack = mine;
+		try {
+			return TraceUndo.undo(this, level, entry, cause);
+		} finally {
+			heldBack = outer;
+			if (!mine.isEmpty()) {
+				List<TraceLedger.Entry> kept = TraceLedger.get(level.getServer()).entries();
+				for (Traced t : mine) {
+					if (kept.contains(t.entry())) {
+						traced(t.level(), t.entry(), t.placedByPlayer());
+					}
+				}
+			}
+		}
 	}
 
 	/** A large edit checked and applied as one. See {@link TraceBatch}. */
@@ -868,8 +889,32 @@ public final class TraceService {
 		return edit;
 	}
 
-	private boolean allowed(ServerLevel level, Collection<BlockPos> positions) {
+	boolean allowed(ServerLevel level, Collection<BlockPos> positions) {
 		return force || isOutOfView(level, positions);
+	}
+
+	/** {@link #allowed(ServerLevel, Collection)} for a box (a mob's). */
+	boolean allowed(ServerLevel level, AABB box) {
+		return force || isOutOfView(level, box);
+	}
+
+	/** One {@link HerobrineEvents#TRACED} waiting for its undo to end. */
+	private record Traced(ServerLevel level, TraceLedger.Entry entry, boolean placedByPlayer) {
+	}
+
+	/** While {@link #undo} runs: the TRACED events its edits would fire, held back. Server thread only. */
+	private static @Nullable List<Traced> heldBack;
+
+	/**
+	 * Fires {@link HerobrineEvents#TRACED} for an entry just ledgered, or holds it back while an undo runs (it fires
+	 * after the undo if the entry is still in the ledger then).
+	 */
+	static void traced(ServerLevel level, TraceLedger.Entry entry, boolean placedByPlayer) {
+		if (heldBack != null) {
+			heldBack.add(new Traced(level, entry, placedByPlayer));
+			return;
+		}
+		HerobrineEvents.TRACED.invoker().onTraced(level, entry, placedByPlayer);
 	}
 
 	private boolean allowedAndNotVetoed(ServerLevel level, Collection<BlockPos> positions, String cause) {
@@ -921,8 +966,11 @@ public final class TraceService {
 	private static void logStack(ServerLevel level, TraceLedger.Kind kind, BlockPos pos, @Nullable BlockPos to, ItemStack stack,
 			int slot, int toSlot, String cause) {
 		MinecraftServer server = level.getServer();
-		TraceLedger.get(server).add(new TraceLedger.Entry(kind, cause, GameClock.day(server), GlobalPos.of(level.dimension(), pos.immutable()),
+		// The container's block is not changed by a stack edit: placed before is placed now.
+		boolean placed = Services.watch().wasPlacedByPlayer(level, pos);
+		TraceLedger.Entry entry = TraceLedger.get(server).add(new TraceLedger.Entry(kind, cause, GameClock.day(server), GlobalPos.of(level.dimension(), pos.immutable()),
 				Optional.ofNullable(to).map(BlockPos::immutable), Optional.empty(), Optional.empty(), Optional.of(stack), slot, toSlot));
 		A1016_02.LOGGER.debug("[a1016] trace {} at {} ({})", kind, pos, cause);
+		traced(level, entry, placed);
 	}
 }

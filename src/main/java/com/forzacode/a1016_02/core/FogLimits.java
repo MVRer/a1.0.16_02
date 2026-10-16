@@ -1,14 +1,17 @@
 package com.forzacode.a1016_02.core;
 
+import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.function.Supplier;
 
 import net.minecraft.core.BlockPos;
+import net.minecraft.resources.ResourceKey;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.LightLayer;
+import net.minecraft.world.phys.Vec3;
 
 /**
  * Where the world fog ends for one player, computed the same way on both sides so the server (where he may stand)
@@ -24,6 +27,9 @@ import net.minecraft.world.level.LightLayer;
  * follows a fog night even without a fresh client report. The spell's amount is always its own ease
  * ({@link FogSpell#amount(double)}: the ease it was made with travels with it), so both sides get the same number
  * whatever their configs; for a player the server weights it by the sky light at their eyes ({@link #skyFactor}). Fog
+ * places (D-085, {@link FogPlace}: fog weather over one spot) are weather too: their amount at the eyes
+ * ({@link #placeAmount}) is weighted by the same sky factor and combined with the spell's
+ * ({@link #weatherAmount}) before the dusk fog, so with no places every result is bit for bit what it was. Fog
  * surges (short, per player) and the client's easing between dusk levels (at most {@code duskLevelChangeSeconds} after
  * a change; the client's own fog report covers it) are not included. Fixed-time dimensions get neither. Atmosphere owns
  * the shape and the weather numbers: it installs its config with {@link #installShape} and
@@ -135,10 +141,13 @@ public final class FogLimits {
 	}
 
 	/**
-	 * The fog one player sees now: their requested view distance, the server's, the world's dusk fog level and fog
-	 * spell, and their level's clock (neither where time is fixed). The spell is weather, outside: its amount is
-	 * weighted by the sky light at the player's eyes ({@link #skyFactor}), as vanilla gates its rain fog on the sky, so
-	 * a fog night gives no fog in a cave or a closed house (the dusk fog is not weighted). Server thread.
+	 * The fog one player sees now: their requested view distance, the server's, the world's dusk fog level, fog spell
+	 * and fog places, and their level's clock (none of them where time is fixed). The spell and the places are
+	 * weather, outside: their amounts (the places' at the player's eyes) are weighted by the sky light at the eyes
+	 * ({@link #skyFactor}), as vanilla gates its rain fog on the sky, so a fog night or a fog place gives no fog in a
+	 * cave or a closed house (the dusk fog is not weighted), and they combine as
+	 * {@code combine(dusk, combine(spell, place))} ({@link #weatherAmount}). With no places the result is bit for bit
+	 * what it was without them. Server thread.
 	 */
 	public static Result of(ServerPlayer player) {
 		MinecraftServer server = player.level().getServer();
@@ -147,11 +156,41 @@ public final class FogLimits {
 		HerobrineState.Effects effects = HerobrineState.get(server).effects();
 		float dusk = fixed ? 0.0F : effects.duskFogLevel();
 		long clock = level.getDefaultClockTime();
+		Vec3 eyes = player.getEyePosition();
 		double spell = fixed ? 0.0 : spellAmount(effects.fogSpell(), clock);
-		if (spell > 0.0) {
-			spell *= skyFactor(level.getBrightness(LightLayer.SKY, BlockPos.containing(player.getEyePosition())));
+		double place = fixed ? 0.0 : placeAmount(effects.fogPlaces(), level.dimension(), eyes, clock);
+		double sky = spell > 0.0 || place > 0.0 ? skyFactor(level.getBrightness(LightLayer.SKY, BlockPos.containing(eyes))) : 1.0;
+		return of(player.requestedViewDistance(), server.getPlayerList().getViewDistance(), dusk, clock, shape(), weatherAmount(spell, place, sky));
+	}
+
+	/**
+	 * The fog places' amount at {@code pos} in {@code dim} at this clock time (0 to 1, the partial tick allowed), each
+	 * its own {@link FogPlace#amount}, together {@code 1 - Π(1 - a)}: never less than the thickest, never over 1, and
+	 * exactly 0 with no places (or none here). The same on both sides from the same places and clock; the sky weight is
+	 * the caller's ({@link #weatherAmount}).
+	 */
+	public static double placeAmount(List<FogPlace> places, ResourceKey<Level> dim, Vec3 pos, double clockTime) {
+		double clear = 1.0;
+		boolean any = false;
+		for (FogPlace place : places) {
+			double a = clamp01(place.amount(pos, dim, clockTime));
+			if (a > 0.0) {
+				clear *= 1.0 - a;
+				any = true;
+			}
 		}
-		return of(player.requestedViewDistance(), server.getPlayerList().getViewDistance(), dusk, clock, shape(), spell);
+		return any ? clamp01(1.0 - clear) : 0.0;
+	}
+
+	/**
+	 * The weather's fog amount, 0 to 1: a fog spell's amount and the fog places' (each 0 to 1, unweighted) times the sky
+	 * factor where they are seen ({@link #skyFactor}, 0 to 1; the client's smoothed one), together
+	 * ({@link #combine}). It goes into the pure {@link #of(int, int, float, long, Shape, double)} as its spell amount,
+	 * which combines it with the dusk fog. With {@code place} 0 it is {@code spell * sky} exactly.
+	 */
+	public static double weatherAmount(double spell, double place, double sky) {
+		double s = clamp01(sky);
+		return combine(spell > 0.0 ? spell * s : 0.0, place > 0.0 ? place * s : 0.0);
 	}
 
 	/**

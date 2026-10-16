@@ -49,30 +49,46 @@ public final class HerobrineState extends SavedData {
 	}
 
 	/**
-	 * Client effects that persist and are sent again on every join: music off, the dusk fog level and the world's fog
-	 * spell (D-071; empty when the sky is clear). A save from before fog weather has no {@code fogSpell} and loads with
-	 * none.
+	 * Client effects that persist and are sent again on every join: music off, the dusk fog level, the world's fog
+	 * spell (D-071; empty when the sky is clear) and its fog places (D-085, oldest first; empty when there are none). A
+	 * save from before fog weather has no {@code fogSpell} and loads with none; one from before fog places (v1.3) has no
+	 * {@code fogPlaces} and loads with none, and effects without places write no {@code fogPlaces} key, so the file
+	 * is what it was. The key is read leniently: a list that cannot be read loads as none and never stops the state
+	 * loading. At most {@link ClientEffects#FOG_PLACES_MAX} places are kept (the newest).
 	 */
-	public record Effects(boolean musicOff, float duskFogLevel, Optional<FogSpell> fogSpell) {
+	public record Effects(boolean musicOff, float duskFogLevel, Optional<FogSpell> fogSpell, List<FogPlace> fogPlaces) {
 		public static final Effects NONE = new Effects(false, 0.0F, Optional.empty());
 		static final Codec<Effects> CODEC = RecordCodecBuilder.create(i -> i.group(
 				Codec.BOOL.optionalFieldOf("musicOff", false).forGetter(Effects::musicOff),
 				Codec.FLOAT.optionalFieldOf("duskFogLevel", 0.0F).forGetter(Effects::duskFogLevel),
-				FogSpell.CODEC.optionalFieldOf("fogSpell").forGetter(Effects::fogSpell)
+				FogSpell.CODEC.optionalFieldOf("fogSpell").forGetter(Effects::fogSpell),
+				FogPlace.CODEC.listOf().lenientOptionalFieldOf("fogPlaces", List.of()).forGetter(Effects::fogPlaces)
 		).apply(i, Effects::new));
 
 		public Effects {
 			fogSpell = fogSpell != null ? fogSpell : Optional.empty();
+			List<FogPlace> places = fogPlaces != null ? fogPlaces : List.of();
+			fogPlaces = List.copyOf(places.subList(Math.max(0, places.size() - ClientEffects.FOG_PLACES_MAX), places.size()));
 		}
 
-		/** Without a fog spell. */
+		/** Without fog places. */
+		public Effects(boolean musicOff, float duskFogLevel, Optional<FogSpell> fogSpell) {
+			this(musicOff, duskFogLevel, fogSpell, List.of());
+		}
+
+		/** Without a fog spell or fog places. */
 		public Effects(boolean musicOff, float duskFogLevel) {
 			this(musicOff, duskFogLevel, Optional.empty());
 		}
 
-		/** These effects with this fog spell (or none). */
+		/** These effects with this fog spell (or none); the fog places stay. */
 		public Effects withFogSpell(Optional<FogSpell> spell) {
-			return new Effects(musicOff, duskFogLevel, spell);
+			return new Effects(musicOff, duskFogLevel, spell, fogPlaces);
+		}
+
+		/** These effects with these fog places (oldest first; empty for none); the rest stays. */
+		public Effects withFogPlaces(List<FogPlace> places) {
+			return new Effects(musicOff, duskFogLevel, fogSpell, places);
 		}
 	}
 

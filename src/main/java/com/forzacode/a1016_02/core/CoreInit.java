@@ -24,7 +24,16 @@ public final class CoreInit {
 			Services.sites().attach(server);
 			Services.protectedAreas().attach(server);
 		});
-		ServerLifecycleEvents.SERVER_STARTED.register(HerobrineState::get);
+		ServerLifecycleEvents.SERVER_STARTED.register(server -> {
+			HerobrineState.get(server);
+			SelfCreated.serverStarted(server);
+		});
+		// The layer switched off: core's fog places go (clients are told at once, and get none on join).
+		SelfCreated.onSwitchedOff("core", server -> {
+			if (!HerobrineState.get(server).effects().fogPlaces().isEmpty()) {
+				ClientEffects.clearFogPlaces(server);
+			}
+		});
 		ServerLifecycleEvents.SERVER_STOPPED.register(server -> {
 			Services.sites().detach();
 			Services.protectedAreas().detach();

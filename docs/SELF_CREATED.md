@@ -109,6 +109,27 @@ places, a v1.3 `state.dat` loads with none, `FogLimits.of` unchanged without pla
 (DONE, UNLOADED, BLOCKED, IN_VIEW), an old `traces.dat` loads; `stepType` matches dig's rule on snow, leaf litter, a
 carpet; `alone` counts a spectator within the radius.
 
+As built (SC-0, `SelfCreatedCoreTests`):
+- **The switch** (not in the design above): `sections.sc.enabled` (default true, core's section `sc` v1). Every feature
+  asks `SelfCreated.enabled()` (any thread, both sides) first and does nothing while it is false; core's
+  `ClientEffects.addFogPlace` and the contract of `MobTamper.unname` already refuse. Register what puts your visible
+  changes back with `SelfCreated.onSwitchedOff("scNN", server -> ...)` in init (idempotent, cheap, no chunk loads):
+  it runs at every server start while the switch is off and at once on `SelfCreated.setEnabled(server, false)`. A
+  client-only change shown with no server (the world list) checks `enabled()` itself.
+- **Files**: write only with `SelfCreated.writeInWorld(SelfCreated.worldFolder(server) or the summary's folder,
+  "relative/path", bytes)` (refuses anything that leaves the world's folder; whole or nothing; never deletes).
+- `FIGURE_LEFT`'s `appearedFor` is nullable; the invoker cuts the path to `HerobrineEvents.FIGURE_PATH_MAX` (24).
+  Both new events log a throwing listener and go on.
+- `TRACED` also fires for `recordName` (placed false) and for stack and sign edits; never for an undo's closed reverse
+  edits (only what an undo leaves ledgered fires, after it).
+- `TraceLedger.recordName` returns the entry, or null (nothing recorded: keep the name); call it before clearing.
+  `TraceLedger.storedName(level, entry)` reads it back. NAME undo: not in the level is UNLOADED only while the
+  entities of its recorded chunk are not loaded, BLOCKED once they are (so Ending D's chunk clusters never wait
+  forever). NAME entries are saved under `traces.dat`'s `names` key, so a v1.3 jar still loads a file written now.
+- `FogPlace` adds `timeAmount`, `spaceAmount`, `fadingBy` and `endedEarly`; `amount` takes a `double` clock. The cap
+  in `addFogPlace` counts places not yet fading; at most `ClientEffects.FOG_PLACES_MAX` (16) are stored.
+  `FogLimits.weatherAmount(spell, place, sky)` is the combine both sides use (`combine(spell * sky, place * sky)`).
+
 ## Features
 
 Each feature: cards, tier and earliest stage, what the player experiences, why it is scary, how it stays deniable,

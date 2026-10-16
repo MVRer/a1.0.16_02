@@ -284,6 +284,12 @@ final class TraceEdit {
 	// --- applying ---
 
 	void apply() {
+		// TRACED's placedByPlayer is read before anything changes.
+		PlayerWatch watch = Services.watch();
+		boolean[] placed = new boolean[records.size()];
+		for (int i = 0; i < placed.length; i++) {
+			placed[i] = watch.wasPlacedByPlayer(level, records.get(i).pos());
+		}
 		changes.forEach((pos, state) -> level.setBlock(pos, state, SILENT_FLAGS));
 		moveInto.forEach((pos, data) -> {
 			BlockEntity moved = level.getBlockEntity(pos);
@@ -314,9 +320,10 @@ final class TraceEdit {
 		}
 		TraceLedger ledger = TraceLedger.get(level.getServer());
 		long day = GameClock.day(level.getServer());
+		List<TraceLedger.Entry> written = new ArrayList<>(records.size());
 		for (Record r : records) {
-			ledger.add(new TraceLedger.Entry(r.kind(), r.cause(), day, GlobalPos.of(level.dimension(), r.pos()), Optional.ofNullable(r.to()),
-					Optional.of(r.state()), Optional.ofNullable(r.blockEntity()), Optional.empty(), -1, -1));
+			written.add(ledger.add(new TraceLedger.Entry(r.kind(), r.cause(), day, GlobalPos.of(level.dimension(), r.pos()), Optional.ofNullable(r.to()),
+					Optional.of(r.state()), Optional.ofNullable(r.blockEntity()), Optional.empty(), -1, -1)));
 		}
 		// The game does the falling: the lowest falling block ticks, finds nothing under it and drops; each block
 		// above follows when the one under it leaves.
@@ -326,6 +333,10 @@ final class TraceEdit {
 			level.scheduleTick(start, startBlock, TraceFall.START_DELAY);
 		}
 		A1016_02.LOGGER.debug("[a1016] trace '{}': {} changes, {} records, {} falling", cause, changes.size(), records.size(), fall.falling().size());
+		// Last: the whole edit is applied and ledgered before any listener hears of it.
+		for (int i = 0; i < written.size(); i++) {
+			TraceService.traced(level, written.get(i), placed[i]);
+		}
 	}
 
 	// --- helpers ---
