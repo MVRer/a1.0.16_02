@@ -2,8 +2,10 @@ package com.forzacode.a1016_02.entity;
 
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import java.util.function.Predicate;
 import java.util.function.ToDoubleFunction;
 
@@ -15,6 +17,8 @@ import net.minecraft.tags.FluidTags;
 import net.minecraft.util.Mth;
 import net.minecraft.util.RandomSource;
 import net.minecraft.world.entity.EntityDimensions;
+import net.minecraft.world.level.BlockGetter;
+import net.minecraft.world.level.Level;
 import net.minecraft.world.level.LightLayer;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
@@ -114,37 +118,144 @@ public final class SpotFinder {
 	}
 
 	/**
-	 * Just behind a tree trunk as seen from the player, offset sideways so half of him shows past it.
+	 * Just behind a tree trunk as seen from the player, offset sideways so half of him shows past it (DESIGN: "half of
+	 * him visible behind a tree"): his middle on the edge of the trunk's shadow from the player's eyes, on either side,
+	 * 0.9 blocks behind the trunk's middle. Only a spot that really shows that half once the player turns to it is taken
+	 * ({@link #halfVisible}: his head and the shoulder that sticks out in plain sight, the trunk over his other half),
+	 * so a canopy or the next tree never hides the one part of him there is to see. Bare trunks score higher (no leaves
+	 * around the crown, the existing bareness), and so do spots nearer the middle of the band.
 	 *
 	 * @param groveBonus extra score for a trunk position (for example inside a known bare grove)
 	 */
 	public static Optional<Spot> trunk(Query q, ToDoubleFunction<BlockPos> groveBonus) {
 		ServerLevel level = q.level();
 		List<Spot> found = new ArrayList<>();
+		Set<BlockPos> tried = new HashSet<>();
 		BlockPos.MutableBlockPos m = new BlockPos.MutableBlockPos();
-		for (Vec3 point : ring(q, 1)) {
+		double middle = (q.inner() + q.outer()) / 2.0;
+		double halfDepth = Math.max(1.0, (q.outer() - q.inner()) / 2.0);
+		for (Vec3 point : ring(q, 2)) {
 			int px = Mth.floor(point.x);
 			int pz = Mth.floor(point.z);
 			for (int dx = -3; dx <= 3; dx++) {
 				for (int dz = -3; dz <= 3; dz++) {
 					BlockPos base = trunkBase(level, px + dx, pz + dz, m);
-					if (base == null) {
+					if (base == null || !tried.add(base)) {
 						continue;
 					}
-					Vec3 center = new Vec3(base.getX() + 0.5, base.getY(), base.getZ() + 0.5);
-					Vec3 dir = center.subtract(q.feet()).horizontal().normalize();
-					Vec3 side = new Vec3(-dir.z, 0.0, dir.x).scale(q.random().nextBoolean() ? 0.45 : -0.45);
-					Vec3 spot = center.add(dir.scale(0.9)).add(side);
-					Vec3 feet = standAt(level, spot.x, spot.z, q.dims());
-					if (feet == null || Math.abs(feet.y - base.getY()) > 1.0 || !valid(q, feet, q.inner(), q.outer())) {
-						continue;
+					double bareness = Double.NaN;
+					for (int sign : new int[] {1, -1}) {
+						Vec3 spot = behindTrunk(q.eye(), base, sign);
+						if (spot == null) {
+							continue;
+						}
+						Vec3 feet = standAt(level, spot.x, spot.z, q.dims());
+						if (feet == null || Math.abs(feet.y - base.getY()) > 1.0) {
+							continue;
+						}
+						double d = horizontal(q.feet(), feet);
+						if (d < q.inner() - 0.5 || d > q.outer() + 0.5 || !halfVisible(level, q.eye(), feet, base) || !valid(q, feet, q.inner(), q.outer())) {
+							continue;
+						}
+						if (Double.isNaN(bareness)) {
+							bareness = 1.0 - leavesAround(level, base, m) / 60.0;
+						}
+						double centered = 1.0 - Math.min(1.0, Math.abs(d - middle) / halfDepth);
+						found.add(new Spot(feet, d, groveBonus.applyAsDouble(base) + bareness + centered + q.random().nextDouble() * 0.5, base));
 					}
-					double bareness = 1.0 - leavesAround(level, base, m) / 60.0;
-					found.add(new Spot(feet, horizontal(q.feet(), feet), groveBonus.applyAsDouble(base) + bareness + q.random().nextDouble(), base));
 				}
 			}
 		}
 		return best(found);
+	}
+
+	/** How far behind the trunk's middle he stands, along the line from the player's eyes. */
+	static final double BEHIND_TRUNK = 0.9;
+	/** The points {@link #halfVisible} looks at: his head's middle and the top of his arm, and how far from his middle line. */
+	static final double HEAD_Y = 1.65;
+	static final double HEAD_SIDE = 0.12;
+	static final double SHOULDER_Y = 1.3;
+	static final double SHOULDER_SIDE = 0.35;
+
+	/**
+	 * Where he stands behind this trunk as seen from {@code eye} (x and z; the ground is found later): {@link #BEHIND_TRUNK}
+	 * past its middle, his middle on the edge of the trunk's shadow on the {@code sign} side, so the trunk covers one
+	 * half of him and the other half shows. Null if the eye is inside the trunk's column.
+	 */
+	static @Nullable Vec3 behindTrunk(Vec3 eye, BlockPos trunk, int sign) {
+		double cx = trunk.getX() + 0.5;
+		double cz = trunk.getZ() + 0.5;
+		double dist = Math.hypot(cx - eye.x, cz - eye.z);
+		if (dist < 1.0) {
+			return null;
+		}
+		double ux = (cx - eye.x) / dist;
+		double uz = (cz - eye.z) / dist;
+		double sx = -uz * sign;
+		double sz = ux * sign;
+		// The shadow's edge on this side: the widest a corner of the column stands from the line, over its depth.
+		double slope = Double.NEGATIVE_INFINITY;
+		for (int cornerX = 0; cornerX <= 1; cornerX++) {
+			for (int cornerZ = 0; cornerZ <= 1; cornerZ++) {
+				double ox = trunk.getX() + cornerX - eye.x;
+				double oz = trunk.getZ() + cornerZ - eye.z;
+				double depth = ox * ux + oz * uz;
+				if (depth <= 0.0) {
+					return null;
+				}
+				slope = Math.max(slope, (ox * sx + oz * sz) / depth);
+			}
+		}
+		double depth = dist + BEHIND_TRUNK;
+		double side = slope * depth;
+		return new Vec3(eye.x + ux * depth + sx * side, eye.y, eye.z + uz * depth + sz * side);
+	}
+
+	/**
+	 * Between trunks, half of him for real: from {@code eye}, his head and the shoulder on the side that sticks out past
+	 * the trunk have a clear line, where every block but air blocks it (leaves too, unlike the out-of-view rule's line of
+	 * sight, which looks through them: a player does not make out a figure through a canopy), and the line to the other
+	 * half of his head and his other shoulder goes through the trunk's logs. It asks what the player would see if they
+	 * turned to the spot; which way they face now does not matter (he still spawns out of everyone's view). An unloaded
+	 * block on a clear line counts as blocking.
+	 *
+	 * @param feet  his feet
+	 * @param trunk the trunk's lowest log
+	 */
+	public static boolean halfVisible(Level level, Vec3 eye, Vec3 feet, BlockPos trunk) {
+		double tx = feet.x - eye.x;
+		double tz = feet.z - eye.z;
+		double length = Math.hypot(tx, tz);
+		if (length < 1.0E-3) {
+			return false;
+		}
+		// Sideways as the player sees him, toward the side that sticks out (away from the trunk's middle).
+		Vec3 side = new Vec3(-tz / length, 0.0, tx / length);
+		if ((feet.x - (trunk.getX() + 0.5)) * side.x + (feet.z - (trunk.getZ() + 0.5)) * side.z < 0.0) {
+			side = side.scale(-1.0);
+		}
+		Vec3 head = feet.add(0.0, HEAD_Y, 0.0);
+		Vec3 shoulder = feet.add(0.0, SHOULDER_Y, 0.0);
+		return clearLine(level, eye, head.add(side.scale(HEAD_SIDE))) && clearLine(level, eye, shoulder.add(side.scale(SHOULDER_SIDE)))
+				&& throughTrunk(level, eye, head.subtract(side.scale(HEAD_SIDE)), trunk)
+				&& throughTrunk(level, eye, shoulder.subtract(side.scale(SHOULDER_SIDE)), trunk);
+	}
+
+	/** True if nothing but air lies between the eye and the point (the block the eye is in aside); unloaded blocks block. */
+	static boolean clearLine(Level level, Vec3 eye, Vec3 point) {
+		BlockPos eyeBlock = BlockPos.containing(eye);
+		return BlockGetter.traverseBlocks(eye, point, level, (l, pos) -> {
+			if (pos.equals(eyeBlock)) {
+				return null;
+			}
+			return !l.isLoaded(pos) || !l.getBlockState(pos).isAir() ? Boolean.FALSE : null;
+		}, l -> Boolean.TRUE);
+	}
+
+	/** True if the line from the eye to the point passes through a log of the trunk's column, at or above its lowest log. */
+	static boolean throughTrunk(Level level, Vec3 eye, Vec3 point, BlockPos trunk) {
+		return BlockGetter.traverseBlocks(eye, point, level, (l, pos) -> pos.getX() == trunk.getX() && pos.getZ() == trunk.getZ()
+				&& pos.getY() >= trunk.getY() && l.isLoaded(pos) && l.getBlockState(pos).is(BlockTags.LOGS) ? Boolean.TRUE : null, l -> Boolean.FALSE);
 	}
 
 	/**

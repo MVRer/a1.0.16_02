@@ -2,6 +2,33 @@
 
 One entry per merge, newest first. Run the game from the main checkout (this folder, on `main`).
 
+## READY TO TRY: Between trunks you can actually see  (branch fix/trunks-close; jar build/libs/a1016_02-1.3.0-26.3.jar after ./gradlew build)
+```
+Restart needed: full game restart (only the server side changed; everyone still needs the same jar).
+What changed, in plain words (Mariano's playtest: "he spawns behind the trunk or really far"):
+  - Between trunks stands 18 to 40 blocks away, never past the fog. It used to stand where every other sighting
+    does, 0.55 to 0.75 of the fog end: 140 to 190 blocks out on a clear day at 16 chunks, a few pixels behind a tree.
+  - He only stands where half of him really shows once you turn: his head and one shoulder past the trunk with
+    nothing in front of them, not even leaves, and the trunk over his other half. Bare trees and spots near the middle
+    of the 18 to 40 blocks come first.
+  - Everything else is as before: he appears out of your view, watches you, and slips behind the tree when you come
+    closer or round it, then is gone.
+See it now (Dev Client):
+  1. Stand near a forest, a bare grove if you have one, with trees 18 to 40 blocks off, and face away from them.
+     /a1016 entity spawn between_trunks (a forced spawn skips the time-of-day gates, so clear daylight works too).
+  2. The line says FIRED, how many blocks out, and the band (18.0..40.0 unless the fog is thicker than 42 blocks).
+     NO_SPOT means no trunk there shows half of him from where you stand (leaves at head height, other trees in the
+     way, the trees nearer than 18 or past 40, or the trees are in front of you): move, face away, try again.
+  3. Turn around: half of him past a trunk, head and one shoulder, facing you.
+  4. Walk toward him or round the tree: he slips behind it and is gone.
+  /a1016 entity info shows the band ("between trunks 18.0..40.0"); /a1016 entity tune trunkMinDistance <blocks> and
+  trunkMaxDistance <blocks> try other distances.
+Existing config files are upgraded automatically: the entity section steps to version 5 (it only adds
+  trunkMinDistance 18 and trunkMaxDistance 40; nothing you set changes).
+Still to check in the Dev Client: whether half of him at 18 to 40 blocks in daylight and in fog reads as a figure
+  watching from behind a tree, and whether 40 is too far on a clear day.
+```
+
 ## READY TO TRY: v1.3  (main 206ab06, with every review fix; jar build/libs/a1016_02-1.3.0-26.3.jar after ./gradlew build)
 ```
 Restart needed: full game restart. Everyone who plays needs the same jar plus Fabric API (the client sends when a menu

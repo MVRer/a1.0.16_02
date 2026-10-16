@@ -27,6 +27,9 @@ final class EntityTuning {
 			// The close variant's clamp in blocks; the minimum distance still holds under it.
 			new Key("closeMinDistance", EntityConfig.MIN_DISTANCE_FLOOR, 64.0, c -> c.closeMinDistance, (c, v) -> c.closeMinDistance = v),
 			new Key("closeMaxDistance", EntityConfig.MIN_DISTANCE_FLOOR, 96.0, c -> c.closeMaxDistance, (c, v) -> c.closeMaxDistance = v),
+			// Between trunks, in blocks (the trunk fix); the fog end's margin and the minimum distance still hold.
+			new Key("trunkMinDistance", EntityConfig.MIN_DISTANCE_FLOOR, 96.0, c -> c.trunkMinDistance, (c, v) -> c.trunkMinDistance = v),
+			new Key("trunkMaxDistance", EntityConfig.MIN_DISTANCE_FLOOR, 128.0, c -> c.trunkMaxDistance, (c, v) -> c.trunkMaxDistance = v),
 			// Never under 8 blocks, whatever the file says.
 			new Key("minDistance", EntityConfig.MIN_DISTANCE_FLOOR, 64.0, c -> c.minDistance, (c, v) -> c.minDistance = v),
 			new Key("approachBlocks", 1.0, 64.0, c -> c.approachBlocks, (c, v) -> c.approachBlocks = v),
