@@ -2,7 +2,13 @@ package com.forzacode.a1016_02.dig;
 
 import com.forzacode.a1016_02.core.Director;
 import com.forzacode.a1016_02.core.HerobrineEvents;
+import com.forzacode.a1016_02.core.SelfCreated;
 import com.forzacode.a1016_02.core.Services;
+import com.forzacode.a1016_02.dig.sc.DigScCommands;
+import com.forzacode.a1016_02.dig.sc.RestRefusal;
+import com.forzacode.a1016_02.dig.sc.Sc12Config;
+import com.forzacode.a1016_02.dig.sc.Sc13Config;
+import com.forzacode.a1016_02.dig.sc.WayBack;
 
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
@@ -32,6 +38,14 @@ public final class DigInit {
 		Director.register(new BlindCards.BlindStep());
 		Director.register(new BlindCards.BlindTorch());
 		Director.register(new BlindCards.BlindDoor());
+		// docs/SELF_CREATED.md, 12 and 13: their sections, cards, debug commands and what the switch puts back.
+		Sc12Config.get();
+		Sc13Config.get();
+		Director.register(new RestRefusal.Card());
+		Director.register(new WayBack.Card());
+		DigScCommands.register();
+		SelfCreated.onSwitchedOff("sc12", RestRefusal::revert);
+		SelfCreated.onSwitchedOff("sc13", server -> WayBack.clear());
 		DigCommands.register();
 		ServerTickEvents.END_SERVER_TICK.register(DigTicker.INSTANCE::tick);
 		// Sessions (D-062.4, D-062.5): a start remembers the player's base; a stop ends what ran for that player only.

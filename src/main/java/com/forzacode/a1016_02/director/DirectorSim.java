@@ -19,6 +19,7 @@ import com.forzacode.a1016_02.core.FogSpell;
 import com.forzacode.a1016_02.core.FogWeatherRules;
 import com.forzacode.a1016_02.core.Stage;
 import com.forzacode.a1016_02.core.Tier;
+import com.forzacode.a1016_02.director.sc.Sc01Config;
 
 import net.minecraft.util.RandomSource;
 
@@ -48,6 +49,12 @@ import org.jspecify.annotations.Nullable;
  * usual dice ({@link Params#fitChance}), never at a director tick; any other card's moment is looked at on director
  * ticks only, so a deck without BLIND cards plays exactly as with no blind moments. Fires from a recheck carry the note
  * {@link #RECHECK}.
+ * <p>
+ * Places remember (docs/SELF_CREATED.md, 01): with a dread share ({@link Params#places}), every seat's place factor is
+ * rolled once per director tick on dice of their own: {@link Params#dreadShare} of the ticks at
+ * {@link Params#dreadFactor}, {@link Params#trustedShare} at {@link Params#trustedFactor}, the rest at
+ * {@link Params#awayFactor}. The brain applies it as it applies the live one (from Traces, after the first hour, the
+ * ambient and minor rates only). Without a share (the default) every run is exactly as before.
  */
 public final class DirectorSim {
 	/** The player of a one-player dry run. */
@@ -142,6 +149,29 @@ public final class DirectorSim {
 		public FogWeatherRules.History fogHistory = FogWeatherRules.History.START;
 		/** Blind moments (menus opened) per hour of a player's play, each a recheck (D-077); 0: none. */
 		public double blindPerHour = 20;
+		/** Places remember (01): the share of director ticks at {@link #dreadFactor}; 0 (the default) with {@link #trustedShare} 0: no place factor. */
+		public double dreadShare;
+		public double dreadFactor = 1;
+		/** The share of director ticks at {@link #trustedFactor}. */
+		public double trustedShare;
+		public double trustedFactor = 1;
+		/** The factor of every other director tick. */
+		public double awayFactor = 1;
+
+		/** The dread share of this section ({@code simDreadShare} at {@code simDreadFactor}, {@code simTrustedShare} at {@code trustedFactor}, the rest at {@code awayFactor}). */
+		public Params places(Sc01Config config) {
+			dreadShare = Math.max(0, config.simDreadShare);
+			dreadFactor = config.simDreadFactor;
+			trustedShare = Math.max(0, config.simTrustedShare);
+			trustedFactor = config.trustedFactor;
+			awayFactor = config.awayFactor;
+			return this;
+		}
+
+		/** True if the run rolls a place factor at all. */
+		boolean modelsPlaces() {
+			return dreadShare > 0 || trustedShare > 0 || awayFactor != 1;
+		}
 
 		public static Params from(DirectorConfig config, DirectorRules rules) {
 			Params p = new Params();
@@ -832,6 +862,8 @@ public final class DirectorSim {
 		final RandomSource weather;
 		/** Blind moments (D-077): dice of their own, so a run's director dice are the same with or without them. */
 		final RandomSource blindDice;
+		/** Places (01): dice of their own for each seat's place factor. */
+		final RandomSource placeDice;
 		Optional<FogSpell> fogSpell;
 		FogWeatherRules.History fogHistory;
 		long weatherClock;
@@ -844,6 +876,7 @@ public final class DirectorSim {
 			this.random = RandomSource.create(mix(params.seed));
 			this.weather = RandomSource.create(mix(params.seed ^ 0xF065_9E11L));
 			this.blindDice = RandomSource.create(mix(params.seed ^ 0xB11D_0077L));
+			this.placeDice = RandomSource.create(mix(params.seed ^ 0x5C01_0084L));
 			this.world = world;
 			this.stage = stage;
 			this.worldStart = worldTicks;
@@ -964,6 +997,11 @@ public final class DirectorSim {
 					brain.onTelling(world, first.clock(), first.env, true, first.rec);
 				}
 				List<SeatRun> deciding = joined.isEmpty() ? online : online.stream().filter(seat -> !joined.contains(seat)).toList();
+				if (params.modelsPlaces()) {
+					for (SeatRun seat : deciding) {
+						seat.place = rollPlace();
+					}
+				}
 				for (int k = 0; k < deciding.size(); k++) {
 					// Players take turns going first, as the live director staggers them.
 					SeatRun seat = deciding.get((tick + k) % deciding.size());
@@ -988,6 +1026,15 @@ public final class DirectorSim {
 				result.tension = seat.env.tension;
 				result.violations = check(result, cards);
 			}
+		}
+
+		/** One director tick's place factor for a seat (01): the dread share, the trusted share, else away. */
+		double rollPlace() {
+			double roll = placeDice.nextDouble();
+			if (roll < params.dreadShare) {
+				return params.dreadFactor;
+			}
+			return roll < params.dreadShare + params.trustedShare ? params.trustedFactor : params.awayFactor;
 		}
 
 		/** The world's stage moved: one world event, and one in every online player's record on their own clock. */
@@ -1029,6 +1076,8 @@ public final class DirectorSim {
 		Result result;
 		/** True during this player's blind moment's recheck (D-077): BLIND cards' moments, and only theirs, may fit. */
 		boolean blind;
+		/** This director tick's place factor (01), 1 without a dread share. */
+		double place = 1;
 
 		SeatRun(Table table, UUID player, long joinAt, @Nullable PacingMemory pacing, long play, double tension) {
 			this.table = table;
@@ -1164,6 +1213,11 @@ public final class DirectorSim {
 		@Override
 		public Optional<FogSpell> fogSpell() {
 			return table.spellNow();
+		}
+
+		@Override
+		public double placeFactor() {
+			return seat.place;
 		}
 	}
 

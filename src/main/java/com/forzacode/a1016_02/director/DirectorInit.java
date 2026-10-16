@@ -1,7 +1,10 @@
 package com.forzacode.a1016_02.director;
 
 import com.forzacode.a1016_02.core.HerobrineEvents;
+import com.forzacode.a1016_02.core.SelfCreated;
 import com.forzacode.a1016_02.core.Services;
+import com.forzacode.a1016_02.director.sc.PlacesCommands;
+import com.forzacode.a1016_02.director.sc.Sc01Config;
 
 import net.fabricmc.fabric.api.entity.event.v1.EntitySleepEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
@@ -18,6 +21,10 @@ public final class DirectorInit {
 	public static void init() {
 		Services.installDirector(DIRECTOR);
 		DirectorCommands.register(DIRECTOR);
+		// docs/SELF_CREATED.md, 01: the places' section, its debug command and what the switch puts back.
+		Sc01Config.get();
+		PlacesCommands.register();
+		SelfCreated.onSwitchedOff("sc01", PlacesCommands::revert);
 
 		// Sessions are per player (D-062.4): one player starting or stopping touches only their own pacing.
 		HerobrineEvents.PARTICIPATION.register((server, player, participating) -> {

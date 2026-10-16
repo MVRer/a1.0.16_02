@@ -24,10 +24,15 @@ import com.forzacode.a1016_02.core.FogWeatherRules;
 import com.forzacode.a1016_02.core.GameClock;
 import com.forzacode.a1016_02.core.HerobrineEvents;
 import com.forzacode.a1016_02.core.HerobrineState;
+import com.forzacode.a1016_02.core.ModConfig;
 import com.forzacode.a1016_02.core.PlayerWatch;
+import com.forzacode.a1016_02.core.SelfCreated;
 import com.forzacode.a1016_02.core.Services;
 import com.forzacode.a1016_02.core.Stage;
 import com.forzacode.a1016_02.core.Tier;
+import com.forzacode.a1016_02.director.sc.PlaceMemory;
+import com.forzacode.a1016_02.director.sc.Places;
+import com.forzacode.a1016_02.director.sc.Sc01Config;
 
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerPlayer;
@@ -87,7 +92,10 @@ public final class DirectorImpl implements Director {
 			}
 			decide(server, player.get(), rules);
 			DirectorData data = DirectorData.get(server);
-			data.memory().find(uuid).ifPresent(pacing -> DirectorTriggers.periodicFor(server, player.get(), pacing, rules));
+			data.memory().find(uuid).ifPresent(pacing -> {
+				DirectorTriggers.periodicFor(server, player.get(), pacing, rules);
+				sampleDwell(player.get(), pacing, GameClock.playTicks(server, uuid), rules);
+			});
 			data.setDirty();
 		}
 	}
@@ -242,6 +250,32 @@ public final class DirectorImpl implements Director {
 		data.setDirty();
 	}
 
+	// --- places remember (docs/SELF_CREATED.md, 01) ---
+
+	/** Once per director tick of this player's: their dwell in the chunk they stand in (nothing while the layer is off). */
+	static void sampleDwell(ServerPlayer player, PacingMemory pacing, long playTicks, DirectorRules rules) {
+		if (SelfCreated.enabled()) {
+			pacing.places().sampleDwell(PlaceMemory.Chunk.of(player.level().dimension(), player.blockPosition()), playTicks, rules.tickInterval,
+					rules.hourTicks);
+		}
+	}
+
+	/** The places' factor where this player stands now, on their own pacing (1 while the layer is off or the story is quiet). */
+	static double placeFactor(MinecraftServer server, ServerPlayer player, PacingMemory pacing) {
+		if (!SelfCreated.enabled() || Places.storyQuiet(HerobrineState.get(server))) {
+			return 1.0;
+		}
+		return Places.factor(pacing.places(), player.level().dimension(), player.blockPosition(), GameClock.playTicks(server, player.getUUID()),
+				GameClock.dayTicks(server), Math.max(1, ModConfig.realTicks(3600)), Sc01Config.get());
+	}
+
+	/** A fire that was neither fake nor forced reached this player: remember where they stand (nothing while the layer is off). */
+	static void remember(ServerPlayer player, PacingMemory pacing, CardInfo card, DirectorBrain.Clock c) {
+		if (SelfCreated.enabled()) {
+			Places.remember(pacing.places(), player.level().dimension(), player.blockPosition(), card, c.playTicks(), c.dayTicks(), Sc01Config.get());
+		}
+	}
+
 	/** One decision now for this player, obeying every gate ({@code /a1016 director tick}). */
 	public String decideNow(MinecraftServer server, ServerPlayer player) {
 		if (!Services.watch().isTargetable(player)) {
@@ -338,6 +372,9 @@ public final class DirectorImpl implements Director {
 		long span = Math.max(0, days) * DirectorBrain.DAY_TICKS;
 
 		DirectorSim.Params params = DirectorSim.Params.from(config, rules);
+		if (SelfCreated.enabled()) {
+			params.places(Sc01Config.get());
+		}
 		params.hours = span / (double) rules.hourTicks;
 		params.seed = random.nextLong();
 		params.continueSession = true;
@@ -394,6 +431,9 @@ public final class DirectorImpl implements Director {
 		DirectorRules rules = rules(server);
 		DirectorConfig config = DirectorConfig.get();
 		DirectorSim.Params params = DirectorSim.Params.from(config, rules);
+		if (SelfCreated.enabled()) {
+			params.places(Sc01Config.get());
+		}
 		params.hours = hours;
 		params.player = player;
 		if (tellingAtHour != null) {
@@ -576,6 +616,21 @@ public final class DirectorImpl implements Director {
 				return List.of();
 			}
 			return DirectorImpl.this.sharers(server, DirectorData.get(server).memory(), uuid, Services.watch().sharingWith(player));
+		}
+
+		@Override
+		public double placeFactor() {
+			if (player == null || uuid == null) {
+				return 1.0;
+			}
+			return DirectorData.get(server).memory().find(uuid).map(pacing -> DirectorImpl.placeFactor(server, player, pacing)).orElse(1.0);
+		}
+
+		@Override
+		public void remember(PacingMemory m, CardInfo card, DirectorBrain.Clock c, boolean felt) {
+			if (player != null) {
+				DirectorImpl.remember(player, m, card, c);
+			}
 		}
 
 		@Override

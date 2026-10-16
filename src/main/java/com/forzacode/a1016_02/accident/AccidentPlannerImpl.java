@@ -156,6 +156,11 @@ public final class AccidentPlannerImpl implements AccidentPlanner {
 		return view;
 	}
 
+	/** The route sampler (its standing ring, docs/SELF_CREATED.md, 15). */
+	public RouteSampler sampler() {
+		return sampler;
+	}
+
 	public PlayerWatch watch() {
 		return watch;
 	}
