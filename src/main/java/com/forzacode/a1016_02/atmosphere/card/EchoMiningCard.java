@@ -21,6 +21,7 @@ import net.minecraft.core.Direction;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.tags.BlockTags;
+import net.minecraft.tags.TagKey;
 import net.minecraft.util.RandomSource;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
@@ -37,8 +38,9 @@ import org.jspecify.annotations.Nullable;
  * each block's own sounds, from inside solid rock 14 to 24 blocks from them, below or beside them
  * ({@link WorldScan#rockSpot}, far in the rock's finder: a rock block buried on all six sides, so nobody can see the
  * spot, and the view rule is checked on it too). Only sound; nothing changes. Anyone in range hears it (D-060). Never
- * within 30 s of the player's combat. A burst is echoed when every block in it is dug with a pickaxe or a shovel
- * (mining, not chopping or a torch knocked off).
+ * within 30 s of the player's combat. A burst is echoed when every block in it is natural rock or earth dug with a
+ * pickaxe or a shovel ({@link #mined}): mining, not chopping or a torch knocked off, and never ice, glass, metal,
+ * lanterns or amethyst, whose sounds nothing inside the rock could make.
  *
  * <p>The hits (vanilla 26.3 sends a dig's hit sound every 4 ticks while a block is dug, the first as it starts, then the
  * break): a block's hits are the 4-tick beats of its dig time ({@link #hits}). The dig time is the block's hardness
@@ -47,7 +49,10 @@ import org.jspecify.annotations.Nullable;
  * ({@link #LEAD}), never longer than the block takes with a wooden tool ({@code echoMiningSlowToolSpeed}), so a pause
  * between two blocks is quiet, not more hits; the first break, with no gap before it, takes the tool speed the others
  * imply ({@code echoMiningToolSpeed}, iron, if they imply none). Stone dug with an iron pickaxe is 8 ticks, 2 hits;
- * deepslate 15, 4; dirt with a shovel 3, 1.
+ * deepslate 15, 4; dirt with a shovel 3, 1. An instant break has no hit, as in vanilla (a creative break or a block the
+ * tool breaks at once goes straight to the break, without the dig's first hit): a gap under {@link #LEAD} plus
+ * {@link #MIN_DIG} (creative's 6 ticks, an instamined run's 1 to 3), and the first break too when every other one was
+ * instant or the implied speed breaks it at once.
  *
  * <p>The fake: a burst of the same size (2 to 6 with none) in a rock none of the burst's blocks sounds like, at a steady
  * rhythm well off the burst's own ({@link #fakeBreaks}).
@@ -60,6 +65,24 @@ public final class EchoMiningCard extends EchoCard {
 	static final int LEAD = 6;
 	/** Vanilla's dig ticks are {@code DIG_FACTOR * hardness / toolSpeed} with the right tool. */
 	static final double DIG_FACTOR = 30.0;
+	/**
+	 * The shortest dig that is not an instant break: vanilla adds a block's progress (under 1) from the tick after the
+	 * click, so a dig takes at least 2 ticks; anything shorter (a gap of at most {@code LEAD + 1}, one tick of jitter
+	 * on creative's 6) was a break at once, with no hit.
+	 */
+	static final int MIN_DIG = 2;
+	/**
+	 * Natural rock and earth (vanilla's own tags, so a modded block counts only when its mod puts it in them): the base
+	 * stones of the overworld (stone, granite, diorite, andesite, tuff, deepslate) and of the Nether, every ore, the
+	 * overworld's ground (dirt, coarse and rooted dirt, grass, podzol, mycelium, mud) and sand.
+	 */
+	private static final List<TagKey<Block>> NATURAL_TAGS = List.of(BlockTags.BASE_STONE_OVERWORLD, BlockTags.STONE_ORE_REPLACEABLES,
+			BlockTags.DEEPSLATE_ORE_REPLACEABLES, BlockTags.BASE_STONE_NETHER, BlockTags.ORES, BlockTags.SUBSTRATE_OVERWORLD, BlockTags.SAND);
+	/** Natural rock and earth no tag of {@link #NATURAL_TAGS} holds: gravel, clay, calcite, dripstone, sandstone and the dungeons' cobblestone. */
+	private static final Set<Block> NATURAL_BLOCKS = Set.of(Blocks.GRAVEL, Blocks.SUSPICIOUS_GRAVEL, Blocks.CLAY, Blocks.CALCITE, Blocks.DRIPSTONE_BLOCK,
+			Blocks.SANDSTONE, Blocks.RED_SANDSTONE, Blocks.COBBLESTONE, Blocks.MOSSY_COBBLESTONE);
+	/** The fake's shortest period: its gaps (within 2 of the period) are never shorter than {@code LEAD + MIN_DIG}, a dig. */
+	static final int FAKE_MIN_PERIOD = LEAD + MIN_DIG + 2;
 	/** The fake's rocks: the spot's own rock if it sounds like none of the burst's blocks, else the first of these that does not. */
 	private static final List<Block> FAKE_ROCKS = List.of(Blocks.DEEPSLATE, Blocks.STONE, Blocks.TUFF, Blocks.GRAVEL, Blocks.CALCITE, Blocks.DRIPSTONE_BLOCK);
 
@@ -119,9 +142,27 @@ public final class EchoMiningCard extends EchoCard {
 		return due;
 	}
 
-	/** A block that is mined (dug with a pickaxe or a shovel, never in one tick): what an echo replays. */
+	/**
+	 * A block that is mined, what an echo replays: natural rock or earth ({@link #natural}) dug with a pickaxe or a
+	 * shovel, never in no time at all (hardness above 0). Ice, packed and blue ice (their break is glass), a lantern, an
+	 * iron block or amethyst are pickaxe blocks but not rock: from inside the rock they would be sounds nothing there
+	 * makes.
+	 */
 	static boolean mined(BlockState state) {
-		return (state.is(BlockTags.MINEABLE_WITH_PICKAXE) || state.is(BlockTags.MINEABLE_WITH_SHOVEL)) && hardness(state) > 0.0;
+		return (state.is(BlockTags.MINEABLE_WITH_PICKAXE) || state.is(BlockTags.MINEABLE_WITH_SHOVEL)) && hardness(state) > 0.0 && natural(state);
+	}
+
+	/** Natural rock or earth: in one of {@link #NATURAL_TAGS} or one of {@link #NATURAL_BLOCKS}. */
+	static boolean natural(BlockState state) {
+		if (NATURAL_BLOCKS.contains(state.getBlock())) {
+			return true;
+		}
+		for (TagKey<Block> tag : NATURAL_TAGS) {
+			if (state.is(tag)) {
+				return true;
+			}
+		}
+		return false;
 	}
 
 	static double hardness(BlockState state) {
@@ -157,29 +198,38 @@ public final class EchoMiningCard extends EchoCard {
 	}
 
 	/**
-	 * Each break's dig time in ticks (0 for a block that breaks at once). Every break but the first: its gap from the
-	 * one before less {@link #LEAD}, at least 1, at most the block's time with a slow tool ({@code echoMiningSlowToolSpeed}).
-	 * The first: its hardness at the tool speed the others imply (their average), or {@code echoMiningToolSpeed} if none
-	 * does, within the same bounds.
+	 * Each break's dig time in ticks (0 for a block that breaks at once: no hit, as vanilla plays none for an instant
+	 * break). Every break but the first: its gap from the one before less {@link #LEAD}, at most the block's time with a
+	 * slow tool ({@code echoMiningSlowToolSpeed}); under {@link #MIN_DIG} it was an instant break (creative, or
+	 * instamined). The first: its hardness at the tool speed the others' digs imply (their average), or
+	 * {@code echoMiningToolSpeed} if no other break says anything, within the same bounds; instant if every other break
+	 * was instant (a creative or instamined run) or if that speed breaks it in under {@link #MIN_DIG}.
 	 */
 	static int[] digTicks(List<PlayerAction.Break> breaks, AtmosphereConfig cfg) {
 		int[] dig = new int[breaks.size()];
 		double speeds = 0.0;
 		int implied = 0;
+		int instant = 0;
 		for (int i = 1; i < breaks.size(); i++) {
 			double hardness = hardness(breaks.get(i).state());
 			if (hardness <= 0.0) {
 				continue;
 			}
 			long gap = breaks.get(i).tick() - breaks.get(i - 1).tick();
-			dig[i] = (int) Math.max(1, Math.min(gap - LEAD, slowest(hardness, cfg)));
+			long ticks = Math.min(gap - LEAD, slowest(hardness, cfg));
+			if (ticks < MIN_DIG) {
+				instant++;
+				continue;
+			}
+			dig[i] = (int) ticks;
 			speeds += DIG_FACTOR * hardness / dig[i];
 			implied++;
 		}
 		double first = hardness(breaks.getFirst().state());
-		if (first > 0.0) {
+		if (first > 0.0 && (implied > 0 || instant == 0)) {
 			double speed = implied > 0 ? speeds / implied : Math.max(0.1, cfg.echoMiningToolSpeed);
-			dig[0] = (int) Math.max(1, Math.min(Math.ceil(DIG_FACTOR * first / speed), slowest(first, cfg)));
+			long ticks = Math.min((long) Math.ceil(DIG_FACTOR * first / speed), slowest(first, cfg));
+			dig[0] = ticks < MIN_DIG ? 0 : (int) ticks;
 		}
 		return dig;
 	}
@@ -192,7 +242,9 @@ public final class EchoMiningCard extends EchoCard {
 	/**
 	 * The fake: as many breaks as {@code burst} (2 to 6 if there is none), of a rock that sounds like none of its blocks
 	 * ({@link #fakeBlock}), at {@code spot}, at a steady rhythm: a period from {@code echoMiningFakeGapMin/MaxTicks} at
-	 * least {@code max(6, 30%)} off the burst's mean gap, each gap within 2 ticks of it. Ticks from 0.
+	 * least {@code max(6, 30%)} off the burst's mean gap, each gap within 2 ticks of it. Ticks from 0. The period is at
+	 * least {@link #FAKE_MIN_PERIOD}, so every gap is a dig and the same rock never breaks at once one time and with hits
+	 * the next.
 	 */
 	static List<PlayerAction.Break> fakeBreaks(PlayerAction.@Nullable Mining burst, BlockState spotState, BlockPos spot, RandomSource random,
 			AtmosphereConfig cfg) {
@@ -206,7 +258,7 @@ public final class EchoMiningCard extends EchoCard {
 			mean = burst.gaps().stream().mapToLong(Long::longValue).average().orElse(Double.NaN);
 		}
 		BlockState block = fakeBlock(spotState, heard);
-		int lo = Math.max(1, cfg.echoMiningFakeGapMinTicks);
+		int lo = Math.max(FAKE_MIN_PERIOD, cfg.echoMiningFakeGapMinTicks);
 		int hi = (int) Math.min(PlayerAction.Mining.GAP_TICKS - 3, Math.max(lo, cfg.echoMiningFakeGapMaxTicks));
 		lo = Math.min(lo, hi);
 		int period = steadyPeriod(mean, lo, hi, random);

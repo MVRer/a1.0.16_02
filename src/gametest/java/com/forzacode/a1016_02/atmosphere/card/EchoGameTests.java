@@ -199,8 +199,25 @@ public class EchoGameTests extends RockSoundGameTests {
 		helper.assertTrue(gate != null && gate.open() == WoodType.BIRCH.fenceGateOpen() && gate.close() == WoodType.BIRCH.fenceGateClose(),
 				"a birch gate's own sounds: " + gate);
 		helper.assertTrue(EchoDoorCard.sounds(Blocks.STONE.defaultBlockState()) == null, "stone has door sounds");
+		// chest_opens: each container's own open and close sounds.
+		record Own(Block block, SoundEvent open, SoundEvent close) {
+		}
+		for (Own own : List.of(new Own(Blocks.CHEST, SoundEvents.CHEST_OPEN, SoundEvents.CHEST_CLOSE),
+				new Own(Blocks.TRAPPED_CHEST, SoundEvents.CHEST_OPEN, SoundEvents.CHEST_CLOSE),
+				new Own(Blocks.ENDER_CHEST, SoundEvents.ENDER_CHEST_OPEN, SoundEvents.ENDER_CHEST_CLOSE),
+				new Own(Blocks.BARREL, SoundEvents.BARREL_OPEN, SoundEvents.BARREL_CLOSE),
+				new Own(Blocks.SHULKER_BOX, SoundEvents.SHULKER_BOX_OPEN, SoundEvents.SHULKER_BOX_CLOSE))) {
+			ChestOpensCard.ContainerSounds sounds = ChestOpensCard.sounds(own.block().defaultBlockState());
+			helper.assertTrue(sounds.open() == own.open() && sounds.close() == own.close(), own.block() + " sounds like " + sounds);
+		}
+		for (Block copper : Blocks.COPPER_CHEST.asList()) {
+			ChestOpensCard.ContainerSounds sounds = ChestOpensCard.sounds(copper.defaultBlockState());
+			helper.assertTrue(copper instanceof net.minecraft.world.level.block.ChestBlock chest && sounds.open() == chest.getOpenChestSound()
+					&& sounds.close() == chest.getCloseChestSound() && sounds.open() != SoundEvents.CHEST_OPEN, copper + " sounds like " + sounds);
+		}
 
-		for (Block block : List.of(Blocks.STONE, Blocks.DEEPSLATE, Blocks.COAL_ORE, Blocks.DIRT, Blocks.GRAVEL, Blocks.GRASS_BLOCK, Blocks.COBBLESTONE)) {
+		for (Block block : List.of(Blocks.STONE, Blocks.DEEPSLATE, Blocks.COAL_ORE, Blocks.DIRT, Blocks.GRAVEL, Blocks.GRASS_BLOCK, Blocks.COBBLESTONE,
+				Blocks.TUFF, Blocks.CALCITE, Blocks.GRANITE, Blocks.DEEPSLATE_DIAMOND_ORE, Blocks.SAND, Blocks.CLAY, Blocks.NETHERRACK)) {
 			helper.assertTrue(EchoMiningCard.mined(block.defaultBlockState()), block + " is not mining");
 		}
 		for (Block block : List.of(Blocks.OAK_LOG, Blocks.TORCH, Blocks.SHORT_GRASS, Blocks.OAK_LEAVES, Blocks.BEDROCK)) {
@@ -286,6 +303,11 @@ public class EchoGameTests extends RockSoundGameTests {
 			}
 		}
 		helper.assertTrue(hitsAfterFirst.size() == 6 && hitsAfterFirst.getFirst() - firstBreak >= 59 - 23, "a pause is hammered: " + hitsAfterFirst);
+
+		// Instant breaks have no hit: a dug stone, then two broken at once (creative's 6 ticks, 7 with a tick of jitter);
+		// the first takes the dug one's speed.
+		int[] mixed = EchoMiningCard.digTicks(burst(here, BlockPos.ZERO, List.of(Blocks.STONE.defaultBlockState()), 0, 14, 21, 27).breaks(), cfg);
+		helper.assertTrue(mixed[0] == 8 && mixed[1] == 8 && mixed[2] == 0 && mixed[3] == 0, "dug and instant breaks: " + java.util.Arrays.toString(mixed));
 
 		// The fake: same size, another rock (stone, deepslate and coal ore all sound like stone or deepslate), another
 		// rhythm, still a burst.
@@ -524,8 +546,8 @@ public class EchoGameTests extends RockSoundGameTests {
 		helper.assertTrue(out.log.size() == 2, "not two sounds: " + out.log);
 		Played open = out.log.get(0);
 		Played close = out.log.get(1);
-		helper.assertTrue(open.tick() == 0 && open.sound() == BlockSetType.OAK.doorOpen() && open.pos().equals(door) && open.volume() == 1.0F,
-				"not the oak door's own open at the door: " + open);
+		helper.assertTrue(open.tick() == 0 && open.sound() == BlockSetType.OAK.doorOpen() && open.pos().equals(door)
+				&& open.volume() == (float) AtmosphereConfig.get().echoDoorVolume, "not the oak door's own open at the door: " + open);
 		helper.assertTrue(close.tick() == 23 && close.sound() == BlockSetType.OAK.doorClose() && close.pos().equals(door),
 				"not the oak door's own close 23 ticks later: " + close);
 		helper.assertTrue(open.hearers().equals(uuids(a, b)) && close.hearers().equals(uuids(a, b)), "heard by " + open.hearers() + ", not A and B");
@@ -644,6 +666,102 @@ public class EchoGameTests extends RockSoundGameTests {
 			}
 			helper.assertTrue(chosen.equals(c.chosen()), c.what() + ": chose " + chosen + ", not " + c.chosen());
 		}
+		helper.succeed();
+	}
+
+	// --- R4 (v1.3 review): echoes ---
+
+	/**
+	 * R4: chest_opens now picks the chest the player opened last, and a copper chest (26.3: a {@code ChestBlock} with a
+	 * {@code ChestBlockEntity}, so {@code WorldScan.chestsNear} finds it) has its own open and close sounds
+	 * ({@code ChestBlock.getOpenChestSound()}, as vanilla's {@code ChestBlockEntity} plays them). The card plays a wooden
+	 * chest's {@code CHEST_OPEN} at it: the player's own chest, out of sight, opening with a sound it never makes.
+	 */
+	@GameTest(dimension = "minecraft:the_end", structure = YARD, maxTicks = 100)
+	public void r4ChestOpensPlaysTheChestsOwnSound(GameTestHelper helper) {
+		ServerLevel level = helper.getLevel();
+		for (int x = 0; x < 24; x++) {
+			for (int z = 0; z < 24; z++) {
+				helper.setBlock(x, 0, z, Blocks.STONE);
+			}
+		}
+		Block copper = Blocks.COPPER_CHEST.asList().getFirst();
+		helper.assertTrue(copper instanceof net.minecraft.world.level.block.ChestBlock, "not a chest block: " + copper);
+		SoundEvent ownOpen = ((net.minecraft.world.level.block.ChestBlock) copper).getOpenChestSound();
+		helper.assertTrue(ownOpen != SoundEvents.CHEST_OPEN, "a copper chest sounds like a wooden one: " + ownOpen);
+		helper.setBlock(18, 1, 12, copper);
+		BlockPos chest = helper.absolutePos(new BlockPos(18, 1, 12));
+		ServerPlayer a = at(helper, new Vec3(12.5, 1.0, 12.5), 0.0F);
+		Watched watched = new Watched(a);
+		watched.watch.addAction(a, new PlayerAction.ContainerOpen(level.dimension(), chest, level.getBlockState(chest), level.getServer().getTickCount() - 200));
+		ChestOpensCard card = new ChestOpensCard();
+		List<CardSoundGameTests.Heard> log = new ArrayList<>();
+		card.sounds = CardSoundGameTests.recorder(log, List.of(a));
+		card.watch = () -> watched.watch;
+		card.outOfView = (l, box) -> true;
+		helper.assertTrue(card.fire(new FireContext(a, level, true, true, RandomSource.create(7))) == FireResult.FIRED, "chest_opens did not fire");
+		helper.assertTrue(!log.isEmpty() && BlockPos.containing(log.getFirst().pos()).equals(chest), "not the player's last chest: " + log);
+		helper.assertTrue(log.getFirst().sound().value() == ownOpen, "the copper chest opened with " + log.getFirst().sound().value().location()
+				+ ", not its own " + ownOpen.location());
+		helper.succeed();
+	}
+
+	/**
+	 * R4: an instant break has no hit. In 26.3 a dig's first hit is the client's own, at the dig's start
+	 * ({@code MultiPlayerGameMode.startDestroyBlock} calls {@code addBreakingBlockEffects(pos, dir, true)} only on the
+	 * not-instant path), the rest the server's every 4 ticks while {@code isDestroyingBlock}; a creative break and an
+	 * instant (instamined) survival break go straight to {@code destroyBlock}/{@code destroyAndAck}: no hit at all. Such a
+	 * run is spaced by creative's 5-tick destroy delay (6-tick gaps) or by nothing (1 to 3 ticks), so the gap less
+	 * {@link EchoMiningCard#LEAD} is 0 or less; {@link EchoMiningCard#digTicks} still gives every block at least 1 tick and
+	 * so a hit before each break: a creative or instamined burst comes back with a hit per block that never happened
+	 * (D-076: "the same number of hits and breaks").
+	 */
+	@GameTest
+	public void r4EchoMiningHitsAreVanillas(GameTestHelper helper) {
+		AtmosphereConfig cfg = AtmosphereConfig.get();
+		ResourceKey<Level> here = helper.getLevel().dimension();
+		record Run(String what, BlockState state, int gap) {
+		}
+		for (Run run : List.of(new Run("stone broken in creative (6-tick gaps)", Blocks.STONE.defaultBlockState(), EchoMiningCard.LEAD),
+				new Run("stone instamined (2-tick gaps)", Blocks.STONE.defaultBlockState(), 2))) {
+			PlayerAction.Mining burst = burst(here, BlockPos.ZERO, List.of(run.state()), 1000, 1000 + run.gap(), 1000 + 2L * run.gap(), 1000 + 3L * run.gap());
+			List<EchoCard.Beat> beats = EchoMiningCard.replay(burst.breaks(), cfg);
+			SoundType type = run.state().getSoundType();
+			long hits = beats.stream().filter(b -> b.sound().value() == type.getHitSound()).count();
+			helper.assertTrue(hits == 0, run.what() + ": the echo plays " + hits + " hits for 4 instant breaks (vanilla: none), at "
+					+ beats.stream().filter(b -> b.sound().value() == type.getHitSound()).map(EchoCard.Beat::at).toList());
+		}
+		helper.succeed();
+	}
+
+	/**
+	 * R4: echo_mining's "mined" is every pickaxe or shovel block (BlockTags.MINEABLE_WITH_PICKAXE / SHOVEL), and the replay
+	 * plays each block's own break from inside solid rock. Ice, packed and blue ice (their break is glass shattering), a
+	 * lantern, an iron block or amethyst are pickaxe blocks: a burst of harvested ice comes back as glass breaking inside
+	 * the rock 14 to 24 blocks away, a sound no mob, gravel, friend or the game could make there (D-076's deniability).
+	 */
+	@GameTest
+	public void r4EchoMiningNeverReplaysGlassOrMetalFromTheRock(GameTestHelper helper) {
+		for (Block block : List.of(Blocks.ICE, Blocks.PACKED_ICE, Blocks.BLUE_ICE, Blocks.LANTERN, Blocks.IRON_BLOCK, Blocks.AMETHYST_BLOCK)) {
+			helper.assertFalse(EchoMiningCard.mined(block.defaultBlockState()), block + " (it breaks as " + block.defaultBlockState().getSoundType()
+					.getBreakSound().location() + ") is echoed from inside the rock");
+		}
+		helper.succeed();
+	}
+
+	/**
+	 * R4: echo_door plays at vanilla's door volume (1: heard to 16 blocks, falling off linearly to nothing there) from a
+	 * door up to 16 blocks away, so the far end of its band is silent: at 16 blocks the player hears 0% of it, at 14
+	 * 12%. echo_mining's own check (theEchoCardsAreWhereD076PutsThem) holds its band inside its range; the door's band
+	 * reaches the edge of its range.
+	 */
+	@GameTest
+	public void r4EchoDoorIsHeardAcrossItsBand(GameTestHelper helper) {
+		AtmosphereConfig d = new AtmosphereConfig();
+		double range = Math.max(d.echoDoorVolume, 1.0) * 16;
+		double atFarEnd = 1.0 - d.echoDoorMaxDistance / range;
+		helper.assertTrue(range > d.echoDoorMaxDistance && atFarEnd >= 0.1, "the door echo at " + d.echoDoorMaxDistance + " blocks is heard at "
+				+ Math.round(Math.max(0, atFarEnd) * 100) + "% (range " + range + ")");
 		helper.succeed();
 	}
 }

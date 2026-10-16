@@ -149,8 +149,11 @@ public final class AtmosphereConfig implements ModConfig.Versioned {
 	public double echoMiningSlowToolSpeed = 2.0;
 	/** The tool speed assumed when the player's gaps tell nothing (6: iron). */
 	public double echoMiningToolSpeed = 6.0;
-	/** The fake's steady rhythm: a gap between its breaks from this many ticks... */
-	public int echoMiningFakeGapMinTicks = 8;
+	/**
+	 * The fake's steady rhythm: a gap between its breaks from this many ticks (at least 10, so each gap, give or take 2,
+	 * is a dig of 2 ticks or more after vanilla's 6-tick lead, never an instant break)...
+	 */
+	public int echoMiningFakeGapMinTicks = 10;
 	/** ...to this many (under 60, the 3 s that make a burst). */
 	public int echoMiningFakeGapMaxTicks = 50;
 	/** echo_door: a door, trapdoor or gate the player used at least this many minutes of their play ago... */
@@ -167,8 +170,13 @@ public final class AtmosphereConfig implements ModConfig.Versioned {
 	public int echoDoorGapMinTicks = 12;
 	/** ...to this many. */
 	public int echoDoorGapMaxTicks = 40;
-	/** Vanilla's door volume (heard to 16 blocks): the door's own sound, as loud as the door. */
-	public double echoDoorVolume = 1.0;
+	/**
+	 * The door's own sound, louder than vanilla's door (1: heard to 16 blocks, falling off linearly to nothing there, so
+	 * the band's far end was silent) so the whole 6 to 16 band carries: at 1.6 it is heard to 25.6 blocks (a volume v
+	 * reaches 16v), about three quarters of full at 6 blocks and over a third at 16; anyone else within 25.6 hears it
+	 * too (D-060), well inside the shared moment's 48.
+	 */
+	public double echoDoorVolume = 1.6;
 
 	// --- mining in the dark (timing gates are in Pacing) ---
 	public int miningMinDistance = 6;
