@@ -523,6 +523,39 @@ Only with friends.
 - **Force it.** `/a1016 sc 11 here` (from the cave spot nearest you, the visit rule skipped, view rules kept);
   `/a1016 fire sc_11`.
 
+As built (SC-3, `SelfCreatedWorldTests` and `SelfCreatedWorldTrailTests`, structure `world/sc/cave`):
+- **Code.** `world.sc`: `ScGates` (the common gates), `ScEnv` (live or a test's own players, state, data, view and fog),
+  `ScMarks` (in `world.dat` under the optional, lenient key `sc`: per base its turned and tracks counts with their last
+  day, and the trails left), `Prints`, `Turned`, `Tracks`, `WhereHeStood`, `TorchTrail` (each with its `Config`,
+  sections `sc08` to `sc11` v1, and its `Card`), `WorldSc` (init, reverts) and `ScCommands` (`/a1016 sc 08`, `09
+  [circle]`, `10 [here]`, `11 [here|reset]`). Common gates: the switch, every story-quiet flag
+  (`ScGates.QUIET_FLAGS`, with `ending:last_minute` and `director:obeyed_after_stop`), the overworld, 30 s of the
+  target's combat. A forced fire skips the combat gate, the days apart and the target's own distance; never a cap,
+  `nobodyWithin` or the view.
+- **08.** The facing points at the base cell (the respawn point, a bed when it is one). Signs and banners face their
+  rotation, a head the other way (vanilla places it by the player's own yaw). An asleep target is not counted in
+  `nobodyWithin`.
+- **09.** Each column's ground is `Prints.ground` near the last one found (`LiveTerrain` reads a roof over the door).
+  The open side: the door's outward way turned 0, ±25 or ±50 degrees, the turn with the most prints kept. A print
+  alternates between the line's cell and the one to its right. The house is the covered cells you can walk through,
+  flood-filled from inside the door (at most 8 from the base); the loop runs 2 cells out from their box, alternating
+  with 3. An asleep target or one inside is not counted in `nobodyWithin`. Snow loses one layer (a single layer goes).
+  The fake needs an animal within 32 of the base and is not counted for the base.
+- **10.** Also only for a figure that appeared for a known player of the story (nobody's, or a test's own player's,
+  leaves nothing). Stand, plants and run go in one batch; a stand column not loaded waits, run columns not loaded are
+  left out. `sc 10 here` forces every roll.
+- **11.** One batch, cause `world:left/t0rch/shaft`: only the shaft is ledgered (the torches and the sign are left, so
+  the batch's cause is theirs). Natural stone is `#base_stone_overworld` and the ore replaceables, never an ore; the
+  shaft's sides solid and dry. The mouth is the walk's first cell in a never-visited chunk, every later cell too.
+  Torches at head height (else the feet) on the first wall up to 4 cells right; the last window before the hole may
+  stay dark. The sign on the wall ahead (else a side), the floor torch beside the hole (else the cell before). A fire
+  tries the 4 nearest loaded cave spots within 160. `sc 11 reset` forgets the record (the trail stays).
+- **Switched off.** sc09 and sc10 give back through `TraceService.undo` what is loaded now (sc10 also drops its queue;
+  core clears the fog places); sc11 nothing (left by others). sc08 turns back by itself (`WorldSc.turnBack`: a block
+  still that block with only its facing changed, both entries then leave the ledger), because core's CONVERT undo
+  answers BLOCKED for every player-placed block ("built since"), so **Ending D never turns 08 back** until core blocks
+  only a block that changed since (core ask).
+
 ---
 
 ### dig

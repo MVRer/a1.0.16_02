@@ -12,6 +12,7 @@ import com.forzacode.a1016_02.world.live.LoneLightNearBaseCard;
 import com.forzacode.a1016_02.world.live.NewScarCard;
 import com.forzacode.a1016_02.world.live.NewScarPlacer;
 import com.forzacode.a1016_02.world.live.WorldWatch;
+import com.forzacode.a1016_02.world.sc.WorldSc;
 import com.forzacode.a1016_02.world.sig.HouseCopier;
 import com.forzacode.a1016_02.world.sig.LoneTorch;
 import com.forzacode.a1016_02.world.sig.SignatureCards;
@@ -60,6 +61,7 @@ public final class WorldInit {
 		Director.register(new SignatureCards.HouseElsewhereCard());
 		Director.register(new SignatureCards.CrossRowCard());
 		Director.register(new SignatureCards.LoneRedstoneTorchCard());
+		WorldSc.init();
 		PlayerBlockBreakEvents.AFTER.register((level, player, pos, state, blockEntity) -> {
 			if (level instanceof ServerLevel serverLevel && player instanceof ServerPlayer serverPlayer) {
 				WorldWatch.onBroken(serverLevel, serverPlayer, pos, state);
