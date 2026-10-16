@@ -1,7 +1,11 @@
 package com.forzacode.a1016_02.entity;
 
+import java.util.EnumMap;
+import java.util.Locale;
+import java.util.Map;
 import java.util.Optional;
 import java.util.OptionalDouble;
+import java.util.StringJoiner;
 
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
@@ -20,14 +24,18 @@ import org.jspecify.annotations.Nullable;
 
 /**
  * Where he stands in the screenshot (D-078): on the terrain, {@link Settings#nearShare} to {@link Settings#farShare}
- * (0.6 to 0.75) of the visible fog end from the camera to his middle, never nearer than {@link Settings#minDistance}
- * (12, as every sighting, D-035) nor farther than {@link Settings#maxDistance} (192, every sighting's cap), past the
- * visible fog start so the fog the frame is drawn with covers at least {@link Settings#minFog} of him, and at least
- * {@link Settings#minPixels} tall in the saved image ({@link #band}); inside the frame but off the middle (his middle
+ * (0.6 to 0.75) of the visible fog end from the camera to his middle, never farther than {@link Settings#maxDistance}
+ * (192, every sighting's cap) nor than where he is still {@link Settings#minPixels} tall in the saved image for the
+ * frame's own field of view and height ({@link View#reach}); when either is nearer than the far share, the band ends
+ * there and starts at the same proportion of it (0.6 / 0.75, so 0.8 of it), so a normal night's fog (the dusk fog at
+ * 16 chunks ends about 142 blocks out) puts him nearer instead of nowhere; never nearer than
+ * {@link Settings#minDistance} (12, as every sighting, D-035) nor before the fog the frame is drawn with covers at
+ * least {@link Settings#minFog} of him ({@link #band}); inside the frame but off the middle (his middle
  * {@link Settings#edgeMin} to {@link Settings#edgeMax}, 15 to 35%, of the frame's width from the left or the right edge),
  * his feet and the top of his head inside it, in plain sight of the camera, facing it. The math is pure
- * ({@link #find} with a {@link Fog}, a {@link Ground} and a {@link Sight}); {@link #feetY(Level, int, int)} and
- * {@link #clear(Level, Vec3, Vec3)} are the level's answers, the same on the client and in the game tests.
+ * ({@link #search} with a {@link Fog}, a {@link Ground} and a {@link Sight}, saying why when nothing fits);
+ * {@link #feetY(Level, int, int)} and {@link #clear(Level, Vec3, Vec3)} are the level's answers, the same on the client
+ * and in the game tests.
  */
 public final class ScreenshotSpot {
 	/** His height as drawn: the player model at the player's scale, hat layer included. */
@@ -189,6 +197,28 @@ public final class ScreenshotSpot {
 		}
 
 		/**
+		 * The nearest distance from the camera at which the drawn fog can cover {@code share} (0 to 1) of a point: the
+		 * nearer of where the environmental fog and the render-distance fog each reach it ({@code start + share * (end -
+		 * start)}), NaN if neither is usable. Each fog counts on its own, as the shader takes the larger of the two
+		 * ({@link #value}): at night the environmental fog runs from the camera to the dusk fog's end, so a point halfway
+		 * there is half fogged although the render-distance fog with the same end starts much later. The render-distance
+		 * fog is cylindrical, never farther than the spherical distance, so this is where a spot may first be fogged
+		 * enough; each spot is measured exactly after.
+		 */
+		public double coversFrom(double share) {
+			double s = Double.isNaN(share) ? 0.0 : Math.clamp(share, 0.0, 1.0);
+			double env = usable(environmentalEnd) ? reaches(environmentalStart, environmentalEnd, s) : Double.POSITIVE_INFINITY;
+			double render = usable(renderDistanceEnd) ? reaches(renderDistanceStart, renderDistanceEnd, s) : Double.POSITIVE_INFINITY;
+			double from = Math.min(env, render);
+			return Double.isInfinite(from) ? Double.NaN : from;
+		}
+
+		private static double reaches(double start, double end, double share) {
+			double from = Double.isFinite(start) ? start : 0.0;
+			return from < end ? from + share * (end - from) : from; // a fog that starts at or past its end is a step at its start
+		}
+
+		/**
 		 * How much the drawn fog covers a point at {@code offset} from the camera, 0 to 1, as the shader has it: the larger
 		 * of the environmental fog at the spherical distance and the render-distance fog at the cylindrical one
 		 * ({@code max(horizontal, |dy|)}), each linear from its start to its end.
@@ -240,24 +270,45 @@ public final class ScreenshotSpot {
 	}
 
 	/**
-	 * The distances he may stand at in this view and fog: from the farthest of {@code nearShare} of the visible fog end,
-	 * {@code minDistance} and where the visible fog covers {@code minFog} (past its start), to the nearest of
-	 * {@code farShare} of the end, {@code maxDistance} and where he can still be {@code minPixels} tall (at the side of
-	 * the frame where he is tallest, {@code edgeMin} from an edge: {@link View#reach}; each spot is measured exactly
-	 * after). Empty without a visible fog end, or when no distance meets them all (the arm then waits): at a render
-	 * distance of 32 a thin dusk fog ends about 310 blocks out, and 0.6 of it is past both caps.
+	 * The distances he may stand at in this view and fog. The far end is the nearest of {@code farShare} of the visible
+	 * fog end, {@code maxDistance} and his reach, where he can still be {@code minPixels} tall for this frame's field of
+	 * view and height (at the side of the frame where he is tallest, {@code edgeMin} from an edge: {@link View#reach};
+	 * each spot is measured exactly after). The near end is {@code nearShare} of the fog end, or, when the cap or the
+	 * reach is nearer than the far share, the same proportion of the far end ({@code nearShare / farShare}, 0.8), so the
+	 * band slides in with them instead of emptying; never under {@code minDistance} nor before the drawn fog can cover
+	 * {@code minFog} of him ({@link Fog#coversFrom}). A clear night's dusk fog at 16 chunks ends about 142 blocks out:
+	 * 0.6 of it is 85, past his reach in a 1080-pixel frame (about 80 at a 70-degree field of view), so he stands 64 to
+	 * 80 blocks off, about half in the fog. Empty without a visible fog end, or when no distance meets them all (the arm
+	 * then waits): a fog end inside the floor, or a fog that only starts past his reach.
 	 */
 	public static Band band(View view, Fog fog, Settings settings) {
 		double end = fog.visibleEnd();
 		if (!(end > 0.0) || !Double.isFinite(end)) {
 			return new Band(Double.NaN, Double.NaN);
 		}
-		double start = fog.visibleStart();
-		double fogged = start < end ? start + settings.minFog() * (end - start) : end;
-		double near = Math.max(settings.nearShare() * end, Math.max(settings.minDistance(), fogged));
+		double far = Math.min(settings.farShare() * end, Math.min(settings.maxDistance(), view.reach(settings.minPixels(), settings.edgeMin())));
+		double near = Math.min(settings.nearShare() * end, far * settings.nearShare() / settings.farShare());
+		return new Band(Math.max(near, Math.max(settings.minDistance(), fog.coversFrom(settings.minFog()))), far);
+	}
+
+	/**
+	 * Why {@link #band} is empty for this view and fog, in words for the log ("" if it is not): no visible fog end, or the
+	 * numbers that clash (the fog end, the floor, where the fog first covers him enough, his reach, the cap).
+	 */
+	public static String emptyBand(View view, Fog fog, Settings settings) {
+		Band band = band(view, fog, settings);
+		if (!band.isEmpty()) {
+			return "";
+		}
+		double end = fog.visibleEnd();
+		if (!(end > 0.0) || !Double.isFinite(end)) {
+			return "no visible fog end in the frame";
+		}
 		double reach = view.reach(settings.minPixels(), settings.edgeMin());
-		double far = Math.min(settings.farShare() * end, Math.min(settings.maxDistance(), reach));
-		return new Band(near, far);
+		return String.format(Locale.ROOT, "no distance fits (fog end %.1f: from %.1f, the farthest of %.0f and where the fog covers %.0f%% of him,"
+				+ " %.1f; to %.1f, the nearest of %.2f of it, his reach for %.0f px %.1f and the cap %.0f)", end, band.near(), settings.minDistance(),
+				settings.minFog() * 100.0, fog.coversFrom(settings.minFog()), band.far(), settings.farShare(), settings.minPixels(), reach,
+				settings.maxDistance());
 	}
 
 	/** True if a point at {@code screenX} of the width is off the middle, {@code edgeMin} to {@code edgeMax} from the nearer edge. */
@@ -274,89 +325,191 @@ public final class ScreenshotSpot {
 		return find(view, Fog.fromCamera(fogEnd), settings, ground, sight, random);
 	}
 
-	/**
-	 * A spot for him in this view and fog, or empty if none fits (the arm then waits for the next screenshot). Each try
-	 * picks a side and a place in that side's band of the width, and a distance in the {@link #band}; walks out level
-	 * along that column of the frame to the terrain ({@code ground}, block centres), once more with the height
-	 * difference taken out; and keeps the first spot whose middle is in the band and off the middle of the frame, whose
-	 * feet and head are inside the frame by the margin, who is {@code minPixels} tall in the saved image and covered by
-	 * {@code minFog} of the drawn fog, and whose head and chest the camera sees ({@code sight}).
-	 */
+	/** {@link #search}'s spot, or empty if none fits (the arm then waits for the next screenshot). */
 	public static Optional<Spot> find(View view, Fog fog, Settings settings, Ground ground, Sight sight, RandomSource random) {
+		return search(view, fog, settings, ground, sight, random).spot();
+	}
+
+	/** What a try that found no spot ran into ({@link Search#why}). */
+	public enum Miss {
+		/** The camera looks straight up or down: no column of the frame runs level. */
+		STRAIGHT("looking straight up or down"),
+		/** No ground he can stand on where the try walked out to (water, leaves, a fence, an unloaded chunk). */
+		NO_GROUND("no ground to stand on"),
+		/** Ground, but nearer or farther than the band once the height difference is taken out (a hill, a valley). */
+		OFF_BAND("the ground there is outside the band"),
+		/** In the middle of the frame, or his feet or head past its edge. */
+		FRAME("in the middle of the frame or cut by its edge"),
+		/** Under {@code minPixels} tall in the saved image. */
+		SMALL("too small in the picture"),
+		/** The drawn fog covers less than {@code minFog} of him. */
+		UNFOGGED("not in the fog"),
+		/** His head or chest hidden from the camera (a tree, a hill, a wall). */
+		HIDDEN("his head or chest hidden");
+
+		private final String words;
+
+		Miss(String words) {
+			this.words = words;
+		}
+
+		public String words() {
+			return words;
+		}
+	}
+
+	/**
+	 * A spot search's answer: the spot, or empty; the {@link #band} it searched; and why nothing fits ("" when a spot
+	 * did): the band's clash ({@link #emptyBand}), or the tries and what they ran into, most often first.
+	 */
+	public record Search(Optional<Spot> spot, Band band, String why) {
+	}
+
+	/** A try whose spot is too small walks nearer along its column at most this many times (FIX-PLAIN). */
+	static final int NEARER_STEPS = 3;
+
+	/**
+	 * A spot for him in this view and fog, or why none fits. Each try picks a side and a place in that side's band of
+	 * the width, and a distance in the {@link #band} no farther than his reach at that place of the width
+	 * ({@link View#reach}: he is taller toward the edges); walks out level along that column of the frame to the terrain
+	 * ({@code ground}, block centres), once more with the height difference taken out; and keeps the first spot whose
+	 * middle is in the band and off the middle of the frame, whose feet and head are inside the frame by the margin, who
+	 * is {@code minPixels} tall in the saved image and covered by {@code minFog} of the drawn fog, and whose head and
+	 * chest the camera sees ({@code sight}). The reach is a level view's: looking down from a height he is foreshortened
+	 * and smaller, so a try whose spot is too small walks nearer along its column (by the share of the height he lacks,
+	 * at most {@link #NEARER_STEPS} times), down to the floor ({@code minDistance}, or where the drawn fog first covers
+	 * {@code minFog} of him, the farther), for the farthest spot where he is still {@code minPixels} tall; from a hill
+	 * he may stand nearer than the band, never nearer than the floor. If even the near end of the band is past his reach
+	 * at that place of the width, the try starts at that reach.
+	 */
+	public static Search search(View view, Fog fog, Settings settings, Ground ground, Sight sight, RandomSource random) {
 		Band band = band(view, fog, settings);
 		if (band.isEmpty()) {
-			return Optional.empty();
+			return new Search(Optional.empty(), band, emptyBand(view, fog, settings));
 		}
+		double floor = Math.max(settings.minDistance(), fog.coversFrom(settings.minFog()));
+		Band nearer = new Band(Math.min(floor, band.near()), band.far());
 		Vec3 eye = view.eye();
 		Vec3 forward = view.forward();
 		Vec3 right = view.right();
 		double tanH = view.tanHorizontal();
+		EnumMap<Miss, Integer> misses = new EnumMap<>(Miss.class);
 		for (int i = 0; i < settings.tries(); i++) {
 			boolean left = random.nextBoolean();
 			double fromEdge = Mth.lerp(random.nextDouble(), settings.edgeMin(), settings.edgeMax());
 			double screenX = left ? fromEdge : 1.0 - fromEdge;
-			double distance = Mth.lerp(random.nextDouble(), band.near(), band.far());
+			double pick = random.nextDouble();
 			// The column of the frame at that x, level: the look plus the sideways part of that column's ray.
 			Vec3 ray = forward.add(right.scale((2.0 * screenX - 1.0) * tanH));
 			double length = Math.sqrt(ray.x * ray.x + ray.z * ray.z);
 			if (length < 1.0E-6) {
-				continue; // looking straight up or down
+				misses.merge(Miss.STRAIGHT, 1, Integer::sum);
+				continue;
 			}
 			double dx = ray.x / length;
 			double dz = ray.z / length;
+			double far = Math.min(band.far(), view.reach(settings.minPixels(), screenX));
+			Band accept = far < band.near() ? nearer : band;
+			double distance = far < band.near() ? far : Mth.lerp(pick, band.near(), far);
+			// What the try ran into first: a nearer step after "too small" that fails (out of the frame, no ground) still
+			// counts as too small.
+			Miss miss = null;
 			double horizontal = distance;
-			Optional<Spot> spot = Optional.empty();
-			for (int pass = 0; pass < 2 && spot.isEmpty(); pass++) {
-				int column = Mth.floor(eye.x + dx * horizontal);
-				int row = Mth.floor(eye.z + dz * horizontal);
-				OptionalDouble y = ground.feetY(column, row);
-				if (y.isEmpty()) {
+			for (int step = 0; step <= NEARER_STEPS && distance >= nearer.near() - 1.0E-9; step++) {
+				Walk walk = walk(eye, dx, dz, distance, horizontal, accept, ground);
+				if (walk.feet() == null) {
+					miss = miss == null ? walk.miss() : miss;
 					break;
 				}
-				Vec3 feet = new Vec3(column + 0.5, y.getAsDouble(), row + 0.5);
-				Vec3 middle = feet.add(0.0, MIDDLE, 0.0);
-				double actual = middle.distanceTo(eye);
-				if (band.contains(actual)) {
-					spot = fits(view, fog, feet, actual, settings, sight);
+				Fit fit = fit(view, fog, walk.feet(), walk.actual(), settings, sight);
+				if (fit.spot() != null) {
+					return new Search(Optional.of(fit.spot()), band, "");
+				}
+				miss = miss == null ? fit.miss() : miss;
+				if (fit.miss() != Miss.SMALL || !(fit.pixels() > 0.0)) {
 					break;
 				}
-				double rise = middle.y - eye.y;
-				if (Math.abs(rise) >= distance) {
-					break;
-				}
-				horizontal = Math.sqrt(distance * distance - rise * rise);
+				// Too small (foreshortened from a height): nearer by the share of the height he lacks, a little more,
+				// walking out with the height difference already taken out, and only nearer than this spot.
+				distance = walk.actual() * fit.pixels() / settings.minPixels() * 0.97;
+				double rise = walk.feet().y + MIDDLE - eye.y;
+				horizontal = Math.sqrt(Math.max(0.0, distance * distance - rise * rise));
+				accept = new Band(nearer.near(), walk.actual() - 1.0E-6);
 			}
-			if (spot.isPresent()) {
-				return spot;
-			}
+			misses.merge(miss == null ? Miss.SMALL : miss, 1, Integer::sum);
 		}
-		return Optional.empty();
+		StringJoiner joiner = new StringJoiner(", ");
+		misses.entrySet().stream().sorted(Map.Entry.<Miss, Integer>comparingByValue().reversed())
+				.forEach(e -> joiner.add(e.getKey().words() + " " + e.getValue()));
+		return new Search(Optional.empty(), band, String.format(Locale.ROOT, "no spot in %d tries %.1f to %.1f blocks off, nearer to %.1f if too small (%s)",
+				settings.tries(), band.near(), band.far(), nearer.near(), joiner));
+	}
+
+	/** Where a try's walk out ended: his feet on the ground with his middle {@code actual} away inside the band, or what it ran into. */
+	private record Walk(@Nullable Vec3 feet, double actual, @Nullable Miss miss) {
+	}
+
+	/**
+	 * Walks out level along a column of the frame ({@code dx}, {@code dz}) {@code firstHorizontal} to the terrain, then
+	 * once more with the height difference to {@code distance} taken out, to ground whose spot has its middle inside
+	 * {@code accept}.
+	 */
+	private static Walk walk(Vec3 eye, double dx, double dz, double distance, double firstHorizontal, Band accept, Ground ground) {
+		double horizontal = firstHorizontal;
+		for (int pass = 0; pass < 2; pass++) {
+			int column = Mth.floor(eye.x + dx * horizontal);
+			int row = Mth.floor(eye.z + dz * horizontal);
+			OptionalDouble y = ground.feetY(column, row);
+			if (y.isEmpty()) {
+				return new Walk(null, Double.NaN, Miss.NO_GROUND);
+			}
+			Vec3 feet = new Vec3(column + 0.5, y.getAsDouble(), row + 0.5);
+			Vec3 middle = feet.add(0.0, MIDDLE, 0.0);
+			double actual = middle.distanceTo(eye);
+			if (accept.contains(actual)) {
+				return new Walk(feet, actual, null);
+			}
+			double rise = middle.y - eye.y;
+			if (Math.abs(rise) >= distance) {
+				break;
+			}
+			horizontal = Math.sqrt(distance * distance - rise * rise);
+		}
+		return new Walk(null, Double.NaN, Miss.OFF_BAND);
+	}
+
+	/** One try's end: the spot, or what it ran into (and how tall he was, once that was measured). */
+	private record Fit(@Nullable Spot spot, @Nullable Miss miss, double pixels) {
 	}
 
 	/** The spot at {@code feet} if he is off the middle, inside the frame, tall enough, fogged and seen; else empty. */
 	static Optional<Spot> fits(View view, Fog fog, Vec3 feet, double distance, Settings settings, Sight sight) {
+		return Optional.ofNullable(fit(view, fog, feet, distance, settings, sight).spot());
+	}
+
+	private static Fit fit(View view, Fog fog, Vec3 feet, double distance, Settings settings, Sight sight) {
 		Screen middle = view.project(feet.add(0.0, MIDDLE, 0.0));
 		Screen bottom = view.project(feet);
 		Screen top = view.project(feet.add(0.0, BODY_HEIGHT, 0.0));
 		if (middle == null || bottom == null || top == null || !offCentre(middle.x(), settings)) {
-			return Optional.empty();
+			return new Fit(null, Miss.FRAME, 0.0);
 		}
 		if (!bottom.inside(settings.frameMargin()) || !top.inside(settings.frameMargin())) {
-			return Optional.empty();
+			return new Fit(null, Miss.FRAME, 0.0);
 		}
 		double pixels = view.pixelsTall(feet);
 		if (!(pixels >= settings.minPixels())) {
-			return Optional.empty();
+			return new Fit(null, Miss.SMALL, pixels);
 		}
 		Vec3 eye = view.eye();
 		double fogged = fog.value(feet.add(0.0, MIDDLE, 0.0).subtract(eye));
 		if (!(fogged >= settings.minFog())) {
-			return Optional.empty();
+			return new Fit(null, Miss.UNFOGGED, pixels);
 		}
 		if (!sight.clear(eye, feet.add(0.0, HEAD, 0.0)) || !sight.clear(eye, feet.add(0.0, CHEST, 0.0))) {
-			return Optional.empty();
+			return new Fit(null, Miss.HIDDEN, pixels);
 		}
-		return Optional.of(new Spot(feet, HimEntity.yawToward(feet, eye), middle.x(), distance, pixels, fogged));
+		return new Fit(new Spot(feet, HimEntity.yawToward(feet, eye), middle.x(), distance, pixels, fogged), null, pixels);
 	}
 
 	/**

@@ -3,6 +3,7 @@ package com.forzacode.a1016_02.entity;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
+import java.util.Optional;
 
 import com.forzacode.a1016_02.core.ModConfig;
 import com.forzacode.a1016_02.core.Pacing;
@@ -27,8 +28,13 @@ public record Watchers(List<Watcher> all) {
 	 * @param renderLimit the client's full render distance in blocks (the smaller of its requested view distance and
 	 *                    the server's), where vanilla fog is complete. Never the dusk-pulled value.
 	 * @param takesPart   alive and not spectating: one of those his rules watch (whom he flees), not only a viewer
+	 * @param name        the player's name, for a debug line ({@link #seenBy}); "someone" when not given
 	 */
-	public record Watcher(TraceService.Viewer viewer, double renderLimit, boolean takesPart) {
+	public record Watcher(TraceService.Viewer viewer, double renderLimit, boolean takesPart, String name) {
+		public Watcher(TraceService.Viewer viewer, double renderLimit, boolean takesPart) {
+			this(viewer, renderLimit, takesPart, "someone");
+		}
+
 		public Watcher(TraceService.Viewer viewer, double renderLimit) {
 			this(viewer, renderLimit, true);
 		}
@@ -43,7 +49,8 @@ public record Watchers(List<Watcher> all) {
 	public static Watchers of(List<? extends ServerPlayer> players, int serverChunks) {
 		List<Watcher> list = new ArrayList<>();
 		for (ServerPlayer player : players) {
-			list.add(new Watcher(TraceService.Viewer.of(player, serverChunks), FogEdge.of(player, false).renderLimit(), player.isAlive() && !player.isSpectator()));
+			list.add(new Watcher(TraceService.Viewer.of(player, serverChunks), FogEdge.of(player, false).renderLimit(), player.isAlive() && !player.isSpectator(),
+					player.getName().getString()));
 		}
 		return new Watchers(list);
 	}
@@ -53,6 +60,20 @@ public record Watchers(List<Watcher> all) {
 		Pacing pacing = ModConfig.pacing();
 		List<TraceService.Viewer> viewers = all.stream().map(Watcher::viewer).toList();
 		return !TraceService.isOutOfView(level, box, viewers, pacing.viewNearBlocks, pacing.viewConeDegrees);
+	}
+
+	/**
+	 * The first watcher who sees the box by {@link #sees}' rule, by name (empty: nobody does, exactly when {@link #sees}
+	 * is false).
+	 */
+	public Optional<String> seenBy(Level level, AABB box) {
+		Pacing pacing = ModConfig.pacing();
+		for (Watcher watcher : all) {
+			if (TraceService.sees(level, watcher.viewer(), box, pacing.viewNearBlocks, pacing.viewConeDegrees)) {
+				return Optional.of(watcher.name());
+			}
+		}
+		return Optional.empty();
 	}
 
 	/**

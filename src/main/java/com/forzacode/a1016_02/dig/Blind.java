@@ -55,8 +55,9 @@ import org.jspecify.annotations.Nullable;
  * <li>{@code blind_step}: one or two footsteps 3 to 5 blocks behind them, against their facing, the floor block's own
  * step sound (the ladder's recipe); fake: their own step, late.</li>
  * <li>{@code blind_torch}: a torch or lantern a player placed, 6 to 20 blocks away and out of everyone's view, goes
- * ({@link TraceService#remove}, cause {@value #CAUSE_TORCH}): only while another light source is within 8 blocks of
- * it, never the last light within 6 blocks of a bed; its support stays.</li>
+ * ({@link TraceService#remove}, cause {@value #CAUSE_TORCH}): never the last light within 6 blocks of a bed (a real
+ * one: a respawn point), and, only if {@code blindTorchOtherLightRadius} is set (0, off, by default since
+ * FIX-GLIMPSE), only while another light source is that near it; its support stays.</li>
  * <li>{@code blind_door}: a closed door, trapdoor or fence gate 4 to 12 blocks away and out of view plays its own open
  * then close sound; nothing moves.</li>
  * </ul>
@@ -311,6 +312,24 @@ final class Blind {
 		return Tunnels.isTorch(state) || state.getBlock() instanceof LanternBlock;
 	}
 
+	/** {@code blind_torch}'s torch now, or (null) why none may go, in the player's words ({@code /a1016 dig blind}, the arm). */
+	record TorchPick(@Nullable BlockPos torch, String why) {
+	}
+
+	/** Why one light may not go (the view aside: it is asked last, and only of a light that passed these). */
+	enum TorchRule {
+		PROTECTED("in a protected area"),
+		ALONE("no other light near it"),
+		BED("the last light near a bed"),
+		REFUSED("refused by the trace service");
+
+		final String text;
+
+		TorchRule(String text) {
+			this.text = text;
+		}
+	}
+
 	/**
 	 * The torch {@code blind_torch} takes now, or null: the nearest light ({@link #isBlindLight}) a player placed
 	 * ({@link PlayerWatch#wasPlacedByPlayer}) {@code blindTorchMinDistance} to {@code blindTorchMaxDistance} (6 to 20)
@@ -318,12 +337,21 @@ final class Blind {
 	 * says which to pass over (a torch the trace service just refused).
 	 */
 	static @Nullable BlockPos torch(ServerPlayer player, Env env, @Nullable Predicate<BlockPos> skip) {
+		return pickTorch(player, env, skip).torch();
+	}
+
+	/**
+	 * {@link #torch}, with why none may go when there is none (FIX-GLIMPSE): "none placed by a player 6 to 20 blocks
+	 * away", or how many each rule kept: "2 in view (the nearest: torch at 1 64 2, 9 blocks)", "1 the last light near a
+	 * bed", "1 in a protected area", "1 refused by the trace service".
+	 */
+	static TorchPick pickTorch(ServerPlayer player, Env env, @Nullable Predicate<BlockPos> skip) {
 		ServerLevel level = player.level();
 		DigConfig config = env.config();
 		int max = Math.max(0, config.blindTorchMaxDistance);
 		BlockPos feet = player.blockPosition();
 		if (!Tunnels.chunksLoaded(level, feet, max)) {
-			return null;
+			return new TorchPick(null, "the chunks around you are not all loaded");
 		}
 		Vec3 at = player.position();
 		double minSqr = (double) config.blindTorchMinDistance * config.blindTorchMinDistance;
@@ -336,40 +364,74 @@ final class Blind {
 			}
 		}
 		if (lights.isEmpty()) {
-			return null;
+			return new TorchPick(null, String.format(Locale.ROOT, "no torch or lantern placed by a player %d to %d blocks away", config.blindTorchMinDistance, max));
 		}
 		lights.sort(Comparator.comparingDouble(pos -> pos.distToCenterSqr(at)));
-		List<BlockPos> beds = env.bases().all(level.dimension());
+		List<BlockPos> beds = env.bases().beds(level);
+		int[] kept = new int[TorchRule.values().length];
+		int inView = 0;
+		BlockPos nearestInView = null;
 		for (BlockPos light : lights) {
-			if ((skip == null || !skip.test(light)) && torchMayGo(level, light, beds, config) && env.view().outOfView(level, List.of(light))) {
-				return light;
+			if (skip != null && skip.test(light)) {
+				kept[TorchRule.REFUSED.ordinal()]++;
+				continue;
+			}
+			TorchRule rule = torchRule(level, light, beds, config);
+			if (rule != null) {
+				kept[rule.ordinal()]++;
+				continue;
+			}
+			if (!env.view().outOfView(level, List.of(light))) {
+				if (nearestInView == null) {
+					nearestInView = light;
+				}
+				inView++;
+				continue;
+			}
+			return new TorchPick(light, "ok");
+		}
+		List<String> parts = new ArrayList<>();
+		if (inView > 0) {
+			parts.add(String.format(Locale.ROOT, "%s in view (the nearest: %s at %s, %.0f blocks)", inView == lights.size() ? "all " + inView : inView,
+					level.getBlockState(nearestInView).getBlock().getName().getString().toLowerCase(Locale.ROOT), nearestInView.toShortString(),
+					Math.sqrt(nearestInView.distToCenterSqr(at))));
+		}
+		for (TorchRule rule : TorchRule.values()) {
+			if (kept[rule.ordinal()] > 0) {
+				parts.add(kept[rule.ordinal()] + " " + rule.text);
 			}
 		}
-		return null;
+		return new TorchPick(null, String.join(", ", parts));
 	}
 
 	/**
-	 * The light rules (D-077), the view aside: not in a protected area, another light source within
-	 * {@code blindTorchOtherLightRadius} (8) of it (the cheap rule for "never the only light of a spawn-proof room"), and
-	 * never the last light within {@code blindTorchBedRadius} (6) of a bed: any base dig knows in this level ({@link
-	 * Bases#all}: each known player's respawn point, else the last base dig saw, else their first block). A light
-	 * source is a block giving at least {@code blindTorchOtherLightMin} (7) light.
+	 * The light rules (D-077), the view aside: not in a protected area, never the last light within
+	 * {@code blindTorchBedRadius} (6) of a bed (a real one: {@link Bases#beds}, each known player's respawn point, never
+	 * their first placed block), and only if {@code blindTorchOtherLightRadius} is over 0 (off by default since
+	 * FIX-GLIMPSE: cave torches are farther apart than its old 8, so none ever went), another light source within it (the
+	 * cheap rule for "never the only light of a spawn-proof room"). A light source is a block giving at least
+	 * {@code blindTorchOtherLightMin} (7) light.
 	 */
 	static boolean torchMayGo(ServerLevel level, BlockPos torch, List<BlockPos> beds, DigConfig config) {
+		return torchRule(level, torch, beds, config) == null;
+	}
+
+	/** The rule {@link #torchMayGo} keeps the light by, or null. */
+	static @Nullable TorchRule torchRule(ServerLevel level, BlockPos torch, List<BlockPos> beds, DigConfig config) {
 		if (Services.protectedAreas().isProtected(level.dimension(), torch)) {
-			return false;
+			return TorchRule.PROTECTED;
 		}
 		int min = config.blindTorchOtherLightMin;
-		if (!lightNear(level, torch, config.blindTorchOtherLightRadius, torch, min)) {
-			return false;
+		if (config.blindTorchOtherLightRadius > 0 && !lightNear(level, torch, config.blindTorchOtherLightRadius, torch, min)) {
+			return TorchRule.ALONE;
 		}
 		long bedRadius = config.blindTorchBedRadius;
 		for (BlockPos bed : beds) {
 			if (torch.distSqr(bed) <= bedRadius * bedRadius && !lightNear(level, bed, config.blindTorchBedRadius, torch, min)) {
-				return false;
+				return TorchRule.BED;
 			}
 		}
-		return true;
+		return null;
 	}
 
 	/** True if a block within {@code radius} of {@code center}, other than {@code except}, gives at least {@code min} light (loaded chunks only). */
@@ -392,6 +454,28 @@ final class Blind {
 			refused.add(torch.immutable());
 		}
 		return FireResult.NO_SPOT;
+	}
+
+	/**
+	 * Why {@code kind} does not fit now, in the player's words: the gate, or for the torch why none may go
+	 * ({@link #pickTorch}); after a fire answered {@code result}, a torch that may go yet did not was refused by the
+	 * trace service (a veto, or someone came into view).
+	 */
+	static String reason(Kind kind, ServerPlayer player, Env env, @Nullable FireResult result) {
+		Why why = gates(player, env);
+		if (why != null) {
+			return why.text;
+		}
+		if (kind == Kind.TORCH) {
+			TorchPick pick = pickTorch(player, env, null);
+			if (pick.torch() == null) {
+				return Why.NO_TORCH.text + ": " + pick.why();
+			}
+			return result == FireResult.NO_SPOT ? "the trace service refused the torch at " + pick.torch().toShortString() : "it fits now (the torch at "
+					+ pick.torch().toShortString() + ")";
+		}
+		why = check(kind, player, env);
+		return why == null ? "it fits now" : why.text;
 	}
 
 	// --- blind_door ---
@@ -580,8 +664,12 @@ final class Blind {
 				blind > 0 ? String.format(Locale.ROOT, "blind for %.1f s", blind / 20.0) : "not blind", minBlindTicks(env.config()) / 20.0));
 		for (Kind kind : Kind.values()) {
 			Why why = check(kind, player, env);
-			lines.add(kind.id + ": " + (why == null ? "fits now" : "no (" + why.text + ")"));
+			lines.add(kind.id + ": " + (why == null ? "fits now" : "no (" + (why == Why.NO_TORCH ? reason(kind, player, env, null) : why.text) + ")"));
 		}
+		TorchPick pick = pickTorch(player, env, null);
+		lines.add("blind_torch's torch, the blind moment aside: " + (pick.torch() == null ? "none may go (" + pick.why() + ")"
+				: String.format(Locale.ROOT, "%s at %s, %.0f blocks away", player.level().getBlockState(pick.torch()).getBlock().getName().getString()
+						.toLowerCase(Locale.ROOT), pick.torch().toShortString(), Math.sqrt(pick.torch().distToCenterSqr(player.position())))));
 		BlindCues cues = DigTicker.INSTANCE.blind();
 		lines.add("sounds now: " + cues.sequence(player.getUUID()).map(BlindCues.Sequence::describe).orElse("none"));
 		lines.add("armed: " + cues.armed(player.getUUID()).map(BlindCues.Armed::describe).orElse("nothing"));

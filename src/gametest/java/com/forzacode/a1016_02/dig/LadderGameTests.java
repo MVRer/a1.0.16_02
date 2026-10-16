@@ -204,10 +204,12 @@ public class LadderGameTests {
 		helper.assertTrue(fresh.fire(Ladder.Rung.GLIMPSE, kim, false, true, 8L) == FireResult.FIRED, "a forced rung 3 waited for the rung order");
 		helper.assertTrue(fresh.memory(kim).rung == 3 && fresh.memory(kim).lastEvent == Long.MIN_VALUE && fresh.memory(kim).glimpseDay == Long.MIN_VALUE,
 				"a forced rung 3 was not remembered for the order only");
-		// The debug command's lines (/a1016 dig steps): the memory, the detector and each rung's answer.
+		// The debug command's lines (/a1016 dig steps): the memory, the detector, each rung's answer, rung 3's lights and
+		// each of its candidates, the steps and the arm.
 		List<String> lines = Ladder.debugLines(kim, fresh.env());
-		helper.assertTrue(lines.size() == 7 && lines.get(2).startsWith("detector: a run of 32 cells") && lines.get(5).startsWith(Ladder.Rung.GLIMPSE.id),
-				"debug lines: " + lines);
+		helper.assertTrue(lines.size() == 10 && lines.get(2).startsWith("detector: a run of 32 cells") && lines.get(5).startsWith(Ladder.Rung.GLIMPSE.id)
+				&& lines.get(6).startsWith("steps_behind_glimpse lights 6 to 24 back: ") && lines.get(7).startsWith("steps_behind_glimpse spots (14 to 20 back): 14 ")
+				&& lines.get(9).equals("armed: nothing"), "debug lines: " + lines);
 		helper.succeed();
 	}
 
@@ -267,11 +269,14 @@ public class LadderGameTests {
 				helper.assertTrue(i == 1 ? gap >= cadence - 1 && gap <= cadence : gap == cadence, "step " + i + " came " + gap + " ticks after the one before");
 			}
 			helper.assertTrue(step.source() == SoundSource.PLAYERS, "not a players' sound");
-			helper.assertTrue(step.volume() > 0 && step.volume() <= 1.0F && step.volume() >= louder, "volume " + step.volume() + " after " + louder);
-			float expected = Ladder.volumeAt(step.pos().distanceTo(player.position()), config) * factor;
+			double distance = step.pos().distanceTo(player.position());
+			float expected = Ladder.stepVolume(distance, factor, config);
 			helper.assertTrue(Math.abs(step.volume() - expected) < 1.0E-4, "volume " + step.volume() + ", expected " + expected);
+			double ear = GlimpseFeedbackTests.gain(step.volume(), distance);
+			helper.assertTrue(step.volume() > 0 && step.volume() <= Math.max(config.ladderVolumeFar, config.ladderVolumeNear) + 1.0E-6 && ear >= louder - 1.0E-9,
+					"volume " + step.volume() + " (" + ear + " at the ear) after " + louder);
 			previous = back;
-			louder = step.volume();
+			louder = (float) ear;
 		}
 		int first = LadderRig.backAlongX(player, heard.getFirst().pos());
 		int last = LadderRig.backAlongX(player, heard.getLast().pos());
@@ -415,9 +420,11 @@ public class LadderGameTests {
 	}
 
 	/**
-	 * Rung 3: the figure is asked ({@code canGlimpse}) before any step, for the nearest dark spot 14 to 20 back past the
-	 * torchlight; the steps come up to it and the figure is called ({@code glimpse}) at the last step's cell, facing the
-	 * player, in the tick of the last step.
+	 * Rung 3: the figure is asked ({@code canGlimpse}) before any step; the torch the player placed 6 back goes first
+	 * (FIX-GLIMPSE: he makes the dark), so the spot is the nearest of the cells that will be pitch dark, 14 back; the
+	 * steps come up to it, the dark and the figure are checked again at the last step, and the figure is called
+	 * ({@code glimpse}) at the last step's cell, facing the player, in the tick of the last step. The light engine takes
+	 * in the torch, and then its going, before the plan and before the last step ({@link DigGround#settleLight}).
 	 */
 	@GameTest(maxTicks = 600)
 	public void glimpseAsksTheFigureFirstAndCallsItAtTheLastStep(GameTestHelper helper) {
@@ -426,28 +433,35 @@ public class LadderGameTests {
 		LadderRig rig = new LadderRig(helper, g, "Alex");
 		rig.tunnelX(2, 41, 3, 4);
 		ServerPlayer alex = rig.stand("Alex", 40, 3, 4, LadderRig.EAST);
-		BlockPos torch = g.at(34, 3, 4); // 6 back: its light reaches 3 at 17 back
+		BlockPos torch = g.at(34, 3, 4); // 6 back: its light reaches 3 at 17 back, until it goes
 		g.place(torch, Blocks.TORCH.defaultBlockState());
-		BlockPos spot = g.at(40 - 17, 3, 4);
-		boolean[] fired = {false};
-		helper.succeedWhen(() -> {
-			if (!fired[0]) {
-				helper.assertTrue(light(g, torch) == 14 && light(g, torch.west(6)) == 8 && light(g, spot) == 3 && light(g, spot.east()) == 4,
-						"the torchlight has not settled yet");
-				helper.assertTrue(rig.fire(Ladder.Rung.GLIMPSE, alex, false, true, 51L) == FireResult.FIRED, "rung 3 did not fire: "
-						+ Ladder.check(Ladder.Rung.GLIMPSE, alex, rig.env(), true).why());
-				fired[0] = true;
-				helper.assertTrue(!rig.asked.isEmpty() && rig.heard.isEmpty(), "the figure was not asked before the first step");
+		BlockPos spot = g.at(40 - 14, 3, 4);
+		helper.startSequence().thenExecute(() -> {
+			g.settleLight();
+			helper.assertTrue(light(g, torch) == 14 && light(g, torch.west(6)) == 8 && light(g, g.at(40 - 17, 3, 4)) == 3, "the torchlight is not there");
+			for (int back = 14; back <= 20; back++) {
+				BlockPos cell = g.at(40 - back, 3, 4);
+				helper.assertTrue(g.level.getBrightness(LightLayer.SKY, cell) == 0 && g.level.getBrightness(LightLayer.SKY, cell.above()) == 0,
+						"sky light in the tunnel " + back + " back");
 			}
-			helper.assertFalse(LadderRig.walking(alex), "the steps are still coming");
+			helper.assertTrue(rig.fire(Ladder.Rung.GLIMPSE, alex, false, true, 51L) == FireResult.FIRED, "rung 3 did not fire: "
+					+ Ladder.check(Ladder.Rung.GLIMPSE, alex, rig.env(), true).why());
+			helper.assertTrue(!rig.asked.isEmpty() && rig.heard.isEmpty(), "the figure was not asked before the first step");
+			helper.assertTrue(g.level.getBlockState(torch).isAir(), "the torch behind did not go");
+			g.settleLight(); // the torch's going, long before the last step
+			helper.assertTrue(Ladder.light(g.level, spot) == 0, "the spot is not dark once the torch went: " + Ladder.light(g.level, spot));
+		}).thenWaitUntil(() -> helper.assertFalse(LadderRig.walking(alex), "the steps are still coming")).thenExecute(() -> {
 			LadderRig.Asked first = rig.asked.getFirst();
-			helper.assertTrue(!first.spawn() && first.feet().equals(Vec3.atBottomCenterOf(spot)), "the first spot asked is not the nearest dark one: " + first);
-			helper.assertTrue(rig.asked.stream().filter(a -> !a.spawn()).allMatch(a -> a.tick() <= rig.heard.getFirst().tick()), "asked after the steps began");
+			helper.assertTrue(!first.spawn() && first.feet().equals(Vec3.atBottomCenterOf(spot)), "the first spot asked is not the nearest pitch dark one: "
+					+ first);
+			long lastTick = rig.heard.getLast().tick();
+			helper.assertTrue(rig.asked.stream().filter(a -> !a.spawn()).allMatch(a -> a.tick() <= rig.heard.getFirst().tick() || a.tick() == lastTick),
+					"asked while the steps came");
 			helper.assertTrue(rig.heard.size() >= 3 && rig.heard.size() <= rig.config.ladderGlimpseStepsMax, rig.heard.size() + " steps");
 			double previous = Double.MAX_VALUE;
 			for (LadderRig.Heard step : rig.heard) {
 				double back = LadderRig.exactBackAlongX(alex, step.pos());
-				helper.assertTrue(back < previous && back >= 17 - 1.0E-6, "the steps do not come up to the spot: " + back + " after " + previous);
+				helper.assertTrue(back < previous && back >= 14 - 1.0E-6, "the steps do not come up to the spot: " + back + " after " + previous);
 				helper.assertTrue(step.volume() <= rig.config.ladderGlimpseVolumeMax + 1.0E-6, "a reaching step at " + step.volume());
 				previous = back;
 			}
@@ -461,13 +475,13 @@ public class LadderGameTests {
 			Vec3 toAlex = alex.position().subtract(him.feet()).multiply(1, 0, 1).normalize();
 			helper.assertTrue(facing.dot(toAlex) > 0.99, "he does not face Alex: yaw " + him.yaw());
 			g.keepLoaded(false);
-		});
+		}).thenSucceed();
 	}
 
 	/**
 	 * Rung 3 must be heard: with his spot 19 back, at least three of the steps coming up to it reach the player (their
-	 * volume, up to {@code ladderGlimpseVolumeMax} 1.3, carries about 21 blocks), the last one on the spot, and none
-	 * reaches a friend 60 away. Rungs 1 and 2 never go above 1.
+	 * volume, up to {@code ladderGlimpseVolumeMax} 1.8, carries about 29 blocks where the shared moment radius allows),
+	 * the last one on the spot, and none reaches a friend 60 away.
 	 */
 	@GameTest(maxTicks = 300)
 	public void aGlimpseNineteenBackIsHeardComingButNotSixtyAway(GameTestHelper helper) {
@@ -499,8 +513,8 @@ public class LadderGameTests {
 	 * His spot is dark to the eye, not only past the torchlight: in a tunnel under a trench open to the sky over every
 	 * cell 13 to 20 back no spot is offered and the figure is never even asked; under a single shaft 14 back a spot is
 	 * offered only where the light a player would see (vanilla's raw brightness, the sky's darkening counted) is 3 or
-	 * less at his feet and eyes, never the shaft's own cell (by day none of 14 to 20 is: the shaft lights 11 cells along
-	 * the tunnel); the same tunnel sealed offers the cell 14 back.
+	 * less at his feet and eyes, the darkest of those, never the shaft's own cell (by day none of 14 to 20 is: the shaft
+	 * lights 11 cells along the tunnel); the same tunnel sealed offers the cell 14 back.
 	 */
 	@GameTest(maxTicks = 300)
 	public void aSkyLitSpotIsNeverOffered(GameTestHelper helper) {
@@ -528,15 +542,18 @@ public class LadderGameTests {
 					+ " back, raw brightness " + g.level.getMaxLocalRawBrightness(g.at(40 - Math.max(lit.spot(), 14), 3, 2)) + ", sky darkening "
 					+ g.level.getSkyDarken() + ", asked " + trench.asked);
 			int expected = -1;
-			for (int back = shaft.config.ladderGlimpseSpotMin; back <= shaft.config.ladderGlimpseSpotMax && expected < 0; back++) {
+			int darkest = Integer.MAX_VALUE;
+			for (int back = shaft.config.ladderGlimpseSpotMin; back <= shaft.config.ladderGlimpseSpotMax; back++) {
 				BlockPos cell = g.at(40 - back, 3, 6);
-				if (g.level.getMaxLocalRawBrightness(cell) <= 3 && g.level.getMaxLocalRawBrightness(cell.above()) <= 3) {
+				int raw = Math.max(g.level.getMaxLocalRawBrightness(cell), g.level.getMaxLocalRawBrightness(cell.above()));
+				if (raw <= 3 && raw < darkest) {
 					expected = back;
+					darkest = raw;
 				}
 			}
 			Ladder.Check under = Ladder.check(Ladder.Rung.GLIMPSE, bea, shaft.env(), true);
 			helper.assertTrue(under.spot() == expected && under.spot() != 14 && (expected < 0 ? under.why() == Ladder.Why.NO_SPOT : under.fits()),
-					"under the shaft the spot is " + under.spot() + " back (" + under.why() + "), the first dark one is " + expected + ", sky darkening "
+					"under the shaft the spot is " + under.spot() + " back (" + under.why() + "), the darkest is " + expected + ", sky darkening "
 							+ g.level.getSkyDarken());
 			helper.assertTrue(g.level.getSkyDarken() > 0 || expected < 0, "by day a spot within 11 of the shaft is dark: " + expected);
 			Ladder.Check dark = Ladder.check(Ladder.Rung.GLIMPSE, cy, sealed.env(), true);
@@ -584,13 +601,13 @@ public class LadderGameTests {
 	private static FireResult fireWithTheStubFigure(LadderRig rig, ServerPlayer player) {
 		Ladder.Env env = rig.env();
 		Ladder.Env stub = new Ladder.Env(env.watch(), env.data(), new Figure.Stub(), env.config(), env.playTicks(), env.day(), env.underground(),
-				env.sounds());
+				env.sounds(), env.view(), env.traces());
 		return Ladder.fire(Ladder.Rung.GLIMPSE, new FireContext(player, player.level(), false, true, RandomSource.create(1L)), stub);
 	}
 
 	/**
 	 * D-072, no edits: every rung and both fakes play out and not one block changes, and nothing is ledgered in the
-	 * ground. The fakes: rung 1's is the player's own step, late (at their feet, vanilla's volume); rung 2's goes away,
+	 * ground (no light in these tunnels, so rung 3 has none to take). The fakes: rung 1's is the player's own step, late (at their feet, vanilla's volume); rung 2's goes away,
 	 * fading.
 	 */
 	@GameTest(maxTicks = 400)
@@ -641,9 +658,10 @@ public class LadderGameTests {
 	}
 
 	/**
-	 * Rung 2's fake is heard: its steps start 10 to 13 back and go away fading, every one inside vanilla's 16-block
-	 * range of a step at volume 1 or less and at least about as loud at the player as rung 2's own first step, none
-	 * past the run's end. On the shortest runs (16 and 17 cells) and a long one, every step plays.
+	 * Rung 2's fake is heard: its steps start 10 to 13 back and go away fading, every one inside its hearing range and
+	 * clearly heard (at least 5% of full loudness at the ear, FIX-GLIMPSE's louder steps; v1.3 held it to rung 2's first
+	 * step at the very edge of hearing), none past the run's end. On the shortest runs (16 and 17 cells) and a long
+	 * one, every step plays.
 	 */
 	@GameTest(maxTicks = 200)
 	public void rungTwosFakeIsHeardGoingAwayInsideTheRun(GameTestHelper helper) {
@@ -669,7 +687,6 @@ public class LadderGameTests {
 			players.add(player);
 		}
 		DigConfig config = new DigConfig();
-		double edge = Ladder.volumeAt(config.ladderComingFrom, config) * (1.0 - config.ladderComingFrom / 16.0); // rung 2's first step, at the ear
 		helper.succeedWhen(() -> {
 			for (int i = 0; i < lengths.length; i++) {
 				ServerPlayer player = players.get(i);
@@ -686,11 +703,11 @@ public class LadderGameTests {
 					helper.assertTrue(back > previous && cellBack >= 1 && cellBack <= lengths[i] && TunnelRun.tunnelCell(g.level, rigs.get(i).crew.watch, cell),
 							"a fake step " + back + " back on a " + lengths[i] + "-cell run, after " + previous);
 					double distance = step.pos().distanceTo(player.position());
-					double gain = step.volume() * (1.0 - distance / 16.0);
-					helper.assertTrue(SoundCues.hearers(g.level, List.of(player), step.pos(), step.volume()).contains(player) && step.volume() <= 1.0F,
+					double gain = GlimpseFeedbackTests.gain(step.volume(), distance);
+					helper.assertTrue(SoundCues.hearers(g.level, List.of(player), step.pos(), step.volume()).contains(player),
 							"a fake step out of hearing: " + back + " back at " + step.volume());
-					helper.assertTrue(step.volume() < louder && gain >= 0.95 * edge, "a fake step " + back + " back at " + step.volume() + " (" + gain
-							+ " at the ear, rung 2's first step " + edge + ") after " + louder);
+					helper.assertTrue(step.volume() < louder && gain >= 0.05, "a fake step " + back + " back at " + step.volume() + " (" + gain
+							+ " at the ear) after " + louder);
 					previous = back;
 					louder = step.volume();
 				}

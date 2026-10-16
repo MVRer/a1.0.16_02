@@ -2,6 +2,7 @@ package com.forzacode.a1016_02.dig;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.CompletableFuture;
 
 import com.forzacode.a1016_02.core.Services;
 
@@ -9,6 +10,8 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.gametest.framework.GameTestHelper;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.server.level.ThreadedLevelLightEngine;
+import net.minecraft.util.Util;
 import net.minecraft.world.level.GameType;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
@@ -20,6 +23,9 @@ import net.minecraft.world.level.block.state.BlockState;
  * {@code PlayerWatch} records them); placements go through {@code PlayerWatch.onPlaced}.
  */
 final class DigGround {
+	/** The longest {@link #settleLight} waits, in real time (the light engine's own clock). */
+	private static final long LIGHT_WAIT_MILLIS = 30_000;
+
 	final GameTestHelper helper;
 	final ServerLevel level;
 	final BlockPos origin;
@@ -64,6 +70,29 @@ final class DigGround {
 				level.setChunkForced(cx, cz, loaded);
 			}
 		}
+	}
+
+	/**
+	 * Waits until the light engine has taken in every block change made so far in the ground's chunks (its fill, the
+	 * digs, a torch placed or taken), the way vanilla waits for a chunk's light before sending it
+	 * ({@code waitForPendingTasks}): on the server thread, running its tasks meanwhile as vanilla's own chunk waits do,
+	 * so no tick passes. The engine runs on threads of its own while the game test server runs its ticks back to back:
+	 * in a full run, while another test's big fill is being lit, it can be hundreds of ticks behind the blocks (a torch
+	 * that went still lights the tunnel when rung 3 checks the dark again at its last step). In play, at 20 ticks a
+	 * second, it is a tick or two behind.
+	 */
+	void settleLight() {
+		ThreadedLevelLightEngine engine = level.getChunkSource().getLightEngine();
+		List<CompletableFuture<?>> pending = new ArrayList<>();
+		for (int cx = origin.getX() >> 4; cx <= (origin.getX() + sizeX) >> 4; cx++) {
+			for (int cz = origin.getZ() >> 4; cz <= (origin.getZ() + sizeZ) >> 4; cz++) {
+				pending.add(engine.waitForPendingTasks(cx, cz));
+			}
+		}
+		CompletableFuture<Void> all = CompletableFuture.allOf(pending.toArray(CompletableFuture[]::new));
+		long until = Util.getMillis() + LIGHT_WAIT_MILLIS;
+		level.getServer().managedBlock(() -> all.isDone() || Util.getMillis() > until);
+		helper.assertTrue(all.isDone(), "the light engine did not take in the ground's changes within " + LIGHT_WAIT_MILLIS / 1000 + " s");
 	}
 
 	BlockPos at(int x, int y, int z) {

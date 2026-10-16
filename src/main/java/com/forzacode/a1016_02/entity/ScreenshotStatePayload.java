@@ -16,18 +16,30 @@ import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
  * {@link TheScreenshot#fogOn}), the weather's fog end for the player in blocks ({@code fogEnd},
  * {@link TheScreenshot#weatherFogEnd}: render distance, dusk fog and spell, never a surge or an effect; the client
  * compares the fog it draws with it, {@link ScreenshotRules#pulledIn}), and which arm this is ({@code arm}, a number
- * new with every arm, 0 for none). Sent by {@link TheScreenshot} when {@code the_screenshot} arms the player, whenever
- * one of them changes while the arm lasts (the fog end by more than {@link TheScreenshot#FOG_END_STEP} blocks), and
- * {@link #OFF} when it ends: it ran out, the player left, the story ended or the screenshot happened for anyone. The
- * client keeps the latest ({@code entity.client.ScreenshotClient}).
+ * new with every arm, 0 for none), and while it is paused, why ({@code paused}: {@link ScreenshotRules#paused}, "" when
+ * ready or unknown; the client logs it when an armed F2 saves a plain picture). Sent by {@link TheScreenshot} when
+ * {@code the_screenshot} arms the player, whenever one of them changes while the arm lasts (the fog end by more than
+ * {@link TheScreenshot#FOG_END_STEP} blocks), and {@link #OFF} when it ends: it ran out, the player left, the story
+ * ended or the screenshot happened for anyone. The client keeps the latest ({@code entity.client.ScreenshotClient}).
  */
-public record ScreenshotStatePayload(boolean armed, boolean fogOn, float fogEnd, int arm) implements CustomPacketPayload {
+public record ScreenshotStatePayload(boolean armed, boolean fogOn, float fogEnd, int arm, String paused) implements CustomPacketPayload {
 	public static final Type<ScreenshotStatePayload> TYPE = new Type<>(A1016_02.id("entity/screenshot_state"));
+	/** The longest pause reason sent (a few words and numbers). */
+	public static final int MAX_PAUSED = 256;
 	public static final StreamCodec<ByteBuf, ScreenshotStatePayload> CODEC = StreamCodec.composite(ByteBufCodecs.BOOL, ScreenshotStatePayload::armed,
 			ByteBufCodecs.BOOL, ScreenshotStatePayload::fogOn, ByteBufCodecs.FLOAT, ScreenshotStatePayload::fogEnd, ByteBufCodecs.VAR_INT,
-			ScreenshotStatePayload::arm, ScreenshotStatePayload::new);
+			ScreenshotStatePayload::arm, ByteBufCodecs.stringUtf8(MAX_PAUSED), ScreenshotStatePayload::paused, ScreenshotStatePayload::new);
 	/** Not armed (any more). */
 	public static final ScreenshotStatePayload OFF = new ScreenshotStatePayload(false, false, 0.0F, 0);
+
+	public ScreenshotStatePayload {
+		paused = paused == null ? "" : paused.length() > MAX_PAUSED ? paused.substring(0, MAX_PAUSED) : paused;
+	}
+
+	/** A state without a pause reason. */
+	public ScreenshotStatePayload(boolean armed, boolean fogOn, float fogEnd, int arm) {
+		this(armed, fogOn, fogEnd, arm, "");
+	}
 
 	@Override
 	public Type<ScreenshotStatePayload> type() {

@@ -209,7 +209,7 @@ public final class FigureApi {
 			}
 			return new Spawned(FireResult.NO_SPOT, null);
 		}
-		FogEdge edge = FogEdge.of(player, variant == Variant.CLOSE);
+		FogEdge edge = FogEdge.of(player, variant);
 		Optional<SpotFinder.Spot> spot = findSpot(player, variant, edge, random, forced, watchers);
 		if (spot.isEmpty()) {
 			return new Spawned(FireResult.NO_SPOT, null);
@@ -359,11 +359,12 @@ public final class FigureApi {
 	/**
 	 * Where the variant may stand around this player (D-035, see {@link FogEdge}): {@code normalFractionMin..Max}
 	 * (0.55 to 0.75) of the fog end the client draws, so he reads as a hazy but clear shape. The close variant stands
-	 * {@code closeFractionMin..Max} (0.35 to 0.50) of it, clamped to 16 to 28 blocks. Never under
-	 * {@code EntityConfig.minDistance}.
+	 * {@code closeFractionMin..Max} (0.35 to 0.50) of it, clamped to 16 to 28 blocks. Between trunks stands
+	 * {@code trunkMinDistance..trunkMaxDistance} (18 to 40) blocks away, inside the fog end's margin (the trunk fix).
+	 * Never under {@code EntityConfig.minDistance}.
 	 */
 	public static Band band(ServerPlayer player, Variant variant) {
-		FogEdge edge = FogEdge.of(player, variant == Variant.CLOSE);
+		FogEdge edge = FogEdge.of(player, variant);
 		return new Band(edge.inner(), edge.outer());
 	}
 

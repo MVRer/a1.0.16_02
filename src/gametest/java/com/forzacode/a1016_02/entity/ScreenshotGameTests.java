@@ -324,8 +324,9 @@ public class ScreenshotGameTests {
 		// The fog came, he went out (paused; nothing new on the second look), then he was gone with the fog; the fog end
 		// moved 1.9 blocks (nothing sent), then 2.1 from what the client was told.
 		List<ScreenshotStatePayload> told = hooks.to(a);
-		helper.assertTrue(told.equals(List.of(READY, told(true, true, 1), told(false, true, 1), READY,
-				new ScreenshotStatePayload(true, false, FOG_END - 2.1F, 1))), "told " + told);
+		ScreenshotStatePayload out = new ScreenshotStatePayload(false, true, FOG_END, 1, ScreenshotRules.paused(true, 3, -1, 0, 1).orElseThrow());
+		helper.assertTrue(told.equals(List.of(READY, told(true, true, 1), out, READY, new ScreenshotStatePayload(true, false, FOG_END - 2.1F, 1))),
+				"told " + told);
 		helper.assertTrue(shot.isArmed(a.getUUID()), "a pause ended the arm");
 		helper.assertTrue(shot.gate(a, helper.getLevel()).orElse("").equals("someone is already armed"), "a paused arm can be armed again");
 		helper.succeed();
@@ -658,7 +659,8 @@ public class ScreenshotGameTests {
 	/**
 	 * Never nearer than any sighting (minDistance 12) nor farther (maxSpawnDistance 192): a drawn fog ending at 5, 10 or
 	 * 15 blocks has no spot; at 20 every spot is 12 or more away. A thin dusk fog at render distance 32 ends about 310
-	 * out: no spot at 1080 pixels (he would be a speck), and in an image tall enough for him there, never past 192.
+	 * out: at 1080 pixels he stands nearer, where he is still 24 pixels tall (never a speck), and in an image tall
+	 * enough for him far out, never past 192 (FIX-PLAIN: the band ends at the cap and starts at 0.8 of it).
 	 */
 	@GameTest
 	public void theSpotKeepsEverySightingsFloorAndCap(GameTestHelper helper) {
@@ -670,10 +672,14 @@ public class ScreenshotGameTests {
 			Optional<ScreenshotSpot.Spot> spot = ScreenshotSpot.find(level, 20.0, S, FLAT, OPEN, RandomSource.create(seed));
 			helper.assertTrue(spot.map(s -> s.distance() >= S.minDistance() - 1.0E-9).orElse(true), "nearer than the floor: " + spot);
 		}
-		helper.assertTrue(ScreenshotSpot.find(level, 310.0, S, FLAT, OPEN, RandomSource.create(1)).isEmpty(), "a speck at 1080 pixels");
+		for (int seed = 0; seed < 20; seed++) {
+			Optional<ScreenshotSpot.Spot> spot = ScreenshotSpot.find(level, 310.0, S, FLAT, OPEN, RandomSource.create(seed));
+			helper.assertTrue(spot.isPresent() && spot.get().pixels() >= S.minPixels() && spot.get().distance() < 0.6 * 310.0,
+					"at 1080 pixels he is a speck or missing: " + spot);
+		}
 		ScreenshotSpot.View tall = view(0.0F, 0.0F, 4320);
 		ScreenshotSpot.Band band = ScreenshotSpot.band(tall, ScreenshotSpot.Fog.fromCamera(310.0), S);
-		helper.assertTrue(Math.abs(band.near() - 0.6 * 310.0) < 1.0E-9 && band.far() == S.maxDistance(), "the band at 4320 pixels: " + band);
+		helper.assertTrue(Math.abs(band.near() - 0.8 * S.maxDistance()) < 1.0E-9 && band.far() == S.maxDistance(), "the band at 4320 pixels: " + band);
 		boolean found = false;
 		for (int seed = 0; seed < 20; seed++) {
 			Optional<ScreenshotSpot.Spot> spot = ScreenshotSpot.find(tall, 310.0, S, FLAT, OPEN, RandomSource.create(seed));
@@ -686,11 +692,17 @@ public class ScreenshotGameTests {
 
 	/**
 	 * At least {@code screenshotMinPixels} (24) tall in the saved image: a fog end of 100 puts him 60 to 75 blocks out,
-	 * too small in a 720-pixel image (no spot), and in a 2160-pixel one every spot is 24 pixels or more, as projected.
+	 * too small in a 720-pixel image, so there he stands nearer (FIX-PLAIN: under 60 blocks, still 24 pixels, still in
+	 * the fog), and in a 2160-pixel one every spot is 24 pixels or more, as projected.
 	 */
 	@GameTest
 	public void theSpotIsTallEnoughInTheSavedImage(GameTestHelper helper) {
-		helper.assertTrue(ScreenshotSpot.find(view(0.0F, 0.0F, 720), 100.0, S, FLAT, OPEN, RandomSource.create(4)).isEmpty(), "a speck at 720 pixels");
+		ScreenshotSpot.View small = view(0.0F, 0.0F, 720);
+		for (int seed = 0; seed < 20; seed++) {
+			Optional<ScreenshotSpot.Spot> spot = ScreenshotSpot.find(small, 100.0, S, FLAT, OPEN, RandomSource.create(seed));
+			helper.assertTrue(spot.isPresent() && spot.get().distance() < 60.0 && small.pixelsTall(spot.get().feet()) >= S.minPixels()
+					&& spot.get().fog() >= S.minFog(), "at 720 pixels: " + spot);
+		}
 		ScreenshotSpot.View big = view(15.0F, 3.0F, 2160);
 		boolean found = false;
 		for (int seed = 0; seed < 20; seed++) {

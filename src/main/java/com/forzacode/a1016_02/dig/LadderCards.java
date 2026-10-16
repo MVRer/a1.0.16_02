@@ -14,7 +14,7 @@ import net.minecraft.server.level.ServerPlayer;
 /**
  * The tunnel ladder's three cards (D-072, {@link Ladder}): sounds only, for one player alone ({@link CardTag#PERSONAL},
  * D-074), no habits. The context check is the ladder's gates, rung order and spacing; the fire checks again and starts
- * the steps.
+ * the steps (rung 3 takes the lights behind first).
  */
 final class LadderCards {
 	private LadderCards() {
@@ -34,9 +34,15 @@ final class LadderCards {
 			return Ladder.check(rung, player, Ladder.Env.live(world.getServer()), false).fits();
 		}
 
+		/** A forced fire ({@code /a1016 fire}) that did not fire tells the player why ({@link Ladder#forcedAnswer}). */
 		@Override
 		public FireResult fire(FireContext ctx) {
-			return Ladder.fire(rung, ctx, Ladder.Env.live(ctx.level().getServer()));
+			Ladder.Env env = Ladder.Env.live(ctx.level().getServer());
+			Ladder.Attempt attempt = Ladder.attempt(rung, ctx, env);
+			if (ctx.forced() && attempt.result() != FireResult.FIRED) {
+				DigCommands.tell(ctx.player(), Ladder.forcedAnswer(rung, attempt, ctx.player(), env));
+			}
+			return attempt.result();
 		}
 	}
 

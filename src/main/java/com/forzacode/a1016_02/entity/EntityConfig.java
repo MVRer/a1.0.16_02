@@ -25,6 +25,13 @@ public final class EntityConfig implements ModConfig.Versioned {
 	/** The close variant's clamp in blocks. Tunable live. */
 	public double closeMinDistance = 16;
 	public double closeMaxDistance = 28;
+	/**
+	 * Between trunks (as of the trunk fix; new fields of version 5, no default changed): he stands this many blocks away,
+	 * not a share of the fog end, never farther than the visible fog end less {@link #edgeMarginBlocks} and never closer
+	 * than {@link #minDistance}, so half of him behind a trunk is still a figure on a clear day or in fog. Tunable live.
+	 */
+	public double trunkMinDistance = 18;
+	public double trunkMaxDistance = 40;
 	/** Never closer than this (horizontal, and from any player's eyes to any part of him). Tunable live, never under {@link #MIN_DISTANCE_FLOOR}. */
 	public double minDistance = 12;
 	/** A client fog report older than this is ignored and the server's estimate is used. */
@@ -220,7 +227,7 @@ public final class EntityConfig implements ModConfig.Versioned {
 
 	/** Section version, so changed defaults reach files written before the change ({@link #upgrade}). */
 	public int version = 0;
-	static final int CURRENT_VERSION = 4;
+	static final int CURRENT_VERSION = 5;
 	/** {@link #minDistance} is never taken under this. */
 	public static final double MIN_DISTANCE_FLOOR = 8.0;
 
@@ -245,8 +252,9 @@ public final class EntityConfig implements ModConfig.Versioned {
 	 * to 28 blocks (was 24 to 36). Version 4 (v1.2, D-073) only adds the glimpse's values, which a section without them
 	 * takes from the defaults by itself; no default changed, so nothing the player set is touched. v1.3's screenshot
 	 * values (D-078) are new fields too, without a step (its review fix dropped {@code screenshotMaxFogEnd}: an older
-	 * file's key is skipped on read and gone from the next save). Every later default
-	 * change adds a step with {@link ModConfig.Upgrades#keepOrNew}.
+	 * file's key is skipped on read and gone from the next save). Version 5 (the trunk fix) only adds
+	 * {@code trunkMinDistance} and {@code trunkMaxDistance}; no default changed. Every later default change adds a step
+	 * with {@link ModConfig.Upgrades#keepOrNew}.
 	 */
 	@Override
 	public boolean upgrade() {
@@ -265,6 +273,7 @@ public final class EntityConfig implements ModConfig.Versioned {
 			closeMaxDistance = defaults.closeMaxDistance;
 		}
 		// Version 4: the glimpse's fields are new, nothing to replace.
+		// Version 5: the trunk band's two fields are new, nothing to replace.
 		version = CURRENT_VERSION;
 		return true;
 	}

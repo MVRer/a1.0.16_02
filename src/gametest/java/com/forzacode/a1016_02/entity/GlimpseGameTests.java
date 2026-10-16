@@ -11,8 +11,10 @@ import com.forzacode.a1016_02.core.FogLimits;
 import com.forzacode.a1016_02.core.FogSpell;
 import com.forzacode.a1016_02.core.FogWeatherRules;
 import com.forzacode.a1016_02.core.GameClock;
+import com.forzacode.a1016_02.core.HerobrineState;
 import com.forzacode.a1016_02.core.ModConfig;
 import com.forzacode.a1016_02.core.Services;
+import com.forzacode.a1016_02.core.TraceService;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 
@@ -172,6 +174,64 @@ public class GlimpseGameTests extends TwoPlayerFigureGameTests {
 							"light 3 or less at the feet and the eyes");
 				})
 				.thenSucceed();
+	}
+
+	/**
+	 * FIX-GLIMPSE: {@code glimpseRefusal} says why, in the exact words a debug line shows, and {@code canGlimpse} is its
+	 * {@code isEmpty()}: "player busy", "not the overworld", "the last minute", "he is out", "not loaded", "no room",
+	 * "too lit (light N)", "too close (N blocks)", "in someone's view: NAME"; once dark ({@code glimpseRefusalOnceDark})
+	 * the light is left aside and the rest still holds.
+	 */
+	@GameTest(structure = YARD, maxTicks = 100)
+	public void glimpseRefusalSaysWhyForEachRule(GameTestHelper helper) {
+		tunnel(helper);
+		Vec3 spot = helper.absoluteVec(SPOT);
+		ServerPlayer away = a(helper, WEST);
+		ServerPlayer looking = a(helper, EAST);
+		ServerPlayer near = player(helper, GameType.SURVIVAL, helper.absoluteVec(new Vec3(8.5, 1.0, 10.5)), WEST); // 11 blocks off
+		ServerPlayer spectator = player(helper, GameType.SPECTATOR, helper.absoluteVec(A_FEET), WEST);
+		ServerLevel nether = helper.getLevel().getServer().getLevel(net.minecraft.world.level.Level.NETHER);
+		ServerPlayer elsewhere = new ServerPlayer(helper.getLevel().getServer(), nether, new com.mojang.authlib.GameProfile(java.util.UUID.randomUUID(), "Neth"),
+				net.minecraft.server.level.ClientInformation.createDefault());
+		Predicate<Vec3> loaded = loaded(helper);
+		BlockPos feet = BlockPos.containing(spot);
+		afterTheLightSettles(helper)
+				.thenExecute(() -> {
+					helper.assertTrue(GlimpseFigure.check(away, spot, watching(helper, away), false, loaded).ok(), "the dark spot behind A is refused");
+					assertWhy(helper, GlimpseFigure.check(spectator, spot, watching(helper, spectator), false, loaded), "player busy");
+					assertWhy(helper, GlimpseFigure.check(elsewhere, spot, watching(helper, away), false, loaded), "not the overworld");
+					HerobrineState state = HerobrineState.get(helper.getLevel().getServer());
+					boolean had = state.hasFlag(TraceService.LAST_MINUTE_FLAG);
+					state.setFlag(TraceService.LAST_MINUTE_FLAG, true); // set and cleared in this same tick: no other test sees it
+					try {
+						assertWhy(helper, GlimpseFigure.check(away, spot, watching(helper, away), false, loaded), "the last minute");
+					} finally {
+						state.setFlag(TraceService.LAST_MINUTE_FLAG, had);
+					}
+					assertWhy(helper, GlimpseFigure.check(away, spot, watching(helper, away), true, loaded), "he is out");
+					assertWhy(helper, GlimpseFigure.check(away, spot, watching(helper, away), false, at -> false), "not loaded");
+					assertWhy(helper, GlimpseFigure.check(away, spot.add(0.0, 0.0, 1.0), watching(helper, away), false, loaded), "no room");
+					assertWhy(helper, GlimpseFigure.check(near, spot, watching(helper, near), false, loaded), "too close (11 blocks)");
+					assertWhy(helper, GlimpseFigure.check(away, spot, watching(helper, away, looking), false, loaded),
+							"in someone's view: " + looking.getName().getString());
+					for (ServerPlayer player : List.of(away, looking, near, spectator)) {
+						helper.assertTrue(GlimpseFigure.INSTANCE.canGlimpse(player, spot) == GlimpseFigure.INSTANCE.glimpseRefusal(player, spot).isEmpty(),
+								"canGlimpse is not glimpseRefusal's isEmpty for " + player.getName().getString());
+					}
+					helper.setBlock(18, 1, 10, Blocks.TORCH);
+				})
+				.thenWaitUntil(() -> helper.assertTrue(helper.getLevel().getBrightness(LightLayer.BLOCK, feet) > 3, "the torch's light is not there yet"))
+				.thenExecute(() -> {
+					int light = Math.max(helper.getLevel().getMaxLocalRawBrightness(feet), helper.getLevel().getMaxLocalRawBrightness(feet.above()));
+					assertWhy(helper, GlimpseFigure.check(away, spot, watching(helper, away), false, loaded), "too lit (light " + light + ")");
+					helper.assertTrue(GlimpseFigure.check(away, spot, watching(helper, away), false, loaded, true).ok(), "once dark, the lit spot is refused");
+					assertWhy(helper, GlimpseFigure.check(near, spot, watching(helper, near), false, loaded, true), "too close (11 blocks)");
+				})
+				.thenSucceed();
+	}
+
+	private static void assertWhy(GameTestHelper helper, GlimpseFigure.Check check, String why) {
+		helper.assertTrue(!check.ok() && check.why().equals(why), "expected \"" + why + "\", got \"" + check.why() + "\"");
 	}
 
 	/**
@@ -546,16 +606,16 @@ public class GlimpseGameTests extends TwoPlayerFigureGameTests {
 	// --- config (D-075) ---
 
 	/**
-	 * A version 3 section (v1.1) reads as version 4: the glimpse's new values at their defaults, every value the player
-	 * set kept; a fresh section changes nothing but its version.
+	 * A version 3 section (v1.1) reads as the current version (4 for v1.2, 5 since the trunk fix): the glimpse's new values
+	 * at their defaults, every value the player set kept; a fresh section changes nothing but its version.
 	 */
 	@GameTest
-	public void aVersion3EntitySectionUpgradesToVersion4(GameTestHelper helper) {
+	public void aVersion3EntitySectionUpgradesToTheCurrentVersion(GameTestHelper helper) {
 		JsonObject sections = JsonParser.parseString("{\"entity\": {\"version\": 3, \"approachBlocks\": 7.0, \"closeMinDistance\": 20.0,"
 				+ " \"eyeStyle\": \"GLOW\", \"minDistance\": 10.0}}").getAsJsonObject();
 		EntityConfig read = ModConfig.readSection(sections, "entity", EntityConfig.class, EntityConfig::new);
 		EntityConfig defaults = new EntityConfig();
-		helper.assertTrue(read.version == EntityConfig.CURRENT_VERSION && EntityConfig.CURRENT_VERSION == 4, "version " + read.version);
+		helper.assertTrue(read.version == EntityConfig.CURRENT_VERSION && EntityConfig.CURRENT_VERSION == 5, "version " + read.version);
 		helper.assertTrue(read.approachBlocks == 7.0 && read.closeMinDistance == 20.0 && read.eyeStyle() == EyeStyle.GLOW && read.minDistance == 10.0,
 				"a value the player set was lost: " + read.approachBlocks + " " + read.closeMinDistance + " " + read.eyeStyle());
 		helper.assertTrue(read.glimpseMinDistance == 14 && read.glimpseHideDegrees == 28 && read.glimpseHideBlocks == 10 && read.glimpseServerDegrees == 35
@@ -563,7 +623,7 @@ public class GlimpseGameTests extends TwoPlayerFigureGameTests {
 				"the glimpse's defaults are missing");
 		helper.assertTrue(read.glimpseMinDistance == defaults.glimpseMinDistance && read.stareSeconds == defaults.stareSeconds, "a default moved");
 		EntityConfig fresh = new EntityConfig();
-		helper.assertTrue(fresh.upgrade() && fresh.version == 4 && fresh.approachBlocks == defaults.approachBlocks
+		helper.assertTrue(fresh.upgrade() && fresh.version == EntityConfig.CURRENT_VERSION && fresh.approachBlocks == defaults.approachBlocks
 				&& fresh.closeMinDistance == defaults.closeMinDistance, "a fresh section changed");
 		helper.assertFalse(read.upgrade(), "upgraded twice");
 		// Never under 8 blocks, whatever the file says.

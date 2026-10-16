@@ -163,6 +163,23 @@ final class BlindCues {
 		}
 	}
 
+	/**
+	 * What the armed card's player is told once it fired: the result, and when it did not fire why (FIX-GLIMPSE: for the
+	 * torch, why none may go, {@link Blind#reason}).
+	 */
+	static String firedLine(Armed arm, FireResult result, ServerPlayer player, Blind.Env env) {
+		String why = "";
+		if (result != FireResult.FIRED) {
+			for (Blind.Kind kind : Blind.Kind.values()) {
+				if (kind.id.equals(arm.cardId())) {
+					why = ": " + Blind.reason(kind, player, env, result);
+				}
+			}
+		}
+		return String.format(Locale.ROOT, "[a1016] dig: the armed %s%s fired in your blind moment -> %s%s", arm.cardId(), arm.fake() ? " (fake)" : "", result,
+				why);
+	}
+
 	private void tickArmed(MinecraftServer server, long now) {
 		PlayerWatch watch = Services.watch();
 		long wait = Blind.minBlindTicks(DigConfig.get());
@@ -170,17 +187,19 @@ final class BlindCues {
 		while (it.hasNext()) {
 			Map.Entry<UUID, Armed> entry = it.next();
 			Armed arm = entry.getValue();
+			Optional<ServerPlayer> player = watch.participant(server, entry.getKey());
 			if (now > arm.until()) {
 				it.remove();
-				A1016_02.LOGGER.info("[a1016] dig: the armed {} waited {} ticks for a blind moment and was dropped", arm.cardId(), ARM_TICKS);
+				String line = String.format(Locale.ROOT, "[a1016] dig: the armed %s waited %d s for a blind moment (a menu open %.1f s) and was dropped",
+						arm.cardId(), ARM_TICKS / 20, wait / 20.0);
+				A1016_02.LOGGER.info(line);
+				player.ifPresent(p -> DigCommands.tell(p, line));
 				continue;
 			}
-			Optional<ServerPlayer> player = watch.participant(server, entry.getKey());
 			if (player.isPresent() && watch.blindTicks(player.get()) >= wait) {
 				it.remove();
 				FireResult result = Services.director().fire(server, player.get(), arm.cardId(), arm.fake());
-				A1016_02.LOGGER.info("[a1016] dig: the armed {}{} fired for {} in their blind moment: {}", arm.cardId(), arm.fake() ? " (fake)" : "",
-						player.get().getName().getString(), result);
+				DigCommands.tell(player.get(), firedLine(arm, result, player.get(), Blind.Env.live(server)));
 			}
 		}
 	}
