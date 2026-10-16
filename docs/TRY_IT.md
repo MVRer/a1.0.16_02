@@ -2,7 +2,7 @@
 
 One entry per merge, newest first. Run the game from the main checkout (this folder, on `main`).
 
-## READY TO TRY: v1.3  (branch feat/v13-int; jar build/libs/a1016_02-1.3.0-26.3.jar after ./gradlew build)
+## READY TO TRY: v1.3  (main 206ab06, with every review fix; jar build/libs/a1016_02-1.3.0-26.3.jar after ./gradlew build)
 ```
 Restart needed: full game restart. Everyone who plays needs the same jar plus Fabric API (the client sends when a menu
   is open, and draws the screenshot).
@@ -41,11 +41,13 @@ See it now (Dev Client; /a1016 debug overlay on shows each player's "blind" line
   7. /a1016 dig blind prints your blind moment and why each blind card would or would not happen now; the arm waits
      up to 2 minutes for your next menu. /a1016 director shows your blind line (rechecks and how many fired).
   8. The screenshot: /a1016 fire the_screenshot arms you (/a1016 entity screenshot shows it: days left, ready or
-     paused, fog on or off). Go outdoors in the overworld in fog: /a1016 fog night then /time add 2500, or a short
-     render distance (the fog end under 160 blocks: 8 chunks or less), sky above you, first person (F5 back to
-     it), no menu open, not in water. Press F2 and open the picture in run/screenshots: he stands at the fog edge, off
-     the middle, head and chest in plain sight. The screen never showed him. It waits (and he does not appear) while a
-     figure is out anywhere or no ground spot fits. Once per world: /a1016 entity screenshot reset to try again.
+     paused, fog on or off, the weather's fog end). Go outdoors in the overworld in weather fog: /a1016 fog night (or
+     day) then /time add 2500, or the dusk fog; a short render distance alone never counts. Sky above you, first
+     person (F5 back to it), no menu open, not in water, no Blindness or Darkness, no shaderpack. Press F2 and open
+     the picture in run/screenshots: he stands at the fog edge (12 to 192 blocks off, never a speck), off the middle,
+     head and chest in plain sight. The screen never showed him. It waits (and he does not appear) while a figure is
+     out anywhere, on an in-game day that already had a sighting (try the next day), while a fog surge pulls the fog
+     in, or when no ground spot fits. Once per world: /a1016 entity screenshot reset to try again.
   9. The real way: a NEW world, play normally: mine, use doors, open your inventory now and then. The echoes need 5
      minutes or more to pass; the blind cards need you alone with a menu open; the screenshot comes once, from Traces.
 What to look for: whether an echo reads as your own rhythm coming back, whether a step behind you in the inventory
@@ -54,7 +56,8 @@ Multiplayer: the echoes are heard by anyone in range; the blind cards and the sc
   even a spectator, within 48 blocks for the blind ones). The menu signal only ever makes things happen to the player
   who opened the menu.
 Existing worlds and config files are upgraded automatically: the director section steps to version 3 (it only adds
-  blindHoldMinutes 15 and simBlindPerHour 20); the echo, blind and screenshot numbers are new fields with defaults.
+  blindHoldMinutes 15 and simBlindPerHour 20), the atmosphere section to version 2 (a 1.3.0-preview.1 config's
+  echoDoorVolume 1.0 becomes 1.6); the echo, blind and screenshot numbers are new fields with defaults.
 Still to check in the Dev Client (the game tests cannot hear or see a frame):
   - the echoed mining sounds like digging inside the rock (hits then a break), not like blocks breaking next to you;
   - a blind step at 50% master volume is noticeable but not loud;

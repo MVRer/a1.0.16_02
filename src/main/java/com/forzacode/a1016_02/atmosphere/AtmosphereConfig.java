@@ -20,8 +20,11 @@ import org.jspecify.annotations.Nullable;
  * brings it up one step at a time, replacing only values that still equal the old default.
  */
 public final class AtmosphereConfig implements ModConfig.Versioned {
-	/** The section's current version. 1: v1.2 (D-070's cave sound radius and fog drift fade). */
-	public static final int VERSION = 1;
+	/**
+	 * The section's current version. 1: v1.2 (D-070's cave sound radius and fog drift fade). 2: v1.3 ({@link #echoDoorVolume}
+	 * 1.0 to 1.6 after v1.3.0-preview.1, D-076).
+	 */
+	public static final int VERSION = 2;
 
 	/** The version this section was last written at (0: v1.1 or older; the field's default stays 0). */
 	public int version = 0;
@@ -322,6 +325,10 @@ public final class AtmosphereConfig implements ModConfig.Versioned {
 	 * {@code fogDriftFadeTicks} 100 to 160, each only where it still equals the old default. Everything else new in
 	 * v1.2 (fog weather, far in the rock) is missing from a v1.1 file and gets its default, as v1.3's echo fields
 	 * ({@code echo...}, D-076) do from any older file: new fields, no step.
+	 *
+	 * <p>Step 1 to 2 (v1.3, D-076's FIX-ECHO): {@code echoDoorVolume} 1.0 to 1.6 only where it still equals 1.0, the
+	 * value a v1.3.0-preview.1 file was written with (at 1.0 a door 16 blocks off was silent). A file without the key
+	 * gets 1.6 as any new field does.
 	 */
 	@Override
 	public boolean upgrade() {
@@ -332,6 +339,9 @@ public final class AtmosphereConfig implements ModConfig.Versioned {
 		if (version < 1) {
 			caveSoundAloneRadius = ModConfig.Upgrades.keepOrNew(caveSoundAloneRadius, 48, d.caveSoundAloneRadius);
 			fogDriftFadeTicks = ModConfig.Upgrades.keepOrNew(fogDriftFadeTicks, 100, d.fogDriftFadeTicks);
+		}
+		if (version < 2) {
+			echoDoorVolume = ModConfig.Upgrades.keepOrNew(echoDoorVolume, 1.0, d.echoDoorVolume);
 		}
 		version = VERSION;
 		return true;

@@ -2,6 +2,9 @@
 
 Oct 16, 2026 · after v1.2 (Mariano: "what can make it feel more omniscient?")
 
+**Status: shipped.** C-2, wave 1, INT-2, the R4 to R6 reviews and their fixes, VERIFY-3 (READY) and its two lows
+(FIX-FINAL2) are done; 661 tests green 3/3 (`docs/TASKS.md`). No tag or release until Mariano says.
+
 Three things that make him feel like he was watching: he copies what you just did, he acts in the moments you are
 not looking (a menu open), and once per world a screenshot you take shows him in the fog. Every worker reads
 `docs/ARCHITECTURE.md`, this file's section for their task, and the decisions below. Same process as v1.2
@@ -48,6 +51,8 @@ advancements, the pause menu on a LAN or server world), the player is not watchi
 - `blind_door` (MINOR, Traces, SOUND, PERSONAL, BLIND): a door, trapdoor or gate 4 to 12 blocks away and out of view
   plays its own open then close sound while they are blind. Nothing moves.
 - Alone (the ladder's rule): no other player, spectators included, within 48 blocks.
+- As built: see `docs/DECISIONS.md` D-077 (W-BLIND, W-DIR2, FIX-SMALL). A held BLIND card goes back, parked, after
+  `blindHoldMinutes` (15), not the 60-minute hold, so a player who never opens a menu never freezes a tier.
 
 ### D-078 The screenshot
 Canon: "only one screenshot came out. just fog." Once per world, a screenshot a player takes (F2) shows him at the
@@ -65,6 +70,9 @@ fog edge, though he was never on their screen.
 - The client tells the server it happened; the server records it once per world (a flag), counts it as that player's
   sighting for the day, and disarms everyone. Nothing else knows: no message, no sound.
 - He is drawn by the client only, as a render-only copy of the figure; nothing is spawned in the world.
+- As built: see `docs/DECISIONS.md` D-078 (W-SHOT, FIX-SHOT). Only weather fog counts (a dusk fog or fog spell; the
+  fog end inside 160 blocks alone never does), and the arm waits with Blindness, Darkness, a surge or a shaderpack; he
+  stands 12 to 192 blocks off and at least 24 pixels tall; one arm in the world at a time, ended with the story.
 
 ### D-079 Core for v1.3
 - `PlayerWatch.recentActions(player)` (D-076's ring, newest first), `PlayerWatch.blindTicks(player)` (D-077), the

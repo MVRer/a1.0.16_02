@@ -22,7 +22,10 @@
 			"com.forzacode.a1016_02.core.VerifyV12Tests",
 			"com.forzacode.a1016_02.dig.VerifyV12DigTests",
 			"com.forzacode.a1016_02.director.VerifyV12DirectorTests",
-			"com.forzacode.a1016_02.core.R6ReviewCoreTests"
+			"com.forzacode.a1016_02.core.R6ReviewCoreTests",
+			"com.forzacode.a1016_02.core.VerifyV13Tests",
+			"com.forzacode.a1016_02.director.VerifyV13DirectorTests",
+			"com.forzacode.a1016_02.entity.VerifyV13ScreenshotTests"
 		]
 	},
 	"depends": {
