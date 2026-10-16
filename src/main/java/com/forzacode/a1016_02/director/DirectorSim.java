@@ -41,10 +41,19 @@ import org.jspecify.annotations.Nullable;
  * {@link FogWeatherRules#nightRollTime} ({@link FogWeatherRules#NIGHT_ROLL}, 10000) and a fog day at
  * {@link FogWeatherRules#dayRollTime} ({@link FogWeatherRules#DAY_ROLL}, 21500) of the day before, joined with
  * {@code handOver}. The run's day clock stands in for the overworld clock. Each {@link Result} books its time and fires under each {@link Sky}.
+ * <p>
+ * Blind moments (D-077): each player opens a menu {@link Params#blindPerHour} times an hour of play, rolled at every
+ * director tick on dice of their own (so they never shift the director's), and each moment is one recheck
+ * ({@link DirectorBrain#recheck}) after that tick's decisions. A {@code BLIND} card's moment fits only there, by the
+ * usual dice ({@link Params#fitChance}), never at a director tick; any other card's moment is looked at on director
+ * ticks only, so a deck without BLIND cards plays exactly as with no blind moments. Fires from a recheck carry the note
+ * {@link #RECHECK}.
  */
 public final class DirectorSim {
 	/** The player of a one-player dry run. */
 	public static final UUID SOLO = new UUID(0L, 0xA1016L);
+	/** The note of a fire that came from a blind moment's recheck (D-077). */
+	public static final String RECHECK = "recheck";
 
 	/** The sky over a stretch of a run (D-071): no spell on, a quiet spell (no boost), or a fog spell that boosts. */
 	public enum Sky { CLEAR, QUIET, FOG }
@@ -131,6 +140,8 @@ public final class DirectorSim {
 		public Optional<FogSpell> fogSpell = Optional.empty();
 		/** The weather's history when the run starts (a fresh world's by default). */
 		public FogWeatherRules.History fogHistory = FogWeatherRules.History.START;
+		/** Blind moments (menus opened) per hour of a player's play, each a recheck (D-077); 0: none. */
+		public double blindPerHour = 20;
 
 		public static Params from(DirectorConfig config, DirectorRules rules) {
 			Params p = new Params();
@@ -139,6 +150,7 @@ public final class DirectorSim {
 			p.sessionMin = Math.max(rules.tickInterval, Math.round(config.simSessionMinMinutes * 60 / 3600.0 * rules.hourTicks));
 			p.sessionMax = Math.max(p.sessionMin, Math.round(config.simSessionMaxMinutes * 60 / 3600.0 * rules.hourTicks));
 			p.tellingAtHour = config.simTellingAtHour;
+			p.blindPerHour = config.simBlindPerHour;
 			return p;
 		}
 	}
@@ -180,6 +192,8 @@ public final class DirectorSim {
 		public List<String> violations = List.of();
 		/** Every fog spell the table stored while this player took part, in order (a hand-over stores the joined spell). */
 		public final List<FogSpell> fogSpells = new ArrayList<>();
+		/** This player's blind moments, each one recheck (D-077). */
+		public int rechecks;
 		/** Per stage: play ticks [all, active], sampled at every director tick after its decision. */
 		private final Map<Stage, long[]> stageTime = new EnumMap<>(Stage.class);
 		/** Per sky: play ticks [all, active], sampled like {@link #stageTime}. */
@@ -202,6 +216,11 @@ public final class DirectorSim {
 		/** This player's own fires. */
 		public List<Event> fires() {
 			return events.stream().filter(e -> e.kind() == Kind.FIRE).toList();
+		}
+
+		/** This player's own fires that came from a blind moment's recheck (D-077). */
+		public List<Event> recheckFires() {
+			return events.stream().filter(e -> e.kind() == Kind.FIRE && RECHECK.equals(e.note())).toList();
 		}
 
 		/** What this player went through: their own fires and the moments they felt from others, in order. */
@@ -292,10 +311,10 @@ public final class DirectorSim {
 				}
 			}
 			List<long[]> empties = emptySessions();
-			lines.add(String.format(Locale.ROOT, "stage %s -> %s%s | quiets %d | sessions %d, empty %d | tension %.1f | fog spells %d (%d quiet), %.1fh boosted",
+			lines.add(String.format(Locale.ROOT, "stage %s -> %s%s | quiets %d | sessions %d, empty %d | tension %.1f | fog spells %d (%d quiet), %.1fh boosted%s",
 					startStage, stage, stages.length() == 0 ? "" : " (" + stages.toString().trim() + ")", count(Kind.QUIET),
 					count(Kind.SESSION_START), empties.size(), tension, fogSpells.size(), fogSpells.stream().filter(FogSpell::quiet).count(),
-					skyTicks(Sky.FOG) / (double) rules.hourTicks));
+					skyTicks(Sky.FOG) / (double) rules.hourTicks, rechecks == 0 ? "" : " | blind moments " + rechecks + ", " + recheckFires().size() + " fired"));
 			lines.add(violations.isEmpty() ? "limits: all respected" : "LIMITS BROKEN (" + violations.size() + "): " + violations.getFirst());
 			return lines;
 		}
@@ -811,6 +830,8 @@ public final class DirectorSim {
 		long dayTicks;
 		/** The sky (D-071): its own dice, the stored spell, the rules' history and the day clock it was last rolled up to. */
 		final RandomSource weather;
+		/** Blind moments (D-077): dice of their own, so a run's director dice are the same with or without them. */
+		final RandomSource blindDice;
 		Optional<FogSpell> fogSpell;
 		FogWeatherRules.History fogHistory;
 		long weatherClock;
@@ -822,6 +843,7 @@ public final class DirectorSim {
 			this.brain = new DirectorBrain(rules, cards, historySize);
 			this.random = RandomSource.create(mix(params.seed));
 			this.weather = RandomSource.create(mix(params.seed ^ 0xF065_9E11L));
+			this.blindDice = RandomSource.create(mix(params.seed ^ 0xB11D_0077L));
 			this.world = world;
 			this.stage = stage;
 			this.worldStart = worldTicks;
@@ -947,6 +969,13 @@ public final class DirectorSim {
 					SeatRun seat = deciding.get((tick + k) % deciding.size());
 					brain.step(world, seat.pacing, seat.clock(), seat.env, random, seat.rec);
 				}
+				double blindChance = params.blindPerHour <= 0 ? 0 : 1 - Math.exp(-params.blindPerHour * interval / rules.hourTicks);
+				for (SeatRun seat : deciding) {
+					// A menu opened since this tick's decision (D-077): one recheck for that player.
+					if (blindChance > 0 && blindDice.nextDouble() < blindChance) {
+						seat.recheck();
+					}
+				}
 				for (SeatRun seat : deciding) {
 					seat.bookkeep();
 				}
@@ -998,6 +1027,8 @@ public final class DirectorSim {
 		PacingMemory pacing;
 		long play;
 		Result result;
+		/** True during this player's blind moment's recheck (D-077): BLIND cards' moments, and only theirs, may fit. */
+		boolean blind;
 
 		SeatRun(Table table, UUID player, long joinAt, @Nullable PacingMemory pacing, long play, double tension) {
 			this.table = table;
@@ -1025,6 +1056,17 @@ public final class DirectorSim {
 			if (!keepSession || pacing.sessionStart < 0) {
 				table.brain.onJoin(table.world, pacing, clock(), env, table.random, rec);
 			}
+		}
+
+		/** A blind moment (D-077): one recheck of what this player holds or has parked. */
+		void recheck() {
+			blind = true;
+			try {
+				table.brain.recheck(table.world, pacing, clock(), env, table.random, rec);
+			} finally {
+				blind = false;
+			}
+			result.rechecks++;
 		}
 
 		void add(Kind kind, DirectorBrain.Clock c, Stage stage, Tier tier, String id, boolean fake, double value, long until, boolean flag,
@@ -1099,6 +1141,11 @@ public final class DirectorSim {
 		@Override
 		public boolean contextFits(CardInfo card) {
 			if (table.params.neverFits != null && table.params.neverFits.test(card)) {
+				return false;
+			}
+			if (card.has(CardTag.BLIND) != seat.blind) {
+				// A BLIND card's moment is a menu open (D-077): it fits only at a blind moment's recheck, by the dice below.
+				// Every other card's moment is looked at on director ticks; a recheck gives it nothing in a dry run.
 				return false;
 			}
 			return table.params.fits != null ? table.params.fits.test(card) : table.random.nextDouble() < table.params.fitChance;
@@ -1177,7 +1224,7 @@ public final class DirectorSim {
 
 		@Override
 		public void fired(DirectorBrain.Clock c, CardInfo card, boolean fake, boolean forced, Stage stage, double tensionAfter) {
-			seat.add(Kind.FIRE, c, stage, card.tier(), card.id(), fake, tensionAfter, -1, card.hasFake(), forced ? "forced" : "");
+			seat.add(Kind.FIRE, c, stage, card.tier(), card.id(), fake, tensionAfter, -1, card.hasFake(), forced ? "forced" : seat.blind ? RECHECK : "");
 			if (!forced) {
 				seat.result.skyFires.merge(seat.table.sky(), 1, Integer::sum);
 			}
