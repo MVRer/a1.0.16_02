@@ -694,6 +694,45 @@ The game's own records lie, once each (D-081).
 - **Force it.** `/a1016 sc 14 arm last|version [nogap]` (`nogap` skips the 6 hours and the night), `/a1016 sc 14 seed`,
   `/a1016 sc 14 reset`; then quit to the title and open Singleplayer.
 
+As built (SC-4: 02, 03, 10's call, 14; `SelfCreatedEntityTests`, `SelfCreatedLoreTests`):
+- **10's call.** `HimEntity` keeps where he stood (his feet each tick he is IDLE, RISING or STARE_BACK on the ground) and
+  his way out (every `WAY_OUT_STEP` 2 blocks while LEAVING, HIDING or RUSH, the first 24) and fires `FIGURE_LEFT` once,
+  after `discard`, from `gone` and from the frozen sweep (`FigureApi.sweep` now calls `sweptAway`), only while the switch
+  is on; the path is empty for going under and the glimpse. The first tick also calls `HisView.LIVE.onAppeared`.
+- **02.** `entity.sc`: `NamelessCard`, `Nameless` (arms by UUID on the player's own play clock; ends on PARTICIPATION
+  false, a spectator, the story, the switch's `disarmAll`), `NamelessRules` (pure), `ScGates` (the common gates).
+  Payloads `entity/sc02` (ticks left, hide ticks; 0 is off) and `entity/sc02_spent` (the client used its 30 s: the arm
+  ends). `NamelessClient` keeps a still anchor per remote player (0.1 blocks), reads the frame's `FogData` visible start
+  and end once a tick, counts a hidden tick whenever any name is hidden, and reads its own `sc02` numbers;
+  `AvatarRendererMixin` at the head of `shouldShowName(Avatar, double)`. `/a1016 sc 02` prints each participant's fit.
+- **03.** `HisView` (server), `HisViewRules` (pure: the arm, the look, vanilla's crop, a plain PNG encoder, no AWT),
+  `HisView.writePicture` (the files: refused while the world has no `icon.png`, so putting it back never needs a
+  deletion), `EntityData.sc03Done`/`sc03Restored` (optional). Payloads `entity/sc03` (the figure's entity id) and
+  `entity/sc03_taken` (host only, after an arm). Put back by Ending D's afterward (`afterward`, every 100 ticks), the
+  switch and `sc 03 reset`. Client: `CameraMixin` at the end of `alignWithEntity`; `SectionOcclusionGraphAccessor`. Three
+  frames left holes in the dev client (sections the player never saw were not compiled), so the frames draw with
+  `smartCull` off and no fade-in and go on until nothing is left to compile (3 to 40 frames, at most 1.5 s; the dev client:
+  8 frames, 0.7 s, once per world). `iconSize` reads as 64 whatever its value (vanilla's `FaviconTexture` takes only 64).
+  Checked in the dev client: the frame is from his eyes with the host at the middle, the copy is vanilla's old icon (kept
+  across a reset and a second picture), and the world list shows his view.
+- **14.** `lore.sc`: `TheRecord`, `RecordCard`, `RecordRules` (pure), `RecordData` (`data/a1016_02/lore_sc.dat`, opaque
+  keys), `ScGates`. `sc14.dat` (keys `a`, `b`, `f`, `stopMs`, `stopTime`) is written on an arm, at a start that found a
+  shown beat and at SERVER_STOPPING, on integrated servers only, with no beat while the switch is off (its revert writes
+  it so). `WorldListMarks` (client) rereads a world's files every 2 s; a beat shown once keeps showing for the rest of that
+  run until the world is opened; it is marked seen when vanilla first builds that summary, which `WorldOpenFlows` also
+  does when a world is opened another way (the dev client's direct open asked vanilla's question too). The debug's
+  `nogap` (a) picks its time as if the host had been away a day (last night shows at once). (b) for good: hardcore,
+  `ending:ended` and `ending:line_finished=<host>`; no question then. (c) `SeedCommandMixin` wraps
+  `ComponentUtils.copyOnClickText` in `/seed`'s lambda: only the shown text changes (the result stays the real seed); a
+  player's `/seed` only. (d) on `TRACED`: a REMOVE of a placed block adds 1 to "Times Mined", a REMOVE_STACK its count
+  to "Times Dropped"; never `:left/`, `entity:` (the figure's dig), `ending:` or `core:give_back`; overworld and the story
+  gates; credit by horizontal distance; what was given is kept per player and taken back by the switch's revert (online)
+  or at their next join while it is off. Checked in the dev client: the list's italic `a1.0.16_02`, vanilla's backup
+  question with it, and last night's time.
+- **For SC-5.** One-line states: `Nameless.LIVE.line`, `HisView.LIVE.line`, `TheRecord.LIVE.line`; overlay reads:
+  `Nameless.LIVE.ticksLeft`, `HisView.LIVE.armedFigure`/`forcing`, `RecordData` getters. Reverts registered: `sc02`,
+  `sc03`, `sc14`. Verifier: a LAN checklist for 02 (a friend 24 to 64 off in a fog night, standing 1.5 s).
+
 ---
 
 ### accident

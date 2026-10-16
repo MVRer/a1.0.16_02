@@ -23,6 +23,8 @@ public final class EntityClientInit {
 		FogEndReporter.init();
 		GlimpseHide.init(); // the glimpse's hide latch forgets its figures when the connection changes (D-073)
 		ScreenshotClient.init(); // the screenshot's arm (D-078); the key goes through ScreenshotMixin
+		NamelessClient.init(); // the self-created layer's 02 (AvatarRendererMixin) and 03 (CameraMixin)
+		HisViewClient.init();
 		// After the shaders reload, the eyes try their own pipeline again (see HimEyesLayer#brightEyes).
 		ResourceLoader resources = ResourceLoader.get(PackType.CLIENT_RESOURCES);
 		resources.registerReloadListener(EYE_SHADER_RELOAD, (ResourceManagerReloadListener) manager -> HimEyesLayer.resetAfterReload());

@@ -12,8 +12,11 @@ import java.util.UUID;
 import com.forzacode.a1016_02.A1016_02;
 import com.forzacode.a1016_02.core.Attention;
 import com.forzacode.a1016_02.core.AttentionTrigger;
+import com.forzacode.a1016_02.core.HerobrineEvents;
 import com.forzacode.a1016_02.core.HerobrineState;
 import com.forzacode.a1016_02.core.ModConfig;
+import com.forzacode.a1016_02.core.SelfCreated;
+import com.forzacode.a1016_02.entity.sc.HisView;
 
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
@@ -127,6 +130,8 @@ public class HimEntity extends PathfinderMob {
 	public static final int LEAVE_TICK_MARGIN = 20;
 	/** Closer than this to the edge of the entity-ticking range, he is gone (he would freeze past it). */
 	public static final int EDGE_TICK_MARGIN = 16;
+	/** His way out ({@code FIGURE_LEFT}'s path) is sampled every this many blocks (horizontal). */
+	public static final double WAY_OUT_STEP = 2.0;
 
 	/**
 	 * GOING_UNDER: digging down and covering the hole over himself (D-030). UNDER: covered, gone once out of view.
@@ -195,6 +200,14 @@ public class HimEntity extends PathfinderMob {
 	private SightingRules.Sky cameUnder = SightingRules.Sky.OTHER;
 	/** The glimpse: the farthest the player he appeared for has stood from him since he appeared (an approach is measured from there). */
 	private final Map<UUID, Double> glimpseStarts = new HashMap<>();
+	/**
+	 * Where his feet last stood still (his spawn feet, or where he stopped before he left) and his facing there, his feet on
+	 * his way out every {@link #WAY_OUT_STEP} blocks, and whether he was announced gone ({@code FIGURE_LEFT}, D-087).
+	 */
+	private @Nullable Vec3 stoodAt;
+	private float stoodYaw;
+	private final List<Vec3> wayOut = new ArrayList<>();
+	private boolean leftAnnounced;
 
 	// client: the low pose, blended
 	private float low;
@@ -333,9 +346,11 @@ public class HimEntity extends PathfinderMob {
 				spawnDistance = players.stream().mapToDouble(p -> SpotFinder.horizontal(p.position(), position())).min().orElse(Double.NaN);
 			}
 			cameUnder = sky(level);
+			HisView.LIVE.onAppeared(level, this); // the self-created layer's 03: a sighting set up for the host may arm their client
 		}
 		age++;
 		phaseTicks++;
+		trackWayOut();
 
 		// One rule for every removal below: never while in view, unless past everyone's full render distance.
 		Watchers watchers = watchers(level);
@@ -1369,6 +1384,80 @@ public class HimEntity extends PathfinderMob {
 		}
 		A1016_02.LOGGER.debug("[a1016] figure ({}) gone after {} ticks: {}", variant.shortName(), age, why);
 		discard();
+		announceGone(level);
+	}
+
+	/**
+	 * His chunk stopped ticking and nobody can see him ({@link FigureApi#sweep}): he is removed as the sweep always did, and
+	 * announced like any other way out ({@code FIGURE_LEFT}).
+	 */
+	void sweptAway(ServerLevel level) {
+		discard();
+		announceGone(level);
+	}
+
+	/**
+	 * Every tick: while he stands (IDLE, RISING, STARE_BACK) on the ground, where his feet are is where he stood; once he
+	 * moves off (LEAVING, HIDING, RUSH) his feet are sampled every {@link #WAY_OUT_STEP} blocks from there, the first
+	 * {@code HerobrineEvents.FIGURE_PATH_MAX} kept. Going under adds nothing.
+	 */
+	private void trackWayOut() {
+		Vec3 feet = position();
+		switch (phase) {
+			case IDLE, RISING, STARE_BACK -> {
+				if (stoodAt == null || onGround() && wayOut.isEmpty()) {
+					stoodAt = feet;
+					stoodYaw = holdYaw;
+				}
+			}
+			case LEAVING, HIDING, RUSH -> {
+				if (stoodAt == null) {
+					stoodAt = feet;
+					stoodYaw = holdYaw;
+				}
+				Vec3 last = wayOut.isEmpty() ? stoodAt : wayOut.getLast();
+				if (wayOut.size() < HerobrineEvents.FIGURE_PATH_MAX && SpotFinder.horizontal(feet, last) >= WAY_OUT_STEP) {
+					wayOut.add(feet);
+				}
+			}
+			default -> {
+			}
+		}
+	}
+
+	/**
+	 * {@code FIGURE_LEFT} (D-087), once for this figure, after he is gone, while the layer is on: where he stood and his
+	 * facing there, his way out (none if he went under, nor for the glimpse, which vanishes where it stands), his variant,
+	 * whom he appeared for and whether anyone ever saw him.
+	 */
+	private void announceGone(ServerLevel level) {
+		if (leftAnnounced || !SelfCreated.enabled()) {
+			return;
+		}
+		leftAnnounced = true;
+		boolean under = goUnder != null && (phase == Phase.GOING_UNDER || phase == Phase.UNDER);
+		List<Vec3> path = under || variant == Variant.GLIMPSE ? List.of() : List.copyOf(wayOut);
+		HerobrineEvents.FIGURE_LEFT.invoker().onFigureLeft(level, stoodAt(), stoodYaw(), path, variant.shortName(), appearedFor, everSeen);
+	}
+
+	/** Where his feet stood still (his spawn feet, or where he stopped before leaving); where he is before his first tick. */
+	public Vec3 stoodAt() {
+		return stoodAt == null ? position() : stoodAt;
+	}
+
+	/** His facing where he stood ({@link #stoodAt}). */
+	public float stoodYaw() {
+		return stoodAt == null ? getYRot() : stoodYaw;
+	}
+
+	/** His way out so far (a copy, oldest first). */
+	public List<Vec3> wayOut() {
+		return List.copyOf(wayOut);
+	}
+
+	/** True once {@code FIGURE_LEFT} was fired for him. */
+	public boolean leftAnnounced() {
+		return leftAnnounced;
 	}
 
 	/**

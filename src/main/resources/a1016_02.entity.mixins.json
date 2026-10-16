@@ -4,9 +4,12 @@
 	"compatibilityLevel": "JAVA_25",
 	"mixins": [],
 	"client": [
+		"client.AvatarRendererMixin",
+		"client.CameraMixin",
 		"client.GameRendererAccessor",
 		"client.RenderTypeInvoker",
-		"client.ScreenshotMixin"
+		"client.ScreenshotMixin",
+		"client.SectionOcclusionGraphAccessor"
 	],
 	"server": [],
 	"injectors": {
