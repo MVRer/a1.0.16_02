@@ -843,6 +843,24 @@ world icon is put back (03). The record's version reads `a1.0.16_02` for good af
   15%. `sc01.awayFactor` is 0.9 (section v2): at 1.0 the dread share put very late Traces minors 21% over the plain runs.
 - **Switched off** works as each part built it; `/a1016 sc off` is the live path the verifier can use.
 
+#### Fixed in review (R7, core and director; `SelfCreatedR7ReviewTests`, `SelfCreatedR7DirectorReviewTests`)
+- **M1, L3: the CONVERT undo.** SC-5's "exactly `after`" left a turned furnace lit since (a hive's honey, a lectern's
+  book, water in a chest) turned for good, and let Ending D close a door the player had closed and opened again. Now
+  the undo compares what the conversion changed (the block, and each property it set) and keeps vanilla's drift of
+  the rest when it turns back (a lit furnace stays lit). A change of what it set by anything but `TraceService` (a
+  player, redstone, a piston) marks the entry for good (`TraceLedger.changedSince`, fed by core's `Level.setBlock`
+  hook; core's own edits never count), so the block stays theirs even once it is just what the conversion left
+  again. The marks are saved under `traces.dat`'s `changed` key (v1.3 skips it). This is core's rule, not behind the
+  switch; entries without `after` keep the old rule.
+- **M2: where 01 remembers a moment.** The home cards fire while the player is away, so the house was never
+  remembered and stayed trusted. `Places.AT_HOME` (sc_05, sc_05b, sc_07, sc_08, sc_09, sc_12) is remembered at the
+  home: the base (`PlayerWatch.base`) in that dimension, else the middle of the chunk they dwell in most there; a felt
+  one at the target's home. `Places.AT_TRACE` (sc_15, cause `accident:sc15`) is not remembered when it arms but where
+  its trace is ledgered (the director's `TRACED` listener), once, for the player it was armed for; an arm that runs
+  out leaves no place.
+- **L1: files.** `writeInWorld` makes the target's folders one at a time, each only once the folder it goes in
+  resolves inside the world's folder, so a link never gets a folder made outside before the write is refused.
+
 ## Pacing
 
 New cards join the decks. Alone gains one ambient (sc_06), Traces four minors and two ambients, Proximity three minors

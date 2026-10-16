@@ -19,6 +19,7 @@ import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.block.entity.SignBlockEntity;
 import net.minecraft.world.level.block.entity.SignText;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.block.state.properties.Property;
 
 import org.jspecify.annotations.Nullable;
 
@@ -145,12 +146,13 @@ final class TraceUndo {
 			ledger.remove(entry);
 			return TraceService.UndoResult.DONE;
 		}
-		if (changedSince(level, at, entry, old, now)) {
-			// The block is not what the conversion left (built, dug or changed there since): theirs now.
+		if (changedSince(level, ledger, at, entry, old, now)) {
+			// Not what the conversion left (built, dug or changed there since): theirs now.
 			return TraceService.UndoResult.BLOCKED;
 		}
+		BlockState back = entry.after().isPresent() ? restored(old, entry.after().get(), now) : old;
 		int before = ledger.entries().size();
-		if (!traces.convert(level, at, old, cause)) {
+		if (!traces.convert(level, at, back, cause)) {
 			return TraceService.UndoResult.IN_VIEW;
 		}
 		close(ledger, entry, before, cause);
@@ -158,20 +160,65 @@ final class TraceUndo {
 	}
 
 	/**
-	 * A CONVERT's block changed after the conversion: with the block the conversion left ({@code after}), anything but
-	 * exactly that block now (a block a player placed is taken back while it is still what he left, so a turned block
-	 * goes back); a block entity there now that the old block never had blocks it either way. An entry ledgered before
-	 * {@code after} was kept falls back to the old rule: a block a player placed or a cell they dug is theirs.
+	 * A CONVERT's block changed after the conversion. With the block the conversion left ({@code after}): the block
+	 * does not hold what the conversion changed ({@link #holds}), or anything but core changed that since, even if it is
+	 * what the conversion left again ({@link TraceLedger#changedSince}: a door the player closed and opened again is
+	 * theirs). So a block a player placed goes back while nobody but vanilla's own drift touched it (a turned furnace
+	 * lit since still turns back). A block entity there now that the old block never had blocks it either way. An
+	 * entry ledgered before {@code after} was kept falls back to the old rule: a block a player placed or a cell they
+	 * dug is theirs.
 	 */
-	private static boolean changedSince(ServerLevel level, BlockPos at, TraceLedger.Entry entry, BlockState old, BlockState now) {
+	private static boolean changedSince(ServerLevel level, TraceLedger ledger, BlockPos at, TraceLedger.Entry entry, BlockState old, BlockState now) {
 		if (level.getBlockEntity(at) != null && !old.hasBlockEntity()) {
 			return true;
 		}
 		if (entry.after().isPresent()) {
-			return now != entry.after().get();
+			return ledger.changedSince(entry) || !holds(old, entry.after().get(), now);
 		}
 		PlayerWatch watch = Services.watch();
 		return watch.wasPlacedByPlayer(level, at) || now.isAir() && watch.wasDugByPlayer(level, at);
+	}
+
+	/**
+	 * Whether {@code now} still holds what a conversion from {@code old} to {@code after} changed: the block it left,
+	 * and every property of it the conversion set (one {@code old} lacked or held another value of). The rest is
+	 * vanilla's to change (a furnace's {@code lit}, a hive's honey, a lectern's book, {@code waterlogged}).
+	 */
+	static boolean holds(BlockState old, BlockState after, BlockState now) {
+		if (now == after) {
+			return true;
+		}
+		if (!now.is(after.getBlock())) {
+			return false;
+		}
+		for (Property<?> property : after.getProperties()) {
+			if (converted(property, old, after) && !now.getValue(property).equals(after.getValue(property))) {
+				return false;
+			}
+		}
+		return true;
+	}
+
+	/**
+	 * What the undo of a conversion from {@code old} to {@code after} sets, {@code now} holding it: {@code old}, with
+	 * now's value of each property the conversion never set (a furnace lit since stays lit).
+	 */
+	static BlockState restored(BlockState old, BlockState after, BlockState now) {
+		BlockState back = old;
+		for (Property<?> property : old.getProperties()) {
+			if (now.hasProperty(property) && after.hasProperty(property) && !converted(property, old, after)) {
+				back = copy(back, now, property);
+			}
+		}
+		return back;
+	}
+
+	private static boolean converted(Property<?> property, BlockState old, BlockState after) {
+		return !old.hasProperty(property) || !old.getValue(property).equals(after.getValue(property));
+	}
+
+	private static <T extends Comparable<T>> BlockState copy(BlockState into, BlockState from, Property<T> property) {
+		return into.setValue(property, from.getValue(property));
 	}
 
 	private static TraceService.UndoResult signText(TraceService traces, ServerLevel level, TraceLedger ledger, TraceLedger.Entry entry, String cause) {

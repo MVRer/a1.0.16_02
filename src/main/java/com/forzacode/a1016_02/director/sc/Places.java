@@ -6,6 +6,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 
 import com.forzacode.a1016_02.core.CardTag;
 import com.forzacode.a1016_02.core.HerobrineState;
@@ -14,6 +15,7 @@ import com.forzacode.a1016_02.core.TraceService;
 import com.forzacode.a1016_02.director.CardInfo;
 
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.GlobalPos;
 import net.minecraft.resources.ResourceKey;
 import net.minecraft.world.level.Level;
 
@@ -154,6 +156,43 @@ public final class Places {
 			factor = Math.min(Math.max(1, cfg.maxFactor), Math.max(factor, cfg.trustedFactor));
 		}
 		return factor == 1.0 ? Math.max(0, cfg.awayFactor) : factor;
+	}
+
+	/**
+	 * The layer's cards whose moment is at the player's home, not where they stand when it fires or arms (they fire
+	 * while the player is away from it, or arm now and play there later): 05 and 05b (the house), 07 (a named mob by the
+	 * base), 08 and 09 (the base's blocks, the door), 12 (the bed). Remembered at the home ({@link #placeOf}).
+	 */
+	public static final Set<String> AT_HOME = Set.of("sc_05", "sc_05b", "sc_07", "sc_08", "sc_09", "sc_12");
+
+	/**
+	 * The layer's cards that arm now and play later at a spot they pick then, by the cause of the trace that plays
+	 * them: 15 (the block on the player's route). Not remembered when they arm; remembered where that trace is ledgered,
+	 * once, for the player it was armed for (the director's {@code TRACED} listener). An arm that runs out leaves no place.
+	 */
+	public static final Map<String, String> AT_TRACE = Map.of("sc_15", "accident:sc15");
+
+	/**
+	 * Where a fire of this card is remembered for a player standing at {@code stand}: for a card at home
+	 * ({@link #AT_HOME}) their home, the base in this dimension if they have one, else the middle of the chunk they dwell
+	 * in most here (01's own idea of home) at their height; for any other card where they stand.
+	 */
+	public static BlockPos placeOf(CardInfo card, PlaceMemory memory, ResourceKey<Level> dimension, BlockPos stand, Optional<GlobalPos> base) {
+		if (!AT_HOME.contains(card.id())) {
+			return stand;
+		}
+		if (base.isPresent() && base.get().dimension().equals(dimension)) {
+			return base.get().pos();
+		}
+		PlaceMemory.Chunk home = null;
+		double most = 0;
+		for (Map.Entry<PlaceMemory.Chunk, Double> entry : memory.dwell.entrySet()) {
+			if (entry.getKey().dimension().equals(dimension) && entry.getValue() > most) {
+				home = entry.getKey();
+				most = entry.getValue();
+			}
+		}
+		return home == null ? stand : new BlockPos((home.x() << 4) + 8, stand.getY(), (home.z() << 4) + 8);
 	}
 
 	/** Remembers a fire (real or felt) of this card for the player, at this position and time. */

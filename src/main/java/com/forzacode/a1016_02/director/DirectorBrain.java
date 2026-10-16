@@ -165,8 +165,10 @@ public final class DirectorBrain {
 
 		/**
 		 * A fire that is neither fake nor forced reached this player: theirs ({@code felt} false) or one they felt beside
-		 * someone (true), with their own pacing and clock. Live, it remembers where they stand
-		 * ({@code director.sc.Places.remember}). Nothing by default.
+		 * someone (true), with their own pacing and clock. Live, it remembers where the moment is
+		 * ({@code director.sc.Places.placeOf}: where they stand, or the home for a card at home), or, for a card that
+		 * arms now and plays later at a spot of its own ({@code Places.AT_TRACE}), where its trace is ledgered later.
+		 * Nothing by default.
 		 */
 		default void remember(PacingMemory m, CardInfo card, Clock c, boolean felt) {
 		}

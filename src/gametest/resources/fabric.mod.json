@@ -38,7 +38,9 @@
 			"com.forzacode.a1016_02.lore.SelfCreatedLoreTests",
 			"com.forzacode.a1016_02.core.SelfCreatedIntegrationTests",
 			"com.forzacode.a1016_02.director.SelfCreatedPacingTests",
-			"com.forzacode.a1016_02.debug.SelfCreatedDebugTests"
+			"com.forzacode.a1016_02.debug.SelfCreatedDebugTests",
+			"com.forzacode.a1016_02.core.SelfCreatedR7ReviewTests",
+			"com.forzacode.a1016_02.director.SelfCreatedR7DirectorReviewTests"
 		]
 	},
 	"depends": {

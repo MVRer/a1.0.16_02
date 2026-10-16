@@ -493,4 +493,60 @@ public class SelfCreatedDirectorTests {
 		return Math.abs(a - b) < 1e-6;
 	}
 
+	// --- where the moment is (fixed in review, R7 M2) ---
+
+	/**
+	 * A card at home is remembered at the player's home: the base in this dimension, else the middle of the chunk they
+	 * dwell in most here, at their height; with neither, where they stand. Any other card where they stand.
+	 */
+	@GameTest
+	public void aCardAtHomeIsRememberedAtTheHomeAndAnyOtherWhereThePlayerStands(GameTestHelper helper) {
+		PlaceMemory memory = new PlaceMemory();
+		BlockPos stand = new BlockPos(200, 70, 0);
+		BlockPos bed = new BlockPos(3, 64, 5);
+		CardInfo home = card("sc_05", Tier.MINOR, Stage.TRACES, true);
+		helper.assertTrue(Places.AT_HOME.containsAll(List.of("sc_05", "sc_05b", "sc_07", "sc_08", "sc_09", "sc_12")), "the cards at home: " + Places.AT_HOME);
+		helper.assertTrue(Places.placeOf(home, memory, OVERWORLD, stand, Optional.empty()).equals(stand), "no home: not where they stand");
+		helper.assertTrue(Places.placeOf(home, memory, OVERWORLD, stand, Optional.of(net.minecraft.core.GlobalPos.of(OVERWORLD, bed))).equals(bed),
+				"not at the base");
+		memory.sampleDwell(new PlaceMemory.Chunk(OVERWORLD, 2, -1), 0, 1200, 72_000);
+		memory.sampleDwell(new PlaceMemory.Chunk(OVERWORLD, 2, -1), 1200, 1200, 72_000);
+		// More dwell in the nether, which is not this dimension.
+		for (long t = 2400; t <= 6000; t += 1200) {
+			memory.sampleDwell(new PlaceMemory.Chunk(Level.NETHER, 9, 9), t, 1200, 72_000);
+		}
+		BlockPos dwelt = Places.placeOf(home, memory, OVERWORLD, stand, Optional.of(net.minecraft.core.GlobalPos.of(Level.NETHER, bed)));
+		helper.assertTrue(dwelt.equals(new BlockPos(40, 70, -8)), "a base in another dimension: not the chunk they dwell in most here: " + dwelt);
+		helper.assertTrue(Places.placeOf(minor("away"), memory, OVERWORLD, stand, Optional.of(net.minecraft.core.GlobalPos.of(OVERWORLD, bed))).equals(stand),
+				"another card was not remembered where they stand");
+		helper.succeed();
+	}
+
+	/**
+	 * 15 arms now and plays later: nothing is remembered when it arms; the trace that plays it is where it happened,
+	 * remembered once for the player it was armed for (the nearest of those it waits for), never for another cause.
+	 */
+	@GameTest
+	public void anArmedCardIsRememberedWhereItsTracePlays(GameTestHelper helper) {
+		DirectorImpl director = DirectorInit.director();
+		ServerPlayer player = (ServerPlayer) helper.makeMockServerPlayer(GameType.SURVIVAL);
+		BlockPos hole = helper.absolutePos(new BlockPos(2, 1, 2));
+		player.snapTo(net.minecraft.world.phys.Vec3.atBottomCenterOf(hole.offset(6, 1, 0)), 0, 0);
+		PacingMemory pacing = new PacingMemory();
+		CardInfo card = DirectorTestSupport.registryDeck().stream().filter(c -> c.id().equals("sc_15")).findFirst().orElseThrow();
+		director.awaitTrace(player.getUUID(), pacing, card);
+		net.minecraft.core.GlobalPos at = net.minecraft.core.GlobalPos.of(helper.getLevel().dimension(), hole);
+		com.forzacode.a1016_02.core.TraceLedger.Entry other = new com.forzacode.a1016_02.core.TraceLedger.Entry(
+				com.forzacode.a1016_02.core.TraceLedger.Kind.REMOVE, "accident:sc15/dependent", 0, at, Optional.empty(), Optional.empty(), Optional.empty(),
+				Optional.empty(), -1, -1);
+		com.forzacode.a1016_02.core.TraceLedger.Entry played = new com.forzacode.a1016_02.core.TraceLedger.Entry(
+				com.forzacode.a1016_02.core.TraceLedger.Kind.REMOVE, Places.AT_TRACE.get("sc_15"), 0, at, Optional.empty(), Optional.empty(), Optional.empty(),
+				Optional.empty(), -1, -1);
+		helper.assertFalse(director.onTraced(helper.getLevel(), other, List.of(player)) || !pacing.places().places().isEmpty(), "another cause was remembered");
+		helper.assertTrue(director.onTraced(helper.getLevel(), played, List.of(player)), "the trace that played it was not remembered");
+		helper.assertTrue(pacing.places().places().size() == 1 && pacing.places().places().getFirst().pos().equals(hole)
+				&& pacing.places().places().getFirst().tier() == Tier.MINOR, "not remembered at the hole: " + pacing.places().places());
+		helper.assertFalse(director.onTraced(helper.getLevel(), played, List.of(player)), "remembered twice");
+		helper.succeed();
+	}
 }
