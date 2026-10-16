@@ -41,12 +41,15 @@ import net.minecraft.world.phys.Vec3;
 
 /**
  * The screenshot (D-078), what the game tests reach: the card and its gates, arming and disarming (the time, leaving,
- * pausing, the fog flag), the report (once per world, the day, everyone disarmed), the record through a save, the
- * payloads, and the spot's pure math (the fog band, off the middle, inside the frame, ground or none) with the level's
- * ground and sight rules. The frame itself (him in the PNG, never on the screen) is the client's: see the dev client
- * check list in the report. Each test makes its own {@link TheScreenshot} on its own {@link Hooks} (a fresh
- * {@link EntityData}, a stage, a clock, the players online and a recorder of what was sent), so nothing here reads or
- * changes the shared test server's story. {@link EntityGameTests} extends this (through {@link TwoPlayerFigureGameTests}).
+ * pausing, the fog flag and the weather's fog end, one arm at a time, the story's end), the report (once per world, the
+ * day, everyone disarmed, only from a ready arm), the record through a save, the payloads, the client's conditions
+ * (weather fog only), and the spot's pure math (the fog band with every sighting's floor and cap, his height in the
+ * saved image, past the visible fog start, off the middle, inside the frame, ground or none) with the level's ground
+ * and sight rules. The frame itself (him in the PNG, never on the screen, the clean frame after it) is the client's:
+ * see the dev client check list in the report. Each test makes its own {@link TheScreenshot} on its own {@link Hooks}
+ * (a fresh {@link EntityData}, a stage, a clock, the story's end, the players online and a recorder of what was sent),
+ * so nothing here reads or changes the shared test server's story. {@link EntityGameTests} extends this (through
+ * {@link TwoPlayerFigureGameTests}).
  */
 public class ScreenshotGameTests {
 	private static final long DAY = 24000L;
@@ -61,8 +64,10 @@ public class ScreenshotGameTests {
 		final List<Sent> sent = new ArrayList<>();
 		Stage stage = Stage.TRACES;
 		boolean lastMinute;
+		boolean storyOver;
 		boolean out;
 		boolean fog;
+		float fogEnd = FOG_END;
 		boolean canSend = true;
 		long dayTicks = 3 * DAY + 1000;
 
@@ -93,6 +98,11 @@ public class ScreenshotGameTests {
 		}
 
 		@Override
+		public boolean storyOver(MinecraftServer server) {
+			return storyOver;
+		}
+
+		@Override
 		public boolean heIsOut(MinecraftServer server) {
 			return out;
 		}
@@ -113,6 +123,11 @@ public class ScreenshotGameTests {
 		}
 
 		@Override
+		public float weatherFogEnd(ServerPlayer player) {
+			return fogEnd;
+		}
+
+		@Override
 		public boolean send(ServerPlayer player, ScreenshotStatePayload payload) {
 			if (!canSend) {
 				return false;
@@ -130,7 +145,16 @@ public class ScreenshotGameTests {
 		return card.fire(new FireContext(player, level, false, forced, RandomSource.create(5)));
 	}
 
-	private static final ScreenshotStatePayload READY = new ScreenshotStatePayload(true, false);
+	/** The weather's fog end a test's hooks send unless it sets another. */
+	private static final float FOG_END = 60.0F;
+
+	/** What the client is told: ready or paused, the fog flag, the weather's fog end ({@link #FOG_END}) and the arm's number. */
+	private static ScreenshotStatePayload told(boolean ready, boolean fog, int arm) {
+		return new ScreenshotStatePayload(ready, fog, FOG_END, arm);
+	}
+
+	/** The first arm of a test's screenshot, ready, without fog. */
+	private static final ScreenshotStatePayload READY = told(true, false, 1);
 
 	// --- the card ---
 
@@ -146,26 +170,45 @@ public class ScreenshotGameTests {
 		helper.succeed();
 	}
 
-	/** The gate: the overworld, from Traces, once per world, not armed already, alive and playing, not in Ending D's last minute. */
+	/**
+	 * The gate: the overworld, from Traces, while the story goes on, once per world, nobody armed (one arm in the world
+	 * at a time), alive and playing, not in Ending D's last minute.
+	 */
 	@GameTest
 	public void theGateFitsOnlyInTheOverworldFromTracesOncePerWorld(GameTestHelper helper) {
-		helper.assertTrue(ScreenshotRules.gate(true, Stage.TRACES, false, false, true, false, false).isEmpty(), "the plain case is refused");
-		helper.assertTrue(ScreenshotRules.gate(true, Stage.REMOVAL, false, false, true, false, false).isEmpty(), "Removal is refused");
-		helper.assertTrue(ScreenshotRules.gate(false, Stage.TRACES, false, false, true, false, false).orElse("").equals("not in the overworld"),
+		helper.assertTrue(ScreenshotRules.gate(true, Stage.TRACES, false, false, true, false, false, false).isEmpty(), "the plain case is refused");
+		helper.assertTrue(ScreenshotRules.gate(true, Stage.REMOVAL, false, false, true, false, false, false).isEmpty(), "Removal is refused");
+		helper.assertTrue(ScreenshotRules.gate(false, Stage.TRACES, false, false, true, false, false, false).orElse("").equals("not in the overworld"),
 				"the Nether or the End fit");
-		helper.assertTrue(ScreenshotRules.gate(true, Stage.ALONE, false, false, true, false, false).orElse("").startsWith("before"), "Alone fits");
-		helper.assertTrue(ScreenshotRules.gate(true, Stage.TRACES, true, false, true, false, false).orElse("").contains("already happened"),
+		helper.assertTrue(ScreenshotRules.gate(true, Stage.ALONE, false, false, true, false, false, false).orElse("").startsWith("before"), "Alone fits");
+		helper.assertTrue(ScreenshotRules.gate(true, Stage.TRACES, true, false, true, false, false, false).orElse("").contains("already happened"),
 				"a second screenshot in the world fits");
-		helper.assertTrue(ScreenshotRules.gate(true, Stage.TRACES, false, true, true, false, false).orElse("").equals("already armed"), "re-arming fits");
-		helper.assertTrue(ScreenshotRules.gate(true, Stage.TRACES, false, false, false, false, false).isPresent(), "a dead player fits");
-		helper.assertTrue(ScreenshotRules.gate(true, Stage.TRACES, false, false, true, true, false).isPresent(), "a spectator fits");
-		helper.assertTrue(ScreenshotRules.gate(true, Stage.TRACES, false, false, true, false, true).isPresent(), "Ending D's last minute fits");
+		helper.assertTrue(ScreenshotRules.gate(true, Stage.TRACES, false, true, true, false, false, false).orElse("").equals("someone is already armed"),
+				"a second arm in the world fits");
+		helper.assertTrue(ScreenshotRules.gate(true, Stage.TRACES, false, false, false, false, false, false).isPresent(), "a dead player fits");
+		helper.assertTrue(ScreenshotRules.gate(true, Stage.TRACES, false, false, true, true, false, false).isPresent(), "a spectator fits");
+		helper.assertTrue(ScreenshotRules.gate(true, Stage.TRACES, false, false, true, false, true, false).isPresent(), "Ending D's last minute fits");
+		helper.assertTrue(ScreenshotRules.gate(true, Stage.TRACES, false, false, true, false, false, true).orElse("").equals("the story is over"),
+				"a world quiet for good fits");
+		helper.succeed();
+	}
+
+	/** The story is over for the screenshot once the world is quiet for good or an ending is done: each flag alone, and none. */
+	@GameTest
+	public void theStoryIsOverWithEveryEndingsFlag(GameTestHelper helper) {
+		helper.assertFalse(ScreenshotRules.storyOver(flag -> false), "no flag ends the story");
+		for (String flag : List.of("director:silence_forever", "ending:path=C", "ending:ended", "ending:d_complete")) {
+			helper.assertTrue(ScreenshotRules.storyOver(flag::equals), flag + " does not end the story");
+		}
+		helper.assertFalse(ScreenshotRules.storyOver(flag -> flag.equals("ending:path=A") || flag.equals("ending:last_minute")),
+				"a path under way or the last minute ends the story for good");
 		helper.succeed();
 	}
 
 	/**
-	 * Firing arms the player's client (FIRED, the arm sent) and the card stops fitting for them; it fits for nobody at
-	 * Alone. A client that cannot take the payload is never armed (SKIPPED).
+	 * Firing arms the player's client (FIRED, the arm sent) and the card stops fitting, for them and for everyone else
+	 * (one arm in the world at a time); it fits for nobody at Alone. A client that cannot take the payload is never
+	 * armed (SKIPPED).
 	 */
 	@GameTest
 	public void firingArmsThatPlayersClientOnly(GameTestHelper helper) {
@@ -179,14 +222,16 @@ public class ScreenshotGameTests {
 		helper.assertTrue(card.contextFits(a, level), "the card does not fit A: " + shot.gate(a, level));
 		helper.assertTrue(fire(card, a, level, false) == FireResult.FIRED, "the card did not fire");
 		helper.assertTrue(shot.isArmed(a.getUUID()) && !shot.isArmed(b.getUUID()), "armed " + shot.armed());
-		helper.assertTrue(hooks.to(a).equals(List.of(new ScreenshotStatePayload(true, true))) && hooks.to(b).isEmpty(), "sent " + hooks.sent);
+		helper.assertTrue(hooks.to(a).equals(List.of(told(true, true, 1))) && hooks.to(b).isEmpty(), "sent " + hooks.sent);
 		helper.assertTrue(shot.ticksLeft(level.getServer(), a.getUUID()) == EntityConfig.get().screenshotArmTicks()
 				&& EntityConfig.get().screenshotArmTicks() == 2 * DAY, "the arm is not 2 in-game days: " + shot.ticksLeft(level.getServer(), a.getUUID()));
 		helper.assertFalse(card.contextFits(a, level), "the card fits A again while armed");
-		helper.assertTrue(card.contextFits(b, level), "the card does not fit B: " + shot.gate(b, level));
+		helper.assertTrue(shot.gate(b, level).orElse("").equals("someone is already armed"), "the card fits B while A is armed: " + shot.gate(b, level));
+		helper.assertTrue(fire(card, b, level, false) == FireResult.SKIPPED && !shot.isArmed(b.getUUID()), "B was armed while A is");
 		helper.assertTrue(card.fire(new FireContext(b, level, true, false, RandomSource.create(1))) == FireResult.SKIPPED, "a fake fired");
 
 		hooks.stage = Stage.ALONE;
+		shot.disarm(level.getServer(), a.getUUID());
 		helper.assertFalse(card.contextFits(b, level), "the card fits in Alone");
 		helper.assertTrue(fire(card, b, level, false) == FireResult.SKIPPED && !shot.isArmed(b.getUUID()), "the card armed B in Alone");
 
@@ -230,20 +275,20 @@ public class ScreenshotGameTests {
 		Hooks hooks = new Hooks().with(a, b, c);
 		TheScreenshot shot = new TheScreenshot(hooks);
 		shot.arm(a);
-		shot.arm(b);
-		shot.arm(c);
+		shot.onParticipation(server, b.getUUID(), false);
 		shot.onParticipation(server, a.getUUID(), true);
-		helper.assertTrue(shot.isArmed(a.getUUID()), "taking part disarmed");
+		helper.assertTrue(shot.isArmed(a.getUUID()), "taking part, or someone else leaving, disarmed");
 		shot.onParticipation(server, a.getUUID(), false);
 		helper.assertFalse(shot.isArmed(a.getUUID()), "leaving kept the arm");
-		helper.assertTrue(shot.isArmed(b.getUUID()) && shot.isArmed(c.getUUID()), "one leaving disarmed the others");
 
+		shot.arm(b);
 		hooks.online.remove(b.getUUID()); // gone without a PARTICIPATION event reaching us
 		int sentBefore = hooks.sent.size();
 		shot.check(server);
 		helper.assertFalse(shot.isArmed(b.getUUID()), "a player gone from the server kept the arm");
 		helper.assertTrue(hooks.sent.size() == sentBefore, "something was sent to a player who is gone");
 
+		shot.arm(c);
 		c.mode = GameType.SPECTATOR;
 		shot.check(server);
 		helper.assertFalse(shot.isArmed(c.getUUID()), "a spectator kept the arm");
@@ -252,8 +297,8 @@ public class ScreenshotGameTests {
 	}
 
 	/**
-	 * While armed, the client is told again only when what it may do changes: paused while he is out or in Ending D's
-	 * last minute, and the fog flag. Nothing is sent when nothing changed.
+	 * While armed, the client is told again only when what it may do changes: paused while he is out, the fog flag, and
+	 * the weather's fog end once it moved by more than 2 blocks. Nothing is sent when nothing changed.
 	 */
 	@GameTest
 	public void theClientIsToldWhenHeIsOutOrTheFogChanges(GameTestHelper helper) {
@@ -268,22 +313,70 @@ public class ScreenshotGameTests {
 		shot.check(server);
 		hooks.out = true;
 		shot.check(server);
+		shot.check(server);
 		hooks.out = false;
-		hooks.lastMinute = true;
-		shot.check(server);
-		shot.check(server);
-		hooks.lastMinute = false;
 		hooks.fog = false;
 		shot.check(server);
-		// The fog came, he went out (paused), the last minute took over (still paused: nothing new), then both ended with the fog gone.
+		hooks.fogEnd = FOG_END + 1.9F;
+		shot.check(server);
+		hooks.fogEnd = FOG_END - 2.1F;
+		shot.check(server);
+		// The fog came, he went out (paused; nothing new on the second look), then he was gone with the fog; the fog end
+		// moved 1.9 blocks (nothing sent), then 2.1 from what the client was told.
 		List<ScreenshotStatePayload> told = hooks.to(a);
-		helper.assertTrue(told.equals(List.of(READY, new ScreenshotStatePayload(true, true), new ScreenshotStatePayload(false, true), READY)),
-				"told " + told);
-		helper.assertTrue(shot.told(a.getUUID()).orElseThrow().equals(READY) && shot.isArmed(a.getUUID()), "a pause ended the arm");
-		helper.assertTrue(shot.gate(a, helper.getLevel()).orElse("").equals("already armed"), "a paused arm can be armed again");
-		hooks.lastMinute = true;
+		helper.assertTrue(told.equals(List.of(READY, told(true, true, 1), told(false, true, 1), READY,
+				new ScreenshotStatePayload(true, false, FOG_END - 2.1F, 1))), "told " + told);
+		helper.assertTrue(shot.isArmed(a.getUUID()), "a pause ended the arm");
+		helper.assertTrue(shot.gate(a, helper.getLevel()).orElse("").equals("someone is already armed"), "a paused arm can be armed again");
+		helper.succeed();
+	}
+
+	/**
+	 * The story holds no screenshot during Ending D's last minute and once it is over or quiet for good: every arm ends
+	 * at the next look (its client told), the gate refuses everyone, and even a debug arm is SKIPPED.
+	 */
+	@GameTest
+	public void everyArmEndsWithTheStory(GameTestHelper helper) {
+		ServerLevel level = helper.getLevel();
+		MinecraftServer server = level.getServer();
+		ServerPlayer a = mock(helper);
 		ServerPlayer b = mock(helper);
-		helper.assertTrue(shot.gate(b, helper.getLevel()).isPresent(), "a new arm in Ending D's last minute");
+		for (boolean lastMinute : new boolean[] {true, false}) {
+			Hooks hooks = new Hooks().with(a, b);
+			TheScreenshot shot = new TheScreenshot(hooks);
+			ScreenshotCard card = new ScreenshotCard(shot);
+			helper.assertTrue(fire(card, a, level, false) == FireResult.FIRED, "not armed");
+			hooks.lastMinute = lastMinute;
+			hooks.storyOver = !lastMinute;
+			String why = lastMinute ? "Ending D's last minute" : "the story is over";
+			shot.check(server);
+			helper.assertTrue(shot.armed().isEmpty() && hooks.to(a).getLast().equals(ScreenshotStatePayload.OFF), why + ": the arm stayed, told " + hooks.sent);
+			helper.assertTrue(shot.gate(b, level).orElse("").equals(why), why + ": the gate says " + shot.gate(b, level));
+			helper.assertTrue(fire(card, b, level, true) == FireResult.SKIPPED && shot.armed().isEmpty(), why + ": a debug fire armed");
+			helper.assertTrue(shot.report(a) == TheScreenshot.Report.IGNORED && !hooks.data.screenshotTaken(), why + ": a report counted");
+		}
+		helper.succeed();
+	}
+
+	/**
+	 * One arm in the world at a time: a debug arm for B ends A's (A's client told), with a new arm number; a report
+	 * from A is then ignored.
+	 */
+	@GameTest
+	public void aDebugArmEndsTheArmBefore(GameTestHelper helper) {
+		ServerLevel level = helper.getLevel();
+		ServerPlayer a = mock(helper);
+		ServerPlayer b = mock(helper);
+		Hooks hooks = new Hooks().with(a, b);
+		TheScreenshot shot = new TheScreenshot(hooks);
+		ScreenshotCard card = new ScreenshotCard(shot);
+		helper.assertTrue(fire(card, a, level, false) == FireResult.FIRED, "A not armed");
+		helper.assertTrue(fire(card, b, level, true) == FireResult.FIRED, "the debug arm for B");
+		helper.assertTrue(shot.armed().equals(List.of(b.getUUID())), "armed " + shot.armed());
+		helper.assertTrue(hooks.to(a).equals(List.of(READY, ScreenshotStatePayload.OFF)) && hooks.to(b).equals(List.of(told(true, false, 2))),
+				"sent " + hooks.sent);
+		helper.assertTrue(shot.report(a) == TheScreenshot.Report.IGNORED && !hooks.data.screenshotTaken(), "A's report counted");
+		helper.assertTrue(shot.report(b) == TheScreenshot.Report.RECORDED, "B's report");
 		helper.succeed();
 	}
 
@@ -302,11 +395,11 @@ public class ScreenshotGameTests {
 		TheScreenshot shot = new TheScreenshot(hooks);
 		ScreenshotCard card = new ScreenshotCard(shot);
 		long today = hooks.dayTicks / DAY;
-		helper.assertTrue(fire(card, a, level, false) == FireResult.FIRED && fire(card, b, level, false) == FireResult.FIRED, "not armed");
+		helper.assertTrue(fire(card, b, level, false) == FireResult.FIRED, "not armed");
 		helper.assertTrue(shot.report(stranger) == TheScreenshot.Report.IGNORED, "a report from a client that was not armed counted");
 		helper.assertFalse(hooks.data.screenshotTaken(), "an unarmed report recorded the screenshot");
 		helper.assertTrue(hooks.data.dayAllows(today, 1), "an unarmed report counted the day");
-		helper.assertTrue(shot.isArmed(a.getUUID()) && shot.isArmed(b.getUUID()), "an unarmed report disarmed someone");
+		helper.assertTrue(shot.isArmed(b.getUUID()), "an unarmed report disarmed someone");
 
 		helper.assertTrue(shot.report(b) == TheScreenshot.Report.RECORDED, "B's report was not recorded");
 		helper.assertTrue(hooks.data.screenshotTaken() && hooks.data.screenshotDay() == today && hooks.data.screenshotBy().equals(Optional.of(b.getUUID())),
@@ -316,15 +409,14 @@ public class ScreenshotGameTests {
 		helper.assertTrue(hooks.data.lastPos() == null && hooks.data.lastVariant().isEmpty() && hooks.data.sightings() == 0,
 				"it counted for the place or the variant rule");
 		helper.assertTrue(shot.armed().isEmpty(), "someone is still armed: " + shot.armed());
-		helper.assertTrue(hooks.to(a).getLast().equals(ScreenshotStatePayload.OFF) && hooks.to(b).getLast().equals(ScreenshotStatePayload.OFF),
-				"not everyone was told: " + hooks.sent);
+		helper.assertTrue(hooks.to(b).getLast().equals(ScreenshotStatePayload.OFF), "B was not told: " + hooks.sent);
 		helper.assertTrue(shot.report(b) == TheScreenshot.Report.IGNORED, "a second report from B counted");
 		helper.assertTrue(shot.gate(a, level).orElse("").contains("already happened") && shot.gate(stranger, level).orElse("").contains("already happened"),
 				"the card fits again after the world's screenshot");
 		helper.assertTrue(fire(card, a, level, false) == FireResult.SKIPPED, "a real fire armed again");
 
 		helper.assertTrue(fire(card, a, level, true) == FireResult.FIRED && shot.isArmed(a.getUUID()), "a debug fire did not arm");
-		hooks.dayTicks += 5 * DAY;
+		hooks.dayTicks += DAY + 500; // a later day, the arm still running
 		helper.assertTrue(shot.report(a) == TheScreenshot.Report.ALREADY_RECORDED, "the debug arm's report");
 		helper.assertTrue(hooks.data.screenshotDay() == today && hooks.data.screenshotBy().equals(Optional.of(b.getUUID())), "the first record changed");
 		helper.assertTrue(shot.armed().isEmpty(), "the debug arm stayed");
@@ -370,8 +462,10 @@ public class ScreenshotGameTests {
 	public void thePayloadsRoundTrip(GameTestHelper helper) {
 		for (boolean armed : new boolean[] {false, true}) {
 			for (boolean fog : new boolean[] {false, true}) {
-				ScreenshotStatePayload state = new ScreenshotStatePayload(armed, fog);
-				helper.assertTrue(roundTrip(ScreenshotStatePayload.CODEC, state).equals(state), "state " + state);
+				for (float end : new float[] {0.0F, 37.5F, Float.NaN}) {
+					ScreenshotStatePayload state = new ScreenshotStatePayload(armed, fog, end, armed ? 300 : 0);
+					helper.assertTrue(roundTrip(ScreenshotStatePayload.CODEC, state).equals(state), "state " + state);
+				}
 			}
 		}
 		helper.assertTrue(roundTrip(ScreenshotTakenPayload.CODEC, ScreenshotTakenPayload.INSTANCE).equals(ScreenshotTakenPayload.INSTANCE), "taken");
@@ -381,22 +475,38 @@ public class ScreenshotGameTests {
 
 	// --- the client's conditions and the fog flag ---
 
+	/** The client's conditions for this camera, the plain case (overworld, no screen, in the air, first person, sky 15) changed by the test. */
+	private static Optional<String> conditions(boolean overworld, boolean screen, boolean fluid, boolean firstPerson, int sky, boolean shaders,
+			boolean blindOrDark, boolean fogOn, double drawn, double weather) {
+		return ScreenshotRules.clientConditions(overworld, screen, fluid, firstPerson, sky, 10, shaders, blindOrDark, fogOn, drawn, weather);
+	}
+
+	/**
+	 * Weather fog only (D-078, FIX-SHOT): the server's fog flag on and the drawn fog no nearer than the weather's (a
+	 * surge or an effect pulls it in), never the render distance alone, never Blindness, Darkness or a shaderpack; and
+	 * the camera's own conditions.
+	 */
 	@GameTest
 	public void theClientConditions(GameTestHelper helper) {
-		int sky = 10;
-		double max = 160.0;
-		helper.assertTrue(ScreenshotRules.clientConditions(true, false, false, true, 15, 90.0, false, sky, max).isEmpty(), "fog at 90 blocks refused");
-		helper.assertTrue(ScreenshotRules.clientConditions(true, false, false, true, 10, 159.0, false, sky, max).isEmpty(), "sky 10, fog at 159 refused");
-		helper.assertTrue(ScreenshotRules.clientConditions(true, false, false, true, 15, 300.0, true, sky, max).isEmpty(), "a far fog end with the fog on refused");
-		helper.assertTrue(ScreenshotRules.clientConditions(true, false, false, true, 15, 160.0, false, sky, max).orElse("").equals("no fog"),
-				"a clear view at 160 passed");
-		helper.assertTrue(ScreenshotRules.clientConditions(true, false, false, true, 15, Double.NaN, false, sky, max).orElse("").equals("no fog"),
-				"an unknown fog end passed");
-		helper.assertTrue(ScreenshotRules.clientConditions(false, false, false, true, 15, 60.0, true, sky, max).isPresent(), "the Nether passed");
-		helper.assertTrue(ScreenshotRules.clientConditions(true, true, false, true, 15, 60.0, true, sky, max).isPresent(), "an open screen passed");
-		helper.assertTrue(ScreenshotRules.clientConditions(true, false, true, true, 15, 60.0, true, sky, max).isPresent(), "under water passed");
-		helper.assertTrue(ScreenshotRules.clientConditions(true, false, false, false, 15, 60.0, true, sky, max).isPresent(), "third person passed");
-		helper.assertTrue(ScreenshotRules.clientConditions(true, false, false, true, 9, 60.0, true, sky, max).isPresent(), "sky light 9 passed");
+		helper.assertTrue(conditions(true, false, false, true, 15, false, false, true, 60.0, 60.0).isEmpty(), "a fog night refused");
+		helper.assertTrue(conditions(true, false, false, true, 10, false, false, true, 300.0, 300.0).isEmpty(), "sky 10, a thin dusk fog far out refused");
+		helper.assertTrue(conditions(true, false, false, true, 15, false, false, false, 90.0, 90.0).orElse("").equals("no fog weather"),
+				"a short render distance alone passed");
+		helper.assertTrue(conditions(true, false, false, true, 15, false, false, true, 30.0, 60.0).orElse("").startsWith("the fog is pulled in"),
+				"a surge passed");
+		helper.assertTrue(conditions(true, false, false, true, 15, false, false, true, 52.0, 60.0).isEmpty(), "the client's easing refused");
+		helper.assertTrue(conditions(true, false, false, true, 15, false, false, true, 60.0, Double.NaN).isPresent(), "an unknown weather fog end passed");
+		helper.assertTrue(conditions(true, false, false, true, 15, false, false, true, Double.NaN, 60.0).isPresent(), "an unknown drawn fog end passed");
+		helper.assertTrue(conditions(true, false, false, true, 15, false, true, true, 60.0, 60.0).orElse("").equals("Blindness or Darkness"),
+				"Blindness or Darkness passed");
+		helper.assertTrue(conditions(true, false, false, true, 15, true, false, true, 60.0, 60.0).orElse("").equals("a shaderpack is in use"),
+				"a shaderpack passed");
+		helper.assertTrue(conditions(false, false, false, true, 15, false, false, true, 60.0, 60.0).isPresent(), "the Nether passed");
+		helper.assertTrue(conditions(true, true, false, true, 15, false, false, true, 60.0, 60.0).isPresent(), "an open screen passed");
+		helper.assertTrue(conditions(true, false, true, true, 15, false, false, true, 60.0, 60.0).isPresent(), "under water passed");
+		helper.assertTrue(conditions(true, false, false, false, 15, false, false, true, 60.0, 60.0).isPresent(), "third person passed");
+		helper.assertTrue(conditions(true, false, false, true, 9, false, false, true, 60.0, 60.0).isPresent(), "sky light 9 passed");
+		helper.assertTrue(!ScreenshotRules.pulledIn(51.1, 60.0) && ScreenshotRules.pulledIn(50.9, 60.0), "the pulled-in share is not 0.85");
 		helper.succeed();
 	}
 
@@ -426,10 +536,16 @@ public class ScreenshotGameTests {
 	private static final double FOG = 60.0;
 	private static final ScreenshotSpot.Settings S = ScreenshotSpot.Settings.DEFAULT;
 
-	/** Looking south (yaw 0) and level, a 70-degree 16:9 frame. */
+	/** Looking south (yaw 0) and level, a 70-degree 16:9 frame, saved 1080 pixels tall. */
 	private static ScreenshotSpot.View view(float yaw, float pitch) {
-		return new ScreenshotSpot.View(EYE, yaw, pitch, 70.0, 16.0 / 9.0);
+		return view(yaw, pitch, 1080);
 	}
+
+	private static ScreenshotSpot.View view(float yaw, float pitch, int imageHeight) {
+		return new ScreenshotSpot.View(EYE, yaw, pitch, 70.0, 16.0 / 9.0, imageHeight);
+	}
+
+	private static final ScreenshotSpot.Ground FLAT = (x, z) -> OptionalDouble.of(64.0);
 
 	private static final ScreenshotSpot.Sight OPEN = (from, to) -> true;
 
@@ -516,23 +632,112 @@ public class ScreenshotGameTests {
 		helper.assertTrue(deep.isPresent(), "no spot in the valley below");
 		double d = deep.get().feet().add(0, ScreenshotSpot.MIDDLE, 0).distanceTo(EYE);
 		double flat = Math.hypot(deep.get().feet().x - EYE.x, deep.get().feet().z - EYE.z);
-		helper.assertTrue(ScreenshotSpot.inBand(d, FOG, S) && flat < d - 1.0, "the valley spot is measured flat: 3D " + d + ", level " + flat);
+		helper.assertTrue(d >= 0.6 * FOG - 1.0E-6 && d <= 0.75 * FOG + 1.0E-6 && flat < d - 1.0, "the valley spot is measured flat: 3D " + d + ", level " + flat);
 		helper.succeed();
 	}
 
 	@GameTest
 	public void theBandsAreInclusive(GameTestHelper helper) {
-		helper.assertTrue(ScreenshotSpot.inBand(36.0, 60.0, S) && ScreenshotSpot.inBand(45.0, 60.0, S), "the band's ends");
-		helper.assertFalse(ScreenshotSpot.inBand(35.9, 60.0, S) || ScreenshotSpot.inBand(45.1, 60.0, S), "outside the band");
+		ScreenshotSpot.Band band = ScreenshotSpot.band(view(0.0F, 0.0F), ScreenshotSpot.Fog.fromCamera(60.0), S);
+		helper.assertTrue(band.contains(36.0) && band.contains(45.0), "the band's ends: " + band);
+		helper.assertFalse(band.contains(35.9) || band.contains(45.1), "outside the band: " + band);
 		helper.assertTrue(ScreenshotSpot.offCentre(0.15, S) && ScreenshotSpot.offCentre(0.35, S) && ScreenshotSpot.offCentre(0.65, S)
 				&& ScreenshotSpot.offCentre(0.85, S), "the edge bands' ends");
 		helper.assertFalse(ScreenshotSpot.offCentre(0.5, S) || ScreenshotSpot.offCentre(0.4, S) || ScreenshotSpot.offCentre(0.1, S)
 				|| ScreenshotSpot.offCentre(0.9, S) || ScreenshotSpot.offCentre(-0.2, S) || ScreenshotSpot.offCentre(Double.NaN, S), "the middle or an edge");
-		ScreenshotSpot.Settings odd = new ScreenshotSpot.Settings(0.9, 0.2, 0.4, 0.1, Double.NaN, 0);
-		helper.assertTrue(odd.farShare() >= odd.nearShare() && odd.edgeMax() >= odd.edgeMin() && odd.frameMargin() == 0.03 && odd.tries() == 1,
-				"settings not normalized: " + odd);
+		ScreenshotSpot.Settings odd = new ScreenshotSpot.Settings(0.9, 0.2, 0.4, 0.1, Double.NaN, 0, 50.0, 20.0, Double.NaN, 3.0);
+		helper.assertTrue(odd.farShare() >= odd.nearShare() && odd.edgeMax() >= odd.edgeMin() && odd.frameMargin() == 0.03 && odd.tries() == 1
+				&& odd.maxDistance() == 50.0 && odd.minPixels() == 24.0 && odd.minFog() == 1.0, "settings not normalized: " + odd);
 		ScreenshotSpot.Settings configured = EntityConfig.get().screenshotSpot();
 		helper.assertTrue(configured.equals(S), "the config's defaults are not D-078's: " + configured);
+		helper.assertTrue(S.minDistance() == EntityConfig.get().minDistance() && S.maxDistance() == EntityConfig.get().maxSpawnDistance,
+				"the floor and cap are not every sighting's: " + S);
+		helper.succeed();
+	}
+
+	/**
+	 * Never nearer than any sighting (minDistance 12) nor farther (maxSpawnDistance 192): a drawn fog ending at 5, 10 or
+	 * 15 blocks has no spot; at 20 every spot is 12 or more away. A thin dusk fog at render distance 32 ends about 310
+	 * out: no spot at 1080 pixels (he would be a speck), and in an image tall enough for him there, never past 192.
+	 */
+	@GameTest
+	public void theSpotKeepsEverySightingsFloorAndCap(GameTestHelper helper) {
+		ScreenshotSpot.View level = view(0.0F, 0.0F);
+		for (double end : new double[] {5.0, 10.0, 15.0}) {
+			helper.assertTrue(ScreenshotSpot.band(level, ScreenshotSpot.Fog.fromCamera(end), S).isEmpty(), "a band inside the floor at fog end " + end);
+		}
+		for (int seed = 0; seed < 20; seed++) {
+			Optional<ScreenshotSpot.Spot> spot = ScreenshotSpot.find(level, 20.0, S, FLAT, OPEN, RandomSource.create(seed));
+			helper.assertTrue(spot.map(s -> s.distance() >= S.minDistance() - 1.0E-9).orElse(true), "nearer than the floor: " + spot);
+		}
+		helper.assertTrue(ScreenshotSpot.find(level, 310.0, S, FLAT, OPEN, RandomSource.create(1)).isEmpty(), "a speck at 1080 pixels");
+		ScreenshotSpot.View tall = view(0.0F, 0.0F, 4320);
+		ScreenshotSpot.Band band = ScreenshotSpot.band(tall, ScreenshotSpot.Fog.fromCamera(310.0), S);
+		helper.assertTrue(Math.abs(band.near() - 0.6 * 310.0) < 1.0E-9 && band.far() == S.maxDistance(), "the band at 4320 pixels: " + band);
+		boolean found = false;
+		for (int seed = 0; seed < 20; seed++) {
+			Optional<ScreenshotSpot.Spot> spot = ScreenshotSpot.find(tall, 310.0, S, FLAT, OPEN, RandomSource.create(seed));
+			helper.assertTrue(spot.map(s -> s.distance() <= S.maxDistance() + 1.0E-9 && s.pixels() >= S.minPixels()).orElse(true), "past the cap: " + spot);
+			found |= spot.isPresent();
+		}
+		helper.assertTrue(found, "no spot at 4320 pixels with a fog end of 310");
+		helper.succeed();
+	}
+
+	/**
+	 * At least {@code screenshotMinPixels} (24) tall in the saved image: a fog end of 100 puts him 60 to 75 blocks out,
+	 * too small in a 720-pixel image (no spot), and in a 2160-pixel one every spot is 24 pixels or more, as projected.
+	 */
+	@GameTest
+	public void theSpotIsTallEnoughInTheSavedImage(GameTestHelper helper) {
+		helper.assertTrue(ScreenshotSpot.find(view(0.0F, 0.0F, 720), 100.0, S, FLAT, OPEN, RandomSource.create(4)).isEmpty(), "a speck at 720 pixels");
+		ScreenshotSpot.View big = view(15.0F, 3.0F, 2160);
+		boolean found = false;
+		for (int seed = 0; seed < 20; seed++) {
+			Optional<ScreenshotSpot.Spot> spot = ScreenshotSpot.find(big, 100.0, S, FLAT, OPEN, RandomSource.create(seed));
+			if (spot.isPresent()) {
+				double pixels = big.pixelsTall(spot.get().feet());
+				helper.assertTrue(pixels >= S.minPixels() && Math.abs(pixels - spot.get().pixels()) < 1.0E-9, "only " + pixels + " pixels tall");
+				found = true;
+			}
+		}
+		helper.assertTrue(found, "no spot at 2160 pixels");
+		helper.succeed();
+	}
+
+	/**
+	 * Fogged: he stands past the visible fog start, the drawn fog covering at least {@code screenshotMinFog} (0.1) of him
+	 * as the shader draws it (the environmental fog at the spherical distance, the render-distance fog at the
+	 * cylindrical one, the larger counts). Vanilla's clear fog at 8 chunks (the render-distance fog from 115 to 128) has
+	 * no spot: 0.6 to 0.75 of it is before its start. A fog night's has one, fogged.
+	 */
+	@GameTest
+	public void heStandsPastTheVisibleFogStart(GameTestHelper helper) {
+		ScreenshotSpot.Fog thin = new ScreenshotSpot.Fog(1000.0, 2000.0, 10.0, 20.0);
+		helper.assertTrue(Math.abs(thin.value(new Vec3(15.0, 0.0, 0.0)) - 0.5) < 1.0E-9 && Math.abs(thin.value(new Vec3(0.0, 15.0, 3.0)) - 0.5) < 1.0E-9
+				&& thin.value(new Vec3(5.0, 0.0, 0.0)) == 0.0 && thin.value(new Vec3(25.0, 0.0, 0.0)) == 1.0, "the render-distance fog");
+		helper.assertTrue(Math.abs(ScreenshotSpot.Fog.fromCamera(60.0).value(new Vec3(0.0, 18.0, 24.0)) - 0.5) < 1.0E-9, "the spherical fog");
+
+		ScreenshotSpot.View level = view(0.0F, 0.0F);
+		ScreenshotSpot.Fog clear = new ScreenshotSpot.Fog(0.0, 1024.0, 115.2, 128.0);
+		helper.assertTrue(clear.visibleEnd() == 128.0 && clear.visibleStart() == 115.2, "the visible pair: " + clear);
+		helper.assertTrue(ScreenshotSpot.find(level, clear, S, FLAT, OPEN, RandomSource.create(2)).isEmpty(), "a spot before vanilla's fog start");
+		ScreenshotSpot.Fog late = new ScreenshotSpot.Fog(0.0, 2000.0, 70.0, 80.0);
+		helper.assertTrue(ScreenshotSpot.band(level, late, S).isEmpty(), "a band before the fog start: " + ScreenshotSpot.band(level, late, S));
+
+		ScreenshotSpot.Fog night = new ScreenshotSpot.Fog(0.0, 400.0, 22.6, 52.4);
+		boolean found = false;
+		for (int seed = 0; seed < 20; seed++) {
+			Optional<ScreenshotSpot.Spot> spot = ScreenshotSpot.find(level, night, S, FLAT, OPEN, RandomSource.create(seed));
+			if (spot.isPresent()) {
+				Vec3 offset = spot.get().feet().add(0.0, ScreenshotSpot.MIDDLE, 0.0).subtract(EYE);
+				double cylindrical = Math.max(Math.hypot(offset.x, offset.z), Math.abs(offset.y));
+				helper.assertTrue(cylindrical > night.visibleStart() && spot.get().fog() >= S.minFog() && night.value(offset) == spot.get().fog(),
+						"not fogged: " + spot.get());
+				found = true;
+			}
+		}
+		helper.assertTrue(found, "no spot in a fog night's fog");
 		helper.succeed();
 	}
 
