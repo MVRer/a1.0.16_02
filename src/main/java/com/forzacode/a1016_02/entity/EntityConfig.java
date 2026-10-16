@@ -191,16 +191,25 @@ public final class EntityConfig implements ModConfig.Versioned {
 	public double screenshotArmDays = 2;
 	/**
 	 * Server: a dusk fog or fog spell this strong at the player's eyes (the amount {@code FogLimits} pulls the fog in
-	 * by, 0 to 1) counts as "the fog is on", whatever the fog end.
+	 * by, 0 to 1) counts as "the fog is on". Only this weather fog counts: never the render distance alone, an effect or
+	 * a surge.
 	 */
 	public double screenshotFogOnAmount = 0.1;
-	/** Client: a fog end nearer than this many blocks counts as fog by itself. */
-	public double screenshotMaxFogEnd = 160;
 	/** Client: the sky light at the eyes (raw, 0 to 15) at least this: outside. */
 	public int screenshotMinSkyLight = 10;
-	/** Client: he stands this share of the fog end away (from the camera to his middle, in 3D). */
+	/**
+	 * Client: he stands this share of the visible fog end away (from the camera to his middle, in 3D), never nearer than
+	 * {@link #minDistance} nor farther than {@link #maxSpawnDistance}, as every sighting.
+	 */
 	public double screenshotFogShareMin = 0.6;
 	public double screenshotFogShareMax = 0.75;
+	/** Client: he is at least this many pixels tall in the saved image, or the arm waits (no speck spends the one picture). */
+	public int screenshotMinPixels = 24;
+	/**
+	 * Client: the fog the frame is drawn with covers at least this much of him (0 to 1, the shader's fog at his middle):
+	 * he stands past the visible fog start, tinted like the terrain around him.
+	 */
+	public double screenshotMinFog = 0.1;
 	/** Client: his middle lands this share of the frame's width from the left or the right edge: inside it, off the middle. */
 	public double screenshotEdgeShareMin = 0.15;
 	public double screenshotEdgeShareMax = 0.35;
@@ -235,7 +244,8 @@ public final class EntityConfig implements ModConfig.Versioned {
 	 * 10 blocks (was 6), stare cone 8 degrees (was 6), stare back 2 s (was 1); version 3 (D-035): the close clamp is 16
 	 * to 28 blocks (was 24 to 36). Version 4 (v1.2, D-073) only adds the glimpse's values, which a section without them
 	 * takes from the defaults by itself; no default changed, so nothing the player set is touched. v1.3's screenshot
-	 * values (D-078) are new fields too, without a step. Every later default
+	 * values (D-078) are new fields too, without a step (its review fix dropped {@code screenshotMaxFogEnd}: an older
+	 * file's key is skipped on read and gone from the next save). Every later default
 	 * change adds a step with {@link ModConfig.Upgrades#keepOrNew}.
 	 */
 	@Override
@@ -318,10 +328,13 @@ public final class EntityConfig implements ModConfig.Versioned {
 		return Math.max(1L, Math.round(days * 24000.0));
 	}
 
-	/** The screenshot spot's rules ({@link ScreenshotSpot.Settings}, normalized there). */
+	/**
+	 * The screenshot spot's rules ({@link ScreenshotSpot.Settings}, normalized there): the distance floor and cap are every
+	 * sighting's ({@link #minDistance()}, {@link #maxSpawnDistance}).
+	 */
 	public ScreenshotSpot.Settings screenshotSpot() {
 		return new ScreenshotSpot.Settings(screenshotFogShareMin, screenshotFogShareMax, screenshotEdgeShareMin, screenshotEdgeShareMax,
-				screenshotFrameMargin, screenshotSpotTries);
+				screenshotFrameMargin, screenshotSpotTries, minDistance(), maxSpawnDistance, screenshotMinPixels, screenshotMinFog);
 	}
 
 	private static double angle(double degrees, double fallback) {

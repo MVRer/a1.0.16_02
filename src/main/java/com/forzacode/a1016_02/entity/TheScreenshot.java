@@ -31,18 +31,24 @@ import net.minecraft.world.level.LightLayer;
  * ({@link EntityData#recordScreenshot}: once per world, and it counts as that day's sighting) and disarms everyone.
  * Nothing is spawned and nobody else is told: no message, no sound.
  *
- * <p>Arms live in memory by UUID (an arm ends when its player leaves, so none outlives the server). While an arm lasts
- * the client is told whether it may show him now ({@link ScreenshotStatePayload}: paused while he is out anywhere,
- * since he is one being, and during Ending D's last minute) and whether a dusk fog or fog spell is on at the player
- * ({@link #fogOn}); both are looked at every {@link #TICK_EVERY} ticks and sent on a change. An arm ends when it runs
- * out ({@link ScreenshotStatePayload#OFF} is sent), when its player stops taking part (PARTICIPATION false: they left
- * or turned spectator) and when the screenshot happens for anyone. A report from a player who is not armed is ignored.
- * Server thread only. {@link #LIVE} is the game's; tests make their own with their own {@link Hooks}.
+ * <p>Arms live in memory by UUID (an arm ends when its player leaves, so none outlives the server), one in the world at
+ * a time: the gate refuses anyone while someone is armed, and a forced arm ends the one before. While an arm lasts the
+ * client is told whether it may show him now ({@link ScreenshotStatePayload}: paused while he is out anywhere, since
+ * he is one being), whether a dusk fog or fog spell is on at the player ({@link #fogOn}) and the weather's fog end for
+ * them ({@link #weatherFogEnd}); they are looked at every {@link #TICK_EVERY} ticks and sent on a change. Every arm
+ * ends, and none is made, during Ending D's last minute and once the story is over or quiet for good
+ * ({@link ScreenshotRules#storyOver}). An arm also ends when it runs out ({@link ScreenshotStatePayload#OFF} is sent),
+ * when its player stops taking part (PARTICIPATION false: they left or turned spectator) and when the screenshot
+ * happens for anyone. A report counts only from an arm that is ready at that tick (not run out, not paused); any other
+ * report is ignored, and ends the reporter's arm if they had one. Server thread only. {@link #LIVE} is the game's;
+ * tests make their own with their own {@link Hooks}.
  */
 public final class TheScreenshot {
 	public static final String CARD_ID = "the_screenshot";
 	/** The arms are looked at this often (ticks). */
 	public static final int TICK_EVERY = 10;
+	/** The weather's fog end is sent again once it moved by more than this many blocks. */
+	public static final float FOG_END_STEP = 2.0F;
 	static final long DAY_TICKS = 24000L;
 
 	/** What the screenshot reads and sends, so tests can stand in for the live world. */
@@ -51,8 +57,16 @@ public final class TheScreenshot {
 
 		Stage stage(MinecraftServer server);
 
-		/** Ending D's last minute ({@code ending:last_minute}): no new arm, and an arm pauses. */
+		/** Ending D's last minute ({@code ending:last_minute}): no new arm, and every arm ends. */
 		boolean lastMinute(MinecraftServer server);
+
+		/**
+		 * The story is over or quiet for good ({@link ScreenshotRules#storyOver}): no new arm, and every arm ends. The live
+		 * world's flags unless a test answers for itself.
+		 */
+		default boolean storyOver(MinecraftServer server) {
+			return TheScreenshot.storyOver(server);
+		}
 
 		/** He is out somewhere (one being): an arm pauses. */
 		boolean heIsOut(MinecraftServer server);
@@ -65,6 +79,11 @@ public final class TheScreenshot {
 
 		/** A dusk fog or fog spell on at the player ({@link TheScreenshot#fogOn}). */
 		boolean fogOn(ServerPlayer player);
+
+		/** The weather's fog end for the player ({@link TheScreenshot#weatherFogEnd}); the live world's unless a test answers. */
+		default float weatherFogEnd(ServerPlayer player) {
+			return TheScreenshot.weatherFogEnd(player);
+		}
 
 		/** Sends the state to that player's client; false if their client cannot take it. */
 		boolean send(ServerPlayer player, ScreenshotStatePayload payload);
@@ -122,7 +141,7 @@ public final class TheScreenshot {
 
 	/** How a report from a client went. */
 	public enum Report {
-		/** The player was not armed: nothing happens. */
+		/** The player was not armed, or their arm was not ready (paused or run out): nothing is recorded. */
 		IGNORED,
 		/** The world's screenshot, recorded now; everyone disarmed. */
 		RECORDED,
@@ -130,12 +149,13 @@ public final class TheScreenshot {
 		ALREADY_RECORDED
 	}
 
-	/** One player's arm: in-game time it runs out at, and the state their client was told last. */
-	private record Arm(long untilDayTicks, ScreenshotStatePayload sent) {
+	/** One player's arm: in-game time it runs out at, its number, and the state their client was told last. */
+	private record Arm(long untilDayTicks, int id, ScreenshotStatePayload sent) {
 	}
 
 	private final Hooks hooks;
 	private final Map<UUID, Arm> arms = new LinkedHashMap<>();
+	private int lastArmId;
 
 	public TheScreenshot(Hooks hooks) {
 		this.hooks = hooks;
@@ -144,22 +164,33 @@ public final class TheScreenshot {
 	/** Why {@code the_screenshot} cannot arm this player now ({@link ScreenshotRules#gate}), or empty. */
 	public Optional<String> gate(ServerPlayer player, ServerLevel level) {
 		MinecraftServer server = level.getServer();
-		return ScreenshotRules.gate(level.dimension() == Level.OVERWORLD, hooks.stage(server), hooks.data(server).screenshotTaken(),
-				isArmed(player.getUUID()), player.isAlive(), player.isSpectator(), hooks.lastMinute(server));
+		return ScreenshotRules.gate(level.dimension() == Level.OVERWORLD, hooks.stage(server), hooks.data(server).screenshotTaken(), !arms.isEmpty(),
+				player.isAlive(), player.isSpectator(), hooks.lastMinute(server), hooks.storyOver(server));
 	}
 
 	/**
-	 * Arms the player's client for {@link EntityConfig#screenshotArmTicks} of in-game time (a new arm replaces theirs):
-	 * {@link FireResult#FIRED}, or {@link FireResult#SKIPPED} without arming if their client cannot take the payload
-	 * (it could never show him).
+	 * Arms the player's client for {@link EntityConfig#screenshotArmTicks} of in-game time, the only arm in the world (a
+	 * new arm ends anyone else's, a debug fire's included, and replaces theirs): {@link FireResult#FIRED}, or
+	 * {@link FireResult#SKIPPED} without arming if the story holds no screenshot now (Ending D's last minute, or over for
+	 * good) or their client cannot take the payload (it could never show him).
 	 */
 	public FireResult arm(ServerPlayer player) {
 		MinecraftServer server = player.level().getServer();
-		ScreenshotStatePayload state = state(server, player);
+		if (storyHolds(server)) {
+			return FireResult.SKIPPED;
+		}
+		int id = lastArmId + 1;
+		ScreenshotStatePayload state = state(server, player, id);
 		if (!hooks.send(player, state)) {
 			return FireResult.SKIPPED;
 		}
-		arms.put(player.getUUID(), new Arm(hooks.dayTicks(server) + EntityConfig.get().screenshotArmTicks(), state));
+		lastArmId = id;
+		for (UUID other : new ArrayList<>(arms.keySet())) {
+			if (!other.equals(player.getUUID())) {
+				disarm(server, other);
+			}
+		}
+		arms.put(player.getUUID(), new Arm(hooks.dayTicks(server) + EntityConfig.get().screenshotArmTicks(), id, state));
 		return FireResult.FIRED;
 	}
 
@@ -167,7 +198,7 @@ public final class TheScreenshot {
 		return arms.containsKey(player);
 	}
 
-	/** Everyone armed now, in the order they were armed. */
+	/** Everyone armed now (at most one), in the order they were armed. */
 	public List<UUID> armed() {
 		return List.copyOf(arms.keySet());
 	}
@@ -191,7 +222,7 @@ public final class TheScreenshot {
 		}
 	}
 
-	/** Ends every arm (the screenshot happened, or debug). */
+	/** Ends every arm (the screenshot happened, the story holds none, or debug). */
 	public void disarmAll(MinecraftServer server) {
 		for (UUID player : new ArrayList<>(arms.keySet())) {
 			disarm(server, player);
@@ -213,10 +244,19 @@ public final class TheScreenshot {
 	}
 
 	/**
-	 * Looks at every arm now: one whose player is gone or spectating ends; one that ran out ends and its client is
-	 * told; for the rest, the client is told again whenever what it may do changed (paused or not, fog on or not).
+	 * Looks at every arm now: during Ending D's last minute or once the story is over, every arm ends; one whose player
+	 * is gone or spectating ends; one that ran out ends and its client is told; for the rest, the client is told again
+	 * whenever what it may do changed (paused or not, fog on or not, the weather's fog end by more than
+	 * {@link #FOG_END_STEP} blocks).
 	 */
 	public void check(MinecraftServer server) {
+		if (arms.isEmpty()) {
+			return;
+		}
+		if (storyHolds(server)) {
+			disarmAll(server);
+			return;
+		}
 		long now = hooks.dayTicks(server);
 		for (UUID uuid : new ArrayList<>(arms.keySet())) {
 			Arm arm = arms.get(uuid);
@@ -229,24 +269,33 @@ public final class TheScreenshot {
 				disarm(server, uuid);
 				continue;
 			}
-			ScreenshotStatePayload state = state(server, player.get());
-			if (!state.equals(arm.sent()) && hooks.send(player.get(), state)) {
-				arms.put(uuid, new Arm(arm.untilDayTicks(), state));
+			ScreenshotStatePayload state = state(server, player.get(), arm.id());
+			if (changed(arm.sent(), state) && hooks.send(player.get(), state)) {
+				arms.put(uuid, new Arm(arm.untilDayTicks(), arm.id(), state));
 			}
 		}
 	}
 
 	/**
-	 * A client says the screenshot happened ({@link ScreenshotTakenPayload}). Only from a player who is armed: the
-	 * world's one screenshot is recorded (the day, the player; it counts as that day's sighting) and everyone is
-	 * disarmed. No message, no sound.
+	 * A client says the screenshot happened ({@link ScreenshotTakenPayload}). Only from a player whose arm is ready at
+	 * this tick (armed, not run out, not paused: he is not out anywhere, and the story still holds one): the world's one
+	 * screenshot is recorded (the day, the player; it counts as that day's sighting) and everyone is disarmed. A report
+	 * from an arm that is not ready is ignored and ends that arm (their client forgot it when it reported). No message,
+	 * no sound.
 	 */
 	public Report report(ServerPlayer player) {
-		if (!isArmed(player.getUUID())) {
+		Arm arm = arms.get(player.getUUID());
+		if (arm == null) {
 			return Report.IGNORED;
 		}
 		MinecraftServer server = player.level().getServer();
-		long day = Math.floorDiv(hooks.dayTicks(server), DAY_TICKS);
+		long now = hooks.dayTicks(server);
+		boolean ready = now < arm.untilDayTicks() && !player.isSpectator() && !storyHolds(server) && !hooks.heIsOut(server);
+		if (!ready) {
+			disarm(server, player.getUUID());
+			return Report.IGNORED;
+		}
+		long day = Math.floorDiv(now, DAY_TICKS);
 		boolean recorded = hooks.data(server).recordScreenshot(player.getUUID(), day);
 		disarmAll(server);
 		return recorded ? Report.RECORDED : Report.ALREADY_RECORDED;
@@ -257,9 +306,40 @@ public final class TheScreenshot {
 		arms.clear();
 	}
 
-	private ScreenshotStatePayload state(MinecraftServer server, ServerPlayer player) {
-		boolean paused = hooks.lastMinute(server) || hooks.heIsOut(server);
-		return new ScreenshotStatePayload(!paused, hooks.fogOn(player));
+	/** No arm is kept or made now: Ending D's last minute, or the story is over or quiet for good. */
+	private boolean storyHolds(MinecraftServer server) {
+		return hooks.lastMinute(server) || hooks.storyOver(server);
+	}
+
+	private ScreenshotStatePayload state(MinecraftServer server, ServerPlayer player, int id) {
+		return new ScreenshotStatePayload(!hooks.heIsOut(server), hooks.fogOn(player), hooks.weatherFogEnd(player), id);
+	}
+
+	/** True if the client should be told {@code now} after {@code sent}. */
+	static boolean changed(ScreenshotStatePayload sent, ScreenshotStatePayload now) {
+		if (sent.armed() != now.armed() || sent.fogOn() != now.fogOn() || sent.arm() != now.arm()) {
+			return true;
+		}
+		float a = sent.fogEnd();
+		float b = now.fogEnd();
+		if (Float.isNaN(a) || Float.isNaN(b)) {
+			return Float.isNaN(a) != Float.isNaN(b);
+		}
+		return Math.abs(a - b) > FOG_END_STEP;
+	}
+
+	/** Live: the story is over or quiet for good for the screenshot ({@link ScreenshotRules#storyOver} on the world's flags). */
+	public static boolean storyOver(MinecraftServer server) {
+		return ScreenshotRules.storyOver(HerobrineState.get(server)::hasFlag);
+	}
+
+	/**
+	 * Live: the weather's fog end for this player in blocks ({@code FogLimits.of(player)}: their render distance pulled
+	 * in by the dusk fog and a fog spell, the spell weighted by the sky light at their eyes), never a surge or an effect.
+	 * The client draws the same fog under open sky; a nearer one is pulled in by something else.
+	 */
+	public static float weatherFogEnd(ServerPlayer player) {
+		return (float) FogLimits.of(player).fogEnd();
 	}
 
 	/**

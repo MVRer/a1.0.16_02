@@ -269,11 +269,12 @@ final class EntityCommands {
 		List<String> lines = new ArrayList<>();
 		String happened = !data.screenshotTaken() ? "not yet"
 				: "on day " + data.screenshotDay() + " for " + data.screenshotBy().map(id -> playerName(server, id)).orElse("?");
-		lines.add("[a1016] entity screenshot: " + happened + ", " + shot.armed().size() + " armed");
+		lines.add("[a1016] entity screenshot: " + happened + ", " + shot.armed().size() + " armed"
+				+ (TheScreenshot.storyOver(server) ? ", the story is over (no arm is kept or made)" : ""));
 		for (UUID id : shot.armed()) {
 			ScreenshotStatePayload told = shot.told(id).orElse(ScreenshotStatePayload.OFF);
-			lines.add(String.format(Locale.ROOT, " %s: %.2f in-game days left, %s, fog %s", playerName(server, id), shot.ticksLeft(server, id) / 24000.0,
-					told.armed() ? "ready" : "paused", told.fogOn() ? "on" : "off"));
+			lines.add(String.format(Locale.ROOT, " %s: %.2f in-game days left, %s, fog %s, the weather's fog end %.0f (arm %d)", playerName(server, id),
+					shot.ticksLeft(server, id) / 24000.0, told.armed() ? "ready" : "paused", told.fogOn() ? "on" : "off", told.fogEnd(), told.arm()));
 		}
 		for (String line : lines) {
 			ctx.getSource().sendSuccess(() -> Component.literal(line), false);
