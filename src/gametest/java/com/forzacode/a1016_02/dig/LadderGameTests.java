@@ -423,7 +423,8 @@ public class LadderGameTests {
 	 * Rung 3: the figure is asked ({@code canGlimpse}) before any step; the torch the player placed 6 back goes first
 	 * (FIX-GLIMPSE: he makes the dark), so the spot is the nearest of the cells that will be pitch dark, 14 back; the
 	 * steps come up to it, the dark and the figure are checked again at the last step, and the figure is called
-	 * ({@code glimpse}) at the last step's cell, facing the player, in the tick of the last step.
+	 * ({@code glimpse}) at the last step's cell, facing the player, in the tick of the last step. The light engine takes
+	 * in the torch, and then its going, before the plan and before the last step ({@link DigGround#settleLight}).
 	 */
 	@GameTest(maxTicks = 600)
 	public void glimpseAsksTheFigureFirstAndCallsItAtTheLastStep(GameTestHelper helper) {
@@ -435,18 +436,21 @@ public class LadderGameTests {
 		BlockPos torch = g.at(34, 3, 4); // 6 back: its light reaches 3 at 17 back, until it goes
 		g.place(torch, Blocks.TORCH.defaultBlockState());
 		BlockPos spot = g.at(40 - 14, 3, 4);
-		boolean[] fired = {false};
-		helper.succeedWhen(() -> {
-			if (!fired[0]) {
-				helper.assertTrue(light(g, torch) == 14 && light(g, torch.west(6)) == 8 && light(g, g.at(40 - 17, 3, 4)) == 3,
-						"the torchlight has not settled yet");
-				helper.assertTrue(rig.fire(Ladder.Rung.GLIMPSE, alex, false, true, 51L) == FireResult.FIRED, "rung 3 did not fire: "
-						+ Ladder.check(Ladder.Rung.GLIMPSE, alex, rig.env(), true).why());
-				fired[0] = true;
-				helper.assertTrue(!rig.asked.isEmpty() && rig.heard.isEmpty(), "the figure was not asked before the first step");
-				helper.assertTrue(g.level.getBlockState(torch).isAir(), "the torch behind did not go");
+		helper.startSequence().thenExecute(() -> {
+			g.settleLight();
+			helper.assertTrue(light(g, torch) == 14 && light(g, torch.west(6)) == 8 && light(g, g.at(40 - 17, 3, 4)) == 3, "the torchlight is not there");
+			for (int back = 14; back <= 20; back++) {
+				BlockPos cell = g.at(40 - back, 3, 4);
+				helper.assertTrue(g.level.getBrightness(LightLayer.SKY, cell) == 0 && g.level.getBrightness(LightLayer.SKY, cell.above()) == 0,
+						"sky light in the tunnel " + back + " back");
 			}
-			helper.assertFalse(LadderRig.walking(alex), "the steps are still coming");
+			helper.assertTrue(rig.fire(Ladder.Rung.GLIMPSE, alex, false, true, 51L) == FireResult.FIRED, "rung 3 did not fire: "
+					+ Ladder.check(Ladder.Rung.GLIMPSE, alex, rig.env(), true).why());
+			helper.assertTrue(!rig.asked.isEmpty() && rig.heard.isEmpty(), "the figure was not asked before the first step");
+			helper.assertTrue(g.level.getBlockState(torch).isAir(), "the torch behind did not go");
+			g.settleLight(); // the torch's going, long before the last step
+			helper.assertTrue(Ladder.light(g.level, spot) == 0, "the spot is not dark once the torch went: " + Ladder.light(g.level, spot));
+		}).thenWaitUntil(() -> helper.assertFalse(LadderRig.walking(alex), "the steps are still coming")).thenExecute(() -> {
 			LadderRig.Asked first = rig.asked.getFirst();
 			helper.assertTrue(!first.spawn() && first.feet().equals(Vec3.atBottomCenterOf(spot)), "the first spot asked is not the nearest pitch dark one: "
 					+ first);
@@ -471,7 +475,7 @@ public class LadderGameTests {
 			Vec3 toAlex = alex.position().subtract(him.feet()).multiply(1, 0, 1).normalize();
 			helper.assertTrue(facing.dot(toAlex) > 0.99, "he does not face Alex: yaw " + him.yaw());
 			g.keepLoaded(false);
-		});
+		}).thenSucceed();
 	}
 
 	/**
