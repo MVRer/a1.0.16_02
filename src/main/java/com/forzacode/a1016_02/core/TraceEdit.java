@@ -58,6 +58,14 @@ final class TraceEdit {
 	/** More broken neighbours than this and the edit is refused. */
 	static final int MAX_DEPENDENTS = 64;
 
+	/** How deep the server thread is in {@link #apply()}'s block changes now (the ledger's hook skips its own edits). */
+	private static int applying;
+
+	/** True while an edit's own blocks are being set ({@link TraceLedger#blockChanged} does not count them). */
+	static boolean applying() {
+		return applying > 0;
+	}
+
 	private record Record(TraceLedger.Kind kind, BlockPos pos, @Nullable BlockPos to, BlockState state, @Nullable CompoundTag blockEntity, String cause,
 			@Nullable BlockState after) {
 		Record(TraceLedger.Kind kind, BlockPos pos, @Nullable BlockPos to, BlockState state, @Nullable CompoundTag blockEntity, String cause) {
@@ -294,6 +302,35 @@ final class TraceEdit {
 		for (int i = 0; i < placed.length; i++) {
 			placed[i] = watch.wasPlacedByPlayer(level, records.get(i).pos());
 		}
+		applying++;
+		try {
+			setBlocks();
+		} finally {
+			applying--;
+		}
+		TraceLedger ledger = TraceLedger.get(level.getServer());
+		long day = GameClock.day(level.getServer());
+		List<TraceLedger.Entry> written = new ArrayList<>(records.size());
+		for (Record r : records) {
+			written.add(ledger.add(new TraceLedger.Entry(r.kind(), r.cause(), day, GlobalPos.of(level.dimension(), r.pos()), Optional.ofNullable(r.to()),
+					Optional.of(r.state()), Optional.ofNullable(r.blockEntity()), Optional.empty(), -1, -1, Optional.empty(), Optional.ofNullable(r.after()))));
+		}
+		// The game does the falling: the lowest falling block ticks, finds nothing under it and drops; each block
+		// above follows when the one under it leaves.
+		BlockPos start = fall.start();
+		Block startBlock = fall.startBlock();
+		if (start != null && startBlock != null && level.getBlockState(start).is(startBlock)) {
+			level.scheduleTick(start, startBlock, TraceFall.START_DELAY);
+		}
+		A1016_02.LOGGER.debug("[a1016] trace '{}': {} changes, {} records, {} falling", cause, changes.size(), records.size(), fall.falling().size());
+		// Last: the whole edit is applied and ledgered before any listener hears of it.
+		for (int i = 0; i < written.size(); i++) {
+			TraceService.traced(level, written.get(i), placed[i]);
+		}
+	}
+
+	/** The edit's own block changes: the changes, block entity data into moved blocks, the untouched neighbours' shapes. */
+	private void setBlocks() {
 		changes.forEach((pos, state) -> level.setBlock(pos, state, SILENT_FLAGS));
 		moveInto.forEach((pos, data) -> {
 			BlockEntity moved = level.getBlockEntity(pos);
@@ -321,25 +358,6 @@ final class TraceEdit {
 			if (updated != old && !updated.isAir()) {
 				level.setBlock(n, updated, SILENT_FLAGS);
 			}
-		}
-		TraceLedger ledger = TraceLedger.get(level.getServer());
-		long day = GameClock.day(level.getServer());
-		List<TraceLedger.Entry> written = new ArrayList<>(records.size());
-		for (Record r : records) {
-			written.add(ledger.add(new TraceLedger.Entry(r.kind(), r.cause(), day, GlobalPos.of(level.dimension(), r.pos()), Optional.ofNullable(r.to()),
-					Optional.of(r.state()), Optional.ofNullable(r.blockEntity()), Optional.empty(), -1, -1, Optional.empty(), Optional.ofNullable(r.after()))));
-		}
-		// The game does the falling: the lowest falling block ticks, finds nothing under it and drops; each block
-		// above follows when the one under it leaves.
-		BlockPos start = fall.start();
-		Block startBlock = fall.startBlock();
-		if (start != null && startBlock != null && level.getBlockState(start).is(startBlock)) {
-			level.scheduleTick(start, startBlock, TraceFall.START_DELAY);
-		}
-		A1016_02.LOGGER.debug("[a1016] trace '{}': {} changes, {} records, {} falling", cause, changes.size(), records.size(), fall.falling().size());
-		// Last: the whole edit is applied and ledgered before any listener hears of it.
-		for (int i = 0; i < written.size(); i++) {
-			TraceService.traced(level, written.get(i), placed[i]);
 		}
 	}
 

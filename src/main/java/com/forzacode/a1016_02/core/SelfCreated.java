@@ -4,6 +4,7 @@ import java.io.IOException;
 import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Files;
 import java.nio.file.InvalidPathException;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
@@ -165,10 +166,10 @@ public final class SelfCreated {
 
 	/**
 	 * Writes {@code bytes} to {@code relative} inside the world's folder, whole or not at all: into a temporary file
-	 * beside it, then moved over it (atomically where the file system can). Refused (false, nothing written) for a path
-	 * {@link #inWorld} refuses or whose folder, once created, resolves outside the world's folder (a link). Never
-	 * throws, never deletes anything but its own temporary file. Any thread; the caller keeps two writers of one file
-	 * apart.
+	 * beside it, then moved over it (atomically where the file system can). Refused (false, nothing written, no folder
+	 * made) for a path {@link #inWorld} refuses or whose folder resolves outside the world's folder through a link: the
+	 * folders are made one at a time, each only once the one it goes in is known to be inside. Never throws, never
+	 * deletes anything but its own temporary file. Any thread; the caller keeps two writers of one file apart.
 	 */
 	public static boolean writeInWorld(Path worldFolder, String relative, byte[] bytes) {
 		Optional<Path> target = inWorld(worldFolder, relative);
@@ -180,8 +181,7 @@ public final class SelfCreated {
 		Path temp = null;
 		try {
 			Path parent = file.getParent();
-			Files.createDirectories(parent);
-			if (!parent.toRealPath().startsWith(worldFolder.toAbsolutePath().normalize().toRealPath())) {
+			if (!foldersInWorld(worldFolder.toAbsolutePath().normalize(), parent)) {
 				A1016_02.LOGGER.warn("[a1016] sc: refused to write '{}': its folder leaves the world's folder", relative);
 				return false;
 			}
@@ -206,5 +206,30 @@ public final class SelfCreated {
 				}
 			}
 		}
+	}
+
+	/**
+	 * Walks from the world's folder ({@code root}, absolute and normal; made first if it is not there yet) down to
+	 * {@code folder} (inside it), making each missing folder only after the one it goes in resolved inside the world's
+	 * folder, so a link never gets a folder made outside. False, with nothing more made, at the first that resolves
+	 * outside (or is not a folder).
+	 */
+	private static boolean foldersInWorld(Path root, Path folder) throws IOException {
+		if (Files.notExists(root)) {
+			Files.createDirectories(root);
+		}
+		Path realRoot = root.toRealPath();
+		Path at = root;
+		for (Path part : root.relativize(folder)) {
+			at = at.resolve(part);
+			if (Files.notExists(at, LinkOption.NOFOLLOW_LINKS)) {
+				Files.createDirectory(at);
+			}
+			Path real = at.toRealPath();
+			if (!real.startsWith(realRoot) || !Files.isDirectory(real)) {
+				return false;
+			}
+		}
+		return true;
 	}
 }

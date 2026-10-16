@@ -25,6 +25,7 @@ public final class DirectorInit {
 		Sc01Config.get();
 		PlacesCommands.register();
 		SelfCreated.onSwitchedOff("sc01", PlacesCommands::revert);
+		HerobrineEvents.TRACED.register((level, entry, placedByPlayer) -> DIRECTOR.onTraced(level, entry));
 
 		// Sessions are per player (D-062.4): one player starting or stopping touches only their own pacing.
 		HerobrineEvents.PARTICIPATION.register((server, player, participating) -> {

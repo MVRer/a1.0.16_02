@@ -26,6 +26,8 @@ public final class CoreInit {
 		});
 		ServerLifecycleEvents.SERVER_STARTED.register(server -> {
 			HerobrineState.get(server);
+			// Read now, so its conversions are watched from the first block a player changes (TraceLedger.changedSince).
+			TraceLedger.get(server);
 			SelfCreated.serverStarted(server);
 		});
 		// The layer switched off: core's fog places go (clients are told at once, and get none on join).
@@ -38,6 +40,7 @@ public final class CoreInit {
 			Services.sites().detach();
 			Services.protectedAreas().detach();
 			Services.watch().clear();
+			TraceLedger.stopWatching();
 		});
 
 		// Per player (D-062.4): a join or a leave only ever touches that player.

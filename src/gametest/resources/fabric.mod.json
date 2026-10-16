@@ -42,7 +42,9 @@
 			"com.forzacode.a1016_02.accident.SelfCreatedR9AccidentTests",
 			"com.forzacode.a1016_02.ending.d.SelfCreatedR9EndingTests",
 			"com.forzacode.a1016_02.world.SelfCreatedR9WorldTests",
-			"com.forzacode.a1016_02.world.SelfCreatedR7WorldReviewTests"
+			"com.forzacode.a1016_02.world.SelfCreatedR7WorldReviewTests",
+			"com.forzacode.a1016_02.core.SelfCreatedR7ReviewTests",
+			"com.forzacode.a1016_02.director.SelfCreatedR7DirectorReviewTests"
 		]
 	},
 	"depends": {

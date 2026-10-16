@@ -3,14 +3,20 @@ package com.forzacode.a1016_02.core;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
+import java.util.HashMap;
+import java.util.IdentityHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 
 import com.forzacode.a1016_02.A1016_02;
 import com.mojang.serialization.Codec;
 import com.mojang.serialization.codecs.RecordCodecBuilder;
+
+import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
 
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.GlobalPos;
@@ -20,10 +26,12 @@ import net.minecraft.nbt.NbtOps;
 import net.minecraft.nbt.Tag;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.chat.ComponentSerialization;
+import net.minecraft.resources.ResourceKey;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.entity.Mob;
 import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.saveddata.SavedData;
 import net.minecraft.world.level.saveddata.SavedDataType;
@@ -37,7 +45,9 @@ import org.jspecify.annotations.Nullable;
  * count it as his ({@link #isLeftByOthers}) and Ending D never undoes it. Stored as {@code data/a1016_02/traces.dat}:
  * every entry but NAME under {@code entries}, as v1.3 wrote them, and NAME entries apart under {@value #NAMES_KEY}
  * with their place in the order, so v1.3 still reads a file written now (it skips the names) and an old file loads
- * with none.
+ * with none. A CONVERT whose block was changed since, in what the conversion changed, by anything but
+ * {@link TraceService} (a player, redstone, a piston) is marked so ({@link #changedSince}); the marks are stored under
+ * {@value #CHANGED_KEY} by their place in the order, a key v1.3 skips.
  */
 public final class TraceLedger extends SavedData {
 	/** The cause segment that marks what others left (the people before the player), in any workstream. */
@@ -62,6 +72,8 @@ public final class TraceLedger extends SavedData {
 
 	/** Where NAME entries are stored in {@code traces.dat}, apart from the others (v1.3 skips the key). */
 	public static final String NAMES_KEY = "names";
+	/** Where the marks of the CONVERT entries changed since are stored in {@code traces.dat}: their indexes (v1.3 skips the key). */
+	public static final String CHANGED_KEY = "changed";
 	/** The name's key in a NAME entry's {@code blockEntity}. */
 	public static final String NAME_KEY = "name";
 	/** Set (true) in a NAME entry's {@code blockEntity} when the name showed without being looked at. */
@@ -79,7 +91,8 @@ public final class TraceLedger extends SavedData {
 	 * @param toSlot      the destination slot of a stack move (the equipment slot ordinal for EQUIP), or -1
 	 * @param entity      the mob that wears the stack (EQUIP)
 	 * @param after       the block a CONVERT left (empty for every other kind, and for a CONVERT ledgered before it
-	 *                    was kept): its undo takes it back only while the block is still exactly that
+	 *                    was kept): its undo takes it back only while the block still holds what the conversion changed
+	 *                    (the block, and each property it set) and nothing but core changed that since
 	 */
 	public record Entry(Kind kind, String cause, long day, GlobalPos pos, Optional<BlockPos> to, Optional<BlockState> state,
 			Optional<CompoundTag> blockEntity, Optional<ItemStack> stack, int slot, int toSlot, Optional<UUID> entity, Optional<BlockState> after) {
@@ -122,21 +135,38 @@ public final class TraceLedger extends SavedData {
 
 	public static final Codec<TraceLedger> CODEC = RecordCodecBuilder.create(i -> i.group(
 			Entry.CODEC.listOf().fieldOf("entries").forGetter(TraceLedger::unnamed),
-			Placed.CODEC.listOf().lenientOptionalFieldOf(NAMES_KEY, List.of()).forGetter(TraceLedger::names)
+			Placed.CODEC.listOf().lenientOptionalFieldOf(NAMES_KEY, List.of()).forGetter(TraceLedger::names),
+			Codec.INT.listOf().lenientOptionalFieldOf(CHANGED_KEY, List.of()).forGetter(TraceLedger::changedIndexes)
 	).apply(i, TraceLedger::merged));
 	public static final SavedDataType<TraceLedger> TYPE = new SavedDataType<>(A1016_02.id("traces"), TraceLedger::new, CODEC, null);
 
+	/**
+	 * The ledger whose CONVERT entries are watched now ({@link #blockChanged}): the running server's, while it has any.
+	 * Read on every block change in a server level.
+	 */
+	private static volatile @Nullable TraceLedger watching;
+
 	private final List<Entry> entries = new ArrayList<>();
+	/** The CONVERT entries whose block was changed since (by identity). */
+	private final Set<Entry> changed = Collections.newSetFromMap(new IdentityHashMap<>());
+	/** The CONVERT entries with {@code after} not changed since, by level and position: the ones a block change can mark. */
+	private final Map<ResourceKey<Level>, Long2ObjectOpenHashMap<List<Entry>>> watched = new HashMap<>();
+	/** The server this ledger was last read for ({@link #get}), so the hook never marks one server's entries from another. */
+	private @Nullable MinecraftServer server;
 
 	public TraceLedger() {
 	}
 
 	private TraceLedger(List<Entry> entries) {
 		this.entries.addAll(entries);
+		this.entries.forEach(this::watch);
 	}
 
-	/** The codec's: the other entries in their order, each NAME entry put back at its index (ascending, clamped). */
-	private static TraceLedger merged(List<Entry> unnamed, List<Placed> names) {
+	/**
+	 * The codec's: the other entries in their order, each NAME entry put back at its index (ascending, clamped), then
+	 * the marks of the CONVERT entries changed since, by index (an index that names no CONVERT is skipped).
+	 */
+	private static TraceLedger merged(List<Entry> unnamed, List<Placed> names, List<Integer> changedAt) {
 		List<Entry> all = new ArrayList<>(unnamed);
 		List<Placed> sorted = new ArrayList<>(names);
 		sorted.sort(Comparator.comparingInt(Placed::at));
@@ -145,7 +175,24 @@ public final class TraceLedger extends SavedData {
 				all.add(Math.clamp(placed.at(), 0, all.size()), placed.entry());
 			}
 		}
-		return new TraceLedger(all);
+		TraceLedger ledger = new TraceLedger(all);
+		for (int at : changedAt) {
+			if (at >= 0 && at < all.size() && all.get(at).kind() == Kind.CONVERT) {
+				ledger.markChanged(all.get(at));
+			}
+		}
+		return ledger;
+	}
+
+	/** What is stored under {@value #CHANGED_KEY}: the index of each CONVERT entry changed since, ascending. */
+	private List<Integer> changedIndexes() {
+		List<Integer> at = new ArrayList<>();
+		for (int i = 0; i < entries.size(); i++) {
+			if (changed.contains(entries.get(i))) {
+				at.add(i);
+			}
+		}
+		return at;
 	}
 
 	/** What is stored under {@code entries}: every entry but NAME, in order. */
@@ -165,7 +212,17 @@ public final class TraceLedger extends SavedData {
 	}
 
 	public static TraceLedger get(MinecraftServer server) {
-		return server.getDataStorage().computeIfAbsent(TYPE);
+		TraceLedger ledger = server.getDataStorage().computeIfAbsent(TYPE);
+		if (ledger.server != server) {
+			ledger.server = server;
+			ledger.rewatch();
+		}
+		return ledger;
+	}
+
+	/** Core: the server stopped, so no ledger is watched until the next one is read. */
+	static void stopWatching() {
+		watching = null;
 	}
 
 	/** Oldest first. Unmodifiable. */
@@ -180,6 +237,7 @@ public final class TraceLedger extends SavedData {
 					Optional.empty(), entry.slot(), entry.toSlot(), entry.entity(), entry.after());
 		}
 		entries.add(entry);
+		watch(entry);
 		setDirty();
 		return entry;
 	}
@@ -229,21 +287,137 @@ public final class TraceLedger extends SavedData {
 
 	/** Replaces an entry in place (keeps the order), for an edit that was partly undone. False if it is not here. */
 	boolean replace(Entry old, Entry updated) {
-		int index = entries.indexOf(old);
+		int index = indexOf(old);
 		if (index < 0) {
 			return false;
 		}
+		Entry was = entries.get(index);
+		boolean wasChanged = changed.remove(was);
+		unwatch(was);
 		entries.set(index, updated);
+		if (wasChanged && updated.kind() == Kind.CONVERT) {
+			changed.add(updated);
+		} else {
+			watch(updated);
+		}
 		setDirty();
 		return true;
 	}
 
 	/** Drops an entry once it has been undone. */
 	public boolean remove(Entry entry) {
-		boolean removed = entries.remove(entry);
-		if (removed) {
+		int index = indexOf(entry);
+		if (index < 0) {
+			return false;
+		}
+		Entry was = entries.remove(index);
+		changed.remove(was);
+		unwatch(was);
+		setDirty();
+		return true;
+	}
+
+	/** This very entry's index, else the first equal one's, else -1. */
+	private int indexOf(Entry entry) {
+		for (int i = 0; i < entries.size(); i++) {
+			if (entries.get(i) == entry) {
+				return i;
+			}
+		}
+		return entries.indexOf(entry);
+	}
+
+	// --- conversions changed since ---
+
+	/**
+	 * True if this CONVERT entry's block was changed since the conversion, in what the conversion changed (its block,
+	 * or a property it set), by anything but {@link TraceService}: a player who closed the door it opened, turned the
+	 * block again, or broke it and placed it again; redstone; a piston. The block may be just what the conversion left
+	 * again (the door opened again by hand): it is the player's all the same. Vanilla's own changes of what the
+	 * conversion never set (a furnace lit, a hive's honey, a lectern's book, water in a chest) do not count. False for
+	 * any other entry, and for one not in this ledger.
+	 */
+	public boolean changedSince(Entry entry) {
+		int index = indexOf(entry);
+		return index >= 0 && changed.contains(entries.get(index));
+	}
+
+	/**
+	 * Core's {@code Level.setBlock} hook (nothing else calls it): the block at {@code pos} in this server level changed.
+	 * If it no longer holds what the newest watched conversion there changed ({@link TraceUndo#holds}), every watched
+	 * conversion there is marked changed since; never for one of {@link TraceService}'s own edits. One field read while
+	 * nothing is watched. Server thread.
+	 */
+	public static void blockChanged(ServerLevel level, BlockPos pos) {
+		TraceLedger ledger = watching;
+		if (ledger == null || ledger.server != level.getServer() || TraceEdit.applying()) {
+			return;
+		}
+		Long2ObjectOpenHashMap<List<Entry>> here = ledger.watched.get(level.dimension());
+		List<Entry> at = here == null ? null : here.get(pos.asLong());
+		if (at == null) {
+			return;
+		}
+		// The newest conversion there is the one the block shows now (core's later edits of it are not watched).
+		Entry newest = at.getLast();
+		BlockState now = level.getBlockState(pos);
+		if (TraceUndo.holds(newest.state().orElseThrow(), newest.after().orElseThrow(), now)) {
+			return;
+		}
+		for (Entry entry : List.copyOf(at)) {
+			ledger.markChanged(entry);
+			A1016_02.LOGGER.debug("[a1016] trace '{}' at {}: changed since ({})", entry.cause(), entry.pos().pos(), now);
+		}
+	}
+
+	private void markChanged(Entry entry) {
+		if (changed.add(entry)) {
+			unwatch(entry);
 			setDirty();
 		}
-		return removed;
+	}
+
+	private static boolean watchable(Entry entry) {
+		return entry.kind() == Kind.CONVERT && entry.after().isPresent() && entry.state().isPresent();
+	}
+
+	private void watch(Entry entry) {
+		if (!watchable(entry) || changed.contains(entry)) {
+			return;
+		}
+		watched.computeIfAbsent(entry.pos().dimension(), k -> new Long2ObjectOpenHashMap<>())
+				.computeIfAbsent(entry.pos().pos().asLong(), k -> new ArrayList<>(1)).add(entry);
+		rewatch();
+	}
+
+	private void unwatch(Entry entry) {
+		if (!watchable(entry)) {
+			return;
+		}
+		Long2ObjectOpenHashMap<List<Entry>> here = watched.get(entry.pos().dimension());
+		if (here == null) {
+			return;
+		}
+		long key = entry.pos().pos().asLong();
+		List<Entry> at = here.get(key);
+		if (at != null && at.removeIf(e -> e == entry) && at.isEmpty()) {
+			here.remove(key);
+			if (here.isEmpty()) {
+				watched.remove(entry.pos().dimension());
+			}
+		}
+		rewatch();
+	}
+
+	/** This ledger is the watched one while it was read for a running server and has anything to watch. */
+	private void rewatch() {
+		if (server == null) {
+			return;
+		}
+		if (!watched.isEmpty()) {
+			watching = this;
+		} else if (watching == this) {
+			watching = null;
+		}
 	}
 }

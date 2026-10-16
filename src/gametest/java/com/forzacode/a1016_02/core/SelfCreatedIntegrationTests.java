@@ -150,4 +150,71 @@ public class SelfCreatedIntegrationTests {
 		}
 		helper.succeed();
 	}
+
+	// --- fixed in review (R7 M1, L3): what a conversion changed, and who changed it since ---
+
+	/**
+	 * Core's own edits never mark a conversion changed: a second conversion of the same block, and its undo, leave the
+	 * first one to turn back (newest first, both DONE). A turn back keeps what vanilla changed since (a lit furnace stays
+	 * lit). A change from outside core in what the conversion set marks it for good, even once it is back.
+	 */
+	@GameTest
+	public void aConversionIsChangedSinceOnlyByWhatIsNotCore(GameTestHelper helper) {
+		ServerLevel level = helper.getLevel();
+		MinecraftServer server = level.getServer();
+		ServerPlayer player = (ServerPlayer) helper.makeMockServerPlayer(GameType.SURVIVAL);
+		TraceService traces = Services.traces().forced();
+		String cause = "test:fix-sc-a/convert/" + helper.absolutePos(BlockPos.ZERO).toShortString();
+		String undo = "test:fix-sc-a/undo/" + helper.absolutePos(BlockPos.ZERO).toShortString();
+		TraceLedger ledger = TraceLedger.get(server);
+
+		BlockPos twice = placed(helper, player, new BlockPos(1, 1, 1), Direction.NORTH);
+		helper.assertTrue(traces.convert(level, twice, furnace(Direction.EAST), cause) && traces.convert(level, twice, furnace(Direction.SOUTH), cause),
+				"the conversions were refused");
+		List<TraceLedger.Entry> both = entries(server, cause);
+		helper.assertTrue(both.size() == 2 && both.stream().noneMatch(ledger::changedSince), "core's own second turn marked the first: " + both);
+		level.setBlock(twice, level.getBlockState(twice).setValue(FurnaceBlock.LIT, true), net.minecraft.world.level.block.Block.UPDATE_ALL);
+		helper.assertTrue(traces.undo(level, both.get(1), undo) == TraceService.UndoResult.DONE && !ledger.changedSince(both.get(0))
+				&& traces.undo(level, both.get(0), undo) == TraceService.UndoResult.DONE, "not both turned back");
+		BlockState back = level.getBlockState(twice);
+		helper.assertTrue(back == furnace(Direction.NORTH).setValue(FurnaceBlock.LIT, true) && entries(server, cause).isEmpty() && entries(server, undo).isEmpty(),
+				"not back as it was with vanilla's lit kept: " + back);
+
+		BlockPos turned = placed(helper, player, new BlockPos(3, 1, 1), Direction.NORTH);
+		helper.assertTrue(traces.convert(level, turned, furnace(Direction.EAST), cause), "the conversion was refused");
+		TraceLedger.Entry entry = entries(server, cause).getFirst();
+		helper.setBlock(new BlockPos(3, 1, 1), furnace(Direction.WEST));
+		helper.setBlock(new BlockPos(3, 1, 1), furnace(Direction.EAST));
+		helper.assertTrue(ledger.changedSince(entry) && traces.undo(level, entry, undo) == TraceService.UndoResult.BLOCKED
+				&& level.getBlockState(turned) == furnace(Direction.EAST), "a block the player turned and turned back was taken");
+		ledger.remove(entry);
+		helper.succeed();
+	}
+
+	/** The marks round-trip under their own key by the entry's place in the order; a file without the key (v1.3) loads with none. */
+	@GameTest
+	public void theLedgerKeepsWhatWasChangedSinceUnderAKeyOfItsOwn(GameTestHelper helper) {
+		ServerLevel level = helper.getLevel();
+		var ops = level.registryAccess().createSerializationContext(NbtOps.INSTANCE);
+		TraceLedger.Entry convert = new TraceLedger.Entry(TraceLedger.Kind.CONVERT, "test:fix-sc-a/codec", 3, GlobalPos.of(level.dimension(),
+				new BlockPos(1, 2, 3)), Optional.empty(), Optional.of(furnace(Direction.NORTH)), Optional.empty(), Optional.empty(), -1, -1, Optional.empty(),
+				Optional.of(furnace(Direction.EAST)));
+		TraceLedger.Entry remove = new TraceLedger.Entry(TraceLedger.Kind.REMOVE, "test:fix-sc-a/codec", 3, GlobalPos.of(level.dimension(),
+				new BlockPos(1, 3, 3)), Optional.empty(), Optional.of(Blocks.STONE.defaultBlockState()), Optional.empty(), Optional.empty(), -1, -1);
+		net.minecraft.nbt.CompoundTag file = new net.minecraft.nbt.CompoundTag();
+		net.minecraft.nbt.ListTag list = new net.minecraft.nbt.ListTag();
+		list.add(TraceLedger.Entry.CODEC.encodeStart(ops, remove).getOrThrow());
+		list.add(TraceLedger.Entry.CODEC.encodeStart(ops, convert).getOrThrow());
+		file.put("entries", list);
+		TraceLedger plain = TraceLedger.CODEC.parse(ops, file).getOrThrow();
+		helper.assertTrue(plain.entries().size() == 2 && plain.entries().stream().noneMatch(plain::changedSince), "a file without the key: " + plain.entries());
+		file.put(TraceLedger.CHANGED_KEY, new net.minecraft.nbt.IntArrayTag(new int[] {0, 1, 7}));
+		TraceLedger marked = TraceLedger.CODEC.parse(ops, file).getOrThrow();
+		helper.assertTrue(marked.changedSince(marked.entries().get(1)) && !marked.changedSince(marked.entries().get(0)),
+				"the mark is not on the conversion alone: " + marked.entries());
+		Tag saved = TraceLedger.CODEC.encodeStart(ops, marked).getOrThrow();
+		TraceLedger again = TraceLedger.CODEC.parse(ops, saved).getOrThrow();
+		helper.assertTrue(again.changedSince(again.entries().get(1)) && !again.changedSince(again.entries().get(0)), "the mark did not round-trip: " + saved);
+		helper.succeed();
+	}
 }

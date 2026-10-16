@@ -30,14 +30,19 @@ import com.forzacode.a1016_02.core.SelfCreated;
 import com.forzacode.a1016_02.core.Services;
 import com.forzacode.a1016_02.core.Stage;
 import com.forzacode.a1016_02.core.Tier;
+import com.forzacode.a1016_02.core.TraceLedger;
 import com.forzacode.a1016_02.director.sc.PlaceMemory;
 import com.forzacode.a1016_02.director.sc.Places;
 import com.forzacode.a1016_02.director.sc.Sc01Config;
 
+import net.minecraft.core.BlockPos;
+import net.minecraft.resources.ResourceKey;
 import net.minecraft.server.MinecraftServer;
+import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.util.RandomSource;
 import net.minecraft.world.level.Level;
+import net.minecraft.world.phys.Vec3;
 
 import org.jspecify.annotations.Nullable;
 
@@ -58,6 +63,16 @@ public final class DirectorImpl implements Director {
 	private final DecisionSchedule schedule = new DecisionSchedule();
 	/** Each participant's last blind moment's recheck (D-077), for the session only. */
 	private final Map<UUID, LastRecheck> lastRechecks = new HashMap<>();
+	/**
+	 * 01 (docs/SELF_CREATED.md): the cards armed for each participant whose place comes with the trace that plays them
+	 * ({@link Places#AT_TRACE}), by card id, with the pacing they go into; for the session only, like their arms.
+	 */
+	private final Map<UUID, Map<String, AwaitedTrace>> pendingTraces = new HashMap<>();
+
+	/** A card armed for a player whose place waits for its trace, and the player's pacing. */
+	private record AwaitedTrace(CardInfo card, PacingMemory pacing) {
+	}
+
 	/** Server tick of the next world step, and the interval it was set with; 0 after a server stop. */
 	private long nextWorldTick;
 	private long worldInterval;
@@ -123,7 +138,7 @@ public final class DirectorImpl implements Director {
 			UUID uuid = player.getUUID();
 			DirectorBrain.Clock c = clock(server, uuid);
 			brain(rules(server)).recordForced(memory.world(), memory.pacing(uuid, c.dayTicks()), c, CardInfo.of(card.get()), asFake,
-					HerobrineState.get(server).stage(), sharers(server, memory, uuid, sharing), random, log(server, uuid));
+					HerobrineState.get(server).stage(), sharers(server, memory, uuid, player, sharing), random, log(server, uuid));
 			data.setDirty();
 			HerobrineEvents.CARD_FIRED.invoker().onCardFired(player, cardId, asFake);
 		}
@@ -269,11 +284,89 @@ public final class DirectorImpl implements Director {
 				GameClock.dayTicks(server), Math.max(1, ModConfig.realTicks(3600)), Sc01Config.get());
 	}
 
-	/** A fire that was neither fake nor forced reached this player: remember where they stand (nothing while the layer is off). */
+	/**
+	 * A fire that was neither fake nor forced reached this player: remember where its moment is ({@link Places#placeOf}:
+	 * their home for a card at home, else where they stand). Nothing while the layer is off.
+	 */
 	static void remember(ServerPlayer player, PacingMemory pacing, CardInfo card, DirectorBrain.Clock c) {
+		remember(player, player, pacing, card, c);
+	}
+
+	/**
+	 * The same for a player who felt the moment of {@code target}'s card (or had it, {@code target} being them): a card
+	 * at home is remembered at the target's home (where the moment is), any other where {@code player} stands.
+	 */
+	static void remember(ServerPlayer player, ServerPlayer target, PacingMemory pacing, CardInfo card, DirectorBrain.Clock c) {
 		if (SelfCreated.enabled()) {
-			Places.remember(pacing.places(), player.level().dimension(), player.blockPosition(), card, c.playTicks(), c.dayTicks(), Sc01Config.get());
+			ResourceKey<Level> dimension = player.level().dimension();
+			BlockPos at = Places.AT_HOME.contains(card.id())
+					? Places.placeOf(card, pacing.places(), dimension, player.blockPosition(), Services.watch().base(target))
+					: player.blockPosition();
+			Places.remember(pacing.places(), dimension, at, card, c.playTicks(), c.dayTicks(), Sc01Config.get());
 		}
+	}
+
+	/**
+	 * 01: a card armed for this player now whose place comes with the trace that plays it ({@link Places#AT_TRACE}):
+	 * nothing is remembered yet; {@link #onTraced} remembers it there, into this pacing. A later arm of the same card
+	 * replaces it. Nothing while the layer is off.
+	 */
+	void awaitTrace(UUID player, PacingMemory pacing, CardInfo card) {
+		if (SelfCreated.enabled()) {
+			pendingTraces.computeIfAbsent(player, k -> new HashMap<>()).put(card.id(), new AwaitedTrace(card, pacing));
+		}
+	}
+
+	/** Core's {@code TRACED}, live: {@link #onTraced(ServerLevel, TraceLedger.Entry, List)} among the level's players. */
+	void onTraced(ServerLevel level, TraceLedger.Entry entry) {
+		if (!pendingTraces.isEmpty()) {
+			onTraced(level, entry, level.players());
+		}
+	}
+
+	/**
+	 * The trace that plays a card armed earlier ({@link Places#AT_TRACE}, by its cause) is where its moment happened:
+	 * remembered there once, for the player it was armed for (of these players, the ones it waits for, the nearest the
+	 * trace). Nothing while the layer is off. Server thread.
+	 *
+	 * @return true if a place was remembered
+	 */
+	boolean onTraced(ServerLevel level, TraceLedger.Entry entry, List<? extends ServerPlayer> players) {
+		if (pendingTraces.isEmpty() || !SelfCreated.enabled() || !entry.pos().dimension().equals(level.dimension())) {
+			return false;
+		}
+		boolean remembered = false;
+		for (Map.Entry<String, String> played : Places.AT_TRACE.entrySet()) {
+			if (!entry.cause().equals(played.getValue())) {
+				continue;
+			}
+			String cardId = played.getKey();
+			Vec3 at = Vec3.atCenterOf(entry.pos().pos());
+			ServerPlayer target = null;
+			for (ServerPlayer player : players) {
+				Map<String, AwaitedTrace> pending = pendingTraces.get(player.getUUID());
+				if (pending != null && pending.containsKey(cardId) && (target == null || player.distanceToSqr(at) < target.distanceToSqr(at))) {
+					target = player;
+				}
+			}
+			if (target == null) {
+				continue;
+			}
+			Map<String, AwaitedTrace> pending = pendingTraces.get(target.getUUID());
+			AwaitedTrace awaited = pending.remove(cardId);
+			if (pending.isEmpty()) {
+				pendingTraces.remove(target.getUUID());
+			}
+			MinecraftServer server = level.getServer();
+			DirectorData data = DirectorData.get(server);
+			// Their pacing as it is now (the one it armed with, if the director keeps none for them).
+			PacingMemory pacing = data.memory().find(target.getUUID()).orElse(awaited.pacing());
+			DirectorBrain.Clock c = clock(server, target.getUUID());
+			Places.remember(pacing.places(), level.dimension(), entry.pos().pos(), awaited.card(), c.playTicks(), c.dayTicks(), Sc01Config.get());
+			data.setDirty();
+			remembered = true;
+		}
+		return remembered;
 	}
 
 	/** One decision now for this player, obeying every gate ({@code /a1016 director tick}). */
@@ -314,6 +407,7 @@ public final class DirectorImpl implements Director {
 	void onLeave(MinecraftServer server, UUID player) {
 		schedule.stop(player);
 		lastRechecks.remove(player);
+		pendingTraces.remove(player);
 		DirectorData data = DirectorData.get(server);
 		data.memory().find(player).ifPresent(pacing -> {
 			brain(rules(server)).onLeave(pacing, clock(server, player), log(server, player));
@@ -325,6 +419,7 @@ public final class DirectorImpl implements Director {
 	void clear() {
 		schedule.clear();
 		lastRechecks.clear();
+		pendingTraces.clear();
 		nextWorldTick = 0;
 		worldInterval = 0;
 	}
@@ -516,14 +611,19 @@ public final class DirectorImpl implements Director {
 		return new DirectorLog(name(server, player));
 	}
 
-	/** Everyone in {@code sharing} but the target, as the brain's sharers (their memory, clock, env and log). */
-	private List<DirectorBrain.Sharer> sharers(MinecraftServer server, DirectorMemory memory, UUID target, List<ServerPlayer> sharing) {
+	/**
+	 * Everyone in {@code sharing} but the target, as the brain's sharers (their memory, clock, env and log); each env
+	 * knows whose moment it shares ({@code targetPlayer}, if looked up).
+	 */
+	private List<DirectorBrain.Sharer> sharers(MinecraftServer server, DirectorMemory memory, UUID target, @Nullable ServerPlayer targetPlayer,
+			List<ServerPlayer> sharing) {
 		List<DirectorBrain.Sharer> out = new ArrayList<>();
 		long dayTicks = GameClock.dayTicks(server);
 		for (ServerPlayer other : sharing) {
 			UUID uuid = other.getUUID();
 			if (!uuid.equals(target)) {
-				out.add(new DirectorBrain.Sharer(memory.pacing(uuid, dayTicks), clock(server, uuid), new WorldEnv(server, uuid, other), log(server, uuid)));
+				out.add(new DirectorBrain.Sharer(memory.pacing(uuid, dayTicks), clock(server, uuid), new WorldEnv(server, uuid, other, targetPlayer),
+						log(server, uuid)));
 			}
 		}
 		return out;
@@ -538,11 +638,18 @@ public final class DirectorImpl implements Director {
 		private final MinecraftServer server;
 		private final @Nullable UUID uuid;
 		private final @Nullable ServerPlayer player;
+		/** A sharer's env: the player whose card's moment this one shares (null: their own). */
+		private final @Nullable ServerPlayer momentOf;
 
 		WorldEnv(MinecraftServer server, @Nullable UUID uuid, @Nullable ServerPlayer player) {
+			this(server, uuid, player, null);
+		}
+
+		WorldEnv(MinecraftServer server, @Nullable UUID uuid, @Nullable ServerPlayer player, @Nullable ServerPlayer momentOf) {
 			this.server = server;
 			this.uuid = uuid;
 			this.player = player;
+			this.momentOf = momentOf;
 		}
 
 		@Override
@@ -615,7 +722,7 @@ public final class DirectorImpl implements Director {
 			if (player == null || uuid == null) {
 				return List.of();
 			}
-			return DirectorImpl.this.sharers(server, DirectorData.get(server).memory(), uuid, Services.watch().sharingWith(player));
+			return DirectorImpl.this.sharers(server, DirectorData.get(server).memory(), uuid, player, Services.watch().sharingWith(player));
 		}
 
 		@Override
@@ -628,9 +735,15 @@ public final class DirectorImpl implements Director {
 
 		@Override
 		public void remember(PacingMemory m, CardInfo card, DirectorBrain.Clock c, boolean felt) {
-			if (player != null) {
-				DirectorImpl.remember(player, m, card, c);
+			if (player == null) {
+				return;
 			}
+			if (!felt && Places.AT_TRACE.containsKey(card.id())) {
+				// Armed now: its place is where the trace that plays it is ledgered (onTraced).
+				awaitTrace(player.getUUID(), m, card);
+				return;
+			}
+			DirectorImpl.remember(player, felt && momentOf != null ? momentOf : player, m, card, c);
 		}
 
 		@Override
