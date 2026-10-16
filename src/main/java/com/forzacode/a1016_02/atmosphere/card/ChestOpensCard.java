@@ -22,17 +22,24 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.sounds.SoundEvent;
 import net.minecraft.sounds.SoundEvents;
 import net.minecraft.sounds.SoundSource;
 import net.minecraft.util.RandomSource;
 import net.minecraft.world.Container;
+import net.minecraft.world.level.block.BarrelBlock;
+import net.minecraft.world.level.block.ChestBlock;
+import net.minecraft.world.level.block.EnderChestBlock;
+import net.minecraft.world.level.block.ShulkerBoxBlock;
+import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
 
 /**
- * Chest opens: the open and close sound of a chest within {@code Pacing.chestRadius} of the player, out of
- * everyone's sight. Everyone in hearing range hears it. The contents are unchanged, or (real version only,
- * sometimes) one stack is gone through {@code TraceService.removeStack}. Which chest (D-076): the container the player
+ * Chest opens: the open and close sounds of a chest within {@code Pacing.chestRadius} of the player, out of
+ * everyone's sight, the chest's own ({@link #sounds}: a copper chest sounds like copper, never like a wooden chest).
+ * Everyone in hearing range hears it. The contents are unchanged, or (real version only, sometimes) one stack is gone
+ * through {@code TraceService.removeStack}. Which chest (D-076): the container the player
  * opened most recently, if it is one of those chests (in range, out of sight); otherwise one of the player's own chests
  * there, else any of them.
  */
@@ -73,16 +80,43 @@ public final class ChestOpensCard extends AtmosphereCard {
 		AtmosphereConfig cfg = cfg();
 		RandomSource random = ctx.random();
 		Vec3 at = Vec3.atCenterOf(chest);
+		ContainerSounds itsOwn = sounds(level.getBlockState(chest));
 		// The chest is in the world: everyone in hearing range hears it open and close (D-060), whoever it fired for.
 		SoundOut out = sounds;
-		out.play(level, BuiltInRegistries.SOUND_EVENT.wrapAsHolder(SoundEvents.CHEST_OPEN), SoundSource.BLOCKS, at, 0.5F, random.nextFloat() * 0.1F + 0.9F);
+		out.play(level, BuiltInRegistries.SOUND_EVENT.wrapAsHolder(itsOwn.open()), SoundSource.BLOCKS, at, 0.5F, random.nextFloat() * 0.1F + 0.9F);
 		int closeDelay = cfg.chestCloseMinTicks + random.nextInt(Math.max(1, cfg.chestCloseMaxTicks - cfg.chestCloseMinTicks + 1));
 		float closePitch = random.nextFloat() * 0.1F + 0.9F;
-		Tasks.later(closeDelay, () -> out.play(level, BuiltInRegistries.SOUND_EVENT.wrapAsHolder(SoundEvents.CHEST_CLOSE), SoundSource.BLOCKS, at, 0.5F, closePitch));
+		Tasks.later(closeDelay, () -> out.play(level, BuiltInRegistries.SOUND_EVENT.wrapAsHolder(itsOwn.close()), SoundSource.BLOCKS, at, 0.5F, closePitch));
 		if (!ctx.fake() && random.nextDouble() < cfg.chestStackChance) {
 			takeOneStack(level, chest, random);
 		}
 		return FireResult.FIRED;
+	}
+
+	/** A container's open and close sounds. */
+	record ContainerSounds(SoundEvent open, SoundEvent close) {
+	}
+
+	/**
+	 * The container's own open and close sounds, as vanilla 26.3's block entity plays them (at volume 0.5, pitch 0.9 to
+	 * 1): a chest's are its {@code ChestBlock}'s (a wooden or trapped chest's {@code CHEST_*}, each copper chest's
+	 * {@code COPPER_CHEST*} by its weathering), an ender chest's, a barrel's and a shulker box's their own; a wooden
+	 * chest's for anything else.
+	 */
+	static ContainerSounds sounds(BlockState state) {
+		if (state.getBlock() instanceof ChestBlock chest) {
+			return new ContainerSounds(chest.getOpenChestSound(), chest.getCloseChestSound());
+		}
+		if (state.getBlock() instanceof EnderChestBlock) {
+			return new ContainerSounds(SoundEvents.ENDER_CHEST_OPEN, SoundEvents.ENDER_CHEST_CLOSE);
+		}
+		if (state.getBlock() instanceof BarrelBlock) {
+			return new ContainerSounds(SoundEvents.BARREL_OPEN, SoundEvents.BARREL_CLOSE);
+		}
+		if (state.getBlock() instanceof ShulkerBoxBlock) {
+			return new ContainerSounds(SoundEvents.SHULKER_BOX_OPEN, SoundEvents.SHULKER_BOX_CLOSE);
+		}
+		return new ContainerSounds(SoundEvents.CHEST_OPEN, SoundEvents.CHEST_CLOSE);
 	}
 
 	/**

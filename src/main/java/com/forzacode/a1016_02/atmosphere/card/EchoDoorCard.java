@@ -40,8 +40,9 @@ import org.jspecify.annotations.Nullable;
  * of their play ago ({@code echoDoorMin/MaxAgeMinutes}), now 6 to 16 blocks from them ({@code echoDoorMin/MaxDistance})
  * and out of everyone's view, plays its own open and close sounds (a door's or trapdoor's {@code BlockSetType}, a gate's
  * wood type, as vanilla plays them) with the gap the player left between opening and closing it, or a plausible one
- * ({@code echoDoorGapMin/MaxTicks}) if they left none. The block never changes. Anyone in range hears it (D-060). Never
- * within 30 s of the player's combat. No fake.
+ * ({@code echoDoorGapMin/MaxTicks}) if they left none, louder than vanilla's door so the whole band is heard
+ * ({@code echoDoorVolume}). The block never changes. Anyone in range hears it (D-060). Never within 30 s of the
+ * player's combat. No fake.
  *
  * <p>The sounds end on the state the door is in, so whoever looks finds what they heard: a closed door opens then
  * closes (the usual case), one standing open closes then opens again.
@@ -148,8 +149,9 @@ public final class EchoDoorCard extends EchoCard {
 
 	/**
 	 * The echo: the door's open and close sounds, the second the player's gap (or a plausible one) after the first, in
-	 * the order that leaves the door as it stands (closed: open then close; open: close then open). Vanilla's volume
-	 * ({@code echoDoorVolume}) and pitch (0.9 to 1).
+	 * the order that leaves the door as it stands (closed: open then close; open: close then open). At
+	 * {@code echoDoorVolume} (1.6: heard to 25.6 blocks, so the band's far end at 16 is not silent as at vanilla's 1)
+	 * and vanilla's pitch (0.9 to 1).
 	 */
 	static List<Beat> beats(Candidate door, RandomSource random, AtmosphereConfig cfg) {
 		DoorSounds sounds = sounds(door.state());
