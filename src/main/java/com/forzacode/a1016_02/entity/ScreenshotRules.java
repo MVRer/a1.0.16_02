@@ -73,6 +73,35 @@ public final class ScreenshotRules {
 	}
 
 	/**
+	 * The start of the client's log line (and, in a development environment only, its chat line) when an F2 while armed
+	 * saves a plain picture: {@link #plainLine}.
+	 */
+	public static final String PLAIN = "[a1016] screenshot armed but plain: ";
+
+	/** The line an armed F2 that saved a plain picture leaves in the client log: {@link #PLAIN} and the reason. */
+	public static String plainLine(String reason) {
+		return PLAIN + (reason == null || reason.isBlank() ? "no reason given" : reason);
+	}
+
+	/**
+	 * Server: why an arm that lasts may not show him now, or empty if it may: he is out somewhere (one being, D-060.4),
+	 * or today already had its sighting in entity's world-wide day record ({@code lastDay}, {@code countOnLastDay} and
+	 * {@code maxPerDay}, the rule every sighting card's gate keeps; any sighting or fake that day counts, a debug spawn
+	 * too), the arm then waiting for the next in-game day. The words are what the client logs and
+	 * {@code /a1016 entity screenshot} prints.
+	 */
+	public static Optional<String> paused(boolean heIsOut, long today, long lastDay, int countOnLastDay, int maxPerDay) {
+		if (heIsOut) {
+			return Optional.of("he is out somewhere (one him): it waits until he is gone");
+		}
+		if (!SightingRules.dayAllows(lastDay, countOnLastDay, today, maxPerDay)) {
+			return Optional.of("today (day " + today + ") already had " + countOnLastDay + " sighting" + (countOnLastDay == 1 ? "" : "s") + " (at most "
+					+ maxPerDay + " a day): it waits for day " + (today + 1));
+		}
+		return Optional.empty();
+	}
+
+	/**
 	 * Why the screenshot the client is taking now cannot show him, or empty if it can (a spot is looked for next): the
 	 * overworld, no screen open, the camera in the air (not under water, in lava or powder snow), first person, the sky
 	 * light at the eyes at least {@code minSkyLight}, no shaderpack drawing the frame (Iris: its temporal effects could

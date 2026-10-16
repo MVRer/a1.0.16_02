@@ -2,6 +2,27 @@
 
 One entry per merge, newest first. Run the game from the main checkout (this folder, on `main`).
 
+## READY TO TRY: the screenshot on a normal night, and it says why it waited  (branch fix/screenshot-plain)
+```
+Restart needed: full game restart (server and client jar: the screenshot's state payload changed).
+What changed, in plain words (Mariano's playtest: /a1016 fire the_screenshot said FIRED, F2 saved a plain picture):
+  - Why it stayed plain then: that in-game day already had 12 sightings (the /a1016 entity spawn tries a few minutes
+    before), and the screenshot keeps the one sighting a day, so it waited for the next day without a word. On a clear
+    night (the dusk fog only) it would also have put him too far out to be 24 pixels tall in a 1080p picture.
+  - A normal night or dusk fog is enough now: he stands in the fog but no farther than where he is still 24 pixels tall
+    for your field of view and picture size, never nearer than 12 blocks; from a hill he comes nearer; from very high
+    up he can be too small anywhere (in a 1080p picture, about 40 blocks over the ground) and it waits.
+  - It says why it waits: /a1016 entity screenshot shows "paused: ..." with the reason, and an F2 while armed that
+    saves a plain picture writes "[a1016] screenshot armed but plain: <reason>" to the client log (logs/latest.log);
+    in the Dev Client the same line shows in chat. A real player's chat never shows it.
+See it now (Dev Client): the v1.3 entry's step 8 below, on a clear night: /a1016 stage 2, /time set 18000, wait a
+  minute and a half for the dusk fog to ease in, face open ground (a lake, a plain), /a1016 fire the_screenshot, F2.
+  It needs an in-game day without a sighting yet: /time add 24000 if you spawned him today.
+Existing worlds and config files: nothing to upgrade.
+Still to check in the Dev Client: a dusk picture (13000 to 16000), and one while sprinting or flying (the wider field
+  of view brings him nearer).
+```
+
 ## READY TO TRY: the glimpse says why and makes the dark, louder steps, one torch is enough  (branch fix/glimpse-feedback)
 ```
 Restart needed: full game restart (server and client jar).
@@ -22,6 +43,8 @@ Existing config files: the dig section steps to version 2 (ladderVolumeFar 0.7 t
 Still to check in the Dev Client (the game tests cannot hear or see a frame):
   - the louder steps at 50% master volume are clearly heard but not loud, rung 3's from 14 to 20 back;
   - the torches behind you are never seen going (only out of view), and the tunnel behind is dark when you turn.
+```
+
 ## READY TO TRY: Between trunks you can actually see  (branch fix/trunks-close; jar build/libs/a1016_02-1.3.0-26.3.jar after ./gradlew build)
 ```
 Restart needed: full game restart (only the server side changed; everyone still needs the same jar).
@@ -90,13 +113,16 @@ See it now (Dev Client; /a1016 debug overlay on shows each player's "blind" line
   7. /a1016 dig blind prints your blind moment and why each blind card would or would not happen now; the arm waits
      up to 2 minutes for your next menu. /a1016 director shows your blind line (rechecks and how many fired).
   8. The screenshot: /a1016 fire the_screenshot arms you (/a1016 entity screenshot shows it: days left, ready or
-     paused, fog on or off, the weather's fog end). Go outdoors in the overworld in weather fog: /a1016 fog night (or
-     day) then /time add 2500, or the dusk fog; a short render distance alone never counts. Sky above you, first
-     person (F5 back to it), no menu open, not in water, no Blindness or Darkness, no shaderpack. Press F2 and open
-     the picture in run/screenshots: he stands at the fog edge (12 to 192 blocks off, never a speck), off the middle,
-     head and chest in plain sight. The screen never showed him. It waits (and he does not appear) while a figure is
-     out anywhere, on an in-game day that already had a sighting (try the next day), while a fog surge pulls the fog
-     in, or when no ground spot fits. Once per world: /a1016 entity screenshot reset to try again.
+     paused and why, fog on or off, the weather's fog end). Go outdoors in the overworld in weather fog: a normal night
+     or dusk is enough from Traces on (the dusk fog: /time set 18000), or /a1016 fog night (or day) then /time add 2500;
+     a short render distance alone never counts. Sky above you, first person (F5 back to it), no menu open, not in
+     water, no Blindness or Darkness, no shaderpack; open ground ahead (a lake, a plain) works best. Press F2 and open
+     the picture in run/screenshots: he stands in the fog (12 to 192 blocks off, nearer on a clear night: at least 24
+     pixels tall, never a speck), off the middle, head and chest in plain sight. The screen never showed him. It waits
+     (and he does not appear) while a figure is out anywhere, on an in-game day that already had a sighting (a debug
+     spawn counts too: /time add 24000), while a fog surge pulls the fog in, or when no ground spot fits; each time the
+     client log says why (in the Dev Client the chat too): "[a1016] screenshot armed but plain: ...". Once per world:
+     /a1016 entity screenshot reset to try again (the screenshot was that day's sighting: the next waits for the next day).
   9. The real way: a NEW world, play normally: mine, use doors, open your inventory now and then. The echoes need 5
      minutes or more to pass; the blind cards need you alone with a menu open; the screenshot comes once, from Traces.
 What to look for: whether an echo reads as your own rhythm coming back, whether a step behind you in the inventory
