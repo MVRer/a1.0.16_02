@@ -86,10 +86,11 @@ import org.jspecify.annotations.Nullable;
  * tension drops; the threshold is checked after every fire and on every decision tick, so tension other systems
  * raise ({@code Attention.raiseTension}) starts a quiet too. Tension decays outside quiet.</li>
  * <li>Blind moments (D-077): a {@code BLIND} card's moment is a menu open on the player's screen, which comes often
- * but never lasts, so a held one keeps the whole {@code holdGiveUp} (60 minutes) instead of the five-minute unfit
- * give-back, and is never parked. While a menu is open, {@link #recheck} looks again at what the player's pacing
- * already holds or has parked (BLIND cards first) and fires one whose moment fits now, through every gate of
- * {@link #step}; it never rolls a tier or draws.</li>
+ * but never lasts, so a held one waits {@code blindHold} (15 minutes) of looks instead of the five-minute unfit
+ * give-back before it goes back, parked like any card whose moment did not come (a player who never opens a menu, or
+ * a client without the blind signal, never freezes a tier). While a menu is open, {@link #recheck} looks again at
+ * what the player's pacing already holds or has parked (BLIND cards first) and fires one whose moment fits now,
+ * through every gate of {@link #step}, a parked one released first; it never rolls a tier or draws.</li>
  * </ul>
  */
 public final class DirectorBrain {
@@ -500,10 +501,10 @@ public final class DirectorBrain {
 				}
 				if (!env.contextFits(card)) {
 					m.unfitLooks.merge(tier, 1L, Long::sum);
-					if (shortHold(card) && unfitGoesBack(m, c, tier, card)) {
-						// Its moment may be far off (a card only for a tunnel, drawn on the surface): it must not freeze the
-						// tier for the whole hold. Majors, signatures and BLIND cards keep theirs. Parked, it is out of its
-						// deck for a while, and the roll that drew it goes to the next card.
+					if (unfitHold(card) > 0 && unfitGoesBack(m, c, tier, card)) {
+						// Its moment may be far off (a card only for a tunnel, drawn on the surface; a BLIND card for someone
+						// who opens no menu): it must not freeze the tier for the whole hold. Majors and signatures keep
+						// theirs. Parked, it is out of its deck for a while, and the roll that drew it goes to the next card.
 						boolean parks = parksNow(m, tier, card);
 						String back = parks ? UNFIT + PARKED : UNFIT;
 						giveUp(m, c, tier, card.id(), back, rec);
@@ -534,12 +535,17 @@ public final class DirectorBrain {
 	}
 
 	/**
-	 * True for a card whose hold goes back after {@code heldUnfitGiveBack} (5 minutes) of looks at which its moment did
-	 * not fit: an ambient or a minor, never a {@code BLIND} card (D-077), whose moment, a menu open, comes often and is
-	 * met by the rechecks; it keeps the whole {@code holdGiveUp} as majors and signatures do.
+	 * Play ticks of looks at which its moment did not fit after which a held card goes back into its deck, parked
+	 * ({@link #unfitGoesBack}), or 0 for a card that only has the long {@code holdGiveUp}: {@code blindHold} (15 minutes)
+	 * for a {@code BLIND} card of any tier (D-077: a menu comes often, and the blind moments' rechecks look for it; a
+	 * player who never opens one, or a client without the blind signal, must not freeze a tier), {@code heldUnfitGiveBack}
+	 * (5 minutes) for another ambient or minor, 0 for a major or signature.
 	 */
-	static boolean shortHold(CardInfo card) {
-		return (card.tier() == Tier.AMBIENT || card.tier() == Tier.MINOR) && !card.has(CardTag.BLIND);
+	long unfitHold(CardInfo card) {
+		if (card.has(CardTag.BLIND)) {
+			return rules.blindHold;
+		}
+		return card.tier() == Tier.AMBIENT || card.tier() == Tier.MINOR ? rules.heldUnfitGiveBack : 0;
 	}
 
 	/** True for a fog spell that is on and not quiet (D-071): the director's odds go up. */
@@ -584,7 +590,9 @@ public final class DirectorBrain {
 	 * sharers' gates (D-060.3), a {@code PERSONAL} card never beside a sharer (D-074), and a parked major only while a
 	 * major slot is due. It never rolls a tier's odds and never draws; time does not move (no stage change, no decay)
 	 * and nothing goes back into a deck here: a look that does not fit is not counted ({@code unfitLooks}), and holds
-	 * that a sharer close by rules out wait for the next director tick to go back.
+	 * that a sharer close by rules out wait for the next director tick to go back. A held card whose moment fits here
+	 * but finds no spot stays held, and its unfit looks start again: its moment came, so its unfit hold
+	 * ({@link #unfitHold}) counts from there.
 	 *
 	 * @return a one-line description of what happened, as {@link #step} gives
 	 */
@@ -632,6 +640,9 @@ public final class DirectorBrain {
 						outcome = "fired " + card.id() + (fake ? " (fake)" : "") + (held ? "" : ", released from its park")
 								+ (sharers.isEmpty() ? "" : ", felt by " + sharers.size() + " more");
 						break;
+					}
+					if (held) {
+						m.unfitLooks.remove(card.tier());
 					}
 					notes.add(card.id() + " " + result + ", kept for later");
 				}
@@ -1187,33 +1198,35 @@ public final class DirectorBrain {
 	}
 
 	/**
-	 * True if the current hold of this tier has been looked at for a whole {@code heldUnfitGiveBack} and its moment
-	 * never fit: as many looks as director ticks in it. Looks a gate held back (the gap after any fire, a quiet, an empty
-	 * session, a friend's gates) do not count, so a hold only goes back for its moment, never for a gate.
+	 * True if the current hold of this card's tier has been looked at for a whole {@link #unfitHold} of its own (a major's
+	 * or signature's, at its long hold's end: {@code heldUnfitGiveBack}) and its moment never fit: as many looks as
+	 * director ticks in it. Looks a gate held back (the gap after any fire, a quiet, an empty session, a friend's gates) do
+	 * not count, so a hold only goes back for its moment, never for a gate; a recheck at which a held card's moment fit
+	 * without firing starts the count again ({@link #recheck}).
 	 */
-	private boolean unfitAllAlong(PacingMemory m, Tier tier) {
-		return m.unfitLooks.getOrDefault(tier, 0L) >= Math.max(1, rules.heldUnfitGiveBack / rules.tickInterval);
+	private boolean unfitAllAlong(PacingMemory m, Tier tier, CardInfo card) {
+		long hold = unfitHold(card) > 0 ? unfitHold(card) : rules.heldUnfitGiveBack;
+		return m.unfitLooks.getOrDefault(tier, 0L) >= Math.max(1, hold / rules.tickInterval);
 	}
 
 	/**
-	 * True when a held ambient or minor card whose moment does not fit at this look goes back: after
-	 * {@code heldUnfitGiveBack} of play looked at all along ({@link #unfitAllAlong}), or at once for a struck one
-	 * ({@link #struck}): one look, then back.
+	 * True when a held card with an unfit hold ({@link #unfitHold}) whose moment does not fit at this look goes back:
+	 * after that hold of play looked at all along ({@link #unfitAllAlong}), or at once for a struck one ({@link #struck}):
+	 * one look, then back.
 	 */
 	private boolean unfitGoesBack(PacingMemory m, Clock c, Tier tier, CardInfo card) {
 		if (struck(m, card)) {
 			return true;
 		}
-		return c.playTicks() - m.heldSince.getOrDefault(tier, c.playTicks()) >= rules.heldUnfitGiveBack && unfitAllAlong(m, tier);
+		return c.playTicks() - m.heldSince.getOrDefault(tier, c.playTicks()) >= unfitHold(card) && unfitAllAlong(m, tier, card);
 	}
 
 	/**
 	 * Whether the held card of this tier, going back now because its moment did not come, is parked: always while
-	 * parking is on ({@code unfitPark} above 0), for a hold looked at all along or a card parked before; never a
-	 * {@code BLIND} card (D-077), which goes back after its whole hold and may be drawn again as any other.
+	 * parking is on ({@code unfitPark} above 0), for a hold looked at all along or a card parked before.
 	 */
 	private boolean parksNow(PacingMemory m, Tier tier, CardInfo card) {
-		return rules.unfitPark > 0 && !card.has(CardTag.BLIND) && (struck(m, card) || unfitAllAlong(m, tier));
+		return rules.unfitPark > 0 && (struck(m, card) || unfitAllAlong(m, tier, card));
 	}
 
 	/**

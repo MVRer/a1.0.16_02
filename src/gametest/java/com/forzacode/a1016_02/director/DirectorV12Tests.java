@@ -773,7 +773,7 @@ public class DirectorV12Tests extends R1ReviewDirectorTests {
 		old.stageTagWeights.get("TRACES").put("MOB", 0.8); // the player's addition
 		JsonObject section = gson.toJsonTree(old).getAsJsonObject();
 		for (String added : List.of("version", "firstHourMaxFires", "emptySessionMinStage", "groupRateFactor", "fogWeatherOddsFactor",
-				"fogWeatherSightingWeight", "fogWeatherMajorPullMinutes", "heldUnfitGiveBackMinutes", "unfitParkMinutes", "simBlindPerHour")) {
+				"fogWeatherSightingWeight", "fogWeatherMajorPullMinutes", "heldUnfitGiveBackMinutes", "unfitParkMinutes", "blindHoldMinutes", "simBlindPerHour")) {
 			section.remove(added);
 		}
 		JsonObject sections = new JsonObject();

@@ -11,6 +11,7 @@ import java.util.function.Consumer;
 
 import com.forzacode.a1016_02.A1016_02;
 import com.forzacode.a1016_02.core.CardTag;
+import com.forzacode.a1016_02.core.FireResult;
 import com.forzacode.a1016_02.core.ModConfig;
 import com.forzacode.a1016_02.core.Signature;
 import com.forzacode.a1016_02.core.Stage;
@@ -41,7 +42,8 @@ import org.jspecify.annotations.Nullable;
 /**
  * v1.3's director tests (W-DIR2, D-077): a blind moment's recheck ({@link DirectorBrain#recheck}) fires a held or parked
  * card whose moment fits now, BLIND cards first, through every gate of a director tick and never drawing; a held BLIND
- * card keeps the long hold and is never parked; the dry runs' blind moments ({@code simBlindPerHour}); the director
+ * card goes back after {@code blindHold} (15 minutes) of unfit looks, parked; the dry runs' blind moments
+ * ({@code simBlindPerHour}), and no tier frozen without them; the director
  * section's step to version 3; {@code /a1016 director}'s recheck line. Pure logic and dry runs with their own memories,
  * and one live call for a player who never joins. {@link DirectorMultiplayerTests} extends this.
  */
@@ -349,24 +351,29 @@ public class DirectorV13Tests extends DirectorV12Tests {
 		helper.succeed();
 	}
 
-	// --- the long hold ---
+	// --- the BLIND hold ---
 
 	/**
-	 * D-077: a held BLIND card whose moment does not come keeps the whole {@code holdGiveUp} (60 minutes), never the
-	 * five-minute unfit give-back, and goes back after it without a park (the next draw passes it over); a recheck while
-	 * blind 40 minutes into such a hold fires it. The short hold is for ambients and minors that are not BLIND.
+	 * D-077 (the orchestrator's decision after W-DIR2's first report): a held BLIND card whose moment does not come keeps
+	 * its hold past the five-minute unfit give-back and goes back after {@code blindHold} (15 minutes) of looks, parked
+	 * like any unfit card, with the roll that drew it handed on (another ambient fires in that tick): a player who opens
+	 * no menu never freezes a tier. A recheck at which its moment fit but found no spot starts the count again. A recheck
+	 * while blind ten minutes into a hold fires it.
 	 */
 	@GameTest
-	public void aBlindCardKeepsTheLongHoldAndIsNeverParked(GameTestHelper helper) {
+	public void aBlindCardHoldsFifteenMinutesThenIsParked(GameTestHelper helper) {
 		DirectorRules rules = rules(Tempo.SLOW_BURN, Signature.CROSS_ROW);
 		rules.proximityAmbientPerHour = 1_000_000;
 		rules.minAnyGap = 0;
-		helper.assertTrue(rules.heldUnfitGiveBack < rules.holdGiveUp && rules.unfitPark > 0, "the holds " + rules.heldUnfitGiveBack + ", " + rules.holdGiveUp);
-		helper.assertTrue(!DirectorBrain.shortHold(BLIND_STEP) && !DirectorBrain.shortHold(BLIND_DOOR)
-				&& DirectorBrain.shortHold(card("a", Tier.AMBIENT, Stage.ALONE, false)) && DirectorBrain.shortHold(card("m", Tier.MINOR, Stage.TRACES, false))
-				&& !DirectorBrain.shortHold(card("j", Tier.MAJOR, Stage.PROXIMITY, false)), "shortHold");
+		helper.assertTrue(rules.blindHold == rules.hourTicks / 4 && rules.heldUnfitGiveBack < rules.blindHold && rules.blindHold < rules.holdGiveUp
+				&& rules.unfitPark > 0, "the holds " + rules.heldUnfitGiveBack + ", " + rules.blindHold + ", " + rules.holdGiveUp);
 		DirectorBrain brain = new DirectorBrain(rules, List.of(BLIND_STEP, card("plain_a", Tier.AMBIENT, Stage.ALONE, false),
 				card("plain_b", Tier.AMBIENT, Stage.ALONE, false)), 50);
+		helper.assertTrue(brain.unfitHold(BLIND_STEP) == rules.blindHold && brain.unfitHold(BLIND_DOOR) == rules.blindHold
+				&& brain.unfitHold(card("blind_major", Tier.MAJOR, Stage.PROXIMITY, false, CardTag.BLIND)) == rules.blindHold
+				&& brain.unfitHold(card("a", Tier.AMBIENT, Stage.ALONE, false)) == rules.heldUnfitGiveBack
+				&& brain.unfitHold(card("m", Tier.MINOR, Stage.TRACES, false)) == rules.heldUnfitGiveBack
+				&& brain.unfitHold(card("j", Tier.MAJOR, Stage.PROXIMITY, false)) == 0, "unfitHold");
 		DirectorBrain.Clock clock = playing(rules);
 		long heldAt = clock.playTicks();
 		Solo solo = holding(rules, BLIND_STEP, clock);
@@ -374,35 +381,65 @@ public class DirectorV13Tests extends DirectorV12Tests {
 		env.fits = card -> !card.has(CardTag.BLIND);
 		Watch watch = new Watch();
 		RandomSource random = RandomSource.create(13);
-		while (watch.gaveUp.isEmpty() && clock.playTicks() < heldAt + 2 * rules.holdGiveUp) {
+		while (watch.gaveUp.isEmpty() && clock.playTicks() < heldAt + rules.holdGiveUp) {
 			clock = clock.plus(rules.tickInterval);
 			env.tension = 0;
 			solo.step(brain, clock, env, random, watch);
-			if (clock.playTicks() - heldAt < rules.holdGiveUp) {
+			if (clock.playTicks() - heldAt < rules.blindHold) {
 				helper.assertTrue(BLIND_STEP.id().equals(solo.pacing.held(Tier.AMBIENT)) && env.fired.isEmpty(),
 						"the BLIND hold went back after " + (clock.playTicks() - heldAt) + " ticks: " + watch.gaveUp);
 			}
 		}
-		helper.assertTrue(watch.gaveUp.equals(List.of(BLIND_STEP.id() + ": " + DirectorBrain.HELD_TOO_LONG)) && clock.playTicks() - heldAt >= rules.holdGiveUp
-				&& clock.playTicks() - heldAt < rules.holdGiveUp + rules.tickInterval, "the long hold: " + watch.gaveUp + " after " + (clock.playTicks() - heldAt));
-		helper.assertTrue(solo.pacing.parkedUntil(BLIND_STEP.id()) == -1 && env.fired.size() == 1 && env.fired.getFirst().startsWith("plain_"),
-				"parked, or the next draw did not pass it over: parked until " + solo.pacing.parkedUntil(BLIND_STEP.id()) + ", fired " + env.fired);
+		long back = clock.playTicks();
+		helper.assertTrue(watch.gaveUp.equals(List.of(BLIND_STEP.id() + ": " + DirectorBrain.UNFIT + DirectorBrain.PARKED)) && back - heldAt >= rules.blindHold
+				&& back - heldAt < rules.blindHold + rules.tickInterval, "the BLIND hold: " + watch.gaveUp + " after " + (back - heldAt));
+		helper.assertTrue(solo.pacing.parkedUntil(BLIND_STEP.id()) == back + rules.unfitPark && env.fired.size() == 1 && env.fired.getFirst().startsWith("plain_"),
+				"not parked, or its roll was not handed on: parked until " + solo.pacing.parkedUntil(BLIND_STEP.id()) + ", fired " + env.fired);
 
-		// Forty minutes into a hold, a menu opens: the recheck fires it.
+		// Its moment comes at a recheck ten minutes in, but no spot is found: the fifteen minutes count again from there.
 		DirectorBrain.Clock start = playing(rules);
-		Solo caught = holding(rules, BLIND_STEP, start);
+		Solo spotless = holding(rules, BLIND_STEP, start);
+		boolean[] blind = {false};
+		ScriptEnv noSpot = new ScriptEnv(Stage.PROXIMITY, 0, rules.attentionNeutral);
+		noSpot.fits = card -> !card.has(CardTag.BLIND) || blind[0];
+		noSpot.result = card -> card.has(CardTag.BLIND) ? FireResult.NO_SPOT : FireResult.FIRED;
+		Watch spotWatch = new Watch();
+		DirectorBrain.Clock at = start;
+		while (at.playTicks() - start.playTicks() < 10 * rules.hourTicks / 60) {
+			at = at.plus(rules.tickInterval);
+			noSpot.tension = 0;
+			spotless.step(brain, at, noSpot, random, spotWatch);
+		}
+		long lastTick = at.playTicks();
+		blind[0] = true;
+		String outcome = brain.recheck(spotless.world, spotless.pacing, at.plus(30), noSpot, random, spotWatch);
+		blind[0] = false;
+		helper.assertTrue(outcome.contains("NO_SPOT") && BLIND_STEP.id().equals(spotless.pacing.held(Tier.AMBIENT)) && !spotless.pacing.unfitLooks.containsKey(Tier.AMBIENT),
+				"a fitting recheck without a spot: " + outcome + ", looks " + spotless.pacing.unfitLooks);
+		while (spotWatch.gaveUp.isEmpty() && at.playTicks() < start.playTicks() + rules.holdGiveUp) {
+			at = at.plus(rules.tickInterval);
+			noSpot.tension = 0;
+			spotless.step(brain, at, noSpot, random, spotWatch);
+		}
+		helper.assertTrue(spotWatch.gaveUp.equals(List.of(BLIND_STEP.id() + ": " + DirectorBrain.UNFIT + DirectorBrain.PARKED))
+				&& at.playTicks() - lastTick >= rules.blindHold && at.playTicks() - lastTick < rules.blindHold + rules.tickInterval,
+				"after the fitting recheck the hold went back " + (at.playTicks() - lastTick) + " ticks later: " + spotWatch.gaveUp);
+
+		// Ten minutes into a hold, a menu opens: the recheck fires it.
+		DirectorBrain.Clock from = playing(rules);
+		Solo caught = holding(rules, BLIND_STEP, from);
 		ScriptEnv later = new ScriptEnv(Stage.PROXIMITY, 0, rules.attentionNeutral);
 		later.fits = card -> false;
-		DirectorBrain.Clock at = start;
-		while (at.playTicks() - start.playTicks() < 40 * rules.hourTicks / 60) {
-			at = at.plus(rules.tickInterval);
+		DirectorBrain.Clock now = from;
+		while (now.playTicks() - from.playTicks() < 10 * rules.hourTicks / 60) {
+			now = now.plus(rules.tickInterval);
 			later.tension = 0;
-			caught.step(brain, at, later, random, DirectorBrain.Recorder.NONE);
+			caught.step(brain, now, later, random, DirectorBrain.Recorder.NONE);
 		}
-		helper.assertTrue(BLIND_STEP.id().equals(caught.pacing.held(Tier.AMBIENT)), "the hold went back before 40 minutes");
+		helper.assertTrue(BLIND_STEP.id().equals(caught.pacing.held(Tier.AMBIENT)), "the hold went back before 10 minutes");
 		later.fits = card -> true;
-		brain.recheck(caught.world, caught.pacing, at.plus(30), later, random, DirectorBrain.Recorder.NONE);
-		helper.assertTrue(later.fired.equals(List.of(BLIND_STEP.id())), "40 minutes in, the recheck did not fire it: " + later.fired);
+		brain.recheck(caught.world, caught.pacing, now.plus(30), later, random, DirectorBrain.Recorder.NONE);
+		helper.assertTrue(later.fired.equals(List.of(BLIND_STEP.id())), "10 minutes in, the recheck did not fire it: " + later.fired);
 		helper.succeed();
 	}
 
@@ -445,24 +482,17 @@ public class DirectorV13Tests extends DirectorV12Tests {
 	 * D-077 in the dry runs, measured: the registered deck plus stand-ins for dig's three blind cards (an Alone ambient and
 	 * two Traces minors, PERSONAL and BLIND). Their moments fit only at a blind moment's recheck, so every fire of theirs
 	 * is a recheck's; every limit holds over the 20 h, D-070's first hour holds, and no 4b rate falls more than 15% below
-	 * the plain deck's. The 4b rates against the plain deck, and the same deck with no blind moments (the BLIND cards then
-	 * hold their tier an hour and go back, unparked), are logged.
-	 * Together, a PERSONAL BLIND card never comes.
+	 * the plain deck's (the rates are logged). Together, a PERSONAL BLIND card never comes.
 	 */
 	@GameTest(maxTicks = 3000)
 	public void blindCardsFireOnlyAtRechecksInTheDryRuns(GameTestHelper helper) {
-		List<CardInfo> plainDeck = DirectorTestSupport.registryDeck().stream().filter(card -> !card.has(CardTag.BLIND)).toList();
-		List<CardInfo> deck = new ArrayList<>(plainDeck);
-		deck.addAll(BLIND_STAND_INS);
-		DirectorConfig none = new DirectorConfig();
-		none.simBlindPerHour = 0;
+		List<CardInfo> plainDeck = plainDeck();
+		List<CardInfo> deck = withStandIns(plainDeck);
 		for (Tempo tempo : Tempo.values()) {
 			List<DirectorSim.Result> plainRuns = DirectorTestSupport.registryRuns(tempo, new DirectorConfig(), plainDeck, null);
 			List<DirectorSim.Result> runs = DirectorTestSupport.registryRuns(tempo, new DirectorConfig(), deck, null);
-			List<DirectorSim.Result> menuless = DirectorTestSupport.registryRuns(tempo, none, deck, null);
 			DirectorTestSupport.FourB plain = DirectorTestSupport.FourB.of(plainRuns, plainDeck);
 			DirectorTestSupport.FourB with = DirectorTestSupport.FourB.of(runs, deck);
-			DirectorTestSupport.FourB noMenus = DirectorTestSupport.FourB.of(menuless, deck);
 			DirectorTestSupport.FirstHour first = DirectorTestSupport.FirstHour.of(runs);
 			long blindFires = 0;
 			long recheckFires = 0;
@@ -478,15 +508,10 @@ public class DirectorV13Tests extends DirectorV12Tests {
 				List<String> hard = DirectorTestSupport.feltHardLimits(run, deck);
 				helper.assertTrue(hard.isEmpty(), seed + hard);
 			}
-			for (DirectorSim.Result run : menuless) {
-				helper.assertTrue(run.violations.isEmpty() && run.fires().stream().noneMatch(e -> BLIND_STAND_INS.stream().anyMatch(c -> c.id().equals(e.cardId()))),
-						tempo + " seed " + run.params.seed + ", no blind moments: " + run.violations);
-			}
 			double hours = runs.size() * DirectorTestSupport.HOURS;
 			A1016_02.LOGGER.info("[a1016] director blind cards {}: plain {}", tempo, plain.summary());
 			A1016_02.LOGGER.info("[a1016] director blind cards {}: with BLIND stand-ins {}; {}; {} BLIND fires ({} /h), {} from rechecks", tempo, with.summary(),
 					first.summary(), blindFires, String.format(Locale.ROOT, "%.2f", blindFires / hours), recheckFires);
-			A1016_02.LOGGER.info("[a1016] director blind cards {}: no blind moments {}", tempo, noMenus.summary());
 			helper.assertTrue(blindFires > runs.size() && blindFires == recheckFires, tempo + ": " + blindFires + " BLIND fires, " + recheckFires + " from rechecks");
 			// W-DIR2 measured 9% fewer Alone ambients and 7% or less elsewhere (a BLIND card waits for a menu); a guard, not a target.
 			helper.assertTrue(with.aloneAmbientsPerHour() >= 0.85 * plain.aloneAmbientsPerHour() && with.tracesAmbientsPerHour() >= 0.85 * plain.tracesAmbientsPerHour()
@@ -517,11 +542,59 @@ public class DirectorV13Tests extends DirectorV12Tests {
 		helper.succeed();
 	}
 
+	/**
+	 * D-077 (the orchestrator's decision): with no blind moments at all, as for a player who never opens a menu or a
+	 * client without the blind signal, the stand-ins registered never freeze a tier: each held one goes back after its 15
+	 * minutes, parked, with its roll handed on, so Proximity's ambients stay within 10% of the plain deck's, every tempo.
+	 * No BLIND card fires and every limit holds; the other 4b rates are logged.
+	 */
+	@GameTest(maxTicks = 3000)
+	public void noBlindMomentsNeverFreezeATier(GameTestHelper helper) {
+		List<CardInfo> plainDeck = plainDeck();
+		List<CardInfo> deck = withStandIns(plainDeck);
+		DirectorConfig none = new DirectorConfig();
+		none.simBlindPerHour = 0;
+		for (Tempo tempo : Tempo.values()) {
+			DirectorTestSupport.FourB plain = DirectorTestSupport.FourB.of(DirectorTestSupport.registryRuns(tempo, new DirectorConfig(), plainDeck, null), plainDeck);
+			List<DirectorSim.Result> runs = DirectorTestSupport.registryRuns(tempo, none, deck, null);
+			DirectorTestSupport.FourB menuless = DirectorTestSupport.FourB.of(runs, deck);
+			long parks = 0;
+			for (DirectorSim.Result run : runs) {
+				String seed = tempo + " seed " + run.params.seed + ", no blind moments: ";
+				helper.assertTrue(run.fires().stream().noneMatch(e -> BLIND_STAND_INS.stream().anyMatch(c -> c.id().equals(e.cardId()))), seed + "a BLIND card fired");
+				helper.assertTrue(run.violations.isEmpty(), seed + run.violations);
+				List<String> hard = DirectorTestSupport.feltHardLimits(run, deck);
+				helper.assertTrue(hard.isEmpty(), seed + hard);
+				parks += run.events.stream().filter(e -> e.kind() == DirectorSim.Kind.GIVE_UP && e.note().endsWith(DirectorBrain.PARKED)
+						&& BLIND_STAND_INS.stream().anyMatch(c -> c.id().equals(e.cardId()))).count();
+			}
+			A1016_02.LOGGER.info("[a1016] director blind cards {}: no blind moments {} ({} BLIND parks) against plain {}", tempo, menuless.summary(), parks,
+					plain.summary());
+			helper.assertTrue(parks >= runs.size(), tempo + ": only " + parks + " BLIND parks in " + runs.size() + " runs");
+			helper.assertTrue(menuless.proximityAmbientsPerHour() >= 0.9 * plain.proximityAmbientsPerHour(), tempo + ": Proximity ambients "
+					+ menuless.proximityAmbientsPerHour() + " against plain " + plain.proximityAmbientsPerHour());
+		}
+		helper.succeed();
+	}
+
+	/** The registered deck the playthrough plays, without any BLIND card (dig's, once registered). */
+	private static List<CardInfo> plainDeck() {
+		return DirectorTestSupport.registryDeck().stream().filter(card -> !card.has(CardTag.BLIND)).toList();
+	}
+
+	/** This deck with the stand-ins for dig's three blind cards. */
+	private static List<CardInfo> withStandIns(List<CardInfo> plainDeck) {
+		List<CardInfo> deck = new ArrayList<>(plainDeck);
+		deck.addAll(BLIND_STAND_INS);
+		return deck;
+	}
+
 	// --- config, commands, the live director ---
 
 	/**
-	 * D-075 for v1.3: the director section's step 2 to 3 only adds {@code simBlindPerHour} (20); a version 2 section keeps
-	 * every value it has, hand-changed or not, and a missing section is v1.3's defaults.
+	 * D-075 for v1.3: the director section's step 2 to 3 only adds {@code blindHoldMinutes} (15) and
+	 * {@code simBlindPerHour} (20); a version 2 section keeps every value it has, hand-changed or not, and a missing section
+	 * is v1.3's defaults.
 	 */
 	@GameTest
 	public void theDirectorSectionStepToVersion3OnlyAddsTheBlindMoments(GameTestHelper helper) {
@@ -532,13 +605,14 @@ public class DirectorV13Tests extends DirectorV12Tests {
 		v2.aloneAmbientPerHour = 0.3; // the player's, though v1.1's default
 		v2.simFitChance = 0.5; // the player's
 		JsonObject section = gson.toJsonTree(v2).getAsJsonObject();
+		section.remove("blindHoldMinutes");
 		section.remove("simBlindPerHour");
 		JsonObject sections = new JsonObject();
 		sections.add("director", section);
 		DirectorConfig read = ModConfig.readSection(sections, "director", DirectorConfig.class, DirectorConfig::new);
 		v2.version = DirectorConfig.VERSION;
-		helper.assertTrue(DirectorConfig.VERSION == 3 && read.version == 3 && read.simBlindPerHour == 20 && gson.toJson(read).equals(gson.toJson(v2)),
-				"a version 2 section upgraded to " + gson.toJson(read));
+		helper.assertTrue(DirectorConfig.VERSION == 3 && read.version == 3 && read.blindHoldMinutes == 15 && read.simBlindPerHour == 20
+				&& gson.toJson(read).equals(gson.toJson(v2)), "a version 2 section upgraded to " + gson.toJson(read));
 		DirectorConfig mine = new DirectorConfig();
 		mine.version = DirectorConfig.VERSION;
 		mine.simBlindPerHour = 4;
@@ -546,7 +620,7 @@ public class DirectorV13Tests extends DirectorV12Tests {
 		again.add("director", gson.toJsonTree(mine));
 		helper.assertTrue(ModConfig.readSection(again, "director", DirectorConfig.class, DirectorConfig::new).simBlindPerHour == 4, "the player's 4 was lost");
 		DirectorConfig fresh = ModConfig.readSection(new JsonObject(), "director", DirectorConfig.class, DirectorConfig::new);
-		helper.assertTrue(fresh.version == 3 && fresh.simBlindPerHour == 20, "a missing section: " + gson.toJson(fresh));
+		helper.assertTrue(fresh.version == 3 && fresh.blindHoldMinutes == 15 && fresh.simBlindPerHour == 20, "a missing section: " + gson.toJson(fresh));
 		DirectorRules rules = rules(Tempo.SLOW_BURN, Signature.CROSS_ROW);
 		helper.assertTrue(DirectorSim.Params.from(mine, rules).blindPerHour == 4 && DirectorSim.Params.from(fresh, rules).blindPerHour == 20, "Params.from");
 		helper.succeed();
