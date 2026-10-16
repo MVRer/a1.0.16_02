@@ -505,7 +505,7 @@ Lowering attention is not safety. It only delays him, and a quiet world is exact
 
 He is only ever seen at the edge of the fog, for a few seconds, and he always leaves first.
 
-- **Distance:** just inside the fog or render limit, never closer than 24 blocks. In Proximity he can stand near places you know, still at the fog edge. Underground the glimpse (D-073) stands at least 14 blocks from everyone, past the torchlight, where the dark is the fog; the 24-block rule is for the surface.
+- **Distance:** just inside the fog or render limit, never closer than 24 blocks. In Proximity he can stand near places you know, still at the fog edge. Underground the glimpse (D-073) stands at least 14 blocks from everyone, past the torchlight, where the dark is the fog; the 24-block rule is for the surface. Between trunks stands 18 to 40 blocks off, still inside the fog (D-035, the trunk fix): half a figure behind a tree is only seen that close, and the half that shows has nothing in front of it, not even leaves.
 - **Line of sight:** he spawns out of view and is revealed by the player turning or walking, never by appearing mid-screen.
 - **No sound cue.** No music sting, no red text, no scream. Silence is the cue.
 - **Frequency:** Alone, a tiny chance per day. Traces, rare. Proximity, a few per week of play. Telling, almost none. Never two in one in-game day, and never the same variant twice in a row.

@@ -13,6 +13,8 @@ import com.forzacode.a1016_02.core.ModConfig;
 import com.forzacode.a1016_02.core.Stage;
 import com.forzacode.a1016_02.core.Tier;
 import com.forzacode.a1016_02.core.TraceService;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
 
 import net.fabricmc.fabric.api.gametest.v1.GameTest;
 
@@ -23,11 +25,15 @@ import net.minecraft.nbt.NbtOps;
 import net.minecraft.nbt.Tag;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.util.Mth;
 import net.minecraft.util.RandomSource;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.GameType;
 import net.minecraft.world.level.Level;
+import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.LeavesBlock;
+import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
 
@@ -362,10 +368,10 @@ public class SightingRuleGameTests extends FogAndRunGameTests {
 		ServerLevel level = helper.getLevel();
 		for (int x = 0; x < 8; x++) {
 			for (int z = 0; z < 8; z++) {
-				helper.setBlock(x, 0, z, net.minecraft.world.level.block.Blocks.STONE);
+				helper.setBlock(x, 0, z, Blocks.STONE);
 			}
 		}
-		helper.setBlock(4, 1, 4, net.minecraft.world.level.block.Blocks.TORCH);
+		helper.setBlock(4, 1, 4, Blocks.TORCH);
 		BlockPos light = helper.absolutePos(new BlockPos(4, 1, 4));
 		loadAround(level, light, 2);
 		Vec3 player = Vec3.atBottomCenterOf(light).add(-30.0, 0.0, 0.0);
@@ -382,6 +388,242 @@ public class SightingRuleGameTests extends FogAndRunGameTests {
 					box -> true, level::isLoaded, RandomSource.create(7), 48);
 			helper.assertTrue(SpotFinder.light(beyond, List.of(light), 9, 3, 7).isEmpty(), "a light nearer than the fog band gave a spot");
 		});
+	}
+
+	// --- between trunks (the trunk fix, D-035) ---
+
+	/** A band at dusk like {@link #edge}, for one kind of band. */
+	static FogEdge edge(int clientChunks, int serverChunks, int simulationChunks, double duskFog, double reported, FogEdge.Kind kind, EntityConfig config) {
+		FogLimits.Result fog = FogLimits.of(clientChunks, serverChunks, (float) duskFog, 13000L, new FogLimits.Shape(DUSK_MIN, 0.55));
+		return FogEdge.compute(fog, simulationChunks, reported, kind, config);
+	}
+
+	/**
+	 * Between trunks stands 18 to 40 blocks out whatever the fog end, never past the fog end's margin, the ticking range
+	 * or the minimum distance: in clear daylight at 16 chunks the normal band put him 140 to 190 blocks out, where half a
+	 * figure behind a tree is a few pixels.
+	 */
+	@GameTest
+	public void theTrunkBandStaysInItsBlocksInsideTheFog(GameTestHelper helper) {
+		EntityConfig config = new EntityConfig();
+		helper.assertTrue(config.trunkMinDistance == 18 && config.trunkMaxDistance == 40, "trunk band defaults " + config.trunkMinDistance + ".."
+				+ config.trunkMaxDistance);
+		helper.assertTrue(FogEdge.Kind.of(Variant.BETWEEN_TRUNKS) == FogEdge.Kind.TRUNK, "between trunks does not take the trunk band");
+		double margin = config.edgeMarginBlocks;
+		double min = config.minDistance();
+		for (int sim : new int[] {0, 4, 5, 6, 8, 12, 32}) {
+			double ticking = sim > 0 ? FogEdge.tickingReach(sim) : Double.MAX_VALUE;
+			for (double limit = 6.0; limit <= 400.0; limit += 0.5) {
+				double[] band = FogEdge.band(limit, FogEdge.Kind.TRUNK, sim, config);
+				String what = "limit=" + limit + " sim=" + sim + " -> " + band[0] + ".." + band[1];
+				double room = Math.min(Math.min(limit - margin, config.maxSpawnDistance), ticking);
+				helper.assertTrue(band[0] >= min - 1.0E-6 && band[1] >= band[0] + 2.0 - 1.0E-6, "under the minimum or thinner than 2 blocks: " + what);
+				helper.assertTrue(band[1] <= 40.0 + 1.0E-6 || band[1] <= min + 2.0 + 1.0E-6, "past 40 blocks: " + what);
+				helper.assertTrue(band[1] <= room + 1.0E-6 || room < min + 2.0, "past the fog end's margin or the ticking range: " + what);
+				if (room >= 20.0) {
+					helper.assertTrue(near(band[0], 18.0) && near(band[1], Math.min(40.0, room)), "not 18 to 40 where the fog leaves room: " + what);
+				}
+			}
+		}
+		// The live path: clear daylight at 16 chunks, no report. The normal band is far out; the trunk band is 18 to 40.
+		FogEdge normal = edge(16, 16, 0, 0.0, Double.NaN, FogEdge.Kind.NORMAL, config);
+		FogEdge trunk = edge(16, 16, 0, 0.0, Double.NaN, FogEdge.Kind.TRUNK, config);
+		helper.assertTrue(normal.inner() > 100.0, "the normal band is not the far one the playtest saw: " + normal);
+		helper.assertTrue(near(trunk.inner(), 18.0) && near(trunk.outer(), 40.0) && trunk.seeable(), "clear daylight trunk band: " + trunk);
+		// Dusk fog 0.6 (a 55-block fog end): still 18 to 40. A 30-block fog end: 18 to 28, inside its margin.
+		double fogEnd = 192 * Math.pow(DUSK_MIN / 192, 0.6);
+		FogEdge dusk = edge(12, 12, 0, 0.0, fogEnd, FogEdge.Kind.TRUNK, config);
+		helper.assertTrue(near(dusk.inner(), 18.0) && near(dusk.outer(), 40.0) && dusk.seeable(), "dusk trunk band: " + dusk);
+		FogEdge thick = edge(12, 12, 0, 0.0, 30.0, FogEdge.Kind.TRUNK, config);
+		helper.assertTrue(near(thick.inner(), 18.0) && near(thick.outer(), 28.0) && thick.seeable(), "30-block fog trunk band: " + thick);
+		helper.assertFalse(edge(12, 12, 0, 0.0, 14.0, FogEdge.Kind.TRUNK, config).seeable(), "a trunk sighting in 14-block fog");
+		// Tunable, swapped ends included; NaN in the file falls back to 18 and 40.
+		config.trunkMinDistance = 30;
+		config.trunkMaxDistance = 22;
+		double[] tuned = FogEdge.band(192.0, FogEdge.Kind.TRUNK, 0, config);
+		helper.assertTrue(near(tuned[0], 22.0) && near(tuned[1], 30.0), "tuned: " + tuned[0] + ".." + tuned[1]);
+		config.trunkMinDistance = Double.NaN;
+		config.trunkMaxDistance = Double.NaN;
+		double[] fallback = FogEdge.band(192.0, FogEdge.Kind.TRUNK, 0, config);
+		helper.assertTrue(near(fallback[0], 18.0) && near(fallback[1], 40.0), "NaN: " + fallback[0] + ".." + fallback[1]);
+		helper.succeed();
+	}
+
+	/** D-035's band as it was before the trunk fix, for {@link #everyOtherVariantKeepsItsBand}. */
+	private static double[] bandBeforeTheTrunkFix(double limit, boolean close, int simulationChunks, EntityConfig config) {
+		double fa = close ? config.closeFractionMin : config.normalFractionMin;
+		double fb = close ? config.closeFractionMax : config.normalFractionMax;
+		double a = Double.isNaN(fa) ? 0.5 : Mth.clamp(fa, 0.05, 1.0);
+		double b = Double.isNaN(fb) ? 0.5 : Mth.clamp(fb, 0.05, 1.0);
+		double inner = limit * Math.min(a, b);
+		double outer = limit * Math.max(a, b);
+		if (close) {
+			double lo = Math.min(config.closeMinDistance, config.closeMaxDistance);
+			double hi = Math.max(config.closeMinDistance, config.closeMaxDistance);
+			inner = Mth.clamp(inner, lo, hi);
+			outer = Mth.clamp(outer, lo, hi);
+			if (outer - inner < 2.0) {
+				outer = Math.min(hi, inner + 2.0);
+				inner = Math.max(lo, Math.min(inner, outer - 2.0));
+			}
+		}
+		outer = Math.min(Math.min(outer, limit - config.edgeMarginBlocks), config.maxSpawnDistance);
+		if (simulationChunks > 0) {
+			outer = Math.min(outer, FogEdge.tickingReach(simulationChunks));
+		}
+		inner = Math.max(Math.min(inner, outer - 2.0), config.minDistance());
+		outer = Math.max(outer, inner + 2.0);
+		return new double[] {inner, outer};
+	}
+
+	/** Every variant but between trunks keeps the band it had before the trunk fix, whatever the trunk band is set to. */
+	@GameTest
+	public void everyOtherVariantKeepsItsBand(GameTestHelper helper) {
+		EntityConfig tuned = new EntityConfig();
+		tuned.closeFractionMin = 0.4;
+		tuned.closeFractionMax = 0.25;
+		tuned.closeMinDistance = 22;
+		tuned.closeMaxDistance = 12;
+		tuned.normalFractionMin = 0.6;
+		tuned.trunkMinDistance = 9;
+		tuned.trunkMaxDistance = 90;
+		for (EntityConfig config : List.of(new EntityConfig(), tuned)) {
+			for (Variant variant : Variant.values()) {
+				if (variant == Variant.BETWEEN_TRUNKS) {
+					continue;
+				}
+				boolean close = variant == Variant.CLOSE;
+				helper.assertTrue(FogEdge.Kind.of(variant) == (close ? FogEdge.Kind.CLOSE : FogEdge.Kind.NORMAL), variant + " changed its band kind");
+				for (int sim : new int[] {0, 3, 6, 12}) {
+					for (double limit = 6.0; limit <= 400.0; limit += 0.5) {
+						double[] before = bandBeforeTheTrunkFix(limit, close, sim, config);
+						double[] now = FogEdge.band(limit, FogEdge.Kind.of(variant), sim, config);
+						double[] flag = FogEdge.band(limit, close, sim, config);
+						helper.assertTrue(near(before[0], now[0]) && near(before[1], now[1]) && near(flag[0], now[0]) && near(flag[1], now[1]),
+								variant + " at fog end " + limit + " sim " + sim + ": " + before[0] + ".." + before[1] + " became " + now[0] + ".." + now[1]);
+					}
+				}
+			}
+		}
+		FogEdge byVariant = edge(12, 12, 6, 0.5, Double.NaN, FogEdge.Kind.of(Variant.WALKS_AWAY), new EntityConfig());
+		FogEdge byFlag = edge(12, 12, 6, 0.5, Double.NaN, false, new EntityConfig());
+		helper.assertTrue(byVariant.equals(byFlag), "the normal edge moved: " + byFlag + " -> " + byVariant);
+		helper.succeed();
+	}
+
+	/**
+	 * The trunk scene in a yard: a stone floor at y 0 (x 0 to 23, z 4 to 19) with air above, and one bare oak trunk 5 logs
+	 * tall at (21, 1, 11), 20 blocks along x from the player at (1.5, 1, 11.5). Returns the trunk's lowest log.
+	 */
+	private static BlockPos trunkScene(GameTestHelper helper) {
+		for (int x = 0; x < 24; x++) {
+			for (int z = 4; z < 20; z++) {
+				helper.setBlock(x, 0, z, Blocks.STONE);
+				for (int y = 1; y < 9; y++) {
+					helper.setBlock(x, y, z, Blocks.AIR);
+				}
+			}
+		}
+		for (int y = 1; y <= 5; y++) {
+			helper.setBlock(21, y, 11, Blocks.OAK_LOG);
+		}
+		return helper.absolutePos(new BlockPos(21, 1, 11));
+	}
+
+	/** The trunk finder in the scene: a band of 18 to 24 blocks, only feet inside the yard, everything out of view. */
+	private static SpotFinder.Query trunkQuery(GameTestHelper helper, Vec3 feet) {
+		ServerLevel level = helper.getLevel();
+		AABB yard = AABB.encapsulatingFullBlocks(helper.absolutePos(BlockPos.ZERO), helper.absolutePos(new BlockPos(23, 19, 23)));
+		return new SpotFinder.Query(level, feet, feet.add(0.0, 1.62, 0.0), 18.0, 24.0, EntityConfig.get().minDistance(), ModEntities.HIM.getDimensions(),
+				box -> true, pos -> level.isLoaded(pos) && yard.contains(Vec3.atCenterOf(pos)), RandomSource.create(11), 96);
+	}
+
+	/** His feet behind the trunk on that side, as the trunk finder puts him (on the ground). */
+	private static Vec3 behind(GameTestHelper helper, Vec3 eye, BlockPos trunk, int sign) {
+		Vec3 spot = SpotFinder.behindTrunk(eye, trunk, sign);
+		helper.assertTrue(spot != null, "no spot behind the trunk");
+		Vec3 feet = SpotFinder.standAt(helper.getLevel(), spot.x, spot.z, ModEntities.HIM.getDimensions());
+		helper.assertTrue(feet != null && Math.abs(feet.y - trunk.getY()) < 1.0E-6, "he cannot stand behind the trunk: " + feet);
+		return feet;
+	}
+
+	/**
+	 * Mariano's playtest: "he spawns behind the trunk or really far". Leaves in the line to the half of him that sticks out
+	 * past the trunk (the out-of-view rule looks through them) hide the one part of him there is to see: such a spot is
+	 * refused, on either side, and the trunk finder finds nowhere.
+	 */
+	@GameTest(structure = "a1016_02:accident/yard", skyAccess = true)
+	public void aTrunkSpotWhoseVisibleHalfIsBehindLeavesIsRefused(GameTestHelper helper) {
+		BlockPos trunk = trunkScene(helper);
+		ServerLevel level = helper.getLevel();
+		Vec3 feet = helper.absoluteVec(new Vec3(1.5, 1.0, 11.5));
+		Vec3 eye = feet.add(0.0, 1.62, 0.0);
+		for (int sign : new int[] {1, -1}) {
+			helper.assertTrue(SpotFinder.halfVisible(level, eye, behind(helper, eye, trunk, sign), trunk), "the bare scene does not show half of him");
+		}
+		// Leaves at head height two blocks in front of the trunk, on both sides of it: in the line to his head and outer
+		// shoulder, never in the line to the half the trunk covers.
+		BlockState leaves = Blocks.OAK_LEAVES.defaultBlockState().setValue(LeavesBlock.PERSISTENT, true);
+		helper.setBlock(19, 2, 10, leaves);
+		helper.setBlock(19, 2, 12, leaves);
+		for (int sign : new int[] {1, -1}) {
+			Vec3 him = behind(helper, eye, trunk, sign);
+			helper.assertFalse(SpotFinder.halfVisible(level, eye, him, trunk), "his half behind leaves counts as visible (side " + sign + ")");
+		}
+		Optional<SpotFinder.Spot> found = SpotFinder.trunk(trunkQuery(helper, feet), base -> 0.0);
+		helper.assertTrue(found.isEmpty(), "a spot behind leaves was taken: " + found);
+		helper.succeed();
+	}
+
+	/**
+	 * A clear line to his head and the shoulder that sticks out, and the trunk over his other half: the trunk finder takes
+	 * that spot, at this trunk, in the band, half of him showing. Out in the open (nothing over the other half) or right
+	 * behind the trunk (nothing showing), a spot is not half of him.
+	 */
+	@GameTest(structure = "a1016_02:accident/yard", skyAccess = true)
+	public void aTrunkSpotWithAClearHalfAndTheTrunkOverTheOtherIsTaken(GameTestHelper helper) {
+		BlockPos trunk = trunkScene(helper);
+		ServerLevel level = helper.getLevel();
+		Vec3 feet = helper.absoluteVec(new Vec3(1.5, 1.0, 11.5));
+		Vec3 eye = feet.add(0.0, 1.62, 0.0);
+		Vec3 trunkMiddle = new Vec3(trunk.getX() + 0.5, trunk.getY(), trunk.getZ() + 0.5);
+		for (int sign : new int[] {1, -1}) {
+			Vec3 him = behind(helper, eye, trunk, sign);
+			helper.assertTrue(SpotFinder.halfVisible(level, eye, him, trunk), "half of him behind a bare trunk refused (side " + sign + ")");
+			// His middle is on the edge of the trunk's shadow: just past half a block to the side of the trunk's middle.
+			Vec3 away = him.subtract(trunkMiddle).horizontal();
+			Vec3 toHim = him.subtract(eye).horizontal().normalize();
+			Vec3 side = away.subtract(toHim.scale(away.dot(toHim)));
+			double sideways = side.length();
+			helper.assertTrue(sideways > 0.5 && sideways < 0.6, "not half past the trunk: " + sideways);
+			// Two blocks further out, nothing covers his other half; right behind the trunk, nothing of him shows.
+			Vec3 out = side.normalize();
+			helper.assertFalse(SpotFinder.halfVisible(level, eye, him.add(out.scale(2.0)), trunk), "a figure in the open counts as half hidden");
+			helper.assertFalse(SpotFinder.halfVisible(level, eye, him.subtract(side), trunk), "a figure right behind the trunk counts as half seen");
+		}
+		Optional<SpotFinder.Spot> found = SpotFinder.trunk(trunkQuery(helper, feet), base -> 0.0);
+		helper.assertTrue(found.isPresent() && trunk.equals(found.get().anchor()), "the trunk finder did not take the trunk: " + found);
+		SpotFinder.Spot spot = found.get();
+		helper.assertTrue(spot.distance() >= 17.5 && spot.distance() <= 24.5 && SpotFinder.halfVisible(level, eye, spot.pos(), trunk),
+				"the trunk spot is out of the band or not half visible: " + spot);
+		helper.succeed();
+	}
+
+	/** A version 4 section (v1.2, v1.3) reads as version 5: the trunk band's fields at their defaults, every value set kept. */
+	@GameTest
+	public void aVersion4EntitySectionUpgradesToVersion5(GameTestHelper helper) {
+		JsonObject sections = JsonParser.parseString("{\"entity\": {\"version\": 4, \"closeMinDistance\": 20.0,"
+				+ " \"normalFractionMax\": 0.7, \"glimpseMinDistance\": 16.0, \"screenshotMinPixels\": 30}}").getAsJsonObject();
+		EntityConfig read = ModConfig.readSection(sections, "entity", EntityConfig.class, EntityConfig::new);
+		EntityConfig defaults = new EntityConfig();
+		helper.assertTrue(EntityConfig.CURRENT_VERSION == 5 && read.version == 5, "version " + read.version);
+		helper.assertTrue(read.closeMinDistance == 20.0 && read.normalFractionMax == 0.7 && read.glimpseMinDistance == 16.0 && read.screenshotMinPixels == 30,
+				"a value the player set was lost");
+		helper.assertTrue(read.trunkMinDistance == 18 && read.trunkMaxDistance == 40, "the trunk band's defaults are missing");
+		helper.assertTrue(read.closeMaxDistance == defaults.closeMaxDistance && read.normalFractionMin == defaults.normalFractionMin
+				&& read.minDistance == defaults.minDistance, "a default moved");
+		helper.assertFalse(read.upgrade(), "upgraded twice");
+		helper.succeed();
 	}
 
 	/** Loads (generates if needed) the chunks around a position so terrain checks see real ground. */
