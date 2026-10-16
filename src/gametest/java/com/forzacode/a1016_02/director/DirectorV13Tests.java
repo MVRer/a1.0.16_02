@@ -443,6 +443,42 @@ public class DirectorV13Tests extends DirectorV12Tests {
 		helper.succeed();
 	}
 
+	/**
+	 * INT-2: a roll goes through every struck card it meets. Three ambients whose moment never comes and a BLIND card
+	 * struck between menus (each went back before, their parks over) are the only undrawn cards of the deck: one due
+	 * roll draws each, sends each back parked at its one look, and goes on to the deck's refill, so the ambient fires in
+	 * that same tick. With the hand-on capped at two a tick (v1.2) the third struck card ended the roll, at the end of
+	 * nearly every cycle: about a tenth of Proximity's ambients for a deck with that many cards that never fit.
+	 */
+	@GameTest
+	public void aRollGoesThroughEveryStruckCard(GameTestHelper helper) {
+		DirectorRules rules = rules(Tempo.SLOW_BURN, Signature.CROSS_ROW);
+		rules.proximityAmbientPerHour = 1_000_000;
+		rules.minAnyGap = 0;
+		List<String> struck = List.of("never_a", "never_b", "never_c", BLIND_STEP.id());
+		DirectorBrain brain = new DirectorBrain(rules, List.of(card("never_a", Tier.AMBIENT, Stage.ALONE, false), card("never_b", Tier.AMBIENT, Stage.ALONE, false),
+				card("never_c", Tier.AMBIENT, Stage.ALONE, false), BLIND_STEP, card("plain_a", Tier.AMBIENT, Stage.ALONE, false),
+				card("plain_b", Tier.AMBIENT, Stage.ALONE, false)), 50);
+		DirectorBrain.Clock clock = playing(rules);
+		Solo solo = DirectorTestSupport.pinned(rules);
+		solo.startAt(clock);
+		// This cycle fired both plain cards, plain_a last; the struck cards' parks ended just now.
+		solo.pacing.cycleFired.get(Tier.AMBIENT).addAll(List.of("plain_b", "plain_a"));
+		solo.pacing.lastFired.put(Tier.AMBIENT, "plain_a");
+		struck.forEach(id -> solo.pacing.parkedUntil.put(id, clock.playTicks()));
+		ScriptEnv env = new ScriptEnv(Stage.PROXIMITY, 0, rules.attentionNeutral);
+		env.fits = card -> card.id().startsWith("plain_");
+		Watch watch = new Watch();
+		DirectorBrain.Clock now = clock.plus(rules.tickInterval);
+		String outcome = solo.step(brain, now, env, RandomSource.create(17), watch);
+		helper.assertTrue(env.fired.equals(List.of("plain_b")), "the roll did not reach the refill: " + outcome);
+		for (String id : struck) {
+			helper.assertTrue(solo.pacing.parkedUntil(id) == now.playTicks() + rules.unfitPark && watch.gaveUp.contains(id + ": " + DirectorBrain.UNFIT + DirectorBrain.PARKED),
+					id + " was not looked at and parked again: until " + solo.pacing.parkedUntil(id) + ", " + watch.gaveUp);
+		}
+		helper.succeed();
+	}
+
 	// --- dry runs ---
 
 	/**

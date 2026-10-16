@@ -68,7 +68,8 @@ import org.jspecify.annotations.Nullable;
  * its first look that does not fit. Every director tick each parked card's moment is looked at in passing: one that
  * fits ends its park and that strike there, so a card whose moment is a short stretch of every day (the ridge's dusk)
  * keeps its whole holds. An ambient or minor card parked as it goes back hands the roll that drew it to the next card
- * in the same tick, so a card whose moment never comes costs its tier one five-minute hold, never a fire.</li>
+ * in the same tick, however many such cards the draw meets in a row, so a card whose moment never comes costs its tier
+ * one five-minute hold, never a fire.</li>
  * <li>Gates: the silence flag ({@link DirectorFlags}: nothing at all fires), join grace, forced quiet, empty
  * sessions (rolled from {@code emptySessionMinStage} on, Proximity), a small gap between any two fires, at most
  * {@code firstHourMaxFires} (5) moments in the player's own first hour (D-070), the minor and major gaps (never
@@ -105,8 +106,6 @@ public final class DirectorBrain {
 	static final String UNFIT = "its moment did not come";
 	/** Added to why a card went back when it is parked too ({@link #park}). */
 	static final String PARKED = " (parked)";
-	/** How many times a tick a card that went back hands its roll to the next card drawn ({@link #step}). */
-	private static final int MAX_CARRIED = 2;
 
 	/**
 	 * Shared state and the world-facing half of the cards, for the one player being decided for (tension and the cards
@@ -466,7 +465,10 @@ public final class DirectorBrain {
 		List<String> notes = new ArrayList<>();
 		for (Tier tier : PRIORITY) {
 			// A card parked as it goes back (its moment did not come at any look) hands the roll that drew it to the next
-			// card (up to MAX_CARRIED times a tick), so a card whose moment never comes costs its tier no fire (R1, v1.2).
+			// card, so a card whose moment never comes costs its tier no fire (R1, v1.2). Each hand-on parks a card, which
+			// is then out of the draw, so the chain ends within the tier's cards. No smaller cap (INT-2, v1.3): with two a
+			// tick, a deck holding three or more such cards (the tunnel ladder's and far in the rock for a surface player,
+			// a BLIND card struck between menus) lost the roll at the end of nearly every cycle, about a tenth of its fires.
 			int carried = 0;
 			while (true) {
 				CardInfo card = card(m.held.get(tier));
@@ -512,7 +514,7 @@ public final class DirectorBrain {
 							park(m, c, card.id());
 						}
 						notes.add(card.id() + " goes back: " + back);
-						if (parks && carried < MAX_CARRIED) {
+						if (parks && carried < byTier.get(tier).size()) {
 							carried++;
 							continue;
 						}
