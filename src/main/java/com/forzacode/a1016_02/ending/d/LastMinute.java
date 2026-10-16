@@ -57,7 +57,8 @@ import org.jspecify.annotations.Nullable;
  * ledgered blocks, through core's {@code restoreVisibly} while {@link #FLAG} is set; each one's step sound for everyone
  * within hearing);</li>
  * <li>a torch they lost is back on the stairwell wall (a ledgered torch, through {@code restoreBlock});</li>
- * <li>they come out at dawn and the fog pulls back to full render distance (dusk fog 0, for good);</li>
+ * <li>they come out at dawn and the fog pulls back to full render distance (dusk fog 0, for good; the fog places fade
+ * out with it and no new one comes);</li>
  * <li>on the far shore, at the edge of render distance, he stands facing them, and once seen turns and walks into the
  * bare grove behind him ({@code FigureApi}, walking, never running);</li>
  * <li>the leaves fill back in after him in one red and orange wave, in view on purpose (D-048: his own taken leaves
@@ -160,6 +161,8 @@ public final class LastMinute {
 			@Override
 			public void fogGone(MinecraftServer server) {
 				ClientEffects.setDuskFog(server, 0.0F);
+				// The fog places (10) pull back with it, each over its own fade (review R9).
+				ClientEffects.fadeFogPlaces(server);
 			}
 
 			@Override
@@ -174,6 +177,11 @@ public final class LastMinute {
 				}
 				if (fogGone && ServerPlayNetworking.canSend(player, ClientEffects.DuskFog.TYPE)) {
 					ServerPlayNetworking.send(player, new ClientEffects.DuskFog(0.0F));
+				}
+				if (fogGone && ServerPlayNetworking.canSend(player, ClientEffects.FogPlaces.TYPE)) {
+					MinecraftServer server = player.level().getServer();
+					ServerPlayNetworking.send(player, new ClientEffects.FogPlaces(ClientEffects.fadedPlaces(HerobrineState.get(server).effects().fogPlaces(),
+							server.overworld().getDefaultClockTime())));
 				}
 				if (musicOn && ServerPlayNetworking.canSend(player, ClientEffects.MusicOff.TYPE)) {
 					ServerPlayNetworking.send(player, new ClientEffects.MusicOff(false));

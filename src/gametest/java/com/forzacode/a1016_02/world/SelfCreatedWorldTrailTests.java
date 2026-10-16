@@ -146,11 +146,13 @@ public class SelfCreatedWorldTrailTests {
 		}
 		helper.assertBlockPresent(Blocks.LAVA, new BlockPos(END_X, LAVA_Y, CORRIDOR_Z));
 		helper.assertTrue(plan.shaft().size() == FEET_Y - 1 - LAVA_Y, "the shaft is " + plan.shaft().size() + " deep");
-		// The floor torch beside the hole and the sign over it: "brb", not waxed.
+		// The floor torch beside the hole; the sign 2 cells before it on the left-hand wall (review R9: never read from
+		// the hole's lip), facing the corridor: "brb", not waxed.
 		helper.assertBlockPresent(Blocks.TORCH, new BlockPos(END_X - 1, FEET_Y, CORRIDOR_Z));
-		BlockPos signAt = hole.above();
+		BlockPos signAt = hole.west(TorchTrail.SIGN_BACK_MIN).above();
 		BlockState sign = level.getBlockState(signAt);
-		helper.assertTrue(sign.is(Blocks.OAK_WALL_SIGN) && sign.getValue(WallSignBlock.FACING) == Direction.WEST, "no oak wall sign over the hole: " + sign);
+		helper.assertTrue(plan.sign().pos().equals(signAt) && sign.is(Blocks.OAK_WALL_SIGN) && sign.getValue(WallSignBlock.FACING) == Direction.SOUTH,
+				"no oak wall sign on the left-hand wall 2 before the hole: " + plan.sign() + ", " + sign);
 		helper.assertTrue(level.getBlockEntity(signAt) instanceof SignBlockEntity entity
 				&& entity.getText(SignTextSlot.FRONT).getMessages(false).getFirst().getString().equals("brb") && !entity.isWaxed(), "the sign does not read brb");
 		helper.assertTrue(TorchTrail.lines(level.getServer()).equals(List.of("brb", "", "", "")), "t0rch.json's lines");

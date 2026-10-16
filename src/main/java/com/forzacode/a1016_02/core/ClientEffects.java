@@ -156,6 +156,8 @@ public final class ClientEffects {
 	 * payloads hold at most this many.
 	 */
 	public static final int FOG_PLACES_MAX = 16;
+	/** Ending D's flag once it is complete (ending's {@code EndingDInit.COMPLETE_FLAG}): the fog is gone for good. */
+	public static final String D_COMPLETE_FLAG = "ending:d_complete";
 
 	private ClientEffects() {
 	}
@@ -242,7 +244,8 @@ public final class ClientEffects {
 	 * included. First the places that are over on the overworld clock now are dropped; then, while more than
 	 * {@code max} (1 to {@link #FOG_PLACES_MAX}) places are not yet fading, the oldest of them ends early with its own
 	 * fade ({@link FogPlace#endedEarly}: its fog now is unchanged, so nothing pops). False, and nothing stored or sent,
-	 * while the layer is switched off ({@link SelfCreated#enabled}) or for a place that is already over or gives no fog
+	 * while the layer is switched off ({@link SelfCreated#enabled}), once the fog is gone for good
+	 * ({@link #fogGoneForGood}: Ending D's last minute and after), or for a place that is already over or gives no fog
 	 * (level or radius 0). Server thread.
 	 */
 	public static boolean addFogPlace(MinecraftServer server, FogPlace place, int max) {
@@ -250,8 +253,11 @@ public final class ClientEffects {
 		if (!SelfCreated.enabled() || place == null || place.endedBy(now) || place.level() <= 0.0F || place.radius() <= 0.0F) {
 			return false;
 		}
-		int cap = Math.clamp(max, 1, FOG_PLACES_MAX);
 		HerobrineState state = HerobrineState.get(server);
+		if (fogGoneForGood(state)) {
+			return false;
+		}
+		int cap = Math.clamp(max, 1, FOG_PLACES_MAX);
 		List<FogPlace> places = new ArrayList<>();
 		for (FogPlace stored : state.effects().fogPlaces()) {
 			if (!stored.endedBy(now)) {
@@ -280,6 +286,43 @@ public final class ClientEffects {
 			}
 		}
 		return count;
+	}
+
+	/**
+	 * Whether the fog is gone for good, so no fog place may come (review R9): Ending D's last minute
+	 * ({@link TraceService#LAST_MINUTE_FLAG}) and once it is complete ({@link #D_COMPLETE_FLAG}).
+	 */
+	public static boolean fogGoneForGood(HerobrineState state) {
+		return state.hasFlag(TraceService.LAST_MINUTE_FLAG) || state.hasFlag(D_COMPLETE_FLAG);
+	}
+
+	/**
+	 * These places as they are once the fog pulls back at {@code now}: those over are dropped, every one not fading yet
+	 * ends early with its own fade ({@link FogPlace#endedEarly}: nothing pops), so none gives fog past its fade.
+	 */
+	public static List<FogPlace> fadedPlaces(List<FogPlace> places, long now) {
+		List<FogPlace> faded = new ArrayList<>(places.size());
+		for (FogPlace place : places) {
+			if (!place.endedBy(now)) {
+				faded.add(place.fadingBy(now) ? place : place.endedEarly(now));
+			}
+		}
+		return faded;
+	}
+
+	/**
+	 * Every fog place fades out now with its own fade ({@link #fadedPlaces}), stored and sent to everyone online, the
+	 * fog pulling back for good with the dusk fog (Ending D; review R9). True if anything changed. Server thread.
+	 */
+	public static boolean fadeFogPlaces(MinecraftServer server) {
+		HerobrineState state = HerobrineState.get(server);
+		List<FogPlace> places = state.effects().fogPlaces();
+		List<FogPlace> faded = fadedPlaces(places, server.overworld().getDefaultClockTime());
+		if (faded.equals(places)) {
+			return false;
+		}
+		storePlaces(server, state, faded);
+		return true;
 	}
 
 	/** Drops every fog place at once (no fade) and tells everyone online. Server thread. */

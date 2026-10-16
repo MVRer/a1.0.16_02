@@ -54,7 +54,7 @@ The point is that he finds these by playing. So nothing he sees in normal play o
 
 | Rule | In this layer |
 | --- | --- |
-| DESIGN 1, he never strikes | Held. Nothing damages the player. 15 removes a block only once nobody is on or near it, and only where the hole is plain to see or the fall is short (lava glows, water, an air drop of 6 or less) |
+| DESIGN 1, he never strikes | Held. Nothing damages the player. 15 removes a block only once nobody is on or near it, and only over a short drop onto plain ground (3 or less from their feet: no fall damage), never over or beside lava or water, never onto dripstone, magma or the like, never while they are hurt: it is never lethal on its own (review R9) |
 | DESIGN 2, he never speaks or writes | Held. The only new in-world text is t0rch's sign, "brb", left by a person (11). The world list, `/seed` and the bed message are vanilla's own strings around the canon version and seed (D-081, D-082) |
 | DESIGN 3, default Steve, no glow | Held. 02 hides a friend's name tag (canon: "no name over him"); it never changes anyone's skin or eyes |
 | DESIGN 4, never in front of the camera | Held. 03 renders a frame from where he stood, never presented on screen |
@@ -511,7 +511,8 @@ Only with friends.
     looking that way), dropped after `retryMinutes` 10. Cause `world:sc10`.
   - The fog place at `fogChance` 0.6: `ClientEffects.addFogPlace` at `stoodAt`, radius `fogRadius` 40, level
     `fogLevel` 0.45, ramp and fade `fogRampTicks` 1200, for `fogDaysMin` 1 to `fogDaysMax` 3 in-game days, at most
-    `maxFogPlaces` 4 at once.
+    `maxFogPlaces` 4 at once. Ending D's last minute takes them with the rest of the fog: each fades out over its own
+    fade, and none comes again (review R9).
 - **Friends.** World-wide like weather; everyone sees the place.
 - **Config `sc10` (v1).** `standChance` 0.7, `runChance` 0.35, `clearRadius` 2, `maxRunPrints` 12, `retryMinutes` 10,
   `fogChance` 0.6, `fogRadius` 40, `fogLevel` 0.45, `fogRampTicks` 1200, `fogDaysMin` 1, `fogDaysMax` 3,
@@ -526,9 +527,9 @@ Only with friends.
 
 #### 11 t0rch's torches (card `sc_11`; MINOR, Traces; LIGHT + SCAR; MOURNER + CARVER; no fake; once per world; `sections.sc11`)
 - **Experience.** In a cave you are exploring for the first time, there are torches already. On the right-hand wall,
-  every ten blocks or so, going deeper, into a branch you have not been down. You follow them. They end at a 1x1 hole
-  straight down in the floor, a torch on the floor beside it. On the wall above the hole a sign: "brb". Far down, lava.
-  No torches come back out.
+  every ten blocks or so, going deeper, into a branch you have not been down. You follow them. A few steps before the
+  end, on the wall, a sign: "brb". They end at a 1x1 hole straight down in the floor, a torch on the floor beside it.
+  Far down, lava. No torches come back out.
 - **Why scary.** "This is singleplayer." Someone was here before you and did not come back. The list says
   "t0rch . lava" (F23; F06 "t0rch . gone"). After this, every cave might have someone's torches in it.
 - **Deniable.** It reads as an old player's mine, a used world. Alone it names nobody (guardrail 8).
@@ -543,8 +544,9 @@ Only with friends.
     of view, loaded, not protected.
   - Leave wall torches on the right-hand wall going in (from the known spot), every `spacingMin` 8 to `spacingMax` 12
     path cells, the first within 6 cells of the branch mouth (seen from the known cave); dig the shaft
-    (`world:left/t0rch/shaft`); a floor torch beside the hole; an oak wall sign on the wall over it with line 1 "brb",
-    not waxed (`world:left/t0rch/sign`). Text from `data/a1016_02/world/sc/t0rch.json`, word for word.
+    (`world:left/t0rch/shaft`); a floor torch beside the hole; an oak wall sign 2 to 5 cells before the hole (never
+    read from the hole's lip) with line 1 "brb", not waxed (`world:left/t0rch/sign`). Text from
+    `data/a1016_02/world/sc/t0rch.json`, word for word.
   - Once per world (`maxPerWorld` 1, saved in the tick it is left). Not a site in `SiteRegistry` (lore must not fill it).
 - **Friends.** World-wide once.
 - **Config `sc11` (v1).** `pathMin` 30, `pathMax` 90, `spacingMin` 8, `spacingMax` 12, `shaftMin` 8, `shaftMax` 30,
@@ -583,10 +585,14 @@ As built (SC-3, `SelfCreatedWorldTests` and `SelfCreatedWorldTrailTests`, struct
   the batch's cause is theirs). Natural stone is `#base_stone_overworld` and the ore replaceables, never an ore; the
   shaft's sides solid and dry. The mouth is the walk's first cell in a never-visited chunk, every later cell too.
   Torches at head height (else the feet) on the first wall up to 4 cells right; the last window before the hole may
-  stay dark. The sign on the wall ahead (else a side), the floor torch beside the hole (else the cell before). A fire
+  stay dark. The sign at head height over a walk cell 2 to 5 before the hole, on the left-hand wall (else the right,
+  else one ahead), its column and the one it faces at least 2 from the hole's (review R9: it used to hang over the
+  hole, read from the lip); the floor torch beside the hole (else the cell before). A fire
   tries the 4 nearest loaded cave spots within 160. `sc 11 reset` forgets the record (the trail stays).
 - **Switched off.** sc09 and sc10 give back through `TraceService.undo` what is loaded now (sc10 also drops its queue;
-  core clears the fog places); sc11 nothing (left by others). sc08 turns back by itself (`WorldSc.turnBack`: a block
+  core clears the fog places), with another pass while a pass gave something back and something was blocked (a tall
+  plant's upper half after its lower); what waits (in view, not loaded) is tried again every 30 s while the layer stays
+  off, 08's too (review R7); sc11 nothing (left by others). sc08 turns back by itself (`WorldSc.turnBack`: a block
   still that block with only its facing changed, both entries then leave the ledger), because core's CONVERT undo
   answers BLOCKED for every player-placed block ("built since"), so **Ending D never turns 08 back** until core blocks
   only a block that changed since (core ask; done in SC-5: core's undo now takes a conversion back while the block is
@@ -741,7 +747,8 @@ As built (SC-4: 02, 03, 10's call, 14; `SelfCreatedEntityTests`, `SelfCreatedLor
 
 #### 15 The block you stood on (card `sc_15`; MINOR, Proximity; DIG + PERSONAL; CARVER + STRIPPER; no fake; `sections.sc15`)
 - **Experience.** You walk a path you take often. Seconds later, behind you, one block of the ground you just walked
-  over is gone: a clean 1x1 hole, lava's glow at the bottom, or a drop into a cave. You walked right over it.
+  over is gone: a clean 1x1 hole, two or three blocks down into a pocket of the cave under your path. You walked right
+  over it.
 - **Why scary.** The ground is not safe, and he let you cross. DESIGN's lore: his pass "left the block someone was
   standing on". The care is almost still there. Every accident after this lands harder.
 - **Deniable.** "Was that hole always there?" Caves under paths are common.
@@ -750,18 +757,24 @@ As built (SC-4: 02, 03, 10's call, 14; `SelfCreatedEntityTests`, `SelfCreatedLor
   - Fire arms the target for `armMinutes` 20 of play. While armed, accident's route sampler looks at the cell the
     target's feet stood on `delaySecondsMin` 3 to `delaySecondsMax` 8 s ago, now at least `behindMin` 5 blocks behind
     them and out of view, on one of their routes (`RouteBook`, at least `minPasses` 3 passes), a natural full block
-    (`Scan.takeable`, not player-placed, not a bridge), not protected, outside every armed trap's zone; under it within
-    `cavityDepthMax` 6 a natural cavity: lava (glows), water, or air with a floor at most `airDropMax` 6 below.
+    (`Scan.takeable`, not player-placed, not a bridge), not protected, outside every armed trap's zone; under it a
+    natural cavity of air onto a plain floor, the fall from their feet at most `airDropMax` 3 (never more than vanilla's
+    safe fall of 3: no fall damage). Never lethal on its own (review R9): no lava or water under it, in the drop or
+    beside the block or the drop; never onto or through pointed dripstone, magma, cactus, powder snow, fire, a campfire,
+    berries, a wither rose or a lava cauldron; never while the target has less than `minHealth` 10 health.
   - Alone (`SoundCues.alone(target, 48)`), nobody within `nobodyWithin` 16 of the cell. `TraceService.remove`
     (`accident:sc15`). At most once per in-game day per player, `maxPerWorld` 6.
 - **Friends.** PERSONAL; never with anyone within 16 of the cell.
-- **Config `sc15` (v1).** `armMinutes` 20, `minPasses` 3, `delaySecondsMin` 3, `delaySecondsMax` 8, `behindMin` 5,
-  `cavityDepthMax` 6, `airDropMax` 6, `nobodyWithin` 16, `maxPerWorld` 6.
+- **Config `sc15` (v2).** `armMinutes` 20, `minPasses` 3, `delaySecondsMin` 3, `delaySecondsMax` 8, `behindMin` 5,
+  `airDropMax` 3, `minHealth` 10, `nobodyWithin` 16, `maxPerWorld` 6 (step 1 to 2: `airDropMax` 6 to 3 where still
+  v1's; `cavityDepthMax` is gone).
 - **Build.** `accident.sc.StoodOn` + card; a short ring of the last 10 s of standing cells per armed player in
   `RouteSampler`.
-- **Tests.** Removes a natural block over lava 5+ behind after the delay (ledgered); refused for a placed block, in
-  view, a friend within 48, no cavity, an air drop over 6, a trap zone; once per day.
-- **Force it.** `/a1016 sc 15 arm [player]` (drops `minPasses`), then walk over ground with a cave under it.
+- **Tests.** Removes a natural block over a short drop 5+ behind after the delay (ledgered); refused for a placed
+  block, in view, a friend within 48, no cavity, lava or water under or beside it, a floor that hurts, a fall over 3,
+  a hurt target, a trap zone; once per day.
+- **Force it.** `/a1016 sc 15 arm [player]` (drops `minPasses`), then walk over ground with a low cave pocket under
+  it (two or three blocks from your feet to its floor).
 
 #### As built (SC-2: 01, 12, 13, 15; `SelfCreatedDirectorTests`, `SelfCreatedDigTests`, `SelfCreatedAccidentTests`)
 - **01.** `director.sc.Places` (pure), `PlaceMemory` (kept in `PacingMemory.places()`, saved under `sc01` only when
@@ -793,13 +806,39 @@ As built (SC-4: 02, 03, 10's call, 14; `SelfCreatedEntityTests`, `SelfCreatedLor
   clocks. Reverts: `sc01` debug trusts, `sc12` arms and windows, `sc13` trails and arms, `sc15` arms. The edits of 13
   and 15 are ordinary ledgered traces (Ending D gives them back); the switch does not undo them.
 
+#### Fixed in review (FIX-SC-C: R9 H1, M2, M3, M4, M5 and R7 L2; `SelfCreatedR9AccidentTests`, `SelfCreatedR9WorldTests`, `SelfCreatedR9EndingTests`, `SelfCreatedR7WorldReviewTests`)
+- **15 was an unmarked death** (R9 H1, M2, M3): a 1x1 hole over lava two down on their own route (no way out, no trap
+  to claim the death: in hardcore the run ended with no cross and no cause, at Proximity before any accident may
+  come), a lava source beside the block flowing in, and an "air drop of 6" counted from under the block (a 7-block fall,
+  maybe onto a stalagmite), at any health. 15 stays a scare, never an accident: `StoodOn.under` takes only air onto a
+  plain floor, the fall from the feet over the block (the floor's top from its collision shape) at most `airDropMax` 3
+  and never past `StoodOn.SAFE_FALL` 3 (vanilla's safe fall: walking into it does no damage); no fluid under
+  it, in the drop, beside the block or beside any cell of the drop; nothing that `StoodOn.hurts` in the drop or as the
+  floor (pointed dripstone, magma, cactus, powder snow, fire, campfires, berries, a wither rose, a lava cauldron); the
+  gate refuses a target under `minHealth` 10. The cavity is `Cavity.AIR` only; `Under.depth` is the fall from the feet.
+  `sc15` is version 2 (step 1 to 2: `airDropMax` 6 to 3 where still 6; `cavityDepthMax` is gone, an old file's value is
+  skipped). `SelfCreatedAccidentTests` follow the rule (drops of 2, 3 and 4, lava, water, magma, a hurt target, the
+  section's step).
+- **11's sign was read from the lip** (R9 M4): it hung over the hole, so reading it was standing over an 8 to 30 block
+  shaft to lava. `TorchTrail.sign`: over a walk cell 2 to 5 before the hole, the left-hand wall first, its column and
+  the one it faces at least 2 from the hole's; none, no trail.
+- **Ending D left the fog places** (R9 M5): `LastMinute`'s fog going now also fades them out (`ClientEffects.fadeFogPlaces`:
+  each ends early with its own fade, so nothing pops; a preview sends the faded list to the one previewing),
+  `Afterward.keepEffects` keeps them gone, and core's `addFogPlace` refuses from `ending:last_minute` on and after
+  `ending:d_complete` (`ClientEffects.fogGoneForGood`).
+- **The switch gave back half a plant** (R7 L2): `WorldSc.giveBack` makes another pass while a pass gave something back
+  and something was blocked (a tall plant's upper half stands once its lower half is back), and the switch's give-backs
+  of 08, 09 and 10 keep what waits (in view, not loaded; `WorldSc.Back`) and try it again every `WorldSc.RETRY_TICKS`
+  600 while the layer stays off, as 07 does.
+
 ---
 
 ### ending
 No task. Every card and rule here stops with the common gates (quiet for good, path C, ended, last minute, Ending A's
 peace). Ending D's afterward gives back through the ledger what is his: turned blocks (08), prints (09, 10), the closed
 way back (13), the block you stood on (15), names (07, core's NAME undo); t0rch's trail stays (left by others) and the
-world icon is put back (03). The record's version reads `a1.0.16_02` for good after a finished hardcore line (14 b).
+world icon is put back (03). The last minute's fog going takes the fog places (10) with it: each fades out, core
+refuses new ones from the last minute on, and the afterward keeps them gone (review R9). The record's version reads `a1.0.16_02` for good after a finished hardcore line (14 b).
 
 ### debug (SC-5)
 `/a1016 sc` with no number lists the numbers and each one's state in one line (armed, done, counts), never names;
