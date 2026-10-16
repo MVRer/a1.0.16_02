@@ -161,15 +161,19 @@ public final class ModConfig {
 	 */
 	public static <T> T readSection(JsonObject sections, String name, Class<T> type, Supplier<T> defaults) {
 		T value = defaults.get();
+		boolean fromFile = false;
 		if (sections.has(name)) {
 			JsonElement json = sections.get(name);
 			if (json.isJsonObject()) {
 				Lenient.readInto(json.getAsJsonObject(), value, "sections." + name);
+				fromFile = true;
 			} else if (!json.isJsonNull()) {
 				A1016_02.LOGGER.warn("[a1016] config section '{}' is not an object, using its defaults", name);
 			}
 		}
-		if (value instanceof Versioned versioned && versioned.upgrade()) {
+		// Fresh defaults (a new install, or a section not in the file yet) are upgraded too, to stamp their version, but
+		// quietly: only a section read from the file has values of its own to keep.
+		if (value instanceof Versioned versioned && versioned.upgrade() && fromFile) {
 			A1016_02.LOGGER.info("[a1016] config section '{}' upgraded to new defaults (values you changed are kept)", name);
 		}
 		return value;

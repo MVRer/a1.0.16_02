@@ -22,7 +22,8 @@ import net.minecraft.util.RandomSource;
  * a few looks and no card that fits half the time is ever parked there. Live, the sighting cards' gate
  * ({@code SightingGates.check}: never in clear daylight, the ridge only at dusk, the light only at night) is shut for
  * whole stretches of the in-game day: a sighting drawn by day is looked at all along for five minutes, parked, and
- * from then on goes back (parked again) at the first look that does not fit, until it fires.
+ * from then on goes back (parked again) at the first look that does not fit, until it fires (since FIX-FINAL, or until
+ * its moment fits at one of the director's passing looks, which ends the park and the strike).
  */
 public class VerifyV12DirectorTests {
 	private static final int SIGHTINGS = 5;
@@ -92,7 +93,9 @@ public class VerifyV12DirectorTests {
 	}
 
 	/**
-	 * FINDING (low): a card whose moment is a short stretch of every in-game day, as the ridge's dusk sky (about 15% of
+	 * FINDING (low, fixed in FIX-FINAL: every director tick a parked or struck card's moment is looked at in passing, and
+	 * one that fits is released, park and strike; the dusk-only minors here went from about 0.26 to 0.45 an hour, 0.39
+	 * with the park off): a card whose moment is a short stretch of every in-game day, as the ridge's dusk sky (about 15% of
 	 * the day), is drawn mostly outside it, looked at all along for five minutes, parked, and from then on is struck: each
 	 * later draw outside its stretch parks it again at once. On main it fires about a third less often than with the
 	 * park off, and about half as often as the dry runs (every look an independent die) show, so DESIGN 4b's sighting

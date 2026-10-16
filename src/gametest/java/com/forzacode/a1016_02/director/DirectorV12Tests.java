@@ -131,8 +131,9 @@ public class DirectorV12Tests extends R1ReviewDirectorTests {
 	 * whole hold. Looked at all along, it is parked for {@code unfitPark} (30 minutes) and hands the roll that drew it to
 	 * the next card, which fires in the same tick; never drawn while parked, while the other ambients fire. Drawn again
 	 * after its park and still not fitting, it goes back at its one look, again with its roll handed on. Once its moment
-	 * comes (underground) and its park is over it is drawn again and fires. Looks the gap after a fire held back do not
-	 * count: such a hold waits for its five minutes of looks. A major whose moment never fits keeps the long hold.
+	 * comes (underground) the first passing look at it ends its park and its strike, and it is drawn again and fires
+	 * before that park would have ended. Looks the gap after a fire held back do not count: such a hold waits for its
+	 * five minutes of looks. A major whose moment never fits keeps the long hold.
 	 */
 	@GameTest
 	public void aCardWhoseMomentNeverFitsNeverFreezesItsTier(GameTestHelper helper) {
@@ -195,16 +196,21 @@ public class DirectorV12Tests extends R1ReviewDirectorTests {
 		helper.assertTrue(gaveUp.size() == 2 && env.fired.size() > 3, "after its park it was never drawn again: " + gaveUp.size() + " give-backs");
 		parkedUntil = solo.pacing.parkedUntil("steps_behind");
 
-		// Underground now: it waits out its new park, then it is drawn again and fires.
+		// Underground now: its moment fits at the first passing look, which ends its park and its strike there; it is drawn
+		// again and fires before that park would have ended.
 		underground[0] = true;
+		clock = clock.plus(rules.tickInterval);
+		env.tension = 0;
+		solo.step(brain, clock, env, random, rec);
+		helper.assertTrue(clock.playTicks() < parkedUntil && solo.pacing.parkedUntil("steps_behind") == -1,
+				"its moment fitted at a passing look and it kept its park: until " + solo.pacing.parkedUntil("steps_behind"));
 		for (int i = 0; i < (int) (rules.unfitPark / rules.tickInterval) + 20 && !env.fired.contains("steps_behind"); i++) {
 			clock = clock.plus(rules.tickInterval);
 			env.tension = 0;
 			solo.step(brain, clock, env, random, rec);
-			helper.assertTrue(!env.fired.contains("steps_behind") || clock.playTicks() >= parkedUntil, "it fired while parked: " + env.fired);
 		}
-		helper.assertTrue(env.fired.contains("steps_behind") && solo.pacing.parkedUntil("steps_behind") == -1,
-				"its moment came and it never fired, or it fired and kept its park: " + env.fired);
+		helper.assertTrue(env.fired.contains("steps_behind") && solo.pacing.parkedUntil("steps_behind") == -1 && clock.playTicks() < parkedUntil,
+				"its moment came and it did not fire before its park would have ended, or it fired and kept its park: " + env.fired);
 
 		// The gap after a fire holds its looks back: they do not count, and the hold waits for five minutes of looks.
 		DirectorRules gapped = rules(Tempo.SLOW_BURN, Signature.CROSS_ROW);

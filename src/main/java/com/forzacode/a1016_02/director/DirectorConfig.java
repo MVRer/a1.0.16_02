@@ -92,6 +92,7 @@ public final class DirectorConfig implements ModConfig.Versioned {
 	 * instead of drawing it again and again (the tunnel ladder for someone who never walks a long dug tunnel), and an
 	 * ambient or minor one hands the roll that drew it to the next card. After it, it is drawn as any other card and
 	 * fires once its moment comes; until then a hold of it goes back, parked again, at its first look that does not fit.
+	 * Its moment is looked at in passing every director tick: once it fits, the park and that first-look rule end.
 	 * 0: never parked.
 	 */
 	public double unfitParkMinutes = 30;

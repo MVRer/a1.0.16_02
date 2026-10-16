@@ -267,22 +267,22 @@ The goal is surprise built across many sessions, starting in the first hour (D-0
 - On a fog night or day that is not quiet (D-071), while the fog is at least half in, ambient and minor odds are 3.5 times higher, sightings 3 times as likely to be picked, and a major due within the hour may come now. The gaps between events take part of it back: such an hour holds a little over twice a clear hour's events.
 - Friends together share one moment and roll 1.5 times one player's rate between them; apart, each has their own pace (D-074). The tunnel ladder only happens to a player alone.
 
-What the director's dry runs show (registered deck, 192 seeds of 20 hours per tempo; "active" leaves out quiets and empty sessions, which take 43 to 44% of Proximity; main after the v1.2 review fixes):
+What the director's dry runs show (registered deck, 192 seeds of 20 hours per tempo; "active" leaves out quiets and empty sessions, which take 43 to 45% of Proximity; main after the v1.2 final fixes):
 
 | | Early | Slow burn | Very late |
 | --- | --- | --- | --- |
 | Alone lasts | 0.49 h | 0.65 h | 0.81 h |
 | Alone: ambients per hour | 2.86 | 3.09 | 3.05 |
-| Traces: ambients per hour | 2.25 | 2.30 | 2.23 |
-| Traces: minors per hour | 0.83 | 0.83 | 0.81 |
-| Proximity: ambients per hour | 1.39 | 1.44 | 1.44 |
-| Proximity: minors per hour (active) | 1.05 (1.89) | 1.07 (1.90) | 1.09 (1.92) |
-| Proximity: a major every | 1.76 h | 2.24 h | 2.77 h |
-| First accident: median (earliest) | 4.24 h (2.63 h) | 5.19 h (3.52 h) | 6.53 h (4.43 h) |
+| Traces: ambients per hour | 2.24 | 2.29 | 2.22 |
+| Traces: minors per hour | 0.82 | 0.83 | 0.82 |
+| Proximity: ambients per hour | 1.39 | 1.43 | 1.45 |
+| Proximity: minors per hour (active) | 1.04 (1.88) | 1.06 (1.89) | 1.10 (1.94) |
+| Proximity: a major every | 1.78 h | 2.24 h | 2.75 h |
+| First accident: median (earliest) | 4.21 h (2.63 h) | 5.13 h (3.52 h) | 6.39 h (4.40 h) |
 | First hour: first event by 30 / 45 minutes | 81% / 94% | 83% / 96% | 83% / 97% |
 | First hour: two or more events | 91% | 94% | 97% |
 
-In every tempo the median first event comes 15.5 minutes in, and no first hour holds more than five. A fog spell that counts and is not quiet holds 2.1 to 2.3 times a clear hour's events while the director may act; a quiet one about a clear hour's. A card whose moment never comes for this player (the tunnel steps for someone who never digs a long tunnel) is set aside for half an hour of play instead of holding its tier, so Traces' and Proximity's rates stay within 10% of these.
+In every tempo the median first event comes 15.5 minutes in, and no first hour holds more than five. A fog spell that counts and is not quiet holds 2.1 to 2.2 times a clear hour's events while the director may act; a quiet one about a clear hour's. A card whose moment never comes for this player (the tunnel steps for someone who never digs a long tunnel) is set aside for half an hour of play instead of holding its tier, so Traces' and Proximity's rates stay within 10% of these; one set aside whose moment comes back (the ridge at dusk) is let in again as soon as it fits.
 
 ### 5. False positives
 
