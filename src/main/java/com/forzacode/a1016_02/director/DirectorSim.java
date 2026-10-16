@@ -8,12 +8,15 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.function.Predicate;
 
 import com.forzacode.a1016_02.core.CardTag;
 import com.forzacode.a1016_02.core.FireResult;
+import com.forzacode.a1016_02.core.FogSpell;
+import com.forzacode.a1016_02.core.FogWeatherRules;
 import com.forzacode.a1016_02.core.Stage;
 import com.forzacode.a1016_02.core.Tier;
 
@@ -32,10 +35,28 @@ import org.jspecify.annotations.Nullable;
  * from their own join hour on, and a {@link Sharing} rule for who is close to whom. Each player gets a {@link Result}
  * of their own, on their own clock: their own fires, the moments they felt from someone else's cards
  * ({@link Kind#FELT}), their sessions and quiets, and the world's stage changes.
+ * <p>
+ * Fog weather (D-071): one sky for the table, rolled with core's {@link FogWeatherRules} on its own dice (so the
+ * weather never shifts the director's), at the times atmosphere's live weather rolls it: tonight's fog night at
+ * {@link FogWeatherRules#nightRollTime} ({@link FogWeatherRules#NIGHT_ROLL}, 10000) and a fog day at
+ * {@link FogWeatherRules#dayRollTime} ({@link FogWeatherRules#DAY_ROLL}, 21500) of the day before, joined with
+ * {@code handOver}. The run's day clock stands in for the overworld clock. Each {@link Result} books its time and fires under each {@link Sky}.
+ * <p>
+ * Blind moments (D-077): each player opens a menu {@link Params#blindPerHour} times an hour of play, rolled at every
+ * director tick on dice of their own (so they never shift the director's), and each moment is one recheck
+ * ({@link DirectorBrain#recheck}) after that tick's decisions. A {@code BLIND} card's moment fits only there, by the
+ * usual dice ({@link Params#fitChance}), never at a director tick; any other card's moment is looked at on director
+ * ticks only, so a deck without BLIND cards plays exactly as with no blind moments. Fires from a recheck carry the note
+ * {@link #RECHECK}.
  */
 public final class DirectorSim {
 	/** The player of a one-player dry run. */
 	public static final UUID SOLO = new UUID(0L, 0xA1016L);
+	/** The note of a fire that came from a blind moment's recheck (D-077). */
+	public static final String RECHECK = "recheck";
+
+	/** The sky over a stretch of a run (D-071): no spell on, a quiet spell (no boost), or a fog spell that boosts. */
+	public enum Sky { CLEAR, QUIET, FOG }
 
 	/**
 	 * {@code TELLING}: someone named him (a dry run's {@link Params#tellingAtHour}). {@code FELT}: someone else's card,
@@ -100,12 +121,27 @@ public final class DirectorSim {
 		/** Optional per-card override of the context dice (tests). */
 		public Predicate<CardInfo> fits;
 		/**
+		 * Cards whose moment never comes in this run (a surface player's tunnel cards, a card that never fits): they never
+		 * fit, whatever {@link #fits} or the dice say, so the run plays their holds, give-backs and parks. None by default.
+		 */
+		public Predicate<CardInfo> neverFits;
+		/**
 		 * Hours into the run at which someone names him: lore's naming {@code HerobrineEvents.TELLING}, so the
 		 * run reaches Telling and Stage 3's pacing is exercised. Negative: never (the director alone never gets there).
 		 */
 		public double tellingAtHour = -1;
 		/** Whose pacing a one-player run plays ({@link #run}); {@link #SOLO} by default. */
 		public UUID player = SOLO;
+		/** Roll fog weather (D-071); off, the sky stays as {@link #fogSpell} leaves it. */
+		public boolean fogWeather = true;
+		/** The weather's numbers: D-071's by default (the live dry runs use the installed ones). */
+		public FogWeatherRules.Settings fogSettings = FogWeatherRules.Settings.DEFAULT;
+		/** The spell already stored when the run starts, on the run's day clock. */
+		public Optional<FogSpell> fogSpell = Optional.empty();
+		/** The weather's history when the run starts (a fresh world's by default). */
+		public FogWeatherRules.History fogHistory = FogWeatherRules.History.START;
+		/** Blind moments (menus opened) per hour of a player's play, each a recheck (D-077); 0: none. */
+		public double blindPerHour = 20;
 
 		public static Params from(DirectorConfig config, DirectorRules rules) {
 			Params p = new Params();
@@ -114,6 +150,7 @@ public final class DirectorSim {
 			p.sessionMin = Math.max(rules.tickInterval, Math.round(config.simSessionMinMinutes * 60 / 3600.0 * rules.hourTicks));
 			p.sessionMax = Math.max(p.sessionMin, Math.round(config.simSessionMaxMinutes * 60 / 3600.0 * rules.hourTicks));
 			p.tellingAtHour = config.simTellingAtHour;
+			p.blindPerHour = config.simBlindPerHour;
 			return p;
 		}
 	}
@@ -153,8 +190,16 @@ public final class DirectorSim {
 		public Stage stage;
 		public double tension;
 		public List<String> violations = List.of();
+		/** Every fog spell the table stored while this player took part, in order (a hand-over stores the joined spell). */
+		public final List<FogSpell> fogSpells = new ArrayList<>();
+		/** This player's blind moments, each one recheck (D-077). */
+		public int rechecks;
 		/** Per stage: play ticks [all, active], sampled at every director tick after its decision. */
 		private final Map<Stage, long[]> stageTime = new EnumMap<>(Stage.class);
+		/** Per sky: play ticks [all, active], sampled like {@link #stageTime}. */
+		private final Map<Sky, long[]> skyTime = new EnumMap<>(Sky.class);
+		/** Per sky: this player's own fires (fakes included) under it. */
+		private final Map<Sky, Integer> skyFires = new EnumMap<>(Sky.class);
 
 		Result(DirectorRules rules, Params params, UUID player, WorldMemory world, PacingMemory pacing, long startPlay, long startDayTicks) {
 			this.rules = rules;
@@ -171,6 +216,11 @@ public final class DirectorSim {
 		/** This player's own fires. */
 		public List<Event> fires() {
 			return events.stream().filter(e -> e.kind() == Kind.FIRE).toList();
+		}
+
+		/** This player's own fires that came from a blind moment's recheck (D-077). */
+		public List<Event> recheckFires() {
+			return events.stream().filter(e -> e.kind() == Kind.FIRE && RECHECK.equals(e.note())).toList();
 		}
 
 		/** What this player went through: their own fires and the moments they felt from others, in order. */
@@ -196,6 +246,23 @@ public final class DirectorSim {
 		public long activeTicks(Stage stage) {
 			long[] time = stageTime.get(stage);
 			return time == null ? 0 : time[1];
+		}
+
+		/** Play ticks the run spent under this sky (D-071). */
+		public long skyTicks(Sky sky) {
+			long[] time = skyTime.get(sky);
+			return time == null ? 0 : time[0];
+		}
+
+		/** Play ticks the run spent under this sky outside quiets and empty sessions. */
+		public long skyActiveTicks(Sky sky) {
+			long[] time = skyTime.get(sky);
+			return time == null ? 0 : time[1];
+		}
+
+		/** This player's own fires (fakes included) under this sky. */
+		public int skyFires(Sky sky) {
+			return skyFires.getOrDefault(sky, 0);
 		}
 
 		/** Play tick at which the run first entered this stage, or -1. */
@@ -244,9 +311,10 @@ public final class DirectorSim {
 				}
 			}
 			List<long[]> empties = emptySessions();
-			lines.add(String.format(Locale.ROOT, "stage %s -> %s%s | quiets %d | sessions %d, empty %d | tension %.1f",
+			lines.add(String.format(Locale.ROOT, "stage %s -> %s%s | quiets %d | sessions %d, empty %d | tension %.1f | fog spells %d (%d quiet), %.1fh boosted%s",
 					startStage, stage, stages.length() == 0 ? "" : " (" + stages.toString().trim() + ")", count(Kind.QUIET),
-					count(Kind.SESSION_START), empties.size(), tension));
+					count(Kind.SESSION_START), empties.size(), tension, fogSpells.size(), fogSpells.stream().filter(FogSpell::quiet).count(),
+					skyTicks(Sky.FOG) / (double) rules.hourTicks, rechecks == 0 ? "" : " | blind moments " + rechecks + ", " + recheckFires().size() + " fired"));
 			lines.add(violations.isEmpty() ? "limits: all respected" : "LIMITS BROKEN (" + violations.size() + "): " + violations.getFirst());
 			return lines;
 		}
@@ -267,6 +335,16 @@ public final class DirectorSim {
 					continue;
 				}
 				lines.add(String.format(Locale.ROOT, "%s day %d  %-13s %s", time(e.play(), rules), e.day(), e.kind(), describe(e, rules)));
+			}
+			lines.add("");
+			for (FogSpell spell : fogSpells) {
+				lines.add(String.format(Locale.ROOT, "fog spell day %d %05d to day %d %05d, level %.2f%s", Math.floorDiv(spell.fromClock(), DirectorBrain.DAY_TICKS),
+						Math.floorMod(spell.fromClock(), DirectorBrain.DAY_TICKS), Math.floorDiv(spell.untilClock(), DirectorBrain.DAY_TICKS),
+						Math.floorMod(spell.untilClock(), DirectorBrain.DAY_TICKS), spell.level(), spell.quiet() ? " (quiet)" : ""));
+			}
+			for (Sky sky : Sky.values()) {
+				double hours = skyTicks(sky) / (double) rules.hourTicks;
+				lines.add(String.format(Locale.ROOT, "sky %-5s %.1fh, %d fires (%.2f/h)", sky, hours, skyFires(sky), hours <= 0 ? 0 : skyFires(sky) / hours));
 			}
 			lines.add("");
 			if (violations.isEmpty()) {
@@ -531,6 +609,7 @@ public final class DirectorSim {
 		long lastMajor = start.lastMajorOrSignature;
 		long firstDayEnd = start.firstDayTicks + (long) rules.noMajorBeforeDay * DirectorBrain.DAY_TICKS;
 		int aloneAmbients = start.aloneAmbientCount;
+		int firstHour = start.firstHourFires;
 		Map<Tier, Set<String>> cycle = new EnumMap<>(Tier.class);
 		Map<Tier, String> last = new EnumMap<>(Tier.class);
 		for (Tier tier : Tier.values()) {
@@ -564,7 +643,7 @@ public final class DirectorSim {
 				case SESSION_START -> {
 					sessionStart = e.play();
 					emptyUntil = e.flag() ? e.until() : -1;
-					if (e.flag() && !e.stage().atLeast(Stage.TRACES)) {
+					if (e.flag() && !e.stage().atLeast(rules.emptySessionMinStage)) {
 						broken.add(at + "empty session rolled in " + e.stage());
 					}
 				}
@@ -632,6 +711,9 @@ public final class DirectorSim {
 					}
 					if (tier == Tier.AMBIENT && e.stage() == Stage.ALONE && ++aloneAmbients > rules.aloneMaxAmbient) {
 						broken.add(at + "ambient number " + aloneAmbients + " in Alone");
+					}
+					if (rules.firstHourMaxFires >= 0 && now < rules.hourTicks && !"forced".equals(e.note()) && ++firstHour > rules.firstHourMaxFires) {
+						broken.add(at + "moment number " + firstHour + " in their first hour");
 					}
 					if (card != null) {
 						if (card.has(CardTag.ACCIDENT) && now < rules.firstAccident) {
@@ -746,6 +828,13 @@ public final class DirectorSim {
 		Stage stage;
 		long worldTicks;
 		long dayTicks;
+		/** The sky (D-071): its own dice, the stored spell, the rules' history and the day clock it was last rolled up to. */
+		final RandomSource weather;
+		/** Blind moments (D-077): dice of their own, so a run's director dice are the same with or without them. */
+		final RandomSource blindDice;
+		Optional<FogSpell> fogSpell;
+		FogWeatherRules.History fogHistory;
+		long weatherClock;
 
 		Table(DirectorRules rules, Collection<CardInfo> cards, int historySize, WorldMemory world, Stage stage, long worldTicks, long dayTicks,
 				Sharing sharing, Params params) {
@@ -753,12 +842,73 @@ public final class DirectorSim {
 			this.params = params;
 			this.brain = new DirectorBrain(rules, cards, historySize);
 			this.random = RandomSource.create(mix(params.seed));
+			this.weather = RandomSource.create(mix(params.seed ^ 0xF065_9E11L));
+			this.blindDice = RandomSource.create(mix(params.seed ^ 0xB11D_0077L));
 			this.world = world;
 			this.stage = stage;
 			this.worldStart = worldTicks;
 			this.worldTicks = worldTicks;
 			this.dayTicks = dayTicks;
 			this.sharing = sharing;
+			this.fogSpell = params.fogSpell == null ? Optional.empty() : params.fogSpell;
+			this.fogHistory = params.fogHistory == null ? FogWeatherRules.History.START : params.fogHistory;
+			this.weatherClock = dayTicks;
+		}
+
+		/**
+		 * The spell on right now, or empty: one that counts as fog ({@link FogSpell#counts} with the run's gate share),
+		 * as the live director reads it, so a spell easing in or out below that share of its level is a clear sky here.
+		 */
+		Optional<FogSpell> spellNow() {
+			double share = (params.fogSettings == null ? FogWeatherRules.Settings.DEFAULT : params.fogSettings).fogGateShare();
+			return fogSpell.filter(spell -> spell.counts(dayTicks, share));
+		}
+
+		Sky sky() {
+			Optional<FogSpell> on = spellNow();
+			return on.isEmpty() ? Sky.CLEAR : on.get().quiet() ? Sky.QUIET : Sky.FOG;
+		}
+
+		/**
+		 * Rolls the fog weather due since the last call, as atmosphere's live weather does (D-071): at
+		 * {@link FogWeatherRules#nightRollTime} (10000) tonight's fog night (or a clear night), at
+		 * {@link FogWeatherRules#dayRollTime} (21500) the next day's fog day (never when a morning carry-over already runs into it);
+		 * a spell rolled while another still gives fog is joined to it ({@code handOver}). The stage is the world's at the
+		 * roll.
+		 */
+		void rollWeather() {
+			if (!params.fogWeather) {
+				return;
+			}
+			FogWeatherRules.Settings settings = params.fogSettings == null ? FogWeatherRules.Settings.DEFAULT : params.fogSettings;
+			long nightRoll = FogWeatherRules.nightRollTime(settings);
+			long dayRoll = FogWeatherRules.dayRollTime(settings);
+			while (true) {
+				long base = Math.floorDiv(weatherClock, DirectorBrain.DAY_TICKS) * DirectorBrain.DAY_TICKS;
+				long night = base + nightRoll > weatherClock ? base + nightRoll : base + DirectorBrain.DAY_TICKS + nightRoll;
+				long day = base + dayRoll > weatherClock ? base + dayRoll : base + DirectorBrain.DAY_TICKS + dayRoll;
+				long next = Math.min(night, day);
+				if (next > dayTicks) {
+					return;
+				}
+				weatherClock = next;
+				long clockDay = Math.floorDiv(next, DirectorBrain.DAY_TICKS);
+				Optional<FogSpell> rolled;
+				if (next == night) {
+					rolled = FogWeatherRules.night(weather, clockDay, stage, fogHistory, settings);
+					fogHistory = fogHistory.afterNight(rolled.isPresent());
+				} else {
+					rolled = FogWeatherRules.day(weather, clockDay + 1, stage, fogHistory, fogSpell, settings);
+					fogHistory = fogHistory.afterDay(rolled.isPresent());
+				}
+				if (rolled.isPresent()) {
+					FogSpell stored = FogWeatherRules.handOver(fogSpell, rolled.get(), next, settings);
+					fogSpell = Optional.of(stored);
+					for (SeatRun seat : online()) {
+						seat.result.fogSpells.add(stored);
+					}
+				}
+			}
 		}
 
 		List<SeatRun> online() {
@@ -790,6 +940,7 @@ public final class DirectorSim {
 				if (!online.isEmpty()) {
 					worldTicks += interval;
 					dayTicks += interval;
+					rollWeather();
 				}
 				online.forEach(seat -> seat.play += interval);
 				if (worldTicks >= sessionEnd) {
@@ -817,6 +968,13 @@ public final class DirectorSim {
 					// Players take turns going first, as the live director staggers them.
 					SeatRun seat = deciding.get((tick + k) % deciding.size());
 					brain.step(world, seat.pacing, seat.clock(), seat.env, random, seat.rec);
+				}
+				double blindChance = params.blindPerHour <= 0 ? 0 : 1 - Math.exp(-params.blindPerHour * interval / rules.hourTicks);
+				for (SeatRun seat : deciding) {
+					// A menu opened since this tick's decision (D-077): one recheck for that player.
+					if (blindChance > 0 && blindDice.nextDouble() < blindChance) {
+						seat.recheck();
+					}
 				}
 				for (SeatRun seat : deciding) {
 					seat.bookkeep();
@@ -869,6 +1027,8 @@ public final class DirectorSim {
 		PacingMemory pacing;
 		long play;
 		Result result;
+		/** True during this player's blind moment's recheck (D-077): BLIND cards' moments, and only theirs, may fit. */
+		boolean blind;
 
 		SeatRun(Table table, UUID player, long joinAt, @Nullable PacingMemory pacing, long play, double tension) {
 			this.table = table;
@@ -891,10 +1051,22 @@ public final class DirectorSim {
 			}
 			result = new Result(table.rules, table.params, player, table.world, pacing, play, table.dayTicks);
 			result.startStage = table.stage;
+			table.fogSpell.filter(spell -> !spell.endedBy(table.dayTicks)).ifPresent(result.fogSpells::add);
 			rec.ensureRow(play);
 			if (!keepSession || pacing.sessionStart < 0) {
 				table.brain.onJoin(table.world, pacing, clock(), env, table.random, rec);
 			}
+		}
+
+		/** A blind moment (D-077): one recheck of what this player holds or has parked. */
+		void recheck() {
+			blind = true;
+			try {
+				table.brain.recheck(table.world, pacing, clock(), env, table.random, rec);
+			} finally {
+				blind = false;
+			}
+			result.rechecks++;
 		}
 
 		void add(Kind kind, DirectorBrain.Clock c, Stage stage, Tier tier, String id, boolean fake, double value, long until, boolean flag,
@@ -920,6 +1092,11 @@ public final class DirectorSim {
 			time[0] += rules.tickInterval;
 			if (!quiet && !empty) {
 				time[1] += rules.tickInterval;
+			}
+			long[] sky = result.skyTime.computeIfAbsent(table.sky(), s -> new long[2]);
+			sky[0] += rules.tickInterval;
+			if (!quiet && !empty) {
+				sky[1] += rules.tickInterval;
 			}
 		}
 	}
@@ -963,6 +1140,14 @@ public final class DirectorSim {
 
 		@Override
 		public boolean contextFits(CardInfo card) {
+			if (table.params.neverFits != null && table.params.neverFits.test(card)) {
+				return false;
+			}
+			if (card.has(CardTag.BLIND) != seat.blind) {
+				// A BLIND card's moment is a menu open (D-077): it fits only at a blind moment's recheck, by the dice below.
+				// Every other card's moment is looked at on director ticks; a recheck gives it nothing in a dry run.
+				return false;
+			}
 			return table.params.fits != null ? table.params.fits.test(card) : table.random.nextDouble() < table.params.fitChance;
 		}
 
@@ -974,6 +1159,11 @@ public final class DirectorSim {
 		@Override
 		public List<DirectorBrain.Sharer> sharers() {
 			return table.sharers(seat);
+		}
+
+		@Override
+		public Optional<FogSpell> fogSpell() {
+			return table.spellNow();
 		}
 	}
 
@@ -1034,7 +1224,10 @@ public final class DirectorSim {
 
 		@Override
 		public void fired(DirectorBrain.Clock c, CardInfo card, boolean fake, boolean forced, Stage stage, double tensionAfter) {
-			seat.add(Kind.FIRE, c, stage, card.tier(), card.id(), fake, tensionAfter, -1, card.hasFake(), forced ? "forced" : "");
+			seat.add(Kind.FIRE, c, stage, card.tier(), card.id(), fake, tensionAfter, -1, card.hasFake(), forced ? "forced" : seat.blind ? RECHECK : "");
+			if (!forced) {
+				seat.result.skyFires.merge(seat.table.sky(), 1, Integer::sum);
+			}
 			HourRow row = ensureRow(c.playTicks());
 			row.fires.merge(card.tier(), 1, Integer::sum);
 			if (fake) {

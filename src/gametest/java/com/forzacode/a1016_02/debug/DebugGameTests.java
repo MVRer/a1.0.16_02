@@ -13,6 +13,8 @@ import java.util.regex.Pattern;
 import com.forzacode.a1016_02.A1016_02;
 import com.forzacode.a1016_02.accident.ArmedTrap;
 import com.forzacode.a1016_02.core.CardTag;
+import com.forzacode.a1016_02.core.FogSpell;
+import com.forzacode.a1016_02.core.FogWeatherRules;
 import com.forzacode.a1016_02.core.HerobrineState;
 import com.forzacode.a1016_02.core.Stage;
 import com.forzacode.a1016_02.core.Tempo;
@@ -149,11 +151,17 @@ public class DebugGameTests {
 				List.of(new DirectorApi.Held(Tier.MINOR, "chest_opens", 4 * 1_200, "minor gap")),
 				new DirectorMemory.HistoryEntry(72_000, 3, "sighting_close", Tier.MAJOR, true, false, Stage.PROXIMITY, true), 23 * 1_200,
 				new DirectorApi.Next("minor gap", 11 * 1_200, -1), new DirectorApi.Next("major gap", 47 * 1_200, 80 * 1_200), 45 * 1_200, false);
+		// A fog night on day 3, quiet, a third of the way into its ramp; two players on the ladder.
+		Optional<FogSpell> spell = Optional.of(new FogSpell(3 * 24_000L + 11_500, 3 * 24_000L + 23_500, 0.55F, true));
 		Locale before = Locale.getDefault();
 		List<String> rows;
 		try {
 			Locale.setDefault(Locale.forLanguageTag("es-ES"));
-			rows = OverlayText.rows(snapshot, "dark_corner (set) at 1, 64, 2", "ridge rising (unseen)");
+			String fog = DebugOverlay.fog(spell, 3 * 24_000L + 12_500, FogWeatherRules.Settings.DEFAULT);
+			String ladder = DebugOverlay.ladder(List.of(new DebugOverlay.Rung("Ana", true, 2), new DebugOverlay.Rung("Ben", false, 0)));
+			String blind = DebugOverlay.blind(List.of(new DebugOverlay.Blind("Ana", true, 64, "blind_step", 5 * 1_200)), 72_000);
+			String shot = DebugOverlay.screenshot(List.of(new DebugOverlay.ShotArm("Ana", 36_000, false, true)), -1, null);
+			rows = OverlayText.rows(snapshot, "dark_corner (set) at 1, 64, 2", "ridge rising (unseen)", fog, ladder, blind, shot);
 		} finally {
 			Locale.setDefault(before);
 		}
@@ -162,7 +170,9 @@ public class DebugGameTests {
 		helper.assertFalse(LOCALIZED_DECIMAL.matcher(text).find(), "a localized decimal in the overlay: " + text);
 		for (String expected : List.of("Ana", "2 taking part", "PROXIMITY", "x0.60", "12.5 (shared)", "your tension 34.5/60", "+15%", "until day 5",
 				"chest_opens", "sighting_close (fake)", "felt, someone else's", "23m00s ago", "in 11m00s (minor gap)", "due in 1h20m", "dark_corner",
-				"ridge rising", "play 2h14m (world 5h30m)", "day 3")) {
+				"ridge rising", "play 2h14m (world 5h30m)", "day 3", "fog spell\tlevel 0.55, day 3 11500 to day 3 23500 | fog now 0.", "| quiet",
+				"ladder\tAna rung 2 (you), Ben rung 0", "blind\tAna (you) blind 64t (3.2 s), last blind_step 5m00s ago",
+				"screenshot\tarmed: Ana (1.50 d left, fog on)")) {
 			helper.assertTrue(text.contains(expected), "the overlay is missing '" + expected + "':\n" + text);
 		}
 		helper.succeed();
@@ -187,6 +197,61 @@ public class DebugGameTests {
 		helper.assertTrue(bens.equals("none | 2 others armed"), "Ben's row: " + bens);
 		helper.assertTrue(DebugOverlay.trap(Map.of(ana, traps.get(ana)), ana).equals("dark_corner (set) at 1, 64, 2"), "a lone trap got a count");
 		helper.assertTrue(DebugOverlay.trap(Map.of(), ana).equals("none"), "nobody's trap: " + DebugOverlay.trap(Map.of(), ana));
+		helper.succeed();
+	}
+
+	/**
+	 * The overlay's fog row (D-071) is the world's spell as /a1016 fog names it: none, or its level, from and until on
+	 * the clock, the fog it gives now and "quiet"; the ladder row (D-072) is every participant's rung, the viewer's
+	 * marked.
+	 */
+	@GameTest
+	public void overlayFogAndLadderRows(GameTestHelper helper) {
+		FogWeatherRules.Settings d = FogWeatherRules.Settings.DEFAULT;
+		long day = 24_000L;
+		helper.assertTrue(DebugOverlay.fog(Optional.empty(), 5 * day, d).equals("none"), "no spell: " + DebugOverlay.fog(Optional.empty(), 5 * day, d));
+		FogSpell night = new FogSpell(4 * day + 11_500, 5 * day + 5_500, 0.65F, false);
+		String full = DebugOverlay.fog(Optional.of(night), 4 * day + 18_000, d);
+		helper.assertTrue(full.equals("level 0.65, day 4 11500 to day 5 5500 | fog now 0.65"), "a full fog night with its morning: " + full);
+		String before = DebugOverlay.fog(Optional.of(night), 4 * day + 10_000, d);
+		helper.assertTrue(before.endsWith("fog now 0.00"), "a spell not started yet gives no fog: " + before);
+		String quiet = DebugOverlay.fog(Optional.of(new FogSpell(night.fromClock(), night.untilClock(), 0.65F, true)), 4 * day + 18_000, d);
+		helper.assertTrue(quiet.endsWith(" | quiet"), "a quiet spell: " + quiet);
+		helper.assertTrue(DebugOverlay.ladder(List.of()).equals("nobody taking part"), "nobody: " + DebugOverlay.ladder(List.of()));
+		String ladder = DebugOverlay.ladder(List.of(new DebugOverlay.Rung("Ben", false, 3), new DebugOverlay.Rung("Ana", true, 0)));
+		helper.assertTrue(ladder.equals("Ben rung 3, Ana rung 0 (you)"), "the ladder row: " + ladder);
+		// Live: nobody takes part on the test server.
+		MinecraftServer server = helper.getLevel().getServer();
+		helper.assertTrue(DebugOverlay.ladder(server, UUID.randomUUID()).equals("nobody taking part"), "live ladder " + DebugOverlay.ladder(server, UUID.randomUUID()));
+		helper.succeed();
+	}
+
+	/**
+	 * v1.3's overlay rows (INT-2): the blind row is every participant's blind moment (D-077, server ticks and seconds)
+	 * and the newest echo or blind card that fired for them (D-076), the viewer's marked; the screenshot row (D-078) is
+	 * who is armed, with the in-game days left and whether their arm is paused or has fog, and the day it happened.
+	 */
+	@GameTest
+	public void overlayBlindAndScreenshotRows(GameTestHelper helper) {
+		long hour = 72_000;
+		helper.assertTrue(DebugOverlay.blind(List.of(), hour).equals("nobody taking part"), "nobody: " + DebugOverlay.blind(List.of(), hour));
+		String blind = DebugOverlay.blind(List.of(new DebugOverlay.Blind("Ana", false, 0, "echo_mining", 12 * 1_200),
+				new DebugOverlay.Blind("Ben", true, 31, null, 0)), hour);
+		helper.assertTrue(blind.equals("Ana not blind, last echo_mining 12m00s ago | Ben (you) blind 31t (1.6 s)"), "the blind row: " + blind);
+		helper.assertTrue(DebugOverlay.echoOrBlind("echo_mining") && DebugOverlay.echoOrBlind("echo_door") && DebugOverlay.echoOrBlind("blind_step")
+				&& DebugOverlay.echoOrBlind("blind_torch") && DebugOverlay.echoOrBlind("blind_door") && !DebugOverlay.echoOrBlind("chest_opens")
+				&& !DebugOverlay.echoOrBlind("steps_behind_once"), "the echo and blind cards");
+		helper.assertTrue(DebugOverlay.screenshot(List.of(), -1, null).equals("not armed"), "nobody armed: " + DebugOverlay.screenshot(List.of(), -1, null));
+		String shot = DebugOverlay.screenshot(List.of(new DebugOverlay.ShotArm("Ana", 12_000, true, true), new DebugOverlay.ShotArm("Ben", 48_000, false, false)),
+				-1, null);
+		helper.assertTrue(shot.equals("armed: Ana (0.50 d left, paused), Ben (2.00 d left)"), "the screenshot row: " + shot);
+		String taken = DebugOverlay.screenshot(List.of(), 12, "Ben");
+		helper.assertTrue(taken.equals("not armed | taken day 12 by Ben"), "after the screenshot: " + taken);
+		// Live: nobody takes part on the test server; the row reads the screenshot's state and changes nothing.
+		MinecraftServer server = helper.getLevel().getServer();
+		helper.assertTrue(DebugOverlay.blind(server, UUID.randomUUID(), hour).equals("nobody taking part"), "live blind " + DebugOverlay.blind(server, UUID.randomUUID(), hour));
+		String live = DebugOverlay.screenshot(server);
+		helper.assertTrue(live.startsWith("not armed") || live.startsWith("armed: "), "live screenshot " + live);
 		helper.succeed();
 	}
 

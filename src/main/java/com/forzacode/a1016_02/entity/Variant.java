@@ -1,5 +1,7 @@
 package com.forzacode.a1016_02.entity;
 
+import java.util.Arrays;
+import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
 
@@ -10,8 +12,8 @@ import net.minecraft.resources.ResourceKey;
 import net.minecraft.world.level.Level;
 
 /**
- * The sighting variants (DESIGN.md "Sightings"), one event card each. Each one says where he stands, how he
- * stands, and how the sighting ends.
+ * The sighting variants (DESIGN.md "Sightings"), one event card each but the glimpse. Each one says where he stands,
+ * how he stands, and how the sighting ends.
  */
 public enum Variant {
 	/** Something cow-sized and still: low on all fours. Walk closer (or stare) and he rises, stares, then runs. */
@@ -33,18 +35,30 @@ public enum Variant {
 	/** The End (D-034): perfectly still among the endermen at the edge of what you can see, white eyes among purple ones. */
 	AMONG_ENDERMEN("among_endermen", Tier.MINOR, Stage.TRACES, Spot.ENDERMEN, Pose.STAND, Facing.PLAYER, false, Ending.STARE_LEAVE, Gait.WALK, Fake.NONE),
 	/** The Nether (D-034): still among the zombified piglins at the edge of the Nether fog. */
-	AMONG_PIGLINS("among_piglins", Tier.MINOR, Stage.TRACES, Spot.PIGLINS, Pose.STAND, Facing.PLAYER, false, Ending.STARE_LEAVE, Gait.WALK, Fake.NONE);
+	AMONG_PIGLINS("among_piglins", Tier.MINOR, Stage.TRACES, Spot.PIGLINS, Pose.STAND, Facing.PLAYER, false, Ending.STARE_LEAVE, Gait.WALK, Fake.NONE),
+	/**
+	 * The glimpse (D-073): at the top of the tunnel ladder (dig's third rung, D-072), past the last torch, where the caller
+	 * puts him ({@link GlimpseFigure}). Not a director card of its own; never rushes, never goes under, no fake, silent,
+	 * eyes FLAT. The one figure that vanishes in view: gone before anyone looks straight at him.
+	 */
+	GLIMPSE("glimpse", Tier.MINOR, Stage.TRACES, Spot.GIVEN, Pose.STAND, Facing.PLAYER, false, Ending.VANISH, Gait.WALK, Fake.NONE);
 
-	/** Where the spot finder looks. ENDERMEN and PIGLINS: beside existing mobs of that kind, never spawning one. */
-	public enum Spot { OPEN, RIDGE, TRUNK, LIGHT, SHORE, KNOWN, ENDERMEN, PIGLINS }
+	/**
+	 * Where the spot finder looks. ENDERMEN and PIGLINS: beside existing mobs of that kind, never spawning one. GIVEN:
+	 * the caller gives the spot (the glimpse), the spot finder never looks.
+	 */
+	public enum Spot { OPEN, RIDGE, TRUNK, LIGHT, SHORE, KNOWN, ENDERMEN, PIGLINS, GIVEN }
 
 	public enum Pose { STAND, LOW }
 
 	/** Which way he faces while idle. */
 	public enum Facing { PLAYER, AWAY, ANCHOR }
 
-	/** What he does when stared at or approached. {@link #NONE}: he keeps doing what he was doing. */
-	public enum Ending { NONE, STARE_LEAVE, RISE_STARE_LEAVE, HIDE }
+	/**
+	 * What he does when stared at or approached. {@link #NONE}: he keeps doing what he was doing. {@link #VANISH}: he is
+	 * simply gone, in view or not (the glimpse, D-073, the one exception to "never vanishes in view").
+	 */
+	public enum Ending { NONE, STARE_LEAVE, RISE_STARE_LEAVE, HIDE, VANISH }
 
 	public enum Gait { SLOW, WALK, RUN }
 
@@ -140,9 +154,44 @@ public enum Variant {
 		return dimension() == Level.OVERWORLD && (ending == Ending.STARE_LEAVE || ending == Ending.RISE_STARE_LEAVE);
 	}
 
-	/** True if a chaser he cannot outrun may make him rush past them (D-037). Never Ending A's last one. */
+	/** True if a chaser he cannot outrun may make him rush past them (D-037). Never Ending A's last one, never the glimpse. */
 	public boolean mayRush() {
-		return this != LAST_ONE;
+		return this != LAST_ONE && ending != Ending.VANISH;
+	}
+
+	/** True if the director has a card for this variant ({@code sighting_<name>}): every one but the glimpse. */
+	public boolean isCard() {
+		return spot != Spot.GIVEN;
+	}
+
+	/**
+	 * True if he vanishes in view (D-073): the client stops drawing him the moment he is looked toward and the server
+	 * removes him by his own rules, seen or not. Only the glimpse.
+	 */
+	public boolean vanishesInView() {
+		return ending == Ending.VANISH;
+	}
+
+	/** The eye style this variant always has, whatever the config says, or empty for the configured one. The glimpse: FLAT. */
+	public Optional<EyeStyle> eyeStyle() {
+		return this == GLIMPSE ? Optional.of(EyeStyle.FLAT) : Optional.empty();
+	}
+
+	/**
+	 * True if the variant may come in daytime fog (D-071: a day spell, a morning carry-over): the cow, the one walking
+	 * away, between the trunks, across the water and close. The ridge keeps its dusk sky and the light its night; the
+	 * other dimensions have no daytime.
+	 */
+	public boolean inDaytimeFog() {
+		return switch (this) {
+			case COW, WALKS_AWAY, BETWEEN_TRUNKS, ACROSS_WATER, CLOSE -> true;
+			default -> false;
+		};
+	}
+
+	/** Every variant the director has a card for ({@link #isCard}), in order. */
+	public static List<Variant> cards() {
+		return Arrays.stream(values()).filter(Variant::isCard).toList();
 	}
 
 	/** True if he stands with his back to you and walks off, slowly, once you have seen him. */

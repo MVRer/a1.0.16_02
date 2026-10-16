@@ -4,6 +4,7 @@ import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
+import java.util.function.BiPredicate;
 import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.function.Predicate;
@@ -50,6 +51,11 @@ abstract class AtmosphereCard implements EventCard {
 	Consumer<Tasks.Episode> episodes = Tasks::start;
 	/** Everyone in a level, spectators included, for the "nobody near" rules. A game test swaps in its own, as {@link #sounds}. */
 	Function<ServerLevel, List<ServerPlayer>> everyone = ServerLevel::players;
+	/**
+	 * Whether a place is out of every player's view ({@code TraceService.isOutOfView}). A game test swaps in the same
+	 * geometry over its own players' viewpoints, as {@link #sounds}: mock players are no viewers of the live check.
+	 */
+	BiPredicate<ServerLevel, AABB> outOfView = (level, box) -> Services.traces().isOutOfView(level, box);
 
 	private final String id;
 	private final Tier tier;
@@ -121,6 +127,17 @@ abstract class AtmosphereCard implements EventCard {
 	protected static boolean alone(ServerPlayer player, int radius) {
 		double r2 = (double) radius * radius;
 		for (ServerPlayer other : player.level().players()) {
+			if (!other.getUUID().equals(player.getUUID()) && !other.isSpectator() && other.distanceToSqr(player) <= r2) {
+				return false;
+			}
+		}
+		return true;
+	}
+
+	/** {@link #alone(ServerPlayer, int)} among {@link #everyone} in the player's level: no other non-spectator player within {@code radius}. */
+	protected boolean aloneHere(ServerPlayer player, int radius) {
+		double r2 = (double) radius * radius;
+		for (ServerPlayer other : everyone.apply(player.level())) {
 			if (!other.getUUID().equals(player.getUUID()) && !other.isSpectator() && other.distanceToSqr(player) <= r2) {
 				return false;
 			}

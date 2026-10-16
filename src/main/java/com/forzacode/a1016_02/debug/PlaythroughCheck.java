@@ -240,7 +240,8 @@ final class PlaythroughCheck {
 				limits.paceFactor()), breaches,
 				accidents + " accident fires" + (firstAccident == null ? "" : ", first at " + Fmt.hm(firstAccident.play(), h))));
 
-		// The director's own replay of its rules (decks, quiets, signatures, fakes, empty sessions only from Traces).
+		// The director's own replay of its rules (decks, quiets, signatures, fakes, empty sessions only from Proximity, the
+		// first hour's cap).
 		checks.add(hard("director's own rules (deck, quiet, signature, fake)", directorViolations, directorViolations.isEmpty() ? "all held"
 				: directorViolations.size() + " broken"));
 		return checks;
@@ -257,20 +258,20 @@ final class PlaythroughCheck {
 		List<Event> fires = events.stream().filter(e -> e.kind() == Kind.FIRE).toList();
 		List<Check> checks = new ArrayList<>();
 
-		// Traces: about one ambient per hour.
+		// Traces: about tracesAmbientPerHour ambients per hour (2 since v1.2).
 		StageTime traces = timeline.in(Stage.TRACES);
 		long tracesAmbients = fires.stream().filter(e -> e.stage() == Stage.TRACES && e.tier() == Tier.AMBIENT).count();
 		double target = limits.tracesAmbientPerHour();
 		checks.add(rate(Fmt.f("Traces: about %.1f ambient per hour (+-50%%)", target), tracesAmbients, traces, h / 2, target * 0.5, target * 1.5,
 				"ambients", limits));
 
-		// Proximity: one or two minors per hour.
+		// Proximity: minorsPerHourMin to Max minors per hour (1.5 to 2.5 since v1.2).
 		StageTime proximity = timeline.in(Stage.PROXIMITY);
 		long minors = fires.stream().filter(e -> e.stage() == Stage.PROXIMITY && e.tier() == Tier.MINOR).count();
-		checks.add(rate(Fmt.f("Proximity: %.0f to %.0f minors per hour", limits.minorsPerHourMin(), limits.minorsPerHourMax()), minors, proximity, h,
+		checks.add(rate(Fmt.f("Proximity: %.1f to %.1f minors per hour", limits.minorsPerHourMin(), limits.minorsPerHourMax()), minors, proximity, h,
 				limits.minorsPerHourMin(), limits.minorsPerHourMax(), "minors", limits));
 
-		// Proximity: a major every 2 to 4 hours (times the tempo factor). As gaps: closer than the shortest gap over
+		// Proximity: a major every 1.5 to 3 hours (times the tempo factor). As gaps: closer than the shortest gap over
 		// all the time, or farther apart than the longest gap over the active time, is off.
 		long majors = fires.stream().filter(e -> e.stage() == Stage.PROXIMITY && e.tier() == Tier.MAJOR).count();
 		String majorName = Fmt.f("Proximity: a major every %s to %s", Fmt.hm(limits.majorEveryMin(), h), Fmt.hm(limits.majorEveryMax(), h));
@@ -286,12 +287,12 @@ final class PlaythroughCheck {
 					Fmt.hm(active, h), Fmt.hm(overall, h), majors, majors == 1 ? "" : "s", Fmt.hm(proximity.active(), h), Fmt.hm(proximity.total(), h))));
 		}
 
-		// From Traces on, some whole sessions are empty.
-		long sessionsLater = events.stream().filter(e -> e.kind() == Kind.SESSION_START && e.stage().atLeast(Stage.TRACES)).count();
-		long emptyLater = events.stream().filter(e -> e.kind() == Kind.SESSION_START && e.flag() && e.stage().atLeast(Stage.TRACES)).count();
-		String emptyName = "empty sessions from Traces on";
+		// From Proximity on (D-070; Traces before v1.2), some whole sessions are empty.
+		long sessionsLater = events.stream().filter(e -> e.kind() == Kind.SESSION_START && e.stage().atLeast(Stage.PROXIMITY)).count();
+		long emptyLater = events.stream().filter(e -> e.kind() == Kind.SESSION_START && e.flag() && e.stage().atLeast(Stage.PROXIMITY)).count();
+		String emptyName = "empty sessions from Proximity on";
 		if (sessionsLater == 0) {
-			checks.add(soft(emptyName, Status.NA, "no session started in Traces or later"));
+			checks.add(soft(emptyName, Status.NA, "no session started in Proximity or later"));
 		} else {
 			checks.add(soft(emptyName, emptyLater > 0 ? Status.PASS : Status.OFF, Fmt.f("%d of %d sessions (chance %.2f each)", emptyLater,
 					sessionsLater, limits.emptyChance())));

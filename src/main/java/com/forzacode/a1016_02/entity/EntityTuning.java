@@ -54,7 +54,16 @@ final class EntityTuning {
 			new Key("rushPassOffset", Rush.MIN_OFFSET, 6.0, c -> c.rushPassOffset, (c, v) -> c.rushPassOffset = v),
 			new Key("rushMaxSeconds", 0.5, 10.0, c -> c.rushMaxSeconds, (c, v) -> c.rushMaxSeconds = v),
 			// The End and the Nether (D-034): an enderman or zombified piglin within this many blocks of his spot.
-			new Key("amongMobsRadius", 2.0, 16.0, c -> c.amongMobsRadius, (c, v) -> c.amongMobsRadius = v));
+			new Key("amongMobsRadius", 2.0, 16.0, c -> c.amongMobsRadius, (c, v) -> c.amongMobsRadius = v),
+			// The glimpse (D-073): how far from everyone he stands (never under 8), the client's hide angle and distance, the
+			// server's look angle, the approach, the time seen and the wait unseen before he is gone.
+			new Key("glimpseMinDistance", EntityConfig.MIN_DISTANCE_FLOOR, 32.0, c -> c.glimpseMinDistance, (c, v) -> c.glimpseMinDistance = v),
+			new Key("glimpseHideDegrees", 5.0, 60.0, c -> c.glimpseHideDegrees, (c, v) -> c.glimpseHideDegrees = v),
+			new Key("glimpseHideBlocks", 2.0, 14.0, c -> c.glimpseHideBlocks, (c, v) -> c.glimpseHideBlocks = v),
+			new Key("glimpseServerDegrees", 5.0, 75.0, c -> c.glimpseServerDegrees, (c, v) -> c.glimpseServerDegrees = v),
+			new Key("glimpseApproachBlocks", 0.5, 8.0, c -> c.glimpseApproachBlocks, (c, v) -> c.glimpseApproachBlocks = v),
+			new Key("glimpseSeenSeconds", 0.5, 10.0, c -> c.glimpseSeenSeconds, (c, v) -> c.glimpseSeenSeconds = v),
+			new Key("glimpseWaitSeconds", 1.0, 60.0, c -> c.glimpseWaitSeconds, (c, v) -> c.glimpseWaitSeconds = v));
 
 	private EntityTuning() {
 	}

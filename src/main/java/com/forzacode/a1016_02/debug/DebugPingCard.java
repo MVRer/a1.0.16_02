@@ -16,7 +16,8 @@ import net.minecraft.server.level.ServerPlayer;
 
 /**
  * Sample card for testing {@code /a1016 fire}: sends the player one chat line. Its context never fits, so the
- * director never draws it in normal play; {@code fire} skips gates and runs it anyway.
+ * director never fires it in normal play; {@code fire} skips gates and runs it anyway. Registered only in a
+ * development environment ({@link DebugInit}: the dev client and the game tests), never in a release jar.
  */
 public final class DebugPingCard implements EventCard {
 	public static final String ID = "debug_ping";

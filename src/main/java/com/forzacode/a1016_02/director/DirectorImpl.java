@@ -1,6 +1,7 @@
 package com.forzacode.a1016_02.director;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -18,6 +19,8 @@ import com.forzacode.a1016_02.core.Director;
 import com.forzacode.a1016_02.core.EventCard;
 import com.forzacode.a1016_02.core.FireContext;
 import com.forzacode.a1016_02.core.FireResult;
+import com.forzacode.a1016_02.core.FogSpell;
+import com.forzacode.a1016_02.core.FogWeatherRules;
 import com.forzacode.a1016_02.core.GameClock;
 import com.forzacode.a1016_02.core.HerobrineEvents;
 import com.forzacode.a1016_02.core.HerobrineState;
@@ -29,6 +32,7 @@ import com.forzacode.a1016_02.core.Tier;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.util.RandomSource;
+import net.minecraft.world.level.Level;
 
 import org.jspecify.annotations.Nullable;
 
@@ -41,12 +45,14 @@ import org.jspecify.annotations.Nullable;
  * while anyone takes part. Sessions follow {@code HerobrineEvents.PARTICIPATION}, per player. Only UUIDs are kept
  * across ticks; each decision looks its player up again and skips quietly if they are gone or dead (D-062.1). Every
  * world change is the card's, through {@code TraceService} and {@code MobTamper}. Persistent state is
- * {@link DirectorData}.
+ * {@link DirectorData}. Between decisions, core's blind moments bring rechecks for one player ({@link #recheck}, D-077).
  */
 public final class DirectorImpl implements Director {
 	private static final Set<String> BROKEN_CARDS = new HashSet<>();
 	private final RandomSource random = RandomSource.create();
 	private final DecisionSchedule schedule = new DecisionSchedule();
+	/** Each participant's last blind moment's recheck (D-077), for the session only. */
+	private final Map<UUID, LastRecheck> lastRechecks = new HashMap<>();
 	/** Server tick of the next world step, and the interval it was set with; 0 after a server stop. */
 	private long nextWorldTick;
 	private long worldInterval;
@@ -173,6 +179,39 @@ public final class DirectorImpl implements Director {
 		return DirectorDebug.stateLines(this, server);
 	}
 
+	/**
+	 * A blind moment's recheck (D-077), for this player only: their held or parked card fires if its moment fits now
+	 * and every gate passes, BLIND cards first ({@link DirectorBrain#recheck}); never a roll or a draw. Nothing for
+	 * someone who is not targetable (not taking part, or dead) or whose pacing does not exist yet.
+	 */
+	@Override
+	public void recheck(MinecraftServer server, ServerPlayer player) {
+		if (!Services.watch().isTargetable(player)) {
+			return;
+		}
+		UUID uuid = player.getUUID();
+		DirectorData data = DirectorData.get(server);
+		DirectorMemory memory = data.memory();
+		Optional<PacingMemory> pacing = memory.find(uuid);
+		if (pacing.isEmpty()) {
+			return;
+		}
+		DirectorBrain.Clock c = clock(server, uuid);
+		String outcome = brain(rules(server)).recheck(memory.world(), pacing.get(), c, new WorldEnv(server, uuid, player), random, log(server, uuid));
+		data.setDirty();
+		lastRechecks.put(uuid, new LastRecheck(c.playTicks(), outcome));
+		A1016_02.LOGGER.debug("[a1016] director ({}): recheck: {}", player.getName().getString(), outcome);
+	}
+
+	/** This player's last recheck this session (D-077), or null: for {@code /a1016 director}. */
+	@Nullable LastRecheck lastRecheck(UUID player) {
+		return lastRechecks.get(player);
+	}
+
+	/** A player's last recheck: on their own clock, and what it did. */
+	record LastRecheck(long playTicks, String outcome) {
+	}
+
 	// --- the live loop ---
 
 	/**
@@ -240,6 +279,7 @@ public final class DirectorImpl implements Director {
 	/** {@code HerobrineEvents.PARTICIPATION} false (left, or a spectator now): only this player's session ends. */
 	void onLeave(MinecraftServer server, UUID player) {
 		schedule.stop(player);
+		lastRechecks.remove(player);
 		DirectorData data = DirectorData.get(server);
 		data.memory().find(player).ifPresent(pacing -> {
 			brain(rules(server)).onLeave(pacing, clock(server, player), log(server, player));
@@ -250,6 +290,7 @@ public final class DirectorImpl implements Director {
 	/** Server stop: forgets every schedule (nothing per session survives). */
 	void clear() {
 		schedule.clear();
+		lastRechecks.clear();
 		nextWorldTick = 0;
 		worldInterval = 0;
 	}
@@ -302,6 +343,7 @@ public final class DirectorImpl implements Director {
 		params.continueSession = true;
 		params.singleSession = true;
 		params.attention = state.attention();
+		liveWeather(server, before, params);
 		// The summary shows what time alone does: nobody writes his name during a timewarp.
 		params.tellingAtHour = -1;
 		PacingMemory pacing = focus == null ? new PacingMemory(before.dayTicks())
@@ -361,8 +403,23 @@ public final class DirectorImpl implements Director {
 		params.seed = server.getWorldGenSettings().options().seed() ^ (c.playTicks() * 0x9E3779B97F4A7C15L) ^ (synthetic ? 0x5EED : 0);
 		params.continueSession = Services.watch().participant(server, player).isPresent();
 		params.attention = state.attention();
+		liveWeather(server, c, params);
 		List<CardInfo> cards = synthetic ? SyntheticDeck.cards() : cards();
 		return DirectorSim.run(rules, cards, config.historySize, DirectorData.get(server).memory(), state.stage(), state.tension(player), c, params);
+	}
+
+	/**
+	 * The live sky for a dry run from now (D-071): the installed weather numbers, the stored spell moved onto the run's
+	 * day clock (which counts timewarp days, the overworld clock does not), and the nights rolled so far, so a world a
+	 * few days old is past the first nights' rules.
+	 */
+	private static void liveWeather(MinecraftServer server, DirectorBrain.Clock c, DirectorSim.Params params) {
+		params.fogSettings = FogWeatherRules.settings();
+		long shift = c.dayTicks() - server.overworld().getDefaultClockTime();
+		params.fogSpell = HerobrineState.get(server).effects().fogSpell()
+				.map(spell -> spell.withClocks(spell.fromClock() + shift, spell.untilClock() + shift));
+		long nights = c.day() + (Math.floorMod(c.dayTicks(), DirectorBrain.DAY_TICKS) >= FogWeatherRules.nightRollTime(params.fogSettings) ? 1 : 0);
+		params.fogHistory = new FogWeatherRules.History(Math.clamp(nights, 0, Integer.MAX_VALUE), 0, false, false);
 	}
 
 	// --- helpers ---
@@ -520,6 +577,25 @@ public final class DirectorImpl implements Director {
 			}
 			return DirectorImpl.this.sharers(server, DirectorData.get(server).memory(), uuid, Services.watch().sharingWith(player));
 		}
+
+		@Override
+		public Optional<FogSpell> fogSpell() {
+			if (player == null) {
+				return Optional.empty();
+			}
+			Level level = player.level();
+			return fogSpellOn(HerobrineState.get(server).effects().fogSpell(), level.getDefaultClockTime(), level.dimensionType().hasFixedTime());
+		}
+	}
+
+	/**
+	 * The world's stored fog spell if it counts as fog at this clock (absolute {@code getDefaultClockTime()},
+	 * {@link FogSpell#counts}: its amount at least half its level) in a level that shows weather (D-071): none in
+	 * fixed-time dimensions, as {@code FogLimits.of(player)} reads it, and none while the spell eases in or out below
+	 * half its level, so the boost never comes at a moment with almost no fog (R2#1).
+	 */
+	static Optional<FogSpell> fogSpellOn(Optional<FogSpell> stored, long clockTime, boolean fixedTime) {
+		return fixedTime ? Optional.empty() : stored.filter(spell -> spell.counts(clockTime));
 	}
 
 	/** Logs what the live director decides, for one player (or the world). */
@@ -579,6 +655,19 @@ public final class DirectorImpl implements Director {
 		@Override
 		public void quietStarted(DirectorBrain.Clock clock, int days, long untilDayTicks, double tensionBefore) {
 			A1016_02.LOGGER.info(String.format(Locale.ROOT, "[a1016] director (%s): tension %.1f, quiet for %d in-game days", who, tensionBefore, days));
+		}
+
+		@Override
+		public void rechecked(DirectorBrain.Clock clock, @Nullable CardInfo fired, String outcome) {
+			if (fired != null) {
+				A1016_02.LOGGER.info("[a1016] director ({}): a blind moment's recheck fired {} {}", who, fired.tier(), fired.id());
+			}
+		}
+
+		@Override
+		public void rulesUpgraded(DirectorBrain.Clock clock, int fromVersion, long tracesAt, long proximityAt) {
+			A1016_02.LOGGER.info("[a1016] director: world rules {} -> {}: stage points rolled again, traces at {}, proximity at {} (world play)",
+					fromVersion, WorldMemory.RULES_VERSION, playTime(tracesAt), playTime(proximityAt));
 		}
 
 		static String playTime(long ticks) {

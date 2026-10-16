@@ -17,8 +17,18 @@ import net.minecraft.nbt.CompoundTag;
  * than once per witness. Everything a player's own pacing needs is in their {@link PacingMemory}. Plain data;
  * {@link DirectorBrain} and {@link DirectorTriggers} change it, {@link DirectorMemory} stores it. Times are world play
  * ticks unless the name says day ticks or day.
+ *
+ * <p>Rules versions (D-075): {@link #rulesVersion} is the director's rules the stage points were rolled under. A world
+ * saved before v1.2 has none (0) and re-rolls them in the new windows on its first time step
+ * ({@link DirectorBrain#advanceWorld}); a new memory starts at {@link #RULES_VERSION}.
  */
 public final class WorldMemory {
+	/** The director's world rules: 1 since v1.2 (D-070's stage windows). Raise it when stage points must be rolled again. */
+	public static final int RULES_VERSION = 1;
+
+	/** The rules the stage points were rolled under; 0 for a world saved before v1.2. */
+	int rulesVersion = RULES_VERSION;
+
 	// --- stage timers (world clock) ---
 	long lastStepPlay = -1;
 	/** World play ticks weighted by attention; the stage moves when it passes the rolled points. -1 = not started. */
@@ -58,6 +68,20 @@ public final class WorldMemory {
 		return Collections.unmodifiableSet(signaturesFired);
 	}
 
+	public int rulesVersion() {
+		return rulesVersion;
+	}
+
+	/** World play ticks (attention-weighted) at which Traces starts, or -1 if not rolled yet. */
+	public long tracesAt() {
+		return tracesAt;
+	}
+
+	/** World play ticks (attention-weighted) at which Proximity starts, or -1 if not rolled yet. */
+	public long proximityAt() {
+		return proximityAt;
+	}
+
 	/** World play tick at which a card with this tag last fired for anyone, or {@link DirectorMemory#NEVER}. */
 	public long lastTagFire(CardTag tag) {
 		return lastTag.getOrDefault(tag, DirectorMemory.NEVER);
@@ -72,6 +96,7 @@ public final class WorldMemory {
 
 	public CompoundTag toTag() {
 		CompoundTag tag = new CompoundTag();
+		tag.putInt("rulesVersion", rulesVersion);
 		tag.putLong("lastStepPlay", lastStepPlay);
 		tag.putDouble("stageClock", stageClock);
 		tag.putLong("tracesAt", tracesAt);
@@ -91,9 +116,13 @@ public final class WorldMemory {
 		return tag;
 	}
 
-	/** Reads a world part, or the world fields at the top level of a v1 {@code director.dat}. */
+	/**
+	 * Reads a world part, or the world fields at the top level of a v1 {@code director.dat}. A part saved before v1.2
+	 * has no {@code rulesVersion}: it reads as 0, so its stage points are rolled again.
+	 */
 	public static WorldMemory fromTag(CompoundTag tag) {
 		WorldMemory w = new WorldMemory();
+		w.rulesVersion = tag.getIntOr("rulesVersion", 0);
 		w.lastStepPlay = tag.getLongOr("lastStepPlay", -1);
 		w.stageClock = tag.getDoubleOr("stageClock", -1);
 		w.tracesAt = tag.getLongOr("tracesAt", -1);

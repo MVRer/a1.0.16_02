@@ -49,6 +49,11 @@ import net.minecraft.world.phys.Vec3;
  */
 public class WorldMultiplayerTests {
 	private static final String BIG = "a1016_02:world/signature";
+	/**
+	 * The offline friend's house copy test's own environment, so its batch has no other test and its synchronous load
+	 * of far chunks holds up nobody else's ticks (INT-2, v1.3).
+	 */
+	private static final String HOUSE_COPY_ENVIRONMENT = "a1016_02:world/house_copy";
 
 	/** A closed 3x4 house the {@code builder} placed: cobblestone floor (y 2), plank walls (y 3-4), plank roof (y 5). */
 	private static List<BlockPos> house(GameTestHelper helper, ServerPlayer builder) {
@@ -135,8 +140,13 @@ public class WorldMultiplayerTests {
 	 * house, right where the search would put the copy first, and he has been away for three days (his chunks were last
 	 * visited then). The search keeps every known base clear: no candidate and no site within
 	 * {@code houseCopyBaseClearance} of Ben's base.
+	 *
+	 * <p>The candidates are 300 blocks out, and the live search waits for their chunks to generate in the background. A
+	 * test server ticks as fast as it can, so 2400 ticks could pass before they did (in a busy batch, and in 2 runs of 5
+	 * even alone): the test loads every candidate's chunks first, synchronously and held by the search's own loading
+	 * ticket, then steps the search as the live one does. It has its own environment ({@code a1016_02:world/house_copy}).
 	 */
-	@GameTest(structure = BIG, maxTicks = 600)
+	@GameTest(environment = HOUSE_COPY_ENVIRONMENT, structure = BIG, maxTicks = 2400)
 	public void houseCopySiteKeepsAwayFromAnOfflineFriendsBase(GameTestHelper helper) {
 		ServerLevel level = helper.getLevel();
 		WorldConfig config = new WorldConfig();
@@ -158,10 +168,20 @@ public class WorldMultiplayerTests {
 		ChunkPos benChunk = ChunkPos.containing(benBase);
 		NewScarPlacer.VisitLookup visits = (l, chunk) -> Math.abs(chunk.x() - benChunk.x()) <= 1 && Math.abs(chunk.z() - benChunk.z()) <= 1 ? today - 3 : -1;
 
-		HouseCopier.SiteSearch search = HouseCopier.siteSearch(f.bases(), level, copy, config, RandomSource.create(7), today, visits, 0);
+		HouseCopier.SiteSearch search = HouseCopier.siteSearch(f.bases(), level, copy, config, RandomSource.create(7), today, visits,
+				level.getServer().getTickCount());
+		int hx = copy.realBox().getXSpan() / 2 + 1;
+		int hz = copy.realBox().getZSpan() / 2 + 1;
 		for (BlockPos center : search.centers()) {
 			helper.assertTrue(horizontal(center, benBase) >= config.houseCopyBaseClearance, "a copy site candidate at " + center.toShortString() + ", "
 					+ Math.round(horizontal(center, benBase)) + " blocks from Ben's base");
+			// The candidate's own chunks (the copy's footprint there), generated now and kept loaded for the search.
+			BoundingBox footprint = new BoundingBox(center.getX() - hx, level.getMinY(), center.getZ() - hz, center.getX() + hx, level.getMaxY(),
+					center.getZ() + hz);
+			for (ChunkPos chunk : ChunkLoads.around(footprint, 0)) {
+				level.getChunkSource().addTicketWithRadius(NewScarPlacer.TICKET, chunk, 0);
+				level.getChunk(chunk.x(), chunk.z());
+			}
 		}
 		helper.succeedWhen(() -> {
 			helper.assertFalse(search.exhausted(), "no copy site among " + search.centers().size() + " candidates");

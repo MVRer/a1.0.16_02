@@ -64,9 +64,14 @@ public final class Gates {
 		return state.hasFlag(SILENCE_FOREVER_FLAG) || state.hasFlag(PATH_C_FLAG);
 	}
 
-	/** Distant cave sound: alone and still. */
-	public static boolean caveSound(boolean alone, long stillTicks, long stillNeeded) {
-		return alone && stillTicks >= stillNeeded;
+	/** Distant cave sound: alone, and underground or (on the surface) still (D-070). */
+	public static boolean caveSound(boolean alone, boolean underground, long stillTicks, long stillNeeded) {
+		return alone && (underground || stillTicks >= stillNeeded);
+	}
+
+	/** Far in the rock: underground and alone. */
+	public static boolean rockSound(boolean underground, boolean alone) {
+		return underground && alone;
 	}
 
 	/**
@@ -86,5 +91,18 @@ public final class Gates {
 	/** Away from a place: in another dimension, or at least {@code minBlocks} away. */
 	public static boolean away(boolean sameDimension, double distanceSqr, int minBlocks) {
 		return !sameDimension || distanceSqr >= (double) minBlocks * minBlocks;
+	}
+
+	/**
+	 * The echoes (D-076): something of the player's own to echo, and no combat of theirs within the last
+	 * {@code noCombatTicks} (30 s).
+	 */
+	public static boolean echo(boolean remembered, long ticksSinceCombat, long noCombatTicks) {
+		return remembered && ticksSinceCombat >= noCombatTicks;
+	}
+
+	/** True if {@code value} is in {@code [min, max]}: an echo's age (ticks of play ago) or its distance band (blocks). */
+	public static boolean within(double value, double min, double max) {
+		return value >= min && value <= max;
 	}
 }

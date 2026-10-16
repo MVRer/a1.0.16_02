@@ -3,12 +3,14 @@ package com.forzacode.a1016_02.entity;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
+import java.util.UUID;
 
 import com.forzacode.a1016_02.A1016_02;
 import com.mojang.serialization.Codec;
 import com.mojang.serialization.codecs.RecordCodecBuilder;
 
 import net.minecraft.core.GlobalPos;
+import net.minecraft.core.UUIDUtil;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.world.level.saveddata.SavedData;
 import net.minecraft.world.level.saveddata.SavedDataType;
@@ -18,7 +20,11 @@ import org.jspecify.annotations.Nullable;
 /**
  * The entity workstream's own memory, {@code data/a1016_02/entity.dat}: where and when the last sighting was,
  * which variant it was, and how many there were that day. Fakes count for the place and the day (to the player
- * they were sightings too) but not for the variant rule.
+ * they were sightings too) but not for the variant rule. The glimpse (D-073) keeps its own record, the in-game day of
+ * the last one and how many there were: it is underground at the caller's spot, so it never counts for the surface
+ * sightings' place, day or variant rules (the director's one-sighting-a-day limit covers it through its card's tag).
+ * The screenshot (D-078) happens once per world: the in-game day it happened and whose it was; it counts as a
+ * sighting for that day (the day rule), never for the place or the variant rule.
  */
 public final class EntityData extends SavedData {
 	public static final Codec<EntityData> CODEC = RecordCodecBuilder.create(i -> i.group(
@@ -29,7 +35,11 @@ public final class EntityData extends SavedData {
 			Codec.INT.optionalFieldOf("sightings", 0).forGetter(d -> d.sightings),
 			Codec.INT.optionalFieldOf("fakes", 0).forGetter(d -> d.fakes),
 			Codec.INT.optionalFieldOf("stared", 0).forGetter(d -> d.stared),
-			PendingDig.CODEC.listOf().optionalFieldOf("pendingDigs", List.of()).forGetter(d -> List.copyOf(d.pendingDigs))
+			PendingDig.CODEC.listOf().optionalFieldOf("pendingDigs", List.of()).forGetter(d -> List.copyOf(d.pendingDigs)),
+			Codec.LONG.optionalFieldOf("lastGlimpseDay", -1L).forGetter(d -> d.lastGlimpseDay),
+			Codec.INT.optionalFieldOf("glimpses", 0).forGetter(d -> d.glimpses),
+			Codec.LONG.optionalFieldOf("screenshotDay", -1L).forGetter(d -> d.screenshotDay),
+			UUIDUtil.CODEC.optionalFieldOf("screenshotBy").forGetter(d -> Optional.ofNullable(d.screenshotBy))
 	).apply(i, EntityData::new));
 
 	public static final SavedDataType<EntityData> TYPE = new SavedDataType<>(A1016_02.id("entity"), EntityData::new, CODEC, null);
@@ -43,12 +53,18 @@ public final class EntityData extends SavedData {
 	private int stared;
 	/** Goes-under shafts dug but not covered or put back yet (D-030). */
 	private final List<PendingDig> pendingDigs = new ArrayList<>();
+	/** The in-game day of the last glimpse (D-073), -1 if none yet, and how many there were. */
+	private long lastGlimpseDay = -1;
+	private int glimpses;
+	/** The in-game day the world's one screenshot happened (D-078), -1 if not yet, and whose screenshot it was. */
+	private long screenshotDay = -1;
+	private @Nullable UUID screenshotBy;
 
 	public EntityData() {
 	}
 
 	private EntityData(Optional<GlobalPos> lastPos, long lastDay, int countOnLastDay, String lastVariant, int sightings, int fakes, int stared,
-			List<PendingDig> pendingDigs) {
+			List<PendingDig> pendingDigs, long lastGlimpseDay, int glimpses, long screenshotDay, Optional<UUID> screenshotBy) {
 		this.lastPos = lastPos.orElse(null);
 		this.lastDay = lastDay;
 		this.countOnLastDay = countOnLastDay;
@@ -57,6 +73,10 @@ public final class EntityData extends SavedData {
 		this.fakes = fakes;
 		this.stared = stared;
 		this.pendingDigs.addAll(pendingDigs);
+		this.lastGlimpseDay = lastGlimpseDay;
+		this.glimpses = glimpses;
+		this.screenshotDay = screenshotDay;
+		this.screenshotBy = screenshotBy.orElse(null);
 	}
 
 	/** Records (or updates, by dig id) a shaft that is open. */
@@ -97,13 +117,64 @@ public final class EntityData extends SavedData {
 		setDirty();
 	}
 
+	/** A glimpse on in-game day {@code day} (D-073). Never the surface sightings' place, day or variant. */
+	public void recordGlimpse(long day) {
+		lastGlimpseDay = day;
+		glimpses++;
+		setDirty();
+	}
+
 	public void recordStared() {
 		stared++;
 		setDirty();
 	}
 
+	/**
+	 * The world's one screenshot (D-078), by {@code player} on in-game day {@code day}: recorded only the first time
+	 * (true then, false once there is one), and it counts as that day's sighting (the day rule), never for the place
+	 * or the variant rule.
+	 */
+	public boolean recordScreenshot(UUID player, long day) {
+		if (screenshotTaken()) {
+			return false;
+		}
+		screenshotDay = Math.max(0L, day);
+		screenshotBy = player;
+		countDay(day);
+		setDirty();
+		return true;
+	}
+
+	/** Debug only ({@code /a1016 entity screenshot reset}): forgets the world's screenshot, so it can happen again. */
+	public void forgetScreenshot() {
+		if (screenshotTaken()) {
+			screenshotDay = -1;
+			screenshotBy = null;
+			setDirty();
+		}
+	}
+
+	/** True once the world's screenshot happened. */
+	public boolean screenshotTaken() {
+		return screenshotDay >= 0;
+	}
+
+	/** The in-game day it happened, -1 if not yet. */
+	public long screenshotDay() {
+		return screenshotDay;
+	}
+
+	/** Whose screenshot it was, empty if none yet. */
+	public Optional<UUID> screenshotBy() {
+		return Optional.ofNullable(screenshotBy);
+	}
+
 	private void recordPlaceAndDay(GlobalPos pos, long day) {
 		lastPos = pos;
+		countDay(day);
+	}
+
+	private void countDay(long day) {
 		if (lastDay == day) {
 			countOnLastDay++;
 		} else {
@@ -150,5 +221,14 @@ public final class EntityData extends SavedData {
 
 	public int stared() {
 		return stared;
+	}
+
+	/** The in-game day of the last glimpse, -1 if there was none. */
+	public long lastGlimpseDay() {
+		return lastGlimpseDay;
+	}
+
+	public int glimpses() {
+		return glimpses;
 	}
 }

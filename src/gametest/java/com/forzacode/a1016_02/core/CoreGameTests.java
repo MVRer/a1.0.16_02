@@ -24,8 +24,11 @@ import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
 
-/** Core game tests (plus {@link TraceGameTests}). Same package as core so they can reach package-private setters. */
-public class CoreGameTests extends TraceGameTests {
+/**
+ * Core game tests (plus v1.3's {@link HeKnowsCoreTests}, then {@link TraceGameTests}). Same package as core so they can
+ * reach package-private setters.
+ */
+public class CoreGameTests extends HeKnowsCoreTests {
 	@GameTest
 	public void profileRollIsDeterministic(GameTestHelper helper) {
 		Set<WorldProfile> distinct = new HashSet<>();
@@ -168,6 +171,12 @@ public class CoreGameTests extends TraceGameTests {
 
 		watch.onBroken(level, placed); // breaking a player-placed block is not digging
 		helper.assertTrue(!watch.wasPlacedByPlayer(level, placed) && !watch.wasDugByPlayer(level, placed), "broken placed block");
+
+		// A block placed in a dug cell and broken again (a torch picked up): the cell is dug again, never natural.
+		watch.onPlaced((ServerPlayer) helper.makeMockServerPlayer(GameType.SURVIVAL), level, dug, Blocks.TORCH.defaultBlockState());
+		helper.assertTrue(watch.wasPlacedByPlayer(level, dug) && !watch.wasDugByPlayer(level, dug), "a block placed in a dug cell");
+		watch.onBroken(level, dug);
+		helper.assertTrue(watch.wasDugByPlayer(level, dug) && !watch.wasPlacedByPlayer(level, dug), "the dug cell lost its mark to a place and break");
 		helper.succeed();
 	}
 

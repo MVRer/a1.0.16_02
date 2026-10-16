@@ -37,9 +37,10 @@ import net.minecraft.world.phys.Vec3;
  * Two-player tests for the multiplayer core (MP-0, D-058 to D-064). Game tests share one server and nobody joins
  * it, so each test brings its own {@link Roster}: its own online list, state and participation events, through
  * {@link PlayerWatch}'s package-private source. Nothing here touches the live server's players or the world's
- * state, except reads that are safe with nobody online. {@link CoreContractTests} extends this.
+ * state, except reads that are safe with nobody online. {@link CoreContractTests} extends this; it extends v1.2's
+ * {@link FogWeatherTests} and {@link ConfigVersionTests}.
  */
-public class MultiplayerCoreTests {
+public class MultiplayerCoreTests extends FogWeatherTests {
 	/** A player whose game mode a test can switch. It never joins the server; a {@link Roster} lists it. */
 	static final class TestPlayer extends ServerPlayer {
 		GameType mode;
@@ -61,12 +62,14 @@ public class MultiplayerCoreTests {
 		}
 	}
 
-	/** A test's own online list, state and participation events ({@code "A+"}, {@code "A-"}). */
+	/** A test's own online list, state, participation events ({@code "A+"}, {@code "A-"}) and director (blind rechecks). */
 	static final class Roster implements PlayerWatch.Source {
 		final List<ServerPlayer> online = new ArrayList<>();
 		final HerobrineState state;
 		final List<String> events = new ArrayList<>();
 		final PlayerWatch watch = new PlayerWatch(this);
+		/** Where this watch's blind rechecks go: a stub that does nothing, never the live director. */
+		Director director = new Director.Stub();
 
 		Roster() {
 			this(new HerobrineState());
@@ -93,6 +96,11 @@ public class MultiplayerCoreTests {
 			// On a start the player must already be findable; mark it if not.
 			boolean found = !participating || watch.participant(server, player).isPresent();
 			events.add(name + (participating ? "+" : "-") + (found ? "" : "(not found)"));
+		}
+
+		@Override
+		public Director director() {
+			return director;
 		}
 
 		/** Joins like the server does: Fabric's JOIN runs before the player list has the player. */

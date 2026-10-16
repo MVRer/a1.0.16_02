@@ -25,6 +25,7 @@ import com.forzacode.a1016_02.core.CardTag;
 import com.forzacode.a1016_02.core.FireResult;
 import com.forzacode.a1016_02.core.HerobrineState;
 import com.forzacode.a1016_02.core.ModConfig;
+import com.forzacode.a1016_02.core.Pacing;
 import com.forzacode.a1016_02.core.Services;
 import com.forzacode.a1016_02.core.Signature;
 import com.forzacode.a1016_02.core.Stage;
@@ -218,6 +219,8 @@ public class DirectorGameTests extends DirectorMultiplayerTests {
 			Map<Tier, String> last = new EnumMap<>(Tier.class);
 			Map<Tier, Long> lastProgress = new EnumMap<>(Tier.class);
 			Set<String> everFired = new HashSet<>();
+			// Cards that went back because their moment did not come, parked until these play ticks.
+			Map<String, Long> parkedUntil = new HashMap<>();
 			String previous = null;
 			for (Tier tier : Tier.values()) {
 				cycle.put(tier, new HashSet<>());
@@ -225,11 +228,14 @@ public class DirectorGameTests extends DirectorMultiplayerTests {
 			for (Event e : p.result().events) {
 				if (e.kind() == Kind.DRAW) {
 					lastProgress.put(e.tier(), e.dayTicks());
+				} else if (e.kind() == Kind.GIVE_UP && e.note().endsWith(DirectorBrain.PARKED)) {
+					parkedUntil.put(e.cardId(), e.play() + p.rules().unfitPark);
 				} else if (e.kind() == Kind.REFILL) {
 					helper.assertFalse(cycle.get(e.tier()).isEmpty(), where(p) + "refilled a deck with nothing fired");
-					// No card comes back while one it has not fired could still be drawn in this stage and profile,
-					// unless the deck drew nothing for the whole stall.
+					// No card comes back while one it has not fired could still be drawn in this stage and profile (and is
+					// not parked), unless the deck drew nothing for the whole stall.
 					List<String> waiting = synthetic.stream().filter(card -> card.tier() == e.tier() && !cycle.get(e.tier()).contains(card.id())
+							&& e.play() >= parkedUntil.getOrDefault(card.id(), Long.MIN_VALUE)
 							&& !DirectorTestSupport.outOfStageOrProfile(p.rules(), card, e.stage(), everFired)).map(CardInfo::id).toList();
 					long stuck = e.dayTicks() - lastProgress.getOrDefault(e.tier(), p.result().startDayTicks);
 					helper.assertTrue(waiting.isEmpty() || stuck >= p.rules().deckStall,
@@ -458,6 +464,8 @@ public class DirectorGameTests extends DirectorMultiplayerTests {
 		DirectorRules rules = rules(Tempo.EARLY, Signature.CROSS_ROW);
 		rules.proximityAmbientPerHour = 60;
 		rules.emptySessionChance = 0;
+		// The first hour's cap (D-070, its own test) would hold the pressure back for most of this 3 h run.
+		rules.firstHourMaxFires = -1;
 		PacingMemory memory = new PacingMemory();
 		memory.nextMajorDue = 0;
 		DirectorSim.Params params = DirectorTestSupport.params(rules, 3, rules.attentionNeutral, 3);
@@ -540,18 +548,19 @@ public class DirectorGameTests extends DirectorMultiplayerTests {
 		helper.succeed();
 	}
 
+	/** D-070: whole sessions are rolled empty only from Proximity on; before it every session is lively. */
 	@GameTest
-	public void emptySessionsFromTracesOn(GameTestHelper helper) {
+	public void emptySessionsFromProximityOn(GameTestHelper helper) {
 		int empty = 0;
 		int long45 = 0;
-		int aloneSessions = 0;
+		int earlySessions = 0;
 		for (Playthrough p : playthroughs()) {
 			for (Event e : p.result().events) {
 				if (e.kind() == Kind.SESSION_START) {
 					if (e.flag()) {
-						helper.assertTrue(e.stage().atLeast(Stage.TRACES), where(p) + "empty session in " + e.stage());
-					} else if (e.stage() == Stage.ALONE) {
-						aloneSessions++;
+						helper.assertTrue(e.stage().atLeast(Stage.PROXIMITY), where(p) + "empty session in " + e.stage());
+					} else if (!e.stage().atLeast(Stage.PROXIMITY)) {
+						earlySessions++;
 					}
 				}
 			}
@@ -564,7 +573,7 @@ public class DirectorGameTests extends DirectorMultiplayerTests {
 						where(p) + "a fire inside the empty session from " + span[0]);
 			}
 		}
-		helper.assertTrue(aloneSessions > 0, "no session started in Alone: the 'from Traces on' rule was not tested");
+		helper.assertTrue(earlySessions > 0, "no session started in Alone or Traces: the 'from Proximity on' rule was not tested");
 		helper.assertTrue(empty >= 6 && long45 >= 4, "empty sessions " + empty + " (45+ min: " + long45 + ")");
 		helper.succeed();
 	}
@@ -664,7 +673,10 @@ public class DirectorGameTests extends DirectorMultiplayerTests {
 		helper.assertTrue(env.fired.contains("needs_spot"), "the NO_SPOT card never fired");
 		helper.assertTrue(drawn.stream().filter("needs_spot"::equals).count() == 1, "NO_SPOT put the card back instead of holding it: " + drawn);
 		helper.assertTrue(heldNeverAt >= 0 && !gaveUp.isEmpty(), "the card that never fits was never held and given up");
-		helper.assertTrue(gaveUp.getFirst()[0] - heldNeverAt >= rules.holdGiveUp, "gave up after " + (gaveUp.getFirst()[0] - heldNeverAt) + " ticks");
+		// An ambient whose moment never fits goes back after the short give-back (majors keep the long hold, see
+		// aCardWhoseMomentNeverFitsNeverFreezesItsTier).
+		long heldFor = gaveUp.getFirst()[0] - heldNeverAt;
+		helper.assertTrue(heldFor >= rules.heldUnfitGiveBack && heldFor < rules.holdGiveUp, "gave up after " + heldFor + " ticks");
 		helper.assertFalse(memory.cycleFired(Tier.AMBIENT).contains("never_fits"), "the given-up card did not go back into its deck");
 		helper.assertFalse(env.fired.contains("never_fits"), "a card fired although its moment never fit");
 		helper.succeed();
@@ -880,9 +892,9 @@ public class DirectorGameTests extends DirectorMultiplayerTests {
 	}
 
 	/**
-	 * 4b's rates on the multi-seed average of the scripted playthrough (registered deck, 20 h per seed, code
-	 * defaults): at the low end of every range, never below its floor, and the silence still there. One seed is
-	 * one world's dice, so only the pooled rates are asserted; every run's hard limits hold too.
+	 * 4b's rates (v1.2, D-070) on the multi-seed average of the scripted playthrough (registered deck, 20 h per seed,
+	 * code defaults, fog weather rolled): at the low end of every range, never below its floor, and the silence still
+	 * there. One seed is one world's dice, so only the pooled rates are asserted; every run's hard limits hold too.
 	 */
 	@GameTest(maxTicks = 2000)
 	public void softRatesLandAtTheLowEndOfFourB(GameTestHelper helper) {
@@ -893,6 +905,7 @@ public class DirectorGameTests extends DirectorMultiplayerTests {
 		for (Tempo tempo : Tempo.values()) {
 			List<DirectorSim.Result> runs = DirectorTestSupport.registryRuns(tempo);
 			DirectorSim.Rates rates = DirectorSim.Rates.of(runs);
+			DirectorTestSupport.FourB fourB = DirectorTestSupport.FourB.of(runs, DirectorTestSupport.registryDeck());
 			DirectorRules rules = runs.getFirst().rules;
 			double hour = rules.hourTicks;
 			String at = tempo + " over " + rates.runs() + " seeds: ";
@@ -902,21 +915,23 @@ public class DirectorGameTests extends DirectorMultiplayerTests {
 			}
 			helper.assertTrue(rates.runs() >= 5, at + "fewer than 5 seeds");
 
-			// Traces: about one ambient per hour; the tempo may shift a rate by 40%, and never above the +50% band.
+			// Traces: about two ambients and one minor per hour (fog nights add some), never above the +50% band.
 			helper.assertTrue(rates.tracesAmbientsPerHour() >= 0.6 * rules.tracesAmbientPerHour
 					&& rates.tracesAmbientsPerHour() <= 1.5 * rules.tracesAmbientPerHour, at + "Traces ambients " + rates.summary());
+			helper.assertTrue(fourB.tracesMinorsPerHour() >= 0.5 * rules.tracesMinorsPerHour && fourB.tracesMinorsPerHour() <= 1.5 * rules.tracesMinorsPerHour,
+					at + "Traces minors " + fourB.summary());
 
-			// Proximity: one or two minors per active hour; overall at least 0.7 (slow burn) or 0.6 (40% slower).
-			double minorFloor = tempo == Tempo.SLOW_BURN ? 0.7 : 0.6;
+			// Proximity: 1.5 to 2.5 minors per active hour; overall, with its quiets and empty sessions, at least 0.6
+			// of the low end.
 			helper.assertTrue(rates.minorsPerActiveHour() >= rules.minorsPerHourMin && rates.minorsPerActiveHour() <= rules.minorsPerHourMax,
 					at + "minors while active " + rates.summary());
+			double minorFloor = 0.6 * rules.minorsPerHourMin;
 			helper.assertTrue(rates.minorsPerHour() >= minorFloor && rates.minorsPerHour() <= rules.minorsPerHourMax,
 					at + "minors overall below " + minorFloor + "/h: " + rates.summary());
 
-			// A major every 2 to 4 hours times the tempo. As the playthrough checks it: never more often than the
-			// shortest gap over all the time, never rarer than the longest over the active time. Over all the time
-			// the tuning lands at the long end on purpose (rarity), and a 20 h run only has room for the first gap
-			// and one or two more, so that side is "about" the longest gap (within 5%).
+			// A major every 1.5 to 3 hours times the tempo. As the playthrough checks it: never more often than the
+			// shortest gap over all the time, never rarer than the longest over the active time, and over all the time
+			// about the longest gap at most (within 5%).
 			double every = rates.hoursPerMajor();
 			double shortest = rules.majorEvery.min() / hour;
 			double longest = rules.majorEvery.max() / hour;
@@ -924,11 +939,15 @@ public class DirectorGameTests extends DirectorMultiplayerTests {
 					at + String.format(Locale.ROOT, "a major every %.2f h (%.2f h active), outside %.1f to about %.1f h", every,
 							rates.activeHoursPerMajor(), shortest, longest));
 
-			// Rarity: forced quiets and empty sessions still take a clear share, and from Traces on some whole
-			// 45+ minute sessions have nothing at all.
+			// The first accident never before 3.5 h times the tempo (a hard limit), and it comes: most runs have one.
+			helper.assertTrue(fourB.firstAccidentMinHours() >= rules.firstAccident / hour - 1e-9 && fourB.runsWithAnAccident() * 2 >= fourB.runs(),
+					at + "first accident " + fourB.summary());
+
+			// Rarity: forced quiets and empty sessions still take a clear share, and from Proximity on some whole
+			// 45+ minute sessions have nothing at all (about 1 in 10 sessions is rolled empty).
 			helper.assertTrue(rates.proximityQuietShare() >= 0.3, at + "Proximity is quiet or empty only " + rates.summary());
 			helper.assertTrue(rates.quiets() >= 2 * rates.runs() && rates.emptySessions() >= rates.runs() / 2
-					&& rates.silentSessions() >= rates.runs(), at + "too few silences: " + rates.summary());
+					&& rates.silentSessions() >= rates.runs() / 2, at + "too few silences: " + rates.summary());
 		}
 		helper.succeed();
 	}
@@ -1022,28 +1041,40 @@ public class DirectorGameTests extends DirectorMultiplayerTests {
 		helper.succeed();
 	}
 
+	/**
+	 * Ending B's pace multiplier (D-045) on v1.2's pacing: accidents come closer together, more majors and minors than
+	 * at x1 (pooled over 12 seeds: at v1.2's rates one 30 h run at x1.6 can lose minors to the tension quiets the extra
+	 * fires start, so one seed proves nothing), but never closer than 4b's floors in any run.
+	 */
 	@GameTest
 	public void paceMultiplierKeepsTheHardFloors(GameTestHelper helper) {
-		DirectorSim.Result normal = flagged(Set.of(), 30);
-		long normalMajors = fires(normal, e -> e.tier() == Tier.MAJOR).size();
-		long normalMinors = fires(normal, e -> e.tier() == Tier.MINOR).size();
+		List<DirectorSim.Result> normal = new ArrayList<>();
+		for (long seed = 1; seed <= 12; seed++) {
+			normal.add(flagged(Set.of(), 30, seed));
+		}
+		long normalMajors = normal.stream().mapToLong(r -> fires(r, e -> e.tier() == Tier.MAJOR).size()).sum();
+		long normalMinors = normal.stream().mapToLong(r -> fires(r, e -> e.tier() == Tier.MINOR).size()).sum();
 		helper.assertTrue(normalMajors > 0 && normalMinors > 0, "x1: majors " + normalMajors + ", minors " + normalMinors);
-		long hour = normal.rules.hourTicks;
+		long hour = normal.getFirst().rules.hourTicks;
 		for (String x : List.of("1.6", "4")) {
-			DirectorSim.Result fast = flagged(Set.of("director:pace_multiplier=" + x), 30);
 			String at = "pace x" + x + ": ";
-			long majors = fires(fast, e -> e.tier() == Tier.MAJOR).size();
-			long minors = fires(fast, e -> e.tier() == Tier.MINOR).size();
-			// Accidents come closer together: more majors and minors than at x1 ...
+			long majors = 0;
+			long minors = 0;
+			for (long seed = 1; seed <= 12; seed++) {
+				DirectorSim.Result fast = flagged(Set.of("director:pace_multiplier=" + x), 30, seed);
+				majors += fires(fast, e -> e.tier() == Tier.MAJOR).size();
+				minors += fires(fast, e -> e.tier() == Tier.MINOR).size();
+				// Never closer than 4b's floors: 1 real hour between majors, 15 real minutes between minors.
+				long closestMajor = closest(fires(fast, e -> e.tier() == Tier.MAJOR || e.tier() == Tier.SIGNATURE));
+				long closestMinor = closest(fires(fast, e -> e.tier() == Tier.MINOR));
+				helper.assertTrue(closestMajor >= hour, at + "seed " + seed + ": majors only " + closestMajor + " ticks apart");
+				helper.assertTrue(closestMinor >= hour / 4, at + "seed " + seed + ": minors only " + closestMinor + " ticks apart");
+				// Join grace and no major on day 0 are replayed by the sim's own check with the unscaled numbers.
+				helper.assertTrue(fast.violations.isEmpty() && fast.rules.joinGrace == normal.getFirst().rules.joinGrace, at + "limits " + fast.violations);
+			}
+			// Accidents come closer together: more majors and minors than at x1.
 			helper.assertTrue(majors > normalMajors && minors > normalMinors, at + "majors " + majors + " (x1 " + normalMajors + "), minors " + minors
 					+ " (x1 " + normalMinors + ")");
-			// ... but never closer than 4b's floors: 1 real hour between majors, 15 real minutes between minors.
-			long closestMajor = closest(fires(fast, e -> e.tier() == Tier.MAJOR || e.tier() == Tier.SIGNATURE));
-			long closestMinor = closest(fires(fast, e -> e.tier() == Tier.MINOR));
-			helper.assertTrue(closestMajor >= hour, at + "majors only " + closestMajor + " ticks apart");
-			helper.assertTrue(closestMinor >= hour / 4, at + "minors only " + closestMinor + " ticks apart");
-			// Join grace and no major on day 0 are replayed by the sim's own check with the unscaled numbers.
-			helper.assertTrue(fast.violations.isEmpty() && fast.rules.joinGrace == normal.rules.joinGrace, at + "limits " + fast.violations);
 		}
 		helper.succeed();
 	}
@@ -1085,8 +1116,14 @@ public class DirectorGameTests extends DirectorMultiplayerTests {
 
 	/** A Proximity run from tick 0, day 0 (every fit lands), with these flags on the rules. */
 	private static DirectorSim.Result flagged(Set<String> flags, double hours) {
-		DirectorRules rules = DirectorFlags.apply(rules(Tempo.SLOW_BURN, Signature.CROSS_ROW), DirectorFlags.parse(flags));
-		DirectorSim.Params params = DirectorTestSupport.params(rules, 5, rules.attentionNeutral, hours);
+		return flagged(flags, hours, 5);
+	}
+
+	private static DirectorSim.Result flagged(Set<String> flags, double hours, long seed) {
+		DirectorRules base = DirectorRules.from(new Pacing(), new DirectorConfig(),
+				DirectorTestSupport.profile(Tempo.SLOW_BURN, Signature.CROSS_ROW, WorldProfile.FIXED_FRAGMENTS));
+		DirectorRules rules = DirectorFlags.apply(base, DirectorFlags.parse(flags));
+		DirectorSim.Params params = DirectorTestSupport.params(rules, seed, rules.attentionNeutral, hours);
 		params.fitChance = 1;
 		params.noSpotChance = 0;
 		return DirectorSim.run(rules, SyntheticDeck.cards(), 1000, new DirectorMemory(), Stage.PROXIMITY, 0, new DirectorBrain.Clock(0, 0), params);

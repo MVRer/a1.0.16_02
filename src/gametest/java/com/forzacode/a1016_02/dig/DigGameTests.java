@@ -226,12 +226,13 @@ public class DigGameTests extends TunnelGameTests {
 		MinecraftServer server = helper.getLevel().getServer();
 		CommandSourceStack source = server.createCommandSourceStack().withSuppressedOutput();
 		for (String command : List.of("a1016 dig network grow 3", "a1016 dig network info", "a1016 dig network reveal", "a1016 dig network chest",
-				"a1016 dig tunnel plain", "a1016 dig tunnel tunnel_that_grows", "a1016 dig tunnel tunnel_into_mine")) {
+				"a1016 dig tunnel plain", "a1016 dig tunnel tunnel_that_grows", "a1016 dig tunnel tunnel_into_mine", "a1016 dig steps")) {
 			ParseResults<CommandSourceStack> parsed = server.getCommands().getDispatcher().parse(command, source);
 			helper.assertTrue(!parsed.getReader().canRead() && parsed.getExceptions().isEmpty(), "does not parse: " + command);
 		}
 		server.getCommands().performPrefixedCommand(source, "a1016 dig network info");
 		server.getCommands().performPrefixedCommand(source, "a1016 dig network chest");
+		server.getCommands().performPrefixedCommand(source, "a1016 dig steps");
 		helper.succeed();
 	}
 

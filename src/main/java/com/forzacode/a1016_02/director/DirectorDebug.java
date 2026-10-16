@@ -3,9 +3,11 @@ package com.forzacode.a1016_02.director;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
+import java.util.Optional;
 import java.util.StringJoiner;
 import java.util.UUID;
 
+import com.forzacode.a1016_02.core.FogSpell;
 import com.forzacode.a1016_02.core.HerobrineState;
 import com.forzacode.a1016_02.core.Services;
 import com.forzacode.a1016_02.core.Stage;
@@ -13,6 +15,8 @@ import com.forzacode.a1016_02.core.Tier;
 
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerPlayer;
+
+import org.jspecify.annotations.Nullable;
 
 /** Text for {@code /a1016 state} and {@code /a1016 director}: the world part, then each player's own pacing. */
 final class DirectorDebug {
@@ -53,7 +57,26 @@ final class DirectorDebug {
 						dur(rules, rules.majorGap), dur(rules, rules.majorEvery.min()), dur(rules, rules.majorEvery.max())));
 		lines.add("director: once per world fired " + (w.signaturesFired.isEmpty() ? "-" : String.join(", ", w.signaturesFired))
 				+ (w.lastWarpSummary.isEmpty() ? "" : " | last timewarp " + w.lastWarpSummary));
+		lines.add("director: fog weather " + fogLine(state.effects().fogSpell(), server.overworld().getDefaultClockTime(), rules));
 		return lines;
+	}
+
+	/** What the fog weather does to the director at this overworld clock (D-071): the spell on, if any, and its boost. */
+	static String fogLine(Optional<FogSpell> stored, long clock, DirectorRules rules) {
+		Optional<FogSpell> on = DirectorImpl.fogSpellOn(stored, clock, false);
+		if (on.isEmpty()) {
+			// A spell easing in or out below half its level is not fog yet (or any more): no boost (R2#1).
+			return stored.filter(spell -> spell.activeAt(clock))
+					.map(spell -> String.format(Locale.ROOT, "a %sspell giving %.2f fog of its %.2f, below half: no boost", spell.quiet() ? "quiet " : "",
+							spell.amount(clock), spell.level()))
+					.orElse("clear, no boost");
+		}
+		FogSpell spell = on.get();
+		String until = String.format(Locale.ROOT, "until day %d %05d", Math.floorDiv(spell.untilClock(), DirectorBrain.DAY_TICKS),
+				Math.floorMod(spell.untilClock(), DirectorBrain.DAY_TICKS));
+		return spell.quiet() ? "a quiet spell " + until + ", no boost"
+				: String.format(Locale.ROOT, "a fog spell %s: ambient and minor odds x%.1f, sightings x%.1f, a major due within %s may come now", until,
+						rules.fogWeatherOddsFactor, rules.fogWeatherSightingWeight, dur(rules, rules.fogWeatherMajorPull));
 	}
 
 	/** One player's pacing on one line: tension, quiet, pity, session, held cards, the gate now, what is next, counts. */
@@ -112,19 +135,26 @@ final class DirectorDebug {
 		lines.add("director: " + name + ": next " + next);
 		lines.add(String.format(Locale.ROOT, "director: %s: fires %d (%d of %d fakeable were fakes), felt %d from others, quiets %d, empty sessions %d/%d",
 				name, m.totalFires, m.fakeFires, m.fakeableFires, m.feltFires, m.quietCount, m.emptySessionCount, m.sessionCount));
+		long blind = Services.watch().participant(server, player).map(Services.watch()::blindTicks).orElse(0L);
+		lines.add(recheckLine(name, m, blind, director.lastRecheck(player), now, rules));
 		for (Tier tier : Tier.values()) {
 			List<String> undrawn = new ArrayList<>();
 			List<String> fired = new ArrayList<>();
+			List<String> parked = new ArrayList<>();
 			for (CardInfo card : brain.cards(tier)) {
 				boolean used = m.cycleFired.get(tier).contains(card.id()) || DirectorBrain.oncePerWorld(card) && w.signaturesFired.contains(card.id());
 				(used ? fired : undrawn).add(card.id());
+				if (brain.parked(m, c, card.id())) {
+					parked.add(card.id() + " " + dur(rules, m.parkedUntil.get(card.id()) - now));
+				}
 			}
 			int drawable = brain.candidates(tier, w, m, c, stage).size();
 			Long stuck = m.deckStuckSince.get(tier);
 			String waiting = stuck == null ? "" : String.format(Locale.ROOT, ", waiting on gated cards for %.1f days",
 					(c.dayTicks() - stuck) / (double) DirectorBrain.DAY_TICKS);
-			lines.add(String.format(Locale.ROOT, "deck %s: undrawn %s, fired %s, last %s, drawable now %d%s", tier, undrawn, fired,
-					m.lastFired.getOrDefault(tier, "-"), drawable, waiting));
+			String parkedNote = parked.isEmpty() ? "" : ", parked " + parked;
+			lines.add(String.format(Locale.ROOT, "deck %s: undrawn %s, fired %s, last %s, drawable now %d%s%s", tier, undrawn, fired,
+					m.lastFired.getOrDefault(tier, "-"), drawable, parkedNote, waiting));
 		}
 		List<DirectorMemory.HistoryEntry> history = m.history();
 		int from = Math.max(0, history.size() - 5);
@@ -133,6 +163,16 @@ final class DirectorDebug {
 					e.cardId(), e.fake() ? " fake" : "", e.forced() ? " forced" : "", e.stage()));
 		}
 		return lines;
+	}
+
+	/**
+	 * Blind moments for {@code /a1016 director} (D-077): whether the player is blind now and for how long, their rechecks
+	 * and how many fired a card, and the last one this session (how long ago on their clock, and what it did).
+	 */
+	static String recheckLine(String name, PacingMemory m, long blindTicks, DirectorImpl.@Nullable LastRecheck last, long now, DirectorRules rules) {
+		String blind = blindTicks <= 0 ? "not blind" : String.format(Locale.ROOT, "blind for %.1fs", blindTicks / 20.0);
+		String lastLine = last == null ? "" : " | last " + dur(rules, Math.max(0, now - last.playTicks())) + " ago: " + last.outcome();
+		return String.format(Locale.ROOT, "director: %s: %s | rechecks %d, %d fired%s", name, blind, m.rechecks, m.recheckFires, lastLine);
 	}
 
 	private static String nextAllowed(Tier tier, PacingMemory m, DirectorBrain.Clock c, Stage stage, DirectorRules rules, DirectorBrain brain) {

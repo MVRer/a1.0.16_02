@@ -56,7 +56,8 @@ public final class FootstepLateCard extends AtmosphereCard {
 	private static final Map<UUID, Watch> ARMED = new HashMap<>();
 
 	public FootstepLateCard() {
-		super(ID, Tier.MINOR, Stage.PROXIMITY, Set.of(Habit.WATCHER), Set.of(CardTag.SOUND), false);
+		// From Traces (D-070; v1.1: Proximity).
+		super(ID, Tier.MINOR, Stage.TRACES, Set.of(Habit.WATCHER), Set.of(CardTag.SOUND), false);
 	}
 
 	@Override

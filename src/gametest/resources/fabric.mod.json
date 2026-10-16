@@ -15,7 +15,17 @@
 			"com.forzacode.a1016_02.lore.LoreGameTests",
 			"com.forzacode.a1016_02.accident.AccidentGameTests",
 			"com.forzacode.a1016_02.ending.EndingGameTests",
-			"com.forzacode.a1016_02.debug.DebugGameTests"
+			"com.forzacode.a1016_02.debug.DebugGameTests",
+			"com.forzacode.a1016_02.atmosphere.R2FogReviewTests",
+			"com.forzacode.a1016_02.entity.R2SightingReviewTests",
+			"com.forzacode.a1016_02.entity.R5ScreenshotReviewTests",
+			"com.forzacode.a1016_02.core.VerifyV12Tests",
+			"com.forzacode.a1016_02.dig.VerifyV12DigTests",
+			"com.forzacode.a1016_02.director.VerifyV12DirectorTests",
+			"com.forzacode.a1016_02.core.R6ReviewCoreTests",
+			"com.forzacode.a1016_02.core.VerifyV13Tests",
+			"com.forzacode.a1016_02.director.VerifyV13DirectorTests",
+			"com.forzacode.a1016_02.entity.VerifyV13ScreenshotTests"
 		]
 	},
 	"depends": {

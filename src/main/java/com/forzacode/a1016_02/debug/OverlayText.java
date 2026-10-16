@@ -8,7 +8,9 @@ import com.forzacode.a1016_02.director.DirectorMemory;
 
 /**
  * The overlay's rows from a director snapshot (the viewing player's own pacing and tension, plus the shared stage and
- * attention), the viewer's armed trap with the others' count and the sighting phase. Pure text, {@code Locale.ROOT}.
+ * attention), the viewer's armed trap with the others' count, the sighting phase, the world's fog spell, each
+ * participant's tunnel ladder rung, blind moment (D-077) and last echo or blind card, and the screenshot's arms (D-078).
+ * Pure text, {@code Locale.ROOT}.
  */
 final class OverlayText {
 	private static final long DAY_TICKS = 24000L;
@@ -19,8 +21,12 @@ final class OverlayText {
 	/**
 	 * @param trap     the viewer's own armed trap ("none" if they have none), then how many other players have one armed
 	 * @param sighting the sighting phase ("none" if no figure is out)
+	 * @param fog      the world's fog spell ("none" if there is none; {@code DebugOverlay.fog})
+	 * @param ladder     each participant's tunnel ladder rung ({@code DebugOverlay.ladder})
+	 * @param blind      each participant's blind moment and last echo or blind card ({@code DebugOverlay.blind})
+	 * @param screenshot who is armed for the screenshot, and whether it happened ({@code DebugOverlay.screenshot})
 	 */
-	static List<String> rows(DirectorApi.Snapshot s, String trap, String sighting) {
+	static List<String> rows(DirectorApi.Snapshot s, String trap, String sighting, String fog, String ladder, String blind, String screenshot) {
 		long h = s.hourTicks();
 		List<String> rows = new ArrayList<>();
 		row(rows, "you", Fmt.f("%s%s | %d taking part", s.player(), s.participating() ? "" : " (not taking part)", s.participants()));
@@ -45,6 +51,10 @@ final class OverlayText {
 		row(rows, "next major", next(s.major(), h) + (s.major().dueInTicks() < 0 ? "" : " | due in " + Fmt.dur(s.major().dueInTicks(), h)));
 		row(rows, "trap", trap);
 		row(rows, "sighting", sighting);
+		row(rows, "fog spell", fog);
+		row(rows, "ladder", ladder);
+		row(rows, "blind", blind);
+		row(rows, "screenshot", screenshot);
 		row(rows, "clock", Fmt.f("play %s (world %s) | day %d | %s", Fmt.hm(s.playTicks(), h), Fmt.hm(s.worldPlayTicks(), h),
 				Math.floorDiv(s.dayTicks(), DAY_TICKS), s.sessionTicks() < 0 ? "no session" : "session " + Fmt.dur(s.sessionTicks(), h)
 						+ (s.sessionEmpty() ? " (empty)" : "")));

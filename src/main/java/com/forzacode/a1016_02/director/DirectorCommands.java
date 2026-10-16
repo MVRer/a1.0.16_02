@@ -27,7 +27,7 @@ import net.minecraft.server.level.ServerPlayer;
 import org.jspecify.annotations.Nullable;
 
 /**
- * {@code /a1016 director [player]} (the world part, then that player's state, decks, history),
+ * {@code /a1016 director [player]} (the world part, then that player's state, blind moments' rechecks, decks, history),
  * {@code director tick [player]} (one decision now for them, gates obeyed), {@code director quiet clear [player]},
  * {@code director sim <hours> [synthetic] [telling <atHour>] [player]} (dry run from their pacing, log in
  * {@code logs/a1016_director_sim.log}; {@code telling} has them name him that many hours in, so the run reaches

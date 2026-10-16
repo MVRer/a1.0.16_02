@@ -26,16 +26,25 @@ import net.minecraft.world.phys.Vec3;
  * Its players never join the server.
  */
 final class Crew implements PlayerWatch.Source {
-	/** A player only this crew lists as online. */
+	/** A player only this crew lists as online: in survival unless a test makes them something else ({@link #mode}). */
 	static final class Member extends ServerPlayer {
+		/** Null while the superclass is being built (read as survival). */
+		GameType mode = GameType.SURVIVAL;
+
 		Member(ServerLevel level, UUID uuid, String name) {
 			super(level.getServer(), level, new GameProfile(uuid, name), ClientInformation.createDefault());
 			GameType.SURVIVAL.updatePlayerAbilities(getAbilities());
 		}
 
+		/** This member is in {@code mode} from now on (a spectator: no participant, but still online and in hearing range). */
+		void setMode(GameType mode) {
+			this.mode = mode;
+			mode.updatePlayerAbilities(getAbilities());
+		}
+
 		@Override
 		public GameType gameMode() {
-			return GameType.SURVIVAL;
+			return mode == null ? GameType.SURVIVAL : mode;
 		}
 
 		@Override

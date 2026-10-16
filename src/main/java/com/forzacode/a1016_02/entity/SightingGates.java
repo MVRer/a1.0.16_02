@@ -29,7 +29,12 @@ import net.minecraft.world.phys.Vec3;
 /**
  * The context gates of a sighting (DESIGN.md "Sightings"): fog or dusk, never in clear daylight, never during
  * combat, never indoors, never at the base, 300+ blocks from the last one, never two in one in-game day, never the
- * same variant twice in a row, one figure at a time. Debug fires skip all of this; never the out-of-view rule.
+ * same variant twice in a row, one figure at a time. Debug fires skip all of this; never the out-of-view rule. A
+ * fog spell over the day (D-071: a fog day, a morning carry-over) is not clear daylight, and in that daytime fog only
+ * the cow, the one walking away, between the trunks, across the water and close may come
+ * ({@link SightingRules#daylight}); the fog counts only while the spell gives at least half its level
+ * ({@link SightingRules#fogWeather}), and a sighting that came in it walks away once it no longer does
+ * ({@link SightingRules#fogLifted}). The glimpse is not a card ({@link Variant#isCard}): it has no gates here.
  *
  * <p>Multiplayer (D-058 to D-062): the gates are asked for the player the director picked, in that player's own
  * level. He is one being, so one figure at a time, the day count, the variant rule and the 300-block rule are the
@@ -55,6 +60,9 @@ public final class SightingGates {
 		Pacing pacing = ModConfig.pacing();
 		HerobrineState state = HerobrineState.get(server);
 
+		if (!variant.isCard()) {
+			return Optional.of("not a sighting card (the glimpse comes from the tunnel ladder)");
+		}
 		// The dimension first: each card only ever fits in its own (D-034), checked against the level it is asked about.
 		if (!dimensionFits(variant, level)) {
 			return Optional.of("not in " + dimensionName(variant.dimension()));
@@ -78,8 +86,9 @@ public final class SightingGates {
 		if (!level.dimensionType().hasFixedTime()) {
 			long time = timeOfDay(server);
 			boolean raining = level.isRaining();
-			if (SightingRules.clearDaylight(time, raining, config)) {
-				return Optional.of("clear daylight");
+			Optional<String> daylight = SightingRules.daylight(variant, time, raining, fogWeather(server), config);
+			if (daylight.isPresent()) {
+				return daylight; // clear daylight; in daytime fog (D-071) only the variants that read in it
 			}
 			if (variant == Variant.RIDGE && !SightingRules.duskSky(time, raining, config)) {
 				return Optional.of("no dusk sky");
@@ -178,6 +187,27 @@ public final class SightingGates {
 	/** Time of day, 0 (sunrise) to 23999. */
 	public static long timeOfDay(MinecraftServer server) {
 		return Math.floorMod(server.overworld().getOverworldClockTime(), 24000L);
+	}
+
+	/**
+	 * True while the world's fog spell (D-071, {@code HerobrineState.Effects.fogSpell}) gives fog that counts
+	 * ({@link SightingRules#fogWeather}), on the overworld clock (absolute {@code getDefaultClockTime()}, as the spell
+	 * and {@code FogLimits.of(player)} use it).
+	 */
+	public static boolean fogWeather(MinecraftServer server) {
+		return SightingRules.fogWeather(HerobrineState.get(server).effects().fogSpell(), server.overworld().getDefaultClockTime());
+	}
+
+	/**
+	 * The sky over this level now ({@link SightingRules#sky}): the overworld's time of day, this level's rain and the
+	 * world's fog weather; {@link SightingRules.Sky#OTHER} where time stands still (the End, the Nether).
+	 */
+	public static SightingRules.Sky sky(ServerLevel level) {
+		if (level.dimensionType().hasFixedTime()) {
+			return SightingRules.Sky.OTHER;
+		}
+		MinecraftServer server = level.getServer();
+		return SightingRules.sky(timeOfDay(server), level.isRaining(), fogWeather(server), EntityConfig.get());
 	}
 
 	/** True if {@code pos} is within {@code radius} blocks (horizontal) of the player's own base (D-061). */

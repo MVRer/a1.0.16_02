@@ -5,6 +5,7 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
+import java.util.UUID;
 
 import com.forzacode.a1016_02.core.CommandHooks;
 import com.forzacode.a1016_02.core.GameClock;
@@ -26,7 +27,8 @@ import net.minecraft.util.RandomSource;
 import org.jspecify.annotations.Nullable;
 
 /**
- * {@code /a1016 entity spawn <variant> [player] | clear | info [player] | goesunder | eyes [<flat|bright|glow> [fogResistance]] | tune [<key> <value>]}.
+ * {@code /a1016 entity spawn <variant> [player] | clear | info [player] | goesunder | eyes [<flat|bright|glow> [fogResistance]] | tune [<key> <value>]
+ * | screenshot [reset]}.
  * {@code spawn} and {@code info} act on the named player, else the player running the command, else (from the
  * console) the first participant (D-062.9). {@code goesunder} makes the figure that is out end the sighting by going
  * under (D-030) now, if the ground lets him. Debug only (op level 2, like the whole /a1016 tree). {@code eyes} and
@@ -40,7 +42,7 @@ final class EntityCommands {
 		CommandHooks.register((root, context) -> root.then(Commands.literal("entity")
 				.then(Commands.literal("spawn")
 						.then(Commands.argument("variant", StringArgumentType.word())
-								.suggests((ctx, builder) -> SharedSuggestionProvider.suggest(Arrays.stream(Variant.values()).map(Variant::shortName), builder))
+								.suggests((ctx, builder) -> SharedSuggestionProvider.suggest(Variant.cards().stream().map(Variant::shortName), builder))
 								.executes(ctx -> spawn(ctx, target(ctx.getSource())))
 								.then(Commands.argument("player", EntityArgument.player())
 										.executes(ctx -> spawn(ctx, EntityArgument.getPlayer(ctx, "player"))))))
@@ -55,6 +57,8 @@ final class EntityCommands {
 								.executes(ctx -> setEyes(ctx, null))
 								.then(Commands.argument("fogResistance", DoubleArgumentType.doubleArg(0.0, 1.0))
 										.executes(ctx -> setEyes(ctx, DoubleArgumentType.getDouble(ctx, "fogResistance"))))))
+				.then(Commands.literal("screenshot").executes(EntityCommands::screenshot)
+						.then(Commands.literal("reset").executes(EntityCommands::screenshotReset)))
 				.then(Commands.literal("tune").executes(EntityCommands::tunings)
 						.then(Commands.argument("key", StringArgumentType.word())
 								.suggests((ctx, builder) -> SharedSuggestionProvider.suggest(EntityTuning.KEYS.stream().map(EntityTuning.Key::name), builder))
@@ -140,6 +144,11 @@ final class EntityCommands {
 			ctx.getSource().sendFailure(Component.literal("[a1016] no player to spawn him for"));
 			return 0;
 		}
+		if (!variant.get().isCard()) {
+			ctx.getSource().sendFailure(Component.literal("[a1016] the " + variant.get().shortName()
+					+ " never stands at the fog edge: dig's tunnel ladder sets it up (D-073)"));
+			return 0;
+		}
 		boolean wasOut = FigureApi.anyOut(ctx.getSource().getServer());
 		FogEdge edge = FogEdge.of(player, variant.get() == Variant.CLOSE);
 		FigureApi.Spawned spawned = FigureApi.spawnAtFogEdge(player, variant.get(), RandomSource.create(), true);
@@ -202,6 +211,10 @@ final class EntityCommands {
 					appearedFor, him.spawnDistance(), him.fleeDistance(config), him.approachBlocks(config), him.age() / 20,
 					him.seenFor() < 0 ? -1 : him.seenFor() / 20, him.unseenTicks(), stare, him.staredBy().size(), closed, him.triggered(), him.fled(),
 					him.isLow(), him.moveSpeed(), him.outrunning()));
+			if (him.vanishesInView()) {
+				lines.add(String.format(Locale.ROOT, "  glimpse: eyes %s, vanishes in view, seen %d ticks, unseen %d ticks",
+						him.eyeStyle().map(EyeStyle::shortName).orElse("as configured"), him.seenTicks(), him.unseenTicks()));
+			}
 			GoUnder dig = him.goUnder();
 			if (dig != null) {
 				lines.add(String.format(Locale.ROOT, "  under: %s at %s, %d deep, dug %d, covered %d of %d", dig.status(), dig.plan().top().toShortString(),
@@ -219,9 +232,10 @@ final class EntityCommands {
 		}
 		EntityData data = EntityData.get(server);
 		String last = data.lastPos() == null ? "-" : data.lastPos().pos().toShortString();
-		lines.add(String.format(Locale.ROOT, "record: last=%s@%s day=%d (x%d) today=%d sightings=%d fakes=%d stared=%d",
+		lines.add(String.format(Locale.ROOT, "record: last=%s@%s day=%d (x%d) today=%d sightings=%d fakes=%d stared=%d glimpses=%d (last on day %d)"
+				+ " fogWeather=%s",
 				data.lastVariant().isEmpty() ? "-" : data.lastVariant(), last, data.lastDay(), data.countOnLastDay(), GameClock.day(server),
-				data.sightings(), data.fakes(), data.stared()));
+				data.sightings(), data.fakes(), data.stared(), data.glimpses(), data.lastGlimpseDay(), SightingGates.fogWeather(server) ? "on" : "off"));
 		if (player != null) {
 			HerobrineState state = HerobrineState.get(server);
 			FogEdge edge = FogEdge.of(player, false);
@@ -235,7 +249,7 @@ final class EntityCommands {
 					close.inner(), close.outer(), config.minDistance(), edge.seeable() ? "" : " (fog too thick to see him)",
 					SightingGates.timeOfDay(server), Services.watch().base(player).map(b -> b.pos().toShortString()).orElse("-")));
 			StringBuilder gates = new StringBuilder("gates:");
-			for (Variant variant : Variant.values()) {
+			for (Variant variant : Variant.cards()) {
 				gates.append(' ').append(variant.shortName()).append('=')
 						.append(SightingGates.check(player, player.level(), variant).orElse("ok"));
 			}
@@ -245,6 +259,44 @@ final class EntityCommands {
 			ctx.getSource().sendSuccess(() -> Component.literal(line), false);
 		}
 		return out.size();
+	}
+
+	/** The world's screenshot (D-078): whether it happened (day, whose), and who is armed now (time left, what their client was told). */
+	private static int screenshot(CommandContext<CommandSourceStack> ctx) {
+		MinecraftServer server = ctx.getSource().getServer();
+		EntityData data = EntityData.get(server);
+		TheScreenshot shot = TheScreenshot.LIVE;
+		List<String> lines = new ArrayList<>();
+		String happened = !data.screenshotTaken() ? "not yet"
+				: "on day " + data.screenshotDay() + " for " + data.screenshotBy().map(id -> playerName(server, id)).orElse("?");
+		lines.add("[a1016] entity screenshot: " + happened + ", " + shot.armed().size() + " armed"
+				+ (TheScreenshot.storyOver(server) ? ", the story is over (no arm is kept or made)" : ""));
+		for (UUID id : shot.armed()) {
+			ScreenshotStatePayload told = shot.told(id).orElse(ScreenshotStatePayload.OFF);
+			lines.add(String.format(Locale.ROOT, " %s: %.2f in-game days left, %s, fog %s, the weather's fog end %.0f (arm %d)", playerName(server, id),
+					shot.ticksLeft(server, id) / 24000.0, told.armed() ? "ready" : "paused", told.fogOn() ? "on" : "off", told.fogEnd(), told.arm()));
+		}
+		for (String line : lines) {
+			ctx.getSource().sendSuccess(() -> Component.literal(line), false);
+		}
+		return shot.armed().size();
+	}
+
+	/** Debug: forgets the world's screenshot and disarms everyone, so {@code /a1016 fire the_screenshot} works as new. */
+	private static int screenshotReset(CommandContext<CommandSourceStack> ctx) {
+		MinecraftServer server = ctx.getSource().getServer();
+		EntityData.get(server).forgetScreenshot();
+		TheScreenshot.LIVE.disarmAll(server);
+		ctx.getSource().sendSuccess(() -> Component.literal("[a1016] entity screenshot reset -> not yet, nobody armed"), true);
+		return 1;
+	}
+
+	private static String playerName(MinecraftServer server, UUID id) {
+		ServerPlayer online = server.getPlayerList().getPlayer(id);
+		if (online != null) {
+			return online.getName().getString();
+		}
+		return HerobrineState.get(server).player(id).map(p -> p.name()).orElse(id.toString());
 	}
 
 	/** Where the band's fog end came from. */

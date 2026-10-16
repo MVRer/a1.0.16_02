@@ -1,6 +1,7 @@
 package com.forzacode.a1016_02.core;
 
 import java.util.List;
+import java.util.Optional;
 
 import com.forzacode.a1016_02.A1016_02;
 
@@ -18,8 +19,10 @@ import net.minecraft.server.level.ServerPlayer;
 /**
  * Server-to-client effects. Payload types live here and are registered on both sides; atmosphere does the
  * client side by installing a {@code core.client.ClientEffectsClient.Handler}. Persistent effects (music off,
- * dusk fog) are stored in {@link HerobrineState}, sent to everyone online and sent again on every join. Fog surges
- * and silences he makes reach everyone sharing the moment ({@link #fogSurgeShared}, {@link #silenceShared}, D-060).
+ * dusk fog, the fog spell) are stored in {@link HerobrineState}, sent to everyone online and sent again on every join.
+ * Fog surges and silences he makes reach everyone sharing the moment ({@link #fogSurgeShared}, {@link #silenceShared},
+ * D-060). The payload {@link FogSpell} shares its name with core's {@link com.forzacode.a1016_02.core.FogSpell} record
+ * it carries; inside this class the bare name is the payload.
  */
 public final class ClientEffects {
 	/** Fog closes in to {@code strength} (0 to 1) over {@code rampTicks}, holds, then fades back. */
@@ -74,13 +77,43 @@ public final class ClientEffects {
 		}
 	}
 
+	/**
+	 * The world's fog spell (D-071), or none: the sky is clear (any spell before is over). Persistent. Every client
+	 * computes the spell's fog from it and its own clock ({@code getDefaultClockTime()}), the same as the server's
+	 * {@link FogLimits}.
+	 */
+	public record FogSpell(Optional<com.forzacode.a1016_02.core.FogSpell> spell) implements CustomPacketPayload {
+		public static final Type<FogSpell> TYPE = new Type<>(A1016_02.id("fog_spell"));
+		public static final StreamCodec<ByteBuf, FogSpell> CODEC = ByteBufCodecs.optional(com.forzacode.a1016_02.core.FogSpell.STREAM_CODEC)
+				.map(FogSpell::new, FogSpell::spell);
+
+		public FogSpell {
+			spell = spell != null ? spell : Optional.empty();
+		}
+
+		@Override
+		public Type<FogSpell> type() {
+			return TYPE;
+		}
+	}
+
 	/** Every persistent effect at once, sent on join. */
-	public record Sync(boolean musicOff, float duskFogLevel) implements CustomPacketPayload {
+	public record Sync(boolean musicOff, float duskFogLevel, Optional<com.forzacode.a1016_02.core.FogSpell> fogSpell) implements CustomPacketPayload {
 		public static final Type<Sync> TYPE = new Type<>(A1016_02.id("sync"));
 		public static final StreamCodec<ByteBuf, Sync> CODEC = StreamCodec.composite(
 				ByteBufCodecs.BOOL, Sync::musicOff,
 				ByteBufCodecs.FLOAT, Sync::duskFogLevel,
+				ByteBufCodecs.optional(com.forzacode.a1016_02.core.FogSpell.STREAM_CODEC), Sync::fogSpell,
 				Sync::new);
+
+		public Sync {
+			fogSpell = fogSpell != null ? fogSpell : Optional.empty();
+		}
+
+		/** Without a fog spell. */
+		public Sync(boolean musicOff, float duskFogLevel) {
+			this(musicOff, duskFogLevel, Optional.empty());
+		}
 
 		@Override
 		public Type<Sync> type() {
@@ -97,6 +130,7 @@ public final class ClientEffects {
 		PayloadTypeRegistry.clientboundPlay().register(Silence.TYPE, Silence.CODEC);
 		PayloadTypeRegistry.clientboundPlay().register(MusicOff.TYPE, MusicOff.CODEC);
 		PayloadTypeRegistry.clientboundPlay().register(DuskFog.TYPE, DuskFog.CODEC);
+		PayloadTypeRegistry.clientboundPlay().register(FogSpell.TYPE, FogSpell.CODEC);
 		PayloadTypeRegistry.clientboundPlay().register(Sync.TYPE, Sync.CODEC);
 	}
 
@@ -139,7 +173,8 @@ public final class ClientEffects {
 	/** Stores the setting and sends it to everyone online. */
 	public static void setMusicOff(MinecraftServer server, boolean off) {
 		HerobrineState state = HerobrineState.get(server);
-		state.setEffects(new HerobrineState.Effects(off, state.effects().duskFogLevel()));
+		HerobrineState.Effects old = state.effects();
+		state.setEffects(new HerobrineState.Effects(off, old.duskFogLevel(), old.fogSpell()));
 		server.getPlayerList().getPlayers().forEach(player -> send(player, new MusicOff(off)));
 	}
 
@@ -147,14 +182,32 @@ public final class ClientEffects {
 	public static void setDuskFog(MinecraftServer server, float level) {
 		float clamped = Math.clamp(level, 0.0F, 1.0F);
 		HerobrineState state = HerobrineState.get(server);
-		state.setEffects(new HerobrineState.Effects(state.effects().musicOff(), clamped));
+		HerobrineState.Effects old = state.effects();
+		state.setEffects(new HerobrineState.Effects(old.musicOff(), clamped, old.fogSpell()));
 		server.getPlayerList().getPlayers().forEach(player -> send(player, new DuskFog(clamped)));
+	}
+
+	/**
+	 * Stores the world's fog spell (D-071; empty clears it) and sends it to everyone online, spectators included. One
+	 * spell at a time: a new one replaces the old (join them first with {@link FogWeatherRules#handOver} so the fog
+	 * goes on from where it is). Server thread.
+	 */
+	public static void setFogSpell(MinecraftServer server, Optional<com.forzacode.a1016_02.core.FogSpell> spell) {
+		Optional<com.forzacode.a1016_02.core.FogSpell> stored = spell != null ? spell : Optional.empty();
+		HerobrineState state = HerobrineState.get(server);
+		state.setEffects(state.effects().withFogSpell(stored));
+		FogSpell payload = new FogSpell(stored);
+		server.getPlayerList().getPlayers().forEach(player -> send(player, payload));
+	}
+
+	/** Every persistent effect of this state, as {@link #sync} sends it. */
+	public static Sync syncPayload(HerobrineState.Effects effects) {
+		return new Sync(effects.musicOff(), effects.duskFogLevel(), effects.fogSpell());
 	}
 
 	/** Sends every persistent effect. Core calls this on every join, spectators included. */
 	public static void sync(ServerPlayer player) {
-		HerobrineState.Effects effects = HerobrineState.get(player.level().getServer()).effects();
-		send(player, new Sync(effects.musicOff(), effects.duskFogLevel()));
+		send(player, syncPayload(HerobrineState.get(player.level().getServer()).effects()));
 	}
 
 	private static void send(ServerPlayer player, CustomPacketPayload payload) {
