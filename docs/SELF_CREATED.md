@@ -170,9 +170,10 @@ target's combat; UUIDs across ticks (D-062).
     the refractory wait (D-074's place). Traces and later only; never the first hour (no places yet), never a gap, cap,
     major slot or hard limit. `awayFactor` (1.0) multiplies the rate where the factor is exactly 1, for tuning.
 - **Friends.** Each player's own places and dwell; a felt fire records at the sharer's own position.
-- **Config `sc01` (v1).** `maxPlaces` 24, `radius` 32, `maxFactor` 1.8, `halfLifeDays` 4, `weightAmbient` 0.15,
+- **Config `sc01` (v2).** `maxPlaces` 24, `radius` 32, `maxFactor` 1.8, `halfLifeDays` 4, `weightAmbient` 0.15,
   `weightMinor` 0.3, `weightMajor` 0.5, `weightSighting` 0.2, `trustedFactor` 1.6, `trustedMinHours` 1,
-  `awayFactor` 1.0, `simDreadShare` 0.3, `simDreadFactor` 1.4, `simTrustedShare` 0.05.
+  `awayFactor` 0.9 (1.0 in v1; SC-5's step lowers it where it is still 1.0, see "As built (SC-5)"), `simDreadShare`
+  0.3, `simDreadFactor` 1.4, `simTrustedShare` 0.05.
 - **Build.** `director.sc.Places` (pure: weights, decay, factor, trusted chunk); `PacingMemory.places` and `dwell`
   (saved, optional; old `director.dat` loads empty); `DirectorBrain.Env.placeFactor()` (default 1.0; live env reads the
   player's position); `DirectorSim` models a dread share (`simDreadShare` of ticks at `simDreadFactor`,
@@ -588,7 +589,8 @@ As built (SC-3, `SelfCreatedWorldTests` and `SelfCreatedWorldTrailTests`, struct
   core clears the fog places); sc11 nothing (left by others). sc08 turns back by itself (`WorldSc.turnBack`: a block
   still that block with only its facing changed, both entries then leave the ledger), because core's CONVERT undo
   answers BLOCKED for every player-placed block ("built since"), so **Ending D never turns 08 back** until core blocks
-  only a block that changed since (core ask).
+  only a block that changed since (core ask; done in SC-5: core's undo now takes a conversion back while the block is
+  exactly what it left, Ending D turns 08 back, and `turnBack` goes through core's undo for such entries).
 
 ---
 
@@ -772,7 +774,8 @@ As built (SC-4: 02, 03, 10's call, 14; `SelfCreatedEntityTests`, `SelfCreatedLor
   `DirectorSim.Params.places(cfg)` turns the dread share on (own dice, off by default, so every older run is unchanged);
   `/a1016 director sim` and timewarp's summary use it while the layer is on. The debug lines are `/a1016 sc 01`'s only, never `/a1016 director`'s.
   Measured (192 seeds x 3 tempos): with the share, Traces ambients +5 to +11%, Traces minors +7 to +13%, Proximity
-  ambients +4 to +6%, minors +3 to +5%, majors within 2%, the first hour fire for fire the same: `awayFactor` stays 1.
+  ambients +4 to +6%, minors +3 to +5%, majors within 2%, the first hour fire for fire the same: `awayFactor` stays 1
+  (SC-5, with every card of the layer in the deck: 0.9, section v2).
 - **12.** `dig.sc.RestRefusal` (+ card), `dig.mixin.ServerPlayerSleepMixin` (`@ModifyExpressionValue` on the monster
   list's `isEmpty` in `ServerPlayer.startSleepInBed`, so creative never sees it, as vanilla skips the check there),
   `Sc12Config`. Arms in `DigData.sc()` (`DigScMemory`, saved under `sc`). The cap counts refusals; an arm is dropped when
@@ -803,6 +806,43 @@ world icon is put back (03). The record's version reads `a1.0.16_02` for good af
 `/a1016 debug overlay sc` (dev only) adds per participant: the place factor (01), any arm (02, 03, 05, 06, 12, 13, 14,
 15) with time left, tonight's empty night (04), fog places (10).
 
+#### As built (SC-5, integration: `SelfCreatedIntegrationTests`, `SelfCreatedPacingTests`, `SelfCreatedDebugTests`)
+- **The merge.** SC-0 to SC-4 together compiled and registered cleanly (12 cards, 16 reverts, every `sc <NN>` under one
+  `sc` literal). One test failed: SC-2's dry runs with the dread share, now over the whole layer's deck, put a very late
+  world's Traces minors 21% over the plain runs (17% over DESIGN 4b's v1.3 numbers). Fixed by the design's knob
+  (below), nothing else.
+- **Core: a conversion of a block a player placed** (SC-3's ask). `TraceLedger.Entry` gains `after`, the block a
+  CONVERT left (saved under its own key `after`, read leniently: v1.3 skips it, an older entry loads without it; the
+  older constructors give none). `TraceUndo`'s CONVERT is BLOCKED only when the block now is not exactly `after` (or a
+  block entity stands there that the old block never had); a block a player placed goes back while it is still what
+  the conversion left. An entry without `after` keeps the old rule (a placed block or a dug cell is theirs). So Ending
+  D's afterward turns 08 back; `WorldSc.turnBack` (the switch) goes through core's undo for entries with `after` and
+  keeps its facing-only rule for older ones, so a block the player turned again since stays theirs.
+- **Seams.** `FIGURE_LEFT`'s `appearedFor` is the sighting's own player (`FigureApi.spawnAtFogEdge` and the glimpse set
+  it), as 10 needs: no change. 14 (d) also skips an undo's own edits and their dependents (`core:undo...`, the switch's
+  give-backs) and 08's turning back (`world:sc08/back`, `RecordRules.TURNED_BACK`); t0rch's shaft is `:left/` already.
+  The fog places' one producer is 10 (its live env is `ClientEffects.addFogPlace`); SC-1's client draws them. The six
+  `ScGates` copies and `Places.storyQuiet` hold the same story flags (checked; left where they are).
+- **`/a1016 sc`** (`debug.ScIndex`): the switch, then one line per number, `NN: ...`, in counts, days, "armed",
+  "waiting", "done" and time left only (`SelfCreatedDebugTests` holds a list of words that would name a feature and
+  checks the index and the overlay against it). 01 each participant's factor where they stand (or why it is 1 now) and
+  how many places and whether a chunk is trusted; 02, 03, 14 their parts' own lines; 04 the count and the one set; 05,
+  06, 13, 15 each player's arm (13's is the debug arm) with time left; 07 the count; 08, 09 per base; 10 what waits and
+  the world's places; 11 the trails left; 12 the refusals and the arms. `/a1016 sc on|off` is the switch, live
+  (`SelfCreated.setEnabled`; off runs every revert at once).
+- **Overlay.** `/a1016 debug overlay sc` turns the overlay on with the layer's rows (`on` alone shows none; `off` drops
+  both): `sc 04`, `sc 10`, then one row per participant (the viewer first, at most 6): `01 x..` and each arm with its
+  time left (02, 03 and 14 for the host only, 05, 06, 12, 13, 15). `OverlayPayload.MAX_ROWS` is 40.
+- **Readers added** (read-only): `ComingHome.ticksLeft`/`armedCard`, `InStep.armTicksLeft`/`spent`,
+  `WayBack.armTicksLeft`, `ScMarks.bases`.
+- **Sims.** `DirectorSim.Params.fitChanceOf` (a card's own chance a look, on the same dice; null: `fitChance` for all)
+  models a rare moment. `SelfCreatedPacingTests` checks every card's row of the table above and runs 192 seeds x 20 h
+  per tempo in four cases against the deck without the layer: every card at the usual dice; with `sc01`'s dread share;
+  every card of the layer never fitting (dread share); every one fitting 2% a look (dread share; the way back holds the
+  major tier for its long hold, then parks). Every case keeps D-070's first hour, every hard limit and every rate within
+  15%. `sc01.awayFactor` is 0.9 (section v2): at 1.0 the dread share put very late Traces minors 21% over the plain runs.
+- **Switched off** works as each part built it; `/a1016 sc off` is the live path the verifier can use.
+
 ## Pacing
 
 New cards join the decks. Alone gains one ambient (sc_06), Traces four minors and two ambients, Proximity three minors
@@ -828,6 +868,45 @@ limits over 20 h, and Traces and Proximity rates within 15% of DESIGN 4b, else i
 
 Not cards (capped and spaced on their own): 01 (a rate factor), 03 (once, on a sighting), 04 (a night roll, at most 5),
 10 (on a sighting), 14 (b), (c), (d).
+
+Measured (SC-5, `SelfCreatedPacingTests`: the registered deck with every card above and `sc01`'s dread share at
+`awayFactor` 0.9, 192 seeds of 20 h per tempo; in brackets the same runs without the layer's cards, DESIGN 4b's v1.3
+table):
+
+| | Early | Slow burn | Very late |
+| --- | --- | --- | --- |
+| Alone lasts | 0.49 h | 0.65 h | 0.81 h |
+| Alone: ambients per hour | 2.68 (2.66) | 2.89 (2.86) | 2.88 (2.85) |
+| Traces: ambients per hour | 2.29 (2.19) | 2.32 (2.20) | 2.32 (2.20) |
+| Traces: minors per hour | 0.92 (0.86) | 0.86 (0.82) | 0.84 (0.78) |
+| Proximity: ambients per hour | 1.43 (1.38) | 1.46 (1.39) | 1.50 (1.46) |
+| Proximity: minors per hour (active) | 1.04 (1.03), 1.91 | 1.06 (1.05), 1.93 | 1.10 (1.09), 1.94 |
+| Proximity: a major every | 1.82 h (1.78) | 2.25 h (2.23) | 2.75 h (2.73) |
+| First accident: median (earliest) | 4.43 h (2.70 h) | 5.50 h (3.52 h) | 6.38 h (4.52 h) |
+| First hour: first event by 30 / 45 minutes | 80% / 94% | 81% / 95% | 81% / 95% |
+| First hour: two or more events | 90% | 92% | 95% |
+
+The first hour is the plain runs' fire for fire (the factor never applies there). Every card at the usual dice
+without the dread share moves no rate more than 4% (very late Traces minors 0.75). With every card of the layer never
+fitting (a player alone with no house, pets or caves of the right shape): Alone's ambients 2.50 / 2.77 / 2.80 (their
+holds cost up to 6%, like the blind cards'), Traces 2.13 / 2.19 / 2.20 ambients and 0.85 / 0.87 / 0.81 minors,
+Proximity 1.45 / 1.48 / 1.50 and 1.00 / 1.03 / 1.05, a major every 1.86 / 2.31 / 2.88 h, the first event by 30 minutes
+in 78 to 79% of runs, by 45 in 93 to 95%. Fitting 2% a look: Proximity's ambients 1.28 / 1.32 / 1.35 (5 to 8% under), minors
+0.96 / 1.02 / 1.07, a major every 1.81 / 2.28 / 2.72 h. No hard limit is broken in any run.
+
+### Verifier checklist (SC-7; dev client, a LAN pair for 02)
+Not seen in a client yet, each with its debug: 04's sky and quiet (`/a1016 sc 04 tonight force` before 11000: no moon
+from 11000 to 1000, no monster spawning within 96 from 12000, animals silent, the next night as vanilla); 10's fog place
+(`/a1016 sc 10 here` on open ground: the fog thickens toward it over a minute, its haze and tint, none in a tunnel or a
+closed house, gone after its days; `/a1016 sc` line 10 counts it); 02 with two clients (`/a1016 sc 02 arm` on one, the
+other 24 to 64 off in a fog night standing still 1.5 s: no name tag; moves or comes within 24: back). Seen by their
+workers and worth a second look: 03 (`/a1016 sc 03 arm`, `/a1016 entity spawn close` near the base at night: the world
+list's picture, the host's 0.7 s pause once), 14 (`/a1016 sc 14 arm last nogap` and `version nogap`, quit to the title:
+last night's time, the italic version and vanilla's backup question; `/a1016 sc 14 seed` then `/seed`), 12 (`/a1016 sc
+12 arm noshaft`, sleep at night: vanilla's message once, then sleep). The switch: `/a1016 sc off` puts back 08 (a
+turned block a player turned again stays), 09, 10, 07's names, 03's picture, 14's statistics and record, the empty
+night and every arm; `/a1016 sc` then says off; `/a1016 sc on`. The spoiler grep: no feature words in card ids, command
+literals, section names, `/a1016 sc`'s index or INFO logs.
 
 ## Considered and left out
 - A mannequin or any player-shaped entity: spawning one breaks ARCH 2; it is also fanon.

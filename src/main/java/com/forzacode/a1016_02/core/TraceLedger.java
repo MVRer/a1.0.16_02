@@ -50,7 +50,7 @@ public final class TraceLedger extends SavedData {
 
 	/**
 	 * What an entry undoes. REMOVE, MOVE and CONVERT keep the block (and block entity data) from before; MOVE also the
-	 * destination ({@code to}). REMOVE_STACK and MOVE_STACK keep the stack and slots. BLOCK_ENTITY is block entity
+	 * destination ({@code to}), CONVERT also the block it left ({@code after}, under a key v1.3 skips). REMOVE_STACK and MOVE_STACK keep the stack and slots. BLOCK_ENTITY is block entity
 	 * data replaced in place (sign text): {@code blockEntity} is the data from before. EQUIP is a stack taken from a
 	 * container ({@code pos}, {@code slot}) now worn by a mob ({@code entity}, equipment slot ordinal in
 	 * {@code toSlot}, where it was in {@code to}); if the mob died the item dropped and there is nothing to undo. NAME
@@ -78,9 +78,17 @@ public final class TraceLedger extends SavedData {
 	 * @param slot        the source slot of a stack edit, or -1
 	 * @param toSlot      the destination slot of a stack move (the equipment slot ordinal for EQUIP), or -1
 	 * @param entity      the mob that wears the stack (EQUIP)
+	 * @param after       the block a CONVERT left (empty for every other kind, and for a CONVERT ledgered before it
+	 *                    was kept): its undo takes it back only while the block is still exactly that
 	 */
 	public record Entry(Kind kind, String cause, long day, GlobalPos pos, Optional<BlockPos> to, Optional<BlockState> state,
-			Optional<CompoundTag> blockEntity, Optional<ItemStack> stack, int slot, int toSlot, Optional<UUID> entity) {
+			Optional<CompoundTag> blockEntity, Optional<ItemStack> stack, int slot, int toSlot, Optional<UUID> entity, Optional<BlockState> after) {
+		/** An entry without the block a conversion left. */
+		public Entry(Kind kind, String cause, long day, GlobalPos pos, Optional<BlockPos> to, Optional<BlockState> state,
+				Optional<CompoundTag> blockEntity, Optional<ItemStack> stack, int slot, int toSlot, Optional<UUID> entity) {
+			this(kind, cause, day, pos, to, state, blockEntity, stack, slot, toSlot, entity, Optional.empty());
+		}
+
 		/** An entry that involves no entity. */
 		public Entry(Kind kind, String cause, long day, GlobalPos pos, Optional<BlockPos> to, Optional<BlockState> state,
 				Optional<CompoundTag> blockEntity, Optional<ItemStack> stack, int slot, int toSlot) {
@@ -98,7 +106,9 @@ public final class TraceLedger extends SavedData {
 				ItemStack.CODEC.optionalFieldOf("stack").forGetter(Entry::stack),
 				Codec.INT.optionalFieldOf("slot", -1).forGetter(Entry::slot),
 				Codec.INT.optionalFieldOf("toSlot", -1).forGetter(Entry::toSlot),
-				UUIDUtil.CODEC.optionalFieldOf("entity").forGetter(Entry::entity)
+				UUIDUtil.CODEC.optionalFieldOf("entity").forGetter(Entry::entity),
+				// A key v1.3 does not read (it skips it); an entry from before loads without it.
+				BlockState.CODEC.lenientOptionalFieldOf("after").forGetter(Entry::after)
 		).apply(i, Entry::new));
 	}
 
@@ -167,7 +177,7 @@ public final class TraceLedger extends SavedData {
 	Entry add(Entry entry) {
 		if (entry.stack().filter(ItemStack::isEmpty).isPresent()) {
 			entry = new Entry(entry.kind(), entry.cause(), entry.day(), entry.pos(), entry.to(), entry.state(), entry.blockEntity(),
-					Optional.empty(), entry.slot(), entry.toSlot(), entry.entity());
+					Optional.empty(), entry.slot(), entry.toSlot(), entry.entity(), entry.after());
 		}
 		entries.add(entry);
 		setDirty();

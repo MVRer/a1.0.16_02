@@ -20,7 +20,8 @@ import net.minecraft.server.level.ServerPlayer;
  * {@code Locale.ROOT}. {@code on == false} hides the panel.
  */
 public record OverlayPayload(boolean on, List<String> rows) implements CustomPacketPayload {
-	public static final int MAX_ROWS = 32;
+	/** The director's rows, at most four held cards, and the layer's rows ({@code ScIndex.overlay}, at most nine). */
+	public static final int MAX_ROWS = 40;
 	public static final char SEPARATOR = '\t';
 	public static final Type<OverlayPayload> TYPE = new Type<>(A1016_02.id("debug/overlay"));
 	public static final StreamCodec<ByteBuf, OverlayPayload> CODEC = StreamCodec.composite(

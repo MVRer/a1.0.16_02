@@ -817,8 +817,9 @@ public final class TraceService {
 	 * survive there), REMOVE_STACK through {@link #restoreStack} into its own container, and MOVE, CONVERT, MOVE_STACK
 	 * and sign text (BLOCK_ENTITY) by the reverse edit under {@code cause}; the undone entry and the entry the reverse
 	 * edit wrote are both dropped (neighbours it broke stay ledgered as {@code <cause>/dependent}). Nothing is created:
-	 * a moved block or stack goes back only while it is still where it was moved; a conversion is not undone where the
-	 * player has built or dug since. NAME (D-086) gives the mob its name back wherever it is in this level, out of view
+	 * a moved block or stack goes back only while it is still where it was moved; a conversion goes back only while the
+	 * block is still exactly what it left ({@code Entry.after}; a block a player placed included), and an entry from
+	 * before it kept that block is not undone where the player has built or dug since. NAME (D-086) gives the mob its name back wherever it is in this level, out of view
 	 * (BLOCKED once it has a name again, or once the entities of the chunk it was in are loaded and it is not in the
 	 * level; UNLOADED while they are not). EQUIP is never undone. Never loads a chunk. Which entries to undo (and which
 	 * to keep, like what others left) is the caller's choice. {@link HerobrineEvents#TRACED} fires afterwards only for

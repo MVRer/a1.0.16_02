@@ -55,11 +55,11 @@ public final class WorldSc {
 	}
 
 	/**
-	 * 08's give-back: turns back, newest first, every turned block of these entries (CONVERT) that is loaded, out of view
-	 * and still that block with only its facing changed (anything else there now is the player's), by the reverse
-	 * conversion; then both the turn's entry and the reverse one leave the ledger, so nothing of it is left to give back
-	 * and running this again does nothing more. (Core's undo leaves a block a player placed alone, as built since, and
-	 * every turned block is one a player placed.) Returns how many were turned back.
+	 * 08's give-back: turns back, newest first, every turned block of these entries (CONVERT) that is loaded and out of
+	 * view, then both the turn's entry and the reverse one leave the ledger, so nothing of it is left to give back and
+	 * running this again does nothing more. An entry that keeps the block the turn left goes through core's undo (SC-5:
+	 * only while the block is still exactly that; anything else there now is the player's); one from before core kept it
+	 * is turned back while it is still that block with only its facing changed. Returns how many were turned back.
 	 */
 	public static int turnBack(MinecraftServer server, Predicate<TraceLedger.Entry> which) {
 		TraceLedger ledger = TraceLedger.get(server);
@@ -72,6 +72,12 @@ public final class WorldSc {
 			BlockPos pos = entry.pos().pos();
 			BlockState old = entry.state().orElse(null);
 			if (level == null || old == null || !level.isLoaded(pos)) {
+				continue;
+			}
+			if (entry.after().isPresent()) {
+				if (Services.traces().undo(level, entry, back) == TraceService.UndoResult.DONE) {
+					done++;
+				}
 				continue;
 			}
 			BlockState now = level.getBlockState(pos);

@@ -19,7 +19,7 @@ import net.minecraft.server.MinecraftServer;
 /**
  * Playtest tooling: {@code /a1016 debug playthrough <hours> [seed]} (every tempo, logs in
  * {@code logs/a1016_playthrough_<tempo>.log}) and, in a development environment only,
- * {@code /a1016 debug overlay on|off}.
+ * {@code /a1016 debug overlay on|off|sc} ({@code sc}: on, with the self-created layer's rows).
  */
 final class PlaytestCommands {
 	private PlaytestCommands() {
@@ -37,7 +37,8 @@ final class PlaytestCommands {
 				debug.then(Commands.literal("overlay")
 						.executes(PlaytestCommands::overlayStatus)
 						.then(Commands.literal("on").executes(ctx -> overlay(ctx, true)))
-						.then(Commands.literal("off").executes(ctx -> overlay(ctx, false))));
+						.then(Commands.literal("off").executes(ctx -> overlay(ctx, false)))
+						.then(Commands.literal("sc").executes(PlaytestCommands::overlaySc)));
 			}
 			root.then(debug);
 		});
@@ -80,8 +81,16 @@ final class PlaytestCommands {
 		return 1;
 	}
 
+	private static int overlaySc(CommandContext<CommandSourceStack> ctx) {
+		DebugOverlay.setEnabled(ctx.getSource().getServer(), true, true);
+		ctx.getSource().sendSuccess(() -> Component.literal("[a1016] debug overlay " + (DebugOverlay.enabled() ? "on with the sc rows (op players, once per second)"
+				: "off")), true);
+		return 1;
+	}
+
 	private static int overlayStatus(CommandContext<CommandSourceStack> ctx) {
-		send(ctx, "[a1016] debug overlay is " + (DebugOverlay.enabled() ? "on" : "off") + "; /a1016 debug overlay on|off");
+		send(ctx, "[a1016] debug overlay is " + (DebugOverlay.enabled() ? DebugOverlay.scRows() ? "on with the sc rows" : "on" : "off")
+				+ "; /a1016 debug overlay on|off|sc");
 		return 1;
 	}
 

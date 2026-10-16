@@ -46,12 +46,15 @@ import org.jspecify.annotations.Nullable;
  * by default, never saved): once per second, every op player gets the director's state as they see it (their own
  * pacing and tension, the shared stage and attention, their own armed trap and how many others are armed, the world's
  * fog spell, each participant's tunnel ladder rung, blind moment and last echo or blind card, and who is armed for the
- * screenshot) as an {@link OverlayPayload}. Read-only: it never changes the director or the world.
+ * screenshot) as an {@link OverlayPayload}. With {@code /a1016 debug overlay sc} (the self-created layer, D-080: only
+ * then) it also shows the layer's rows ({@link ScIndex#overlay}). Read-only: it never changes the director or the world.
  */
 final class DebugOverlay {
 	private static final int PERIOD_TICKS = 20;
 	private static final long DAY_TICKS = 24000L;
 	private static boolean enabled;
+	/** The layer's rows too ({@code /a1016 debug overlay sc}); off with the overlay. */
+	private static boolean scRows;
 
 	private DebugOverlay() {
 	}
@@ -62,7 +65,10 @@ final class DebugOverlay {
 			return;
 		}
 		ServerTickEvents.END_SERVER_TICK.register(DebugOverlay::tick);
-		ServerLifecycleEvents.SERVER_STOPPED.register(server -> enabled = false);
+		ServerLifecycleEvents.SERVER_STOPPED.register(server -> {
+			enabled = false;
+			scRows = false;
+		});
 	}
 
 	/** Dev only: a release jar never shows the overlay. */
@@ -74,8 +80,18 @@ final class DebugOverlay {
 		return enabled;
 	}
 
+	static boolean scRows() {
+		return scRows;
+	}
+
 	static void setEnabled(MinecraftServer server, boolean on) {
+		setEnabled(server, on, false);
+	}
+
+	/** On or off; {@code sc} adds the layer's rows (only with the overlay on). */
+	static void setEnabled(MinecraftServer server, boolean on, boolean sc) {
 		enabled = on && available();
+		scRows = enabled && sc;
 		sendToOps(server, enabled);
 	}
 
@@ -92,8 +108,14 @@ final class DebugOverlay {
 	static OverlayPayload build(MinecraftServer server, UUID viewer) {
 		try {
 			DirectorApi.Snapshot snapshot = DirectorApi.snapshot(server, viewer);
-			return new OverlayPayload(true, OverlayText.rows(snapshot, trap(server, viewer), sighting(server), fog(server), ladder(server, viewer),
+			List<String> rows = new ArrayList<>(OverlayText.rows(snapshot, trap(server, viewer), sighting(server), fog(server), ladder(server, viewer),
 					blind(server, viewer, snapshot.hourTicks()), screenshot(server)));
+			if (scRows) {
+				for (String[] row : ScIndex.overlay(server, viewer)) {
+					rows.add(row[0] + OverlayPayload.SEPARATOR + row[1]);
+				}
+			}
+			return new OverlayPayload(true, rows);
 		} catch (RuntimeException e) {
 			A1016_02.LOGGER.error("[a1016] debug overlay failed", e);
 			return new OverlayPayload(true, List.of("error" + OverlayPayload.SEPARATOR + e));

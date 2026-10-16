@@ -508,6 +508,12 @@ public final class WayBack {
 		return ARMS.containsKey(player);
 	}
 
+	/** Server ticks this player's debug arm has left at server tick {@code now}, or -1 if they have none. */
+	public static long armTicksLeft(UUID player, long now) {
+		Arm arm = ARMS.get(player);
+		return arm == null ? -1L : Math.max(0L, arm.until - now);
+	}
+
 	/** Every 20 ticks: each armed participant's plan; the first that fits fires (forced), and the op is told. */
 	public static void tickArms(MinecraftServer server, long now) {
 		if (ARMS.isEmpty()) {

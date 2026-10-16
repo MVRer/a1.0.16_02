@@ -149,6 +149,18 @@ public final class ComingHome {
 		return arms.containsKey(player);
 	}
 
+	/** Ticks of the player's own play their arm has left, or -1 if they are not armed (debug's index and overlay). */
+	public long ticksLeft(MinecraftServer server, UUID player) {
+		Arm arm = arms.get(player);
+		return arm == null ? -1L : Math.max(0L, arm.until - playTicks.apply(server, player));
+	}
+
+	/** The card the player is armed with ({@link #STEPS_ID} or {@link #WAITING_ID}), or empty. */
+	public Optional<String> armedCard(UUID player) {
+		Arm arm = arms.get(player);
+		return arm == null ? Optional.empty() : Optional.of(arm.kind == Kind.STEPS ? STEPS_ID : WAITING_ID);
+	}
+
 	/** The player's arm (tests, debug), or null. */
 	@Nullable Arm armOf(UUID player) {
 		return arms.get(player);

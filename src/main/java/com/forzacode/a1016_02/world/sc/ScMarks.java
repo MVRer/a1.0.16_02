@@ -79,6 +79,11 @@ public final class ScMarks {
 		return bases.isEmpty() && trails.isEmpty();
 	}
 
+	/** Every base with marks, in the order they were first marked (unmodifiable; debug's index). */
+	public Map<GlobalPos, Base> bases() {
+		return java.util.Collections.unmodifiableMap(bases);
+	}
+
 	/** This base's marks ({@link Base#NONE} if none). */
 	public Base base(GlobalPos base) {
 		return bases.getOrDefault(base, Base.NONE);
