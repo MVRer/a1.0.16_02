@@ -31,20 +31,29 @@ import net.minecraft.world.level.block.state.BlockState;
 
 /**
  * The self-created layer's accident part (docs/SELF_CREATED.md, 15): on a slab of natural stone far from everything,
- * with lava, water, a short drop, a long drop and solid rock under its cells, a stand from 5 s ago on one of the
- * player's routes goes (ledgered, the day and count saved) once they are 8 blocks past and facing away; refused for a
- * block a player placed, in view, beside a friend, with nothing or a long drop under it, on an armed trap's ground,
- * too soon or too late, off their routes (a forced arm drops the passes), on a bridge of theirs, once today, after the
+ * with drops of 2, 3 and 4 from the feet, lava, water, magma and solid rock under its cells, a stand from 5 s ago on
+ * one of the player's routes goes (ledgered, the day and count saved) once they are 8 blocks past and facing away;
+ * refused for a block a player placed, in view, beside a friend, with nothing, a fluid, a floor that hurts or a fall
+ * of more than 3 under it (review R9: never lethal on its own), on an armed trap's ground, too soon or too late, off
+ * their routes (a forced arm drops the passes), on a bridge of theirs, while they are hurt, once today, after the
  * story; the standing ring and the card's moment; storage and the section. Each test has its own group, routes, ring,
  * traps, memory and clocks; only the trace service is the live one.
  */
 public class SelfCreatedAccidentTests {
-	/** Cells along x on the slab (ground at y 9, feet at y 10, z 6) and what lies under each. */
-	private static final int LAVA = 10;
-	private static final int WATER = 14;
-	private static final int SHORT_DROP = 18;
-	private static final int LONG_DROP = 22;
+	// Cells along x on the slab (ground at y 9, feet at y 10, z 6) and what lies under each.
+	/** Air at y 8 onto stone: a fall of 2 from the feet. */
+	private static final int PIT = 10;
+	/** Air at y 7 and 8 onto stone: a fall of 3. */
+	private static final int PIT3 = 14;
+	/** Air at y 8 over lava. */
+	private static final int LAVA = 18;
+	/** Air from y 6 to 8 onto stone: a fall of 4. */
+	private static final int DEEP = 22;
 	private static final int SOLID = 26;
+	/** Water right under the ground. */
+	private static final int WATER = 30;
+	/** Air at y 8 onto magma. */
+	private static final int MAGMA = 34;
 
 	private static final class Field {
 		final GameTestHelper helper;
@@ -68,22 +77,25 @@ public class SelfCreatedAccidentTests {
 			this.level = helper.getLevel();
 			this.origin = helper.absolutePos(BlockPos.ZERO).offset(9000 + slot * 512, 40, 5000);
 			BlockState stone = Blocks.STONE.defaultBlockState();
-			for (int x = 0; x < 36; x++) {
+			for (int x = 0; x < 44; x++) {
 				for (int z = 0; z < 12; z++) {
 					for (int y = 0; y < 16; y++) {
 						level.setBlock(at(x, y, z), y < 10 ? stone : Blocks.AIR.defaultBlockState(), Block.UPDATE_CLIENTS);
 					}
 				}
 			}
+			air(PIT, 8, 8);
+			air(PIT3, 7, 8);
 			air(LAVA, 8, 8);
 			level.setBlock(at(LAVA, 7, 6), Blocks.LAVA.defaultBlockState(), Block.UPDATE_CLIENTS);
+			air(DEEP, 6, 8);
 			level.setBlock(at(WATER, 8, 6), Blocks.WATER.defaultBlockState(), Block.UPDATE_CLIENTS);
-			air(SHORT_DROP, 5, 8);
-			air(LONG_DROP, 1, 8);
+			air(MAGMA, 8, 8);
+			level.setBlock(at(MAGMA, 7, 6), Blocks.MAGMA_BLOCK.defaultBlockState(), Block.UPDATE_CLIENTS);
 			ServerPlayer mock = (ServerPlayer) helper.makeMockServerPlayer(GameType.SURVIVAL);
 			this.player = mock;
 			group = new Group(helper, mock);
-			standAt(LAVA + 8, -90);
+			standAt(PIT + 8, -90);
 		}
 
 		BlockPos at(int x, int y, int z) {
@@ -141,18 +153,19 @@ public class SelfCreatedAccidentTests {
 	}
 
 	/**
-	 * The block they stood on 5 s ago over lava, on a route walked 3 times, goes once they are 8 past it facing away:
-	 * one ledgered removal, the day and the world's count saved, and then nothing more that day. The undo puts it back.
+	 * The block they stood on 5 s ago over a short drop, on a route walked 3 times, goes once they are 8 past it facing
+	 * away: one ledgered removal, the day and the world's count saved, and then nothing more that day. The undo puts it
+	 * back.
 	 */
 	@GameTest
-	public void theBlockTheyStoodOnGoesBehindThemOverLava(GameTestHelper helper) {
+	public void theBlockTheyStoodOnGoesBehindThemOverAShortDrop(GameTestHelper helper) {
 		Field field = new Field(helper, 61);
-		BlockPos ground = field.feet(LAVA).below();
+		BlockPos ground = field.feet(PIT).below();
 		BlockState before = field.level.getBlockState(ground);
 		try {
-			field.walked(LAVA, 3, 0);
-			field.stood(LAVA, 5);
-			helper.assertTrue(field.why(LAVA, false) == null, "refused: " + field.why(LAVA, false));
+			field.walked(PIT, 3, 0);
+			field.stood(PIT, 5);
+			helper.assertTrue(field.why(PIT, false) == null, "refused: " + field.why(PIT, false));
 			helper.assertTrue(StoodOn.tryNow(field.player, false, field.env()), "nothing went");
 			helper.assertTrue(field.level.getBlockState(ground).isAir(), "the block is still there");
 			List<TraceLedger.Entry> removed = removals(field.level, ground);
@@ -169,17 +182,30 @@ public class SelfCreatedAccidentTests {
 		helper.succeed();
 	}
 
-	/** Water or a short drop under it may open; solid rock, a drop of 8 or a cavity a player dug may not. */
+	/**
+	 * Only a short drop onto plain ground may open under it (review R9): a fall of 2 or 3 from the feet; never lava,
+	 * water, magma, a fall of 4 (whatever {@code airDropMax} says: never past vanilla's safe fall) or solid rock.
+	 */
 	@GameTest
-	public void onlyLavaWaterOrAShortDropMayOpenUnderIt(GameTestHelper helper) {
+	public void onlyAShortDropOntoPlainGroundMayOpenUnderIt(GameTestHelper helper) {
 		Field field = new Field(helper, 62);
 		Sc15Config config = field.config;
-		helper.assertTrue(StoodOn.under(field.level, field.group.watch, field.feet(LAVA).below(), config).cavity() == StoodOn.Cavity.LAVA, "lava");
-		helper.assertTrue(StoodOn.under(field.level, field.group.watch, field.feet(WATER).below(), config).cavity() == StoodOn.Cavity.WATER, "water");
-		StoodOn.Under drop = StoodOn.under(field.level, field.group.watch, field.feet(SHORT_DROP).below(), config);
-		helper.assertTrue(drop.cavity() == StoodOn.Cavity.AIR && drop.depth() == 4, "a drop of 4: " + drop);
-		StoodOn.Under deep = StoodOn.under(field.level, field.group.watch, field.feet(LONG_DROP).below(), config);
-		helper.assertTrue(deep.cavity() == null && String.valueOf(deep.why()).startsWith("a drop deeper than 6"), "a drop of 8: " + deep);
+		StoodOn.Under two = StoodOn.under(field.level, field.group.watch, field.feet(PIT).below(), config);
+		helper.assertTrue(two.cavity() == StoodOn.Cavity.AIR && two.depth() == 2, "a fall of 2: " + two);
+		StoodOn.Under three = StoodOn.under(field.level, field.group.watch, field.feet(PIT3).below(), config);
+		helper.assertTrue(three.cavity() == StoodOn.Cavity.AIR && three.depth() == 3, "a fall of 3: " + three);
+		StoodOn.Under lava = StoodOn.under(field.level, field.group.watch, field.feet(LAVA).below(), config);
+		helper.assertTrue(lava.cavity() == null && "lava or water under it".equals(lava.why()), "lava: " + lava);
+		StoodOn.Under water = StoodOn.under(field.level, field.group.watch, field.feet(WATER).below(), config);
+		helper.assertTrue(water.cavity() == null && "lava or water under it".equals(water.why()), "water: " + water);
+		StoodOn.Under magma = StoodOn.under(field.level, field.group.watch, field.feet(MAGMA).below(), config);
+		helper.assertTrue(magma.cavity() == null && String.valueOf(magma.why()).startsWith("a block that hurts under it"), "magma: " + magma);
+		StoodOn.Under deep = StoodOn.under(field.level, field.group.watch, field.feet(DEEP).below(), config);
+		helper.assertTrue(deep.cavity() == null && "a fall of 4 from their feet (more than 3)".equals(deep.why()), "a fall of 4: " + deep);
+		Sc15Config wide = new Sc15Config();
+		wide.airDropMax = 6;
+		StoodOn.Under capped = StoodOn.under(field.level, field.group.watch, field.feet(DEEP).below(), wide);
+		helper.assertTrue(capped.cavity() == null, "a fall of 4 with airDropMax 6: " + capped);
 		StoodOn.Under solid = StoodOn.under(field.level, field.group.watch, field.feet(SOLID).below(), config);
 		helper.assertTrue(solid.cavity() == null && "no cavity under it".equals(solid.why()), "solid rock: " + solid);
 		field.standAt(SOLID + 8, -90);
@@ -187,15 +213,15 @@ public class SelfCreatedAccidentTests {
 		field.stood(SOLID, 5);
 		helper.assertTrue("no cavity under it".equals(field.why(SOLID, false)), "solid: " + field.why(SOLID, false));
 		field.ring.clear();
-		field.standAt(WATER + 8, -90);
-		field.walked(WATER, 3, 0);
-		field.stood(WATER, 5);
-		helper.assertTrue(field.why(WATER, false) == null, "water refused: " + field.why(WATER, false));
-		BlockPos ground = field.feet(WATER).below();
+		field.standAt(PIT3 + 8, -90);
+		field.walked(PIT3, 3, 0);
+		field.stood(PIT3, 5);
+		helper.assertTrue(field.why(PIT3, false) == null, "a fall of 3 refused: " + field.why(PIT3, false));
+		BlockPos ground = field.feet(PIT3).below();
 		String area = "test:sc15/" + field.origin.toShortString();
 		Services.protectedAreas().protect(area, Level.OVERWORLD, net.minecraft.world.level.levelgen.structure.BoundingBox.fromCorners(ground, ground));
 		try {
-			helper.assertTrue("a protected area".equals(field.why(WATER, false)), "taken in a protected area: " + field.why(WATER, false));
+			helper.assertTrue("a protected area".equals(field.why(PIT3, false)), "taken in a protected area: " + field.why(PIT3, false));
 		} finally {
 			Services.protectedAreas().unprotect(area);
 		}
@@ -204,46 +230,47 @@ public class SelfCreatedAccidentTests {
 
 	/**
 	 * Refused for a block a player placed, in view, beside a friend, on an armed trap's ground, too soon or too late, off
-	 * their routes (a forced arm drops the passes), on a bridge of theirs, after the story, with the layer off.
+	 * their routes (a forced arm drops the passes), on a bridge of theirs, after the story, with the layer off, while they
+	 * are hurt.
 	 */
 	@GameTest
 	public void theBlockIsRefusedWhereItWouldNotBeDeniable(GameTestHelper helper) {
 		Field field = new Field(helper, 63);
-		BlockPos ground = field.feet(LAVA).below();
-		field.walked(LAVA, 3, 0);
-		field.stood(LAVA, 5);
-		helper.assertTrue(field.why(LAVA, false) == null, "the setup is refused: " + field.why(LAVA, false));
-		field.standAt(LAVA + 8, 90);
-		helper.assertTrue("in view".equals(field.why(LAVA, false)), "taken in view: " + field.why(LAVA, false));
-		field.standAt(LAVA + 3, -90);
-		helper.assertTrue(String.valueOf(field.why(LAVA, false)).startsWith("they are not 5 past it"), "taken 3 blocks from them");
-		field.standAt(LAVA + 8, -90);
+		BlockPos ground = field.feet(PIT).below();
+		field.walked(PIT, 3, 0);
+		field.stood(PIT, 5);
+		helper.assertTrue(field.why(PIT, false) == null, "the setup is refused: " + field.why(PIT, false));
+		field.standAt(PIT + 8, 90);
+		helper.assertTrue("in view".equals(field.why(PIT, false)), "taken in view: " + field.why(PIT, false));
+		field.standAt(PIT + 3, -90);
+		helper.assertTrue(String.valueOf(field.why(PIT, false)).startsWith("they are not 5 past it"), "taken 3 blocks from them");
+		field.standAt(PIT + 8, -90);
 		field.traps.add(new ArmedTrap("test_trap", Level.OVERWORLD, ground, List.of(), List.of(), Optional.empty(), List.of(), ArmedTrap.Phase.WATCHING, 0, -1,
 				Long.MAX_VALUE, ArmedTrap.NO_CLOCK, ground.offset(-1, -1, -1), ground.offset(1, 1, 1), "", 0));
-		helper.assertTrue("an armed trap's ground".equals(field.why(LAVA, false)), "taken on a trap's ground");
+		helper.assertTrue("an armed trap's ground".equals(field.why(PIT, false)), "taken on a trap's ground");
 		field.traps.clear();
 		field.ring.clear();
-		field.stood(LAVA, 1);
-		helper.assertTrue(String.valueOf(field.why(LAVA, false)).startsWith("not 3 to 8 s ago"), "taken 1 s after");
+		field.stood(PIT, 1);
+		helper.assertTrue(String.valueOf(field.why(PIT, false)).startsWith("not 3 to 8 s ago"), "taken 1 s after");
 		field.ring.clear();
-		field.stood(LAVA, 9);
-		helper.assertTrue(String.valueOf(field.why(LAVA, false)).startsWith("not 3 to 8 s ago"), "taken 9 s after");
+		field.stood(PIT, 9);
+		helper.assertTrue(String.valueOf(field.why(PIT, false)).startsWith("not 3 to 8 s ago"), "taken 9 s after");
 		field.ring.clear();
-		field.stood(WATER, 5);
-		field.standAt(WATER + 8, -90);
-		field.walked(WATER, 1, 0);
-		helper.assertTrue(String.valueOf(field.why(WATER, false)).startsWith("not one of their routes (1 passes)"), "taken off their routes");
-		helper.assertTrue(field.why(WATER, true) == null, "a forced arm kept the passes: " + field.why(WATER, true));
-		field.walked(WATER, 2, RouteBook.ON_PLACED);
-		helper.assertTrue("a bridge, a ladder or water of theirs".equals(field.why(WATER, false)), "taken on a bridge of theirs");
+		field.stood(PIT3, 5);
+		field.standAt(PIT3 + 8, -90);
+		field.walked(PIT3, 1, 0);
+		helper.assertTrue(String.valueOf(field.why(PIT3, false)).startsWith("not one of their routes (1 passes)"), "taken off their routes");
+		helper.assertTrue(field.why(PIT3, true) == null, "a forced arm kept the passes: " + field.why(PIT3, true));
+		field.walked(PIT3, 2, RouteBook.ON_PLACED);
+		helper.assertTrue("a bridge, a ladder or water of theirs".equals(field.why(PIT3, false)), "taken on a bridge of theirs");
 		field.ring.clear();
-		field.stood(LAVA, 5);
-		field.standAt(LAVA + 8, -90);
+		field.stood(PIT, 5);
+		field.standAt(PIT + 8, -90);
 		field.group.watch.onPlaced(field.player, field.level, ground, field.level.getBlockState(ground));
-		helper.assertTrue("not a natural full block".equals(field.why(LAVA, false)), "took a placed block");
+		helper.assertTrue("not a natural full block".equals(field.why(PIT, false)), "took a placed block");
 
 		ServerPlayer friend = (ServerPlayer) helper.makeMockServerPlayer(GameType.SURVIVAL);
-		friend.snapTo(field.feet(LAVA + 30).getX() + 0.5, field.feet(LAVA).getY(), field.feet(LAVA).getZ() + 0.5, 0, 0);
+		friend.snapTo(field.feet(PIT + 30).getX() + 0.5, field.feet(PIT).getY(), field.feet(PIT).getZ() + 0.5, 0, 0);
 		field.group.online.add(friend);
 		helper.assertTrue("not alone".equals(StoodOn.gate(field.player, field.env())), "beside a friend: " + StoodOn.gate(field.player, field.env()));
 		field.group.online.remove(friend);
@@ -256,6 +283,11 @@ public class SelfCreatedAccidentTests {
 		field.sinceCombat = ModConfig.realTicks(12);
 		helper.assertTrue("combat in the last 30 s".equals(StoodOn.gate(field.player, field.env())), "after combat");
 		field.sinceCombat = Long.MAX_VALUE;
+		field.player.setHealth(6.0F);
+		helper.assertTrue("they are hurt (health 6, under 10)".equals(StoodOn.gate(field.player, field.env())), "while hurt: "
+				+ StoodOn.gate(field.player, field.env()));
+		field.player.setHealth(field.player.getMaxHealth());
+		helper.assertTrue(StoodOn.gate(field.player, field.env()) == null, "healed: " + StoodOn.gate(field.player, field.env()));
 		for (int i = 0; i < field.config.maxPerWorld; i++) {
 			field.memory.record(new UUID(9, i), 1);
 		}
@@ -303,9 +335,12 @@ public class SelfCreatedAccidentTests {
 		helper.succeed();
 	}
 
-	/** The saved days and count round-trip, a world without the file has none; {@code sections.sc15} is version 1. */
+	/**
+	 * The saved days and count round-trip, a world without the file has none; {@code sections.sc15} is version 2, and a
+	 * version 1 file's drop of 6 (counted from under the block) becomes 3 from the feet while one of its own is kept.
+	 */
 	@GameTest
-	public void theMemoryRoundTripsAndTheSectionIsVersionOne(GameTestHelper helper) {
+	public void theMemoryRoundTripsAndTheSectionIsVersionTwo(GameTestHelper helper) {
 		StoodOnData data = new StoodOnData();
 		data.record(new UUID(1, 2), 7);
 		CompoundTag tag = (CompoundTag) StoodOnData.CODEC.encodeStart(NbtOps.INSTANCE, data).getOrThrow();
@@ -313,8 +348,20 @@ public class SelfCreatedAccidentTests {
 		helper.assertTrue(back.count() == 1 && back.lastDay(new UUID(1, 2)) == 7, "not round-tripped");
 		helper.assertTrue(StoodOnData.CODEC.parse(NbtOps.INSTANCE, new CompoundTag()).getOrThrow().count() == 0, "an empty file loaded a count");
 		Sc15Config cfg = ModConfig.readSection(new JsonObject(), Sc15Config.SECTION, Sc15Config.class, Sc15Config::new);
-		helper.assertTrue(cfg.version == 1 && cfg.armMinutes == 20 && cfg.minPasses == 3 && cfg.delaySecondsMin == 3 && cfg.delaySecondsMax == 8
-				&& cfg.behindMin == 5 && cfg.cavityDepthMax == 6 && cfg.airDropMax == 6 && cfg.nobodyWithin == 16 && cfg.maxPerWorld == 6, "the numbers");
+		helper.assertTrue(cfg.version == 2 && cfg.armMinutes == 20 && cfg.minPasses == 3 && cfg.delaySecondsMin == 3 && cfg.delaySecondsMax == 8
+				&& cfg.behindMin == 5 && cfg.airDropMax == 3 && cfg.minHealth == 10 && cfg.nobodyWithin == 16 && cfg.maxPerWorld == 6, "the numbers");
+		helper.assertTrue(versionOne(6).airDropMax == 3 && versionOne(6).version == 2, "version 1's default drop was kept: " + versionOne(6).airDropMax);
+		helper.assertTrue(versionOne(2).airDropMax == 2, "a drop of their own was not kept: " + versionOne(2).airDropMax);
 		helper.succeed();
+	}
+
+	private static Sc15Config versionOne(int airDropMax) {
+		JsonObject section = new JsonObject();
+		section.addProperty("version", 1);
+		section.addProperty("cavityDepthMax", 6);
+		section.addProperty("airDropMax", airDropMax);
+		JsonObject sections = new JsonObject();
+		sections.add(Sc15Config.SECTION, section);
+		return ModConfig.readSection(sections, Sc15Config.SECTION, Sc15Config.class, Sc15Config::new);
 	}
 }

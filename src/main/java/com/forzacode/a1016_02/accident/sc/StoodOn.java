@@ -40,15 +40,18 @@ import com.forzacode.a1016_02.core.Tier;
 import com.forzacode.a1016_02.core.TraceService;
 
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
+import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
-import net.minecraft.tags.FluidTags;
+import net.minecraft.tags.BlockTags;
 import net.minecraft.world.level.Level;
+import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
-import net.minecraft.world.level.material.FluidState;
 import net.minecraft.world.phys.Vec3;
+import net.minecraft.world.phys.shapes.VoxelShape;
 
 import org.jspecify.annotations.Nullable;
 
@@ -60,12 +63,14 @@ import org.jspecify.annotations.Nullable;
  * of every player's view; the cell is on one of their routes ({@code RouteBook}, at least {@code minPasses} passes; a
  * forced arm drops that) and not a bridge, ladder or water spot of theirs; the block is a plain natural full block
  * ({@code Scan.takeable}, no player placed it), not protected and outside every armed trap's ground; right under it a
- * natural cavity (no player dug it): lava or water within {@code cavityDepthMax}, or air onto a floor at most
- * {@code airDropMax} down (never a deeper drop). The player is alone ({@code SoundCues.alone}, 48), nobody else within
- * {@code nobodyWithin} of the block, no combat for 30 s. One {@code TraceService.remove} ({@value #CAUSE}); the arm is
- * spent, the day and the world's count are saved at once. At most once per in-game day per player, {@code maxPerWorld}
- * in a world. The common gates hold; nothing while the layer is off. Arms live in memory by UUID and end when the player
- * stops taking part.
+ * natural cavity (no player dug it) of air onto a plain floor, a fall from their feet of at most {@code airDropMax} and
+ * never more than {@link #SAFE_FALL} (vanilla's safe fall: no fall damage). It is never lethal on its own (review R9):
+ * no fluid under it, in the drop or beside the block or the drop (it would flow in), never onto or through a block that
+ * {@link #hurts}, never while the player has less than {@code minHealth}. The player is alone
+ * ({@code SoundCues.alone}, 48), nobody else within {@code nobodyWithin} of the block, no combat for 30 s. One
+ * {@code TraceService.remove} ({@value #CAUSE}); the arm is spent, the day and the world's count are saved at once. At
+ * most once per in-game day per player, {@code maxPerWorld} in a world. The common gates hold; nothing while the layer
+ * is off. Arms live in memory by UUID and end when the player stops taking part.
  */
 public final class StoodOn {
 	public static final String CARD_ID = "sc_15";
@@ -74,6 +79,11 @@ public final class StoodOn {
 	public static final int TICK_EVERY = 10;
 	/** The shared rule's radius: nobody else within this of the player. */
 	public static final double ALONE_RADIUS = 48;
+	/**
+	 * Vanilla's safe fall ({@code Attributes.SAFE_FALL_DISTANCE}'s default): a fall of this many blocks or less does no
+	 * damage. The drop from their feet is never more, whatever {@code airDropMax} says.
+	 */
+	public static final double SAFE_FALL = 3.0;
 
 	/** An arm: until which of the player's own play ticks, whether it was forced (no passes needed), and the op told. */
 	record Arm(long untilPlay, boolean forced, @Nullable UUID op) {
@@ -110,10 +120,13 @@ public final class StoodOn {
 		}
 	}
 
-	/** What is under the block: lava, water or a drop of air onto a floor, and how deep. */
-	public enum Cavity { LAVA, WATER, AIR }
+	/** What is under the block: a drop of air onto a plain floor (review R9: never lava or water, never a fatal drop). */
+	public enum Cavity { AIR }
 
-	/** The cavity under a ground block, or why there is none that may open. */
+	/**
+	 * The cavity under a ground block, or why there is none that may open; {@code depth} is the fall from their feet in
+	 * whole blocks (rounded up), or how far down the look went.
+	 */
 	public record Under(@Nullable Cavity cavity, int depth, @Nullable String why) {
 	}
 
@@ -179,6 +192,9 @@ public final class StoodOn {
 		if (!ScGates.noCombat(env.sinceCombat().applyAsLong(player))) {
 			return "combat in the last 30 s";
 		}
+		if (player.getHealth() < env.config().minHealth) {
+			return "they are hurt (health " + fmt(Math.ceil(player.getHealth())) + ", under " + fmt(env.config().minHealth) + ")";
+		}
 		if (!SoundCues.alone(player, ALONE_RADIUS, env.watch(), env.listeners().apply(player.level()))) {
 			return "not alone";
 		}
@@ -186,40 +202,81 @@ public final class StoodOn {
 	}
 
 	/**
-	 * What is right under this ground block: lava or water within {@code cavityDepthMax}, or air onto a floor at most
-	 * {@code airDropMax} down; none when the block under it is solid, a player dug it, or the drop is deeper.
+	 * A block that hurts whoever falls onto or through it: pointed dripstone (a stalagmite doubles the fall), magma,
+	 * cactus, powder snow (no collision for a player: they sink in and freeze), fire, a campfire, a berry bush, a wither
+	 * rose, a lava cauldron.
+	 */
+	public static boolean hurts(BlockState state) {
+		return state.is(Blocks.POINTED_DRIPSTONE) || state.is(Blocks.MAGMA_BLOCK) || state.is(Blocks.CACTUS) || state.is(Blocks.POWDER_SNOW)
+				|| state.is(BlockTags.FIRE) || state.is(BlockTags.CAMPFIRES) || state.is(Blocks.SWEET_BERRY_BUSH) || state.is(Blocks.WITHER_ROSE)
+				|| state.is(Blocks.LAVA_CAULDRON);
+	}
+
+	/**
+	 * What is right under this ground block: air onto a plain floor, the fall from the feet over it (the ground's top)
+	 * at most {@code airDropMax} and never more than {@link #SAFE_FALL}, the floor's top read from its collision shape.
+	 * None when the block under it is solid, a player dug it, a fluid is under it, in the drop or beside the ground block
+	 * or any cell of the drop (taking the block would let it flow in), a block that {@link #hurts} is in the drop or is
+	 * the floor, or the fall is deeper. Never loads a chunk.
 	 */
 	public static Under under(ServerLevel level, PlayerWatch watch, BlockPos ground, Sc15Config config) {
 		BlockPos first = ground.below();
 		if (watch.wasDugByPlayer(level, first)) {
 			return new Under(null, 0, "a player dug under it");
 		}
-		int reach = Math.max(config.cavityDepthMax, config.airDropMax + 1);
+		String beside = fluidBeside(level, ground, true);
+		if (beside != null) {
+			return new Under(null, 0, beside);
+		}
+		double maxFall = Math.min(config.airDropMax, SAFE_FALL);
+		double feet = ground.getY() + 1.0;
+		int reach = (int) Math.ceil(Math.max(0.0, maxFall)) + 1;
 		BlockPos.MutableBlockPos cursor = first.mutable();
 		for (int depth = 1; depth <= reach; depth++) {
 			if (!level.isLoaded(cursor)) {
 				return new Under(null, depth, "not loaded");
 			}
-			FluidState fluid = level.getFluidState(cursor);
-			if (!fluid.isEmpty() && depth <= config.cavityDepthMax) {
-				if (fluid.is(FluidTags.LAVA)) {
-					return new Under(Cavity.LAVA, depth, null);
-				}
-				if (fluid.is(FluidTags.WATER)) {
-					return new Under(Cavity.WATER, depth, null);
-				}
-			}
 			BlockState state = level.getBlockState(cursor);
-			if (!state.getCollisionShape(level, cursor).isEmpty() || !fluid.isEmpty()) {
+			if (!state.getFluidState().isEmpty()) {
+				return new Under(null, depth, "lava or water under it");
+			}
+			if (hurts(state)) {
+				return new Under(null, depth, "a block that hurts under it (" + BuiltInRegistries.BLOCK.getKey(state.getBlock()).getPath() + ")");
+			}
+			VoxelShape shape = state.getCollisionShape(level, cursor);
+			if (!shape.isEmpty()) {
 				if (depth == 1) {
 					return new Under(null, 0, "no cavity under it");
 				}
-				int drop = depth - 1;
-				return drop <= config.airDropMax ? new Under(Cavity.AIR, drop, null) : new Under(null, drop, "a drop deeper than " + config.airDropMax);
+				double fall = feet - (cursor.getY() + shape.max(Direction.Axis.Y));
+				int blocks = (int) Math.ceil(fall - 1.0E-6);
+				return fall <= maxFall + 1.0E-6 ? new Under(Cavity.AIR, blocks, null)
+						: new Under(null, blocks, "a fall of " + blocks + " from their feet (more than " + fmt(maxFall) + ")");
+			}
+			beside = fluidBeside(level, cursor, false);
+			if (beside != null) {
+				return new Under(null, depth, beside);
 			}
 			cursor.move(0, -1, 0);
 		}
-		return new Under(null, reach, "a drop deeper than " + config.airDropMax);
+		return new Under(null, reach, "a fall deeper than " + fmt(maxFall) + " from their feet");
+	}
+
+	/** Why a fluid could flow into this cell once the block over it goes: one beside it (or above, for the ground), or null. */
+	private static @Nullable String fluidBeside(ServerLevel level, BlockPos cell, boolean above) {
+		for (Direction side : Direction.values()) {
+			if (side == Direction.DOWN || side == Direction.UP && !above) {
+				continue;
+			}
+			BlockPos next = cell.relative(side);
+			if (!level.isLoaded(next)) {
+				return "not loaded";
+			}
+			if (!level.getFluidState(next).isEmpty()) {
+				return "lava or water beside it";
+			}
+		}
+		return null;
 	}
 
 	/** Why this stand's ground block may not go now, or null. */

@@ -61,7 +61,8 @@ import org.jspecify.annotations.Nullable;
 /**
  * 11 ({@code docs/SELF_CREATED.md}, D-088): someone's torches go deeper into a cave branch nobody visited, on the
  * right-hand wall going in, and end at a 1x1 hole straight down to lava, a torch on the floor beside it and a sign on
- * the wall over it ("brb", from {@value #TEXT_FILE}, not waxed). From a cave spot a participant stood in (world's cave
+ * the wall a few cells before it, never read from the hole's lip ({@link #sign}; "brb", from {@value #TEXT_FILE}, not
+ * waxed). From a cave spot a participant stood in (world's cave
  * spots, {@code LoneTorch.trackCaves}): a walk over natural cave air (not player-dug, a sturdy natural floor, two
  * cells high, at least {@code minDepthBelowSurface} under the surface, at most {@value #MAX_CELLS} cells looked at)
  * {@code pathMin} to {@code pathMax} cells to a floor cell under which natural stone runs straight down
@@ -94,6 +95,11 @@ public final class TorchTrail {
 	private static final int WALL_REACH = 4;
 	/** The torches stop this many cells before the hole. */
 	private static final int END_CLEAR = 2;
+	/** The sign hangs over a walk cell this many cells before the hole at the least, and at the most. */
+	public static final int SIGN_BACK_MIN = 2;
+	public static final int SIGN_BACK_MAX = 5;
+	/** The sign's column and the one it faces are at least this many cells (either way) from the hole's. */
+	public static final int SIGN_CLEAR = 2;
 	/** Ends looked at per walk. */
 	private static final int MAX_ENDS = 256;
 	/** Cave spots tried per fire, nearest the target first. */
@@ -140,7 +146,7 @@ public final class TorchTrail {
 	 * @param shaft     the shaft's cells, top first
 	 * @param lava      the lava it opens on
 	 * @param floorTorch the torch beside the hole
-	 * @param sign      the wall sign over the hole
+	 * @param sign      the wall sign a few cells before the hole
 	 */
 	public record Plan(List<BlockPos> path, int mouth, List<Left> torches, List<BlockPos> shaft, BlockPos lava, Left floorTorch, Left sign) {
 		public BlockPos hole() {
@@ -481,6 +487,43 @@ public final class TorchTrail {
 		return mouth > 0 && mouth < path.size() - 1 - END_CLEAR ? mouth : -1;
 	}
 
+	/** Horizontal distance in cells, either way (the larger of x and z), between two columns. */
+	static int columns(BlockPos a, BlockPos b) {
+		return Math.max(Math.abs(a.getX() - b.getX()), Math.abs(a.getZ() - b.getZ()));
+	}
+
+	/**
+	 * The sign (review R9: reading it never puts you at the shaft's lip): at head height over a walk cell
+	 * {@value #SIGN_BACK_MIN} to {@value #SIGN_BACK_MAX} cells before the hole, past the mouth, on a sturdy wall, the
+	 * left-hand one going in first (the torches are on the right), else the right, else one ahead, facing the walk; its
+	 * own column and the one it faces at least {@value #SIGN_CLEAR} cells from the hole's, so whoever walks up to read it
+	 * stands on the walk's floor, never beside the hole. Null if there is none.
+	 */
+	static @Nullable Left sign(ServerLevel level, List<BlockPos> path, int mouth, Set<BlockPos> taken) {
+		BlockPos hole = path.getLast();
+		for (int back = SIGN_BACK_MIN; back <= SIGN_BACK_MAX; back++) {
+			int i = path.size() - 1 - back;
+			if (i <= mouth) {
+				break;
+			}
+			BlockPos at = path.get(i).above();
+			if (taken.contains(at) || !open(level.getBlockState(at)) || columns(at, hole) < SIGN_CLEAR) {
+				continue;
+			}
+			Direction going = heading(path.get(i), path.get(i + 1));
+			for (Direction wall : List.of(going.getCounterClockWise(), going.getClockWise(), going)) {
+				Direction facing = wall.getOpposite();
+				BlockPos behind = at.relative(wall);
+				BlockState state = Blocks.OAK_WALL_SIGN.defaultBlockState().setValue(WallSignBlock.FACING, facing);
+				if (columns(at.relative(facing), hole) >= SIGN_CLEAR && level.isLoaded(behind)
+						&& level.getBlockState(behind).isFaceSturdy(level, behind, facing) && state.canSurvive(level, at)) {
+					return new Left(at.immutable(), state);
+				}
+			}
+		}
+		return null;
+	}
+
 	/** The torches, the sign and the floor torch for one end, with every safety rule; a plan or why not. */
 	static Result build(ScEnv env, ServerLevel level, List<BlockPos> path, int mouth, Shaft shaft, Config config, List<BlockPos> bases,
 			List<ServerPlayer> people) {
@@ -493,20 +536,9 @@ public final class TorchTrail {
 		Direction in = heading(path.get(path.size() - 2), hole);
 		Set<BlockPos> taken = new LinkedHashSet<>(shaft.cells());
 		taken.add(hole);
-		// The sign: on the wall over the hole, the wall ahead first (it faces whoever walks up), else a side wall.
-		Left sign = null;
-		for (Direction wall : List.of(in, in.getClockWise(), in.getCounterClockWise())) {
-			BlockPos at = hole.above();
-			BlockPos behind = at.relative(wall);
-			BlockState state = Blocks.OAK_WALL_SIGN.defaultBlockState().setValue(WallSignBlock.FACING, wall.getOpposite());
-			if (!level.getBlockState(hole.relative(wall)).getCollisionShape(level, hole.relative(wall)).isEmpty()
-					&& level.getBlockState(behind).isFaceSturdy(level, behind, wall.getOpposite()) && state.canSurvive(level, at)) {
-				sign = new Left(at.immutable(), state);
-				break;
-			}
-		}
+		Left sign = sign(level, path, mouth, taken);
 		if (sign == null) {
-			return Result.none("no wall over the hole for the sign");
+			return Result.none("no wall " + SIGN_BACK_MIN + " to " + SIGN_BACK_MAX + " cells before the hole for the sign");
 		}
 		taken.add(sign.pos());
 		// The floor torch: beside the hole, a side first, else the cell one came from.

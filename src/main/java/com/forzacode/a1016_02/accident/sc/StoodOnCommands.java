@@ -75,8 +75,8 @@ public final class StoodOnCommands {
 		ServerPlayer op = source.getPlayer();
 		StoodOn.tellOp(player.getUUID(), op == null ? null : op.getUUID());
 		source.sendSuccess(() -> Component.literal("sc 15: " + player.getName().getString() + " is armed for "
-				+ StoodOn.Env.live(source.getServer()).config().armMinutes + " minutes of play: walk over natural ground with a cave, water or "
-				+ "lava under it, then keep going"), false);
+				+ StoodOn.Env.live(source.getServer()).config().armMinutes + " minutes of play: walk over natural ground with a low "
+				+ "cave pocket under it (2 or 3 from your feet to its floor, no lava or water near), then keep going"), false);
 		return 1;
 	}
 }

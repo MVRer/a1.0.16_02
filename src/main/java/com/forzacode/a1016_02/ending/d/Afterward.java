@@ -58,11 +58,14 @@ public final class Afterward {
 		}
 	}
 
-	/** The fog is gone for good and the music stays on. */
+	/** The fog is gone for good (the dusk fog and every fog place: review R9) and the music stays on. */
 	static void keepEffects(MinecraftServer server) {
 		HerobrineState.Effects effects = HerobrineState.get(server).effects();
 		if (effects.duskFogLevel() > 0.0F) {
 			ClientEffects.setDuskFog(server, 0.0F);
+		}
+		if (!effects.fogPlaces().isEmpty()) {
+			ClientEffects.fadeFogPlaces(server);
 		}
 		if (effects.musicOff()) {
 			ClientEffects.setMusicOff(server, false);
