@@ -15,11 +15,11 @@ import com.forzacode.a1016_02.core.ModConfig;
  *
  * <p>Versioned (D-075): {@link #upgrade} brings a section written by an older version up one step at a time, taking
  * the new default only where a value still equals the old one. Version 1 is v1.2's pacing (D-070, D-071, D-074);
- * version 2 adds {@link #unfitParkMinutes}.
+ * version 2 adds {@link #unfitParkMinutes}; version 3 (v1.3) adds {@link #simBlindPerHour}.
  */
 public final class DirectorConfig implements ModConfig.Versioned {
-	/** The section's current version: 2 since v1.2's fixes. Raise it, and add a step to {@link #upgrade}, for every later default change. */
-	public static final int VERSION = 2;
+	/** The section's current version: 3 since v1.3. Raise it, and add a step to {@link #upgrade}, for every later default change. */
+	public static final int VERSION = 3;
 
 	/** The version this section was last written at; missing in a file (0) is v1.1 or older. Keep the field's default at 0. */
 	public int version = 0;
@@ -82,7 +82,8 @@ public final class DirectorConfig implements ModConfig.Versioned {
 	 * A held ambient or minor card whose moment does not fit (its context, as a card only underground on the surface)
 	 * goes back into its deck after this much play (real minutes) in which it was looked at every director tick (looks a
 	 * gate held back do not count), so it never freezes its tier for the whole {@link #holdGiveUpMinutes}; the next draw
-	 * passes it over if anything else can be drawn. Majors and signatures keep the long hold.
+	 * passes it over if anything else can be drawn. Majors, signatures and BLIND cards (D-077: a menu comes often, and
+	 * the blind moments' rechecks look for it) keep the long hold.
 	 */
 	public double heldUnfitGiveBackMinutes = 5;
 	/**
@@ -93,7 +94,7 @@ public final class DirectorConfig implements ModConfig.Versioned {
 	 * ambient or minor one hands the roll that drew it to the next card. After it, it is drawn as any other card and
 	 * fires once its moment comes; until then a hold of it goes back, parked again, at its first look that does not fit.
 	 * Its moment is looked at in passing every director tick: once it fits, the park and that first-look rule end.
-	 * 0: never parked.
+	 * A BLIND card is never parked (D-077). 0: never parked.
 	 */
 	public double unfitParkMinutes = 30;
 	/** An empty session stays empty up to this long (real minutes); a marathon session is not empty forever. */
@@ -164,6 +165,12 @@ public final class DirectorConfig implements ModConfig.Versioned {
 	 * {@code /a1016 director sim} and the scripted playthrough use it; timewarp never does.
 	 */
 	public double simTellingAtHour = -1;
+	/**
+	 * Blind moments per hour of play in a dry run (D-077): the menus a player opens, each a recheck at which a held
+	 * {@code BLIND} card's moment fits by {@link #simFitChance}. A BLIND card never fits at a director tick in a dry run
+	 * (a menu is open at few of them), and a recheck gives other cards nothing there. 0: no blind moments.
+	 */
+	public double simBlindPerHour = 20;
 
 	// --- debug ---
 	/** Fires kept in the history (newest last). */
@@ -184,6 +191,9 @@ public final class DirectorConfig implements ModConfig.Versioned {
 	 *
 	 * <p>Step 1 to 2 (v1.2's fixes, R1): only the new {@link #unfitParkMinutes}, which comes with its default when
 	 * missing; every other value stays as it is.
+	 *
+	 * <p>Step 2 to 3 (v1.3, D-077): only the new {@link #simBlindPerHour}, which comes with its default when missing;
+	 * every other value stays as it is.
 	 */
 	@Override
 	public boolean upgrade() {
@@ -198,6 +208,7 @@ public final class DirectorConfig implements ModConfig.Versioned {
 			stageTagWeights = ModConfig.Upgrades.tagWeights(stageTagWeights, v11StageTagWeights(), d.stageTagWeights);
 		}
 		// version < 2: unfitParkMinutes is new, nothing to step.
+		// version < 3: simBlindPerHour is new, nothing to step.
 		version = VERSION;
 		return true;
 	}

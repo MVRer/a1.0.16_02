@@ -91,6 +91,9 @@ public final class PacingMemory {
 	int fakeableFires;
 	/** Someone else's cards felt here (D-060.3). */
 	int feltFires;
+	/** Blind moments' rechecks for this player (D-077), and how many of them fired a card (counted in {@link #totalFires} too). */
+	int rechecks;
+	int recheckFires;
 	final ArrayDeque<DirectorMemory.HistoryEntry> history = new ArrayDeque<>();
 
 	// --- per-player trigger bookkeeping ---
@@ -137,6 +140,16 @@ public final class PacingMemory {
 	/** Minors per hour rolled for this session (Proximity on), or -1 before the first session. */
 	public double sessionMinorRate() {
 		return sessionMinorRate;
+	}
+
+	/** Blind moments' rechecks this player had (D-077). */
+	public int rechecks() {
+		return rechecks;
+	}
+
+	/** Rechecks that fired a card for this player (D-077). */
+	public int recheckFires() {
+		return recheckFires;
 	}
 
 	/** This player's clock when a card with this tag last fired for them or was felt by them, or {@link DirectorMemory#NEVER}. */
@@ -218,6 +231,8 @@ public final class PacingMemory {
 		tag.putInt("fakeFires", fakeFires);
 		tag.putInt("fakeableFires", fakeableFires);
 		tag.putInt("feltFires", feltFires);
+		tag.putInt("rechecks", rechecks);
+		tag.putInt("recheckFires", recheckFires);
 		ListTag list = new ListTag();
 		for (DirectorMemory.HistoryEntry entry : history) {
 			CompoundTag e = new CompoundTag();
@@ -289,6 +304,8 @@ public final class PacingMemory {
 		m.fakeFires = tag.getIntOr("fakeFires", 0);
 		m.fakeableFires = tag.getIntOr("fakeableFires", 0);
 		m.feltFires = tag.getIntOr("feltFires", 0);
+		m.rechecks = tag.getIntOr("rechecks", 0);
+		m.recheckFires = tag.getIntOr("recheckFires", 0);
 		ListTag list = tag.getListOrEmpty("history");
 		for (int i = 0; i < list.size(); i++) {
 			CompoundTag e = list.getCompoundOrEmpty(i);

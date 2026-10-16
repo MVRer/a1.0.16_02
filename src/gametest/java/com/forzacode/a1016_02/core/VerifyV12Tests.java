@@ -86,7 +86,7 @@ public class VerifyV12Tests {
 
 	/**
 	 * Mariano's real v1.1 file (the R1 fixture, byte for byte his {@code config/a1016_02.json}): every section reaches
-	 * its v1.2 version (root 1, director 2, atmosphere 1, dig 1, entity 4), and every field the v1.1 file did not have
+	 * its current version (root 1, director 3 since v1.3, atmosphere 1, dig 1, entity 4), and every field the v1.1 file did not have
 	 * is at v1.2's default. (The R1 test checks the values the file had; this checks the ones it did not.)
 	 */
 	@GameTest
@@ -102,7 +102,7 @@ public class VerifyV12Tests {
 		record Expect(String name, Class<?> type, java.util.function.Supplier<?> fresh, int version) {
 		}
 		List<Expect> expected = List.of(new Expect("director", com.forzacode.a1016_02.director.DirectorConfig.class,
-				com.forzacode.a1016_02.director.DirectorConfig::new, 2),
+				com.forzacode.a1016_02.director.DirectorConfig::new, 3),
 				new Expect("atmosphere", com.forzacode.a1016_02.atmosphere.AtmosphereConfig.class, com.forzacode.a1016_02.atmosphere.AtmosphereConfig::new, 1),
 				new Expect("dig", com.forzacode.a1016_02.dig.DigConfig.class, com.forzacode.a1016_02.dig.DigConfig::new, 1),
 				new Expect("entity", com.forzacode.a1016_02.entity.EntityConfig.class, com.forzacode.a1016_02.entity.EntityConfig::new, 4));

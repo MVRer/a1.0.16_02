@@ -19,6 +19,8 @@ import com.forzacode.a1016_02.core.Tier;
 
 import net.minecraft.util.RandomSource;
 
+import org.jspecify.annotations.Nullable;
+
 /**
  * The director's decisions, with no world in sight: clocks, the memories, an {@link Env} for the shared state and
  * the cards' context, and a random in; decisions out. The live director, timewarp and the dry-run simulator all
@@ -83,6 +85,11 @@ import net.minecraft.util.RandomSource;
  * <li>Every fire adds tension by tier (fakes scaled). At the threshold a quiet of 1 to 4 in-game days starts and
  * tension drops; the threshold is checked after every fire and on every decision tick, so tension other systems
  * raise ({@code Attention.raiseTension}) starts a quiet too. Tension decays outside quiet.</li>
+ * <li>Blind moments (D-077): a {@code BLIND} card's moment is a menu open on the player's screen, which comes often
+ * but never lasts, so a held one keeps the whole {@code holdGiveUp} (60 minutes) instead of the five-minute unfit
+ * give-back, and is never parked. While a menu is open, {@link #recheck} looks again at what the player's pacing
+ * already holds or has parked (BLIND cards first) and fires one whose moment fits now, through every gate of
+ * {@link #step}; it never rolls a tier or draws.</li>
  * </ul>
  */
 public final class DirectorBrain {
@@ -187,6 +194,13 @@ public final class DirectorBrain {
 
 		/** A world saved under older rules rolled its stage points again (D-075), at these world play ticks. */
 		default void rulesUpgraded(Clock clock, int fromVersion, long tracesAt, long proximityAt) {
+		}
+
+		/**
+		 * A blind moment's recheck for this player ({@link #recheck}, D-077) ended with this outcome, having fired
+		 * {@code fired} (its fire was recorded as any other, {@link #fired} first), or nothing (null).
+		 */
+		default void rechecked(Clock clock, @Nullable CardInfo fired, String outcome) {
 		}
 	}
 
@@ -486,10 +500,10 @@ public final class DirectorBrain {
 				}
 				if (!env.contextFits(card)) {
 					m.unfitLooks.merge(tier, 1L, Long::sum);
-					if ((tier == Tier.AMBIENT || tier == Tier.MINOR) && unfitGoesBack(m, c, tier, card)) {
+					if (shortHold(card) && unfitGoesBack(m, c, tier, card)) {
 						// Its moment may be far off (a card only for a tunnel, drawn on the surface): it must not freeze the
-						// tier for the whole hold. Majors and signatures keep theirs. Parked, it is out of its deck for a
-						// while, and the roll that drew it goes to the next card.
+						// tier for the whole hold. Majors, signatures and BLIND cards keep theirs. Parked, it is out of its
+						// deck for a while, and the roll that drew it goes to the next card.
 						boolean parks = parksNow(m, tier, card);
 						String back = parks ? UNFIT + PARKED : UNFIT;
 						giveUp(m, c, tier, card.id(), back, rec);
@@ -519,6 +533,15 @@ public final class DirectorBrain {
 		return notes.isEmpty() ? "nothing due" : String.join("; ", notes);
 	}
 
+	/**
+	 * True for a card whose hold goes back after {@code heldUnfitGiveBack} (5 minutes) of looks at which its moment did
+	 * not fit: an ambient or a minor, never a {@code BLIND} card (D-077), whose moment, a menu open, comes often and is
+	 * met by the rechecks; it keeps the whole {@code holdGiveUp} as majors and signatures do.
+	 */
+	static boolean shortHold(CardInfo card) {
+		return (card.tier() == Tier.AMBIENT || card.tier() == Tier.MINOR) && !card.has(CardTag.BLIND);
+	}
+
 	/** True for a fog spell that is on and not quiet (D-071): the director's odds go up. */
 	public static boolean boosts(Optional<FogSpell> spellOn) {
 		return spellOn.isPresent() && !spellOn.get().quiet();
@@ -545,6 +568,127 @@ public final class DirectorBrain {
 				giveUp(m, c, tier, card.id(), "someone close by already had it", rec);
 			}
 		}
+	}
+
+	// --- blind moments (D-077) ---
+
+	/**
+	 * A blind moment's recheck for this player alone (D-077): their client has a menu open, and core asks again between
+	 * director ticks ({@code Director.recheck}). It looks only at what their pacing already has waiting: the cards they
+	 * hold, then the cards they have parked or struck ({@link #park}), {@code BLIND} cards first, each tier in
+	 * {@link #PRIORITY} order. The first whose gates are open and whose moment fits now ({@code contextFits}) fires,
+	 * recorded as any fire (felt by whoever shares the moment); a parked one is released first, as a passing look
+	 * releases it ({@link #releaseFitting}). At most one fire. Every gate of {@link #step} holds: an open session, a
+	 * quiet the tension calls for (checked first, as a director tick does), the silence, the join grace, the quiet, an
+	 * empty session, the gap after any fire, the first hour's cap, the tier's gaps and caps, the card's own gates, the
+	 * sharers' gates (D-060.3), a {@code PERSONAL} card never beside a sharer (D-074), and a parked major only while a
+	 * major slot is due. It never rolls a tier's odds and never draws; time does not move (no stage change, no decay)
+	 * and nothing goes back into a deck here: a look that does not fit is not counted ({@code unfitLooks}), and holds
+	 * that a sharer close by rules out wait for the next director tick to go back.
+	 *
+	 * @return a one-line description of what happened, as {@link #step} gives
+	 */
+	public String recheck(WorldMemory w, PacingMemory m, Clock c, Env env, RandomSource random, Recorder rec) {
+		m.rechecks++;
+		CardInfo fired = null;
+		String outcome;
+		if (m.sessionStart < 0 || m.sessionStart > c.playTicks()) {
+			outcome = "waiting: no session";
+		} else {
+			// Other systems may have raised tension since the last tick: a quiet it calls for starts before anything fires.
+			checkQuiet(m, c, env, random, rec);
+			String blocked = globalBlock(m, c);
+			List<CardInfo> waiting = blocked == null ? waiting(m) : List.of();
+			if (blocked != null) {
+				outcome = "waiting: " + blocked;
+			} else if (waiting.isEmpty()) {
+				outcome = "nothing held or parked";
+			} else {
+				Stage stage = env.stage();
+				boolean fog = boosts(env.fogSpell());
+				List<Sharer> sharers = env.sharers();
+				List<String> notes = new ArrayList<>();
+				outcome = null;
+				for (CardInfo card : waiting) {
+					boolean held = card.id().equals(m.held.get(card.tier()));
+					String why = recheckBlock(card, held, w, m, c, stage, sharers, fog);
+					if (why != null) {
+						notes.add(card.id() + " waits (" + why + ")");
+						continue;
+					}
+					if (!env.contextFits(card)) {
+						notes.add(card.id() + (held ? " held" : " parked") + ": the moment does not fit");
+						continue;
+					}
+					if (!held) {
+						m.parkedUntil.remove(card.id());
+					}
+					boolean fake = card.hasFake() && random.nextDouble() < rules.fakeChance;
+					FireResult result = env.fire(card, fake);
+					if (result == FireResult.FIRED) {
+						recordFire(w, m, c, card, fake, false, stage, env, sharers, random, rec);
+						m.recheckFires++;
+						fired = card;
+						outcome = "fired " + card.id() + (fake ? " (fake)" : "") + (held ? "" : ", released from its park")
+								+ (sharers.isEmpty() ? "" : ", felt by " + sharers.size() + " more");
+						break;
+					}
+					notes.add(card.id() + " " + result + ", kept for later");
+				}
+				if (outcome == null) {
+					outcome = String.join("; ", notes);
+				}
+			}
+		}
+		rec.rechecked(c, fired, outcome);
+		return outcome;
+	}
+
+	/**
+	 * What a recheck looks at, in its order: the held cards, then the parked or struck ones not held, each tier in
+	 * {@link #PRIORITY} order (parks in the order they were made), every {@code BLIND} card before the rest. Cards no
+	 * longer registered are left out.
+	 */
+	private List<CardInfo> waiting(PacingMemory m) {
+		List<CardInfo> blind = new ArrayList<>();
+		List<CardInfo> other = new ArrayList<>();
+		for (Tier tier : PRIORITY) {
+			CardInfo card = card(m.held.get(tier));
+			if (card != null) {
+				(card.has(CardTag.BLIND) ? blind : other).add(card);
+			}
+		}
+		for (Tier tier : PRIORITY) {
+			for (String id : m.parkedUntil.keySet()) {
+				CardInfo card = card(id);
+				if (card != null && card.tier() == tier && !id.equals(m.held.get(tier))) {
+					(card.has(CardTag.BLIND) ? blind : other).add(card);
+				}
+			}
+		}
+		blind.addAll(other);
+		return blind;
+	}
+
+	/**
+	 * Why this held or parked card may not fire at a recheck now, or null: a {@code PERSONAL} card beside a sharer, its
+	 * tier's and its own gates ({@link #fireBlock}), for a parked card one already had and a major with no slot due, and
+	 * the sharers' gates ({@link #sharedBlock(CardInfo, WorldMemory, List, Stage)}).
+	 */
+	private @Nullable String recheckBlock(CardInfo card, boolean held, WorldMemory w, PacingMemory m, Clock c, Stage stage, List<Sharer> sharers,
+			boolean fog) {
+		if (!sharers.isEmpty() && card.has(CardTag.PERSONAL)) {
+			return "someone close by: a card for one player alone";
+		}
+		String why = fireBlock(card, w, m, c, stage);
+		if (why == null && !held) {
+			if (had(card, m)) {
+				why = "already had it";
+			} else if (card.tier() == Tier.MAJOR && !majorDue(m, c, fog)) {
+				why = "no major slot due";
+			}
+		}
+		return why != null ? why : sharedBlock(card, w, sharers, stage);
 	}
 
 	/**
@@ -787,9 +931,14 @@ public final class DirectorBrain {
 				double perTick = perHour * (1 + pity(m, c)) * rules.tickInterval / rules.hourTicks;
 				yield random.nextDouble() < 1 - Math.exp(-perTick);
 			}
-			case MAJOR -> m.nextMajorDue >= 0 && (c.playTicks() >= m.nextMajorDue || fog && m.nextMajorDue - c.playTicks() <= rules.fogWeatherMajorPull);
+			case MAJOR -> majorDue(m, c, fog);
 			case SIGNATURE -> true;
 		};
+	}
+
+	/** This player's major slot is due now, or within {@code fogWeatherMajorPull} under a fog spell that boosts. */
+	private boolean majorDue(PacingMemory m, Clock c, boolean fog) {
+		return m.nextMajorDue >= 0 && (c.playTicks() >= m.nextMajorDue || fog && m.nextMajorDue - c.playTicks() <= rules.fogWeatherMajorPull);
 	}
 
 	// --- decks ---
@@ -1060,10 +1209,11 @@ public final class DirectorBrain {
 
 	/**
 	 * Whether the held card of this tier, going back now because its moment did not come, is parked: always while
-	 * parking is on ({@code unfitPark} above 0), for a hold looked at all along or a card parked before.
+	 * parking is on ({@code unfitPark} above 0), for a hold looked at all along or a card parked before; never a
+	 * {@code BLIND} card (D-077), which goes back after its whole hold and may be drawn again as any other.
 	 */
 	private boolean parksNow(PacingMemory m, Tier tier, CardInfo card) {
-		return rules.unfitPark > 0 && (struck(m, card) || unfitAllAlong(m, tier));
+		return rules.unfitPark > 0 && !card.has(CardTag.BLIND) && (struck(m, card) || unfitAllAlong(m, tier));
 	}
 
 	/**

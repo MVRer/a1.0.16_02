@@ -37,7 +37,7 @@ import net.minecraft.util.RandomSource;
  * v1.2's director tests (D-070 to D-075): the first hour on the registered deck, fog weather and its boost, PERSONAL
  * cards beside friends, the group factor's solo path, a v1.1 world's re-roll and the director section's upgrade. Pure
  * logic and dry runs with their own memories; nothing here touches the live director or the world's state.
- * {@link DirectorMultiplayerTests} extends this.
+ * {@link DirectorV13Tests} extends this.
  */
 public class DirectorV12Tests extends R1ReviewDirectorTests {
 	private static final UUID ANA = new UUID(0xA1L, 1L);
@@ -773,14 +773,14 @@ public class DirectorV12Tests extends R1ReviewDirectorTests {
 		old.stageTagWeights.get("TRACES").put("MOB", 0.8); // the player's addition
 		JsonObject section = gson.toJsonTree(old).getAsJsonObject();
 		for (String added : List.of("version", "firstHourMaxFires", "emptySessionMinStage", "groupRateFactor", "fogWeatherOddsFactor",
-				"fogWeatherSightingWeight", "fogWeatherMajorPullMinutes", "heldUnfitGiveBackMinutes", "unfitParkMinutes")) {
+				"fogWeatherSightingWeight", "fogWeatherMajorPullMinutes", "heldUnfitGiveBackMinutes", "unfitParkMinutes", "simBlindPerHour")) {
 			section.remove(added);
 		}
 		JsonObject sections = new JsonObject();
 		sections.add("director", section);
 		DirectorConfig read = ModConfig.readSection(sections, "director", DirectorConfig.class, DirectorConfig::new);
 		DirectorConfig d = new DirectorConfig();
-		helper.assertTrue(read.version == DirectorConfig.VERSION && DirectorConfig.VERSION == 2, "version " + read.version);
+		helper.assertTrue(read.version == DirectorConfig.VERSION && DirectorConfig.VERSION == 3, "version " + read.version); // 3 since v1.3
 		helper.assertTrue(read.heldUnfitGiveBackMinutes == 5 && read.unfitParkMinutes == 30, "the holds: give back after " + read.heldUnfitGiveBackMinutes
 				+ " min, parked " + read.unfitParkMinutes + " min");
 		helper.assertTrue(read.aloneAmbientPerHour == d.aloneAmbientPerHour && read.proximityAmbientPerHour == 2.5 && read.tracesMinorsPerHour == 0.5,

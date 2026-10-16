@@ -16,6 +16,8 @@ import com.forzacode.a1016_02.core.Tier;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerPlayer;
 
+import org.jspecify.annotations.Nullable;
+
 /** Text for {@code /a1016 state} and {@code /a1016 director}: the world part, then each player's own pacing. */
 final class DirectorDebug {
 	private DirectorDebug() {
@@ -133,6 +135,8 @@ final class DirectorDebug {
 		lines.add("director: " + name + ": next " + next);
 		lines.add(String.format(Locale.ROOT, "director: %s: fires %d (%d of %d fakeable were fakes), felt %d from others, quiets %d, empty sessions %d/%d",
 				name, m.totalFires, m.fakeFires, m.fakeableFires, m.feltFires, m.quietCount, m.emptySessionCount, m.sessionCount));
+		long blind = Services.watch().participant(server, player).map(Services.watch()::blindTicks).orElse(0L);
+		lines.add(recheckLine(name, m, blind, director.lastRecheck(player), now, rules));
 		for (Tier tier : Tier.values()) {
 			List<String> undrawn = new ArrayList<>();
 			List<String> fired = new ArrayList<>();
@@ -159,6 +163,16 @@ final class DirectorDebug {
 					e.cardId(), e.fake() ? " fake" : "", e.forced() ? " forced" : "", e.stage()));
 		}
 		return lines;
+	}
+
+	/**
+	 * Blind moments for {@code /a1016 director} (D-077): whether the player is blind now and for how long, their rechecks
+	 * and how many fired a card, and the last one this session (how long ago on their clock, and what it did).
+	 */
+	static String recheckLine(String name, PacingMemory m, long blindTicks, DirectorImpl.@Nullable LastRecheck last, long now, DirectorRules rules) {
+		String blind = blindTicks <= 0 ? "not blind" : String.format(Locale.ROOT, "blind for %.1fs", blindTicks / 20.0);
+		String lastLine = last == null ? "" : " | last " + dur(rules, Math.max(0, now - last.playTicks())) + " ago: " + last.outcome();
+		return String.format(Locale.ROOT, "director: %s: %s | rechecks %d, %d fired%s", name, blind, m.rechecks, m.recheckFires, lastLine);
 	}
 
 	private static String nextAllowed(Tier tier, PacingMemory m, DirectorBrain.Clock c, Stage stage, DirectorRules rules, DirectorBrain brain) {

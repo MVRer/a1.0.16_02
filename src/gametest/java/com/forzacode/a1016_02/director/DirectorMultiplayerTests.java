@@ -45,7 +45,7 @@ import net.minecraft.world.phys.Vec3;
  * {@link DirectorSim#runGroup}), or players of its own that never join the server. Nothing here touches the live
  * director's memory or the world's state. {@link DirectorGameTests} extends this.
  */
-public class DirectorMultiplayerTests extends DirectorV12Tests {
+public class DirectorMultiplayerTests extends DirectorV13Tests {
 	private static final UUID ANA = new UUID(0xA1L, 1L);
 	private static final UUID BEN = new UUID(0xBEL, 2L);
 	private static final List<Long> SEEDS = DirectorApi.tuningSeeds();
