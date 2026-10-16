@@ -525,6 +525,45 @@ public class BlindGameTests extends LadderGameTests {
 		helper.succeed();
 	}
 
+	/**
+	 * R4 (v1.3 review): blind_step and its fake are "the floor's own step", but a step on natural snow cover (one snow
+	 * layer, no collision) or on leaf litter plays the block under it. Vanilla 26.3's step
+	 * ({@code Entity.getPrimaryStepSoundBlockPos}) takes the block above the floor when it is in
+	 * {@code #inside_step_sound_blocks} (leaf litter, pink petals, glow lichen ...) or {@code #combination_step_sound_blocks}
+	 * (snow, carpets ...): a player walking there hears snow or leaves, and the step behind them (and their own step, the
+	 * fake) is grass.
+	 */
+	@GameTest
+	public void r4BlindStepOnSnowOrLeafLitterSoundsLikeIt(GameTestHelper helper) {
+		DigGround g = DigGround.of(helper, 90, 30, 8, 12, Blocks.STONE);
+		g.hollow(2, 2, 2, 27, 5, 9);
+		BlindRig rig = new BlindRig(helper, g, "Alex");
+		for (Block cover : List.of(Blocks.SNOW, Blocks.LEAF_LITTER)) {
+			for (int x = 2; x <= 27; x++) {
+				for (int z = 2; z <= 9; z++) {
+					g.level.setBlock(g.at(x, 1, z), Blocks.GRASS_BLOCK.defaultBlockState(), Block.UPDATE_CLIENTS);
+					g.level.setBlock(g.at(x, 2, z), cover.defaultBlockState(), Block.UPDATE_CLIENTS);
+				}
+			}
+			ServerPlayer alex = rig.stand("Alex", 20, 2, 5, LadderRig.EAST);
+			rig.blind(alex, 60);
+			SoundType own = cover.defaultBlockState().getSoundType();
+			for (long seed = 1; seed <= 8; seed++) {
+				List<BlindCues.Cue> steps = Blind.planSteps(alex, rig.config, RandomSource.create(seed * SPREAD));
+				helper.assertTrue(!steps.isEmpty(), "no step on " + cover);
+				for (BlindCues.Cue step : steps) {
+					helper.assertTrue(step.sound().value() == own.getStepSound(), "a step on " + cover + " sounds like "
+							+ step.sound().value().location() + ", not " + own.getStepSound().location());
+				}
+			}
+			BlindCues.Cue fake = Blind.step(g.level, 0, alex.position(), 0.0F, true);
+			helper.assertTrue(fake.sound().value() == own.getStepSound(), "the player's own step on " + cover + " (the fake) sounds like "
+					+ fake.sound().value().location());
+			rig.crew.watch.onBlindState(alex, false);
+		}
+		helper.succeed();
+	}
+
 	/** A closed door (both halves, facing east) at ground coordinates; its lower half. */
 	private static BlockPos door(DigGround g, int x, int y, int z, Block block) {
 		BlockPos lower = g.at(x, y, z);

@@ -1,5 +1,6 @@
 package com.forzacode.a1016_02.core;
 
+import java.lang.ref.WeakReference;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -122,14 +123,20 @@ public final class PlayerWatch {
 		long lastCombatTick = Long.MIN_VALUE;
 	}
 
-	/** One blind moment: where it started, how long it has lasted (counted each tick), how many rechecks it had. */
+	/**
+	 * One blind moment: the player object whose client started it (held weakly, only to tell it from a respawned one; the
+	 * moment is kept by UUID, D-062.1), where it started, how long it has lasted (counted each tick), how many rechecks it
+	 * had.
+	 */
 	private static final class Blind {
+		final WeakReference<ServerPlayer> player;
 		final ResourceKey<Level> dimension;
 		long ticks;
 		int rechecks;
 
-		Blind(ResourceKey<Level> dimension) {
-			this.dimension = dimension;
+		Blind(ServerPlayer player) {
+			this.player = new WeakReference<>(player);
+			this.dimension = player.level().dimension();
 		}
 	}
 
@@ -380,9 +387,10 @@ public final class PlayerWatch {
 	 * How long this player has been blind: ticks since their client said a counting screen opened (a container or the
 	 * inventory, a book or sign, the advancements, the pause menu; core's client decides which, D-077), at least 1 from the
 	 * moment it starts; 0 when not blind. It ends when their client says the screen closed, and is reset when they
-	 * disconnect, stop taking part, die or change dimension (a screen still open then counts again only once the client
-	 * says so again). The server takes the signal from participants who are alive only. Counted at the end of each server
-	 * tick, before the director's tick.
+	 * disconnect, stop taking part, die, respawn or change dimension (a screen still open then counts again only once the
+	 * client says so again). A moment belongs to the player object that started it: a respawn lists a new object, so a
+	 * death no tick saw (killed and respawned between two ticks) ends it too. The server takes the signal from
+	 * participants who are alive only. Counted at the end of each server tick, before the director's tick.
 	 */
 	public long blindTicks(ServerPlayer player) {
 		Blind moment = blind.get(player.getUUID());
@@ -401,7 +409,7 @@ public final class PlayerWatch {
 			blind.remove(uuid);
 		} else if (moment == null || !stillBlind(player, moment)) {
 			if (isParticipant(player) && player.isAlive()) {
-				blind.put(uuid, new Blind(player.level().dimension()));
+				blind.put(uuid, new Blind(player));
 			} else {
 				blind.remove(uuid);
 			}
@@ -416,7 +424,7 @@ public final class PlayerWatch {
 		if (!isParticipant(player) || !player.isAlive()) {
 			return;
 		}
-		Blind moment = new Blind(player.level().dimension());
+		Blind moment = new Blind(player);
 		moment.ticks = Math.max(0, ticks);
 		moment.rechecks = rechecksBy(moment.ticks);
 		blind.put(player.getUUID(), moment);
@@ -435,8 +443,12 @@ public final class PlayerWatch {
 		return (int) Math.min(BLIND_MAX_RECHECKS, 1 + (ticks - BLIND_FIRST_RECHECK_TICKS) / BLIND_RECHECK_EVERY_TICKS);
 	}
 
+	/**
+	 * True while {@code player} is the very object whose client started the moment (not one listed after a respawn), a
+	 * participant, alive and in the moment's dimension.
+	 */
 	private boolean stillBlind(ServerPlayer player, Blind moment) {
-		return isParticipant(player) && player.isAlive() && player.level().dimension().equals(moment.dimension);
+		return moment.player.get() == player && isParticipant(player) && player.isAlive() && player.level().dimension().equals(moment.dimension);
 	}
 
 	// --- footprint (all players) ---
@@ -596,8 +608,9 @@ public final class PlayerWatch {
 	}
 
 	/**
-	 * Counts each blind moment on, ends those whose player is gone, dead, no longer taking part or in another dimension,
-	 * and asks the director to recheck (D-077) {@link #BLIND_FIRST_RECHECK_TICKS} after a moment starts and every
+	 * Counts each blind moment on, ends those whose player is gone, dead, no longer taking part, in another dimension or
+	 * listed as another object than the one that started it (a respawn, even one after a death no tick saw), and asks the
+	 * director to recheck (D-077) {@link #BLIND_FIRST_RECHECK_TICKS} after a moment starts and every
 	 * {@link #BLIND_RECHECK_EVERY_TICKS} while it lasts, at most {@link #BLIND_MAX_RECHECKS} times. A few UUIDs a tick.
 	 */
 	void tickBlind(MinecraftServer server) {

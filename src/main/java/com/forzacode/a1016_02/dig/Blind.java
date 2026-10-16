@@ -269,15 +269,17 @@ final class Blind {
 	}
 
 	/**
-	 * The sounds of the floor a step in {@code cell} is on: a slab or carpet in the cell itself, else the block under
-	 * it, else stone. The ladder's {@link SoundCards#soundAt} takes stone for anything not a full block,
-	 * right for a tunnel's floor; a base's floor is often slabs, stairs or carpet, and a step there sounds like them.
+	 * The sounds of a step in {@code cell}: the floor it is on (a slab or carpet in the cell itself, else the block under
+	 * it), or what covers that floor where vanilla's step plays the cover ({@link SoundCards#stepSound}: one snow layer,
+	 * leaf litter, pink petals ... over the grass); stone with no floor. The ladder's {@link SoundCards#soundAt} takes stone
+	 * for anything not a full block, right for a tunnel's floor; a base's floor is often slabs, stairs or carpet, and a
+	 * step there sounds like them.
 	 */
 	static SoundType floorSound(ServerLevel level, BlockPos cell) {
 		for (BlockPos floor : new BlockPos[] {cell, cell.below()}) {
 			BlockState state = level.getBlockState(floor);
 			if (!state.getCollisionShape(level, floor).isEmpty()) {
-				return state.getSoundType();
+				return SoundCards.stepSound(level, floor, state.getSoundType());
 			}
 		}
 		return SoundType.STONE;

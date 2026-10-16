@@ -808,4 +808,49 @@ public class LadderGameTests {
 				+ ", the cell is dug " + Services.watch().wasDugByPlayer(g.level, torch) + ", placed " + Services.watch().wasPlacedByPlayer(g.level, torch));
 		helper.succeed();
 	}
+
+	// --- review R4 (v1.3 bug hunt) ---
+
+	/**
+	 * R4, the ladder's side of {@code BlindGameTests.r4BlindStepOnSnowOrLeafLitterSoundsLikeIt}: a step in the tunnel is
+	 * vanilla's step there ({@link SoundCards#stepSound}). One snow layer or leaf litter someone placed along their tunnel
+	 * (no collision, so each cell is still the tunnel's) plays snow or leaves, not the stone under it, for rung 1's steps
+	 * and for its fake (the player's own step, on the cover at their feet). Before the fix every one played stone.
+	 */
+	@GameTest(maxTicks = 200)
+	public void r4LadderStepOnSnowOrLeafLitterSoundsLikeIt(GameTestHelper helper) {
+		DigGround g = DigGround.of(helper, 91, 40, 8, 26, Blocks.STONE);
+		g.keepLoaded(true);
+		List<Block> covers = List.of(Blocks.SNOW, Blocks.SNOW, Blocks.LEAF_LITTER, Blocks.LEAF_LITTER);
+		List<LadderRig> rigs = new ArrayList<>();
+		List<ServerPlayer> players = new ArrayList<>();
+		for (int i = 0; i < covers.size(); i++) {
+			String name = "Lee" + i;
+			LadderRig rig = new LadderRig(helper, g, name);
+			int z = 3 + 6 * i;
+			rig.tunnelX(2, 35, 3, z);
+			for (int x = 2; x <= 35; x++) {
+				g.place(g.at(x, 3, z), covers.get(i).defaultBlockState());
+			}
+			ServerPlayer player = rig.stand(name, 34, 3, z, LadderRig.EAST);
+			boolean fake = i % 2 == 1;
+			helper.assertTrue(rig.fire(Ladder.Rung.ONCE, player, fake, true, 41L + i) == FireResult.FIRED, "rung 1" + (fake ? "'s fake" : "")
+					+ " did not fire on " + covers.get(i) + ": " + Ladder.check(Ladder.Rung.ONCE, player, rig.env(), true).why());
+			rigs.add(rig);
+			players.add(player);
+		}
+		helper.succeedWhen(() -> {
+			for (int i = 0; i < covers.size(); i++) {
+				helper.assertFalse(LadderRig.walking(players.get(i)), "the steps are still going");
+				Block cover = covers.get(i);
+				List<LadderRig.Heard> heard = rigs.get(i).heard;
+				helper.assertTrue(!heard.isEmpty(), "no step on " + cover);
+				for (LadderRig.Heard step : heard) {
+					helper.assertTrue(step.sound().value() == cover.defaultBlockState().getSoundType().getStepSound(), "a step" + (i % 2 == 1 ? " (the fake)" : "")
+							+ " on " + cover + " sounds like " + step.sound().value().location());
+				}
+			}
+			g.keepLoaded(false);
+		});
+	}
 }

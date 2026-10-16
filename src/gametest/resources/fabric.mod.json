@@ -20,7 +20,8 @@
 			"com.forzacode.a1016_02.entity.R2SightingReviewTests",
 			"com.forzacode.a1016_02.core.VerifyV12Tests",
 			"com.forzacode.a1016_02.dig.VerifyV12DigTests",
-			"com.forzacode.a1016_02.director.VerifyV12DirectorTests"
+			"com.forzacode.a1016_02.director.VerifyV12DirectorTests",
+			"com.forzacode.a1016_02.core.R6ReviewCoreTests"
 		]
 	},
 	"depends": {
