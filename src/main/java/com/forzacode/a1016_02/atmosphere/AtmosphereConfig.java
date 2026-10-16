@@ -118,6 +118,58 @@ public final class AtmosphereConfig implements ModConfig.Versioned {
 	/** Share of the stone and deepslate sounds that are a hit (the rest a break). Gravel always slides. */
 	public double rockSoundHitShare = 0.65;
 
+	// --- echoes (D-076): your own sounds again, minutes later, where you can't see ---
+	/** Never within this many real seconds of the player's own combat. */
+	public double echoNoCombatSeconds = 30;
+	/** echo_mining: one of the player's bursts at least this many minutes of their play ago (its last break)... */
+	public double echoMiningMinAgeMinutes = 5;
+	/** ...and at most this many. */
+	public double echoMiningMaxAgeMinutes = 30;
+	/** The rock it comes from is this far from the player's feet (3D), at least... */
+	public int echoMiningMinDistance = 14;
+	/** ...and at most this far. */
+	public int echoMiningMaxDistance = 24;
+	/** At most this many blocks above the player's feet (below or beside them, never overhead). */
+	public int echoMiningMaxAbove = 1;
+	/** At most this many blocks below the player's feet. */
+	public int echoMiningMaxBelow = 18;
+	/**
+	 * A break's volume. Vanilla's (1 for stone) is heard to 16 blocks only, short of the 14 to 24 the echo comes from;
+	 * at 2 it carries to 32 blocks, faint there (vanilla's linear fall-off: about half of full at 14 blocks, a quarter
+	 * at 24).
+	 */
+	public double echoMiningBreakVolume = 2.0;
+	/** A hit's volume: heard to 28 blocks, a little fainter than the breaks at every distance of the band (vanilla's hits are a quarter of a break). */
+	public double echoMiningHitVolume = 1.75;
+	/**
+	 * The hits: vanilla's dig time with the block's right tool is {@code 30 * hardness / speed} ticks, a hit every 4.
+	 * The player's own gaps give their tool's speed; a block never takes longer than with a tool this slow (2: wood), so
+	 * a pause between two blocks is quiet, not more hits.
+	 */
+	public double echoMiningSlowToolSpeed = 2.0;
+	/** The tool speed assumed when the player's gaps tell nothing (6: iron). */
+	public double echoMiningToolSpeed = 6.0;
+	/** The fake's steady rhythm: a gap between its breaks from this many ticks... */
+	public int echoMiningFakeGapMinTicks = 8;
+	/** ...to this many (under 60, the 3 s that make a burst). */
+	public int echoMiningFakeGapMaxTicks = 50;
+	/** echo_door: a door, trapdoor or gate the player used at least this many minutes of their play ago... */
+	public double echoDoorMinAgeMinutes = 5;
+	/** ...and at most this many. */
+	public double echoDoorMaxAgeMinutes = 60;
+	/** It is now this far from the player (3D), at least... */
+	public int echoDoorMinDistance = 6;
+	/** ...and at most this far. */
+	public int echoDoorMaxDistance = 16;
+	/** The player's own gap between opening and closing it, if it was at most this many ticks; else a plausible one. */
+	public int echoDoorMaxGapTicks = 100;
+	/** A plausible gap, from this many ticks... */
+	public int echoDoorGapMinTicks = 12;
+	/** ...to this many. */
+	public int echoDoorGapMaxTicks = 40;
+	/** Vanilla's door volume (heard to 16 blocks): the door's own sound, as loud as the door. */
+	public double echoDoorVolume = 1.0;
+
 	// --- mining in the dark (timing gates are in Pacing) ---
 	public int miningMinDistance = 6;
 	public int miningMaxDistance = 13;
@@ -260,7 +312,8 @@ public final class AtmosphereConfig implements ModConfig.Versioned {
 	/**
 	 * D-075: one step at a time from {@link #version}. 0 to 1 (v1.2, D-070): {@code caveSoundAloneRadius} 48 to 24 and
 	 * {@code fogDriftFadeTicks} 100 to 160, each only where it still equals the old default. Everything else new in
-	 * v1.2 (fog weather, far in the rock) is missing from a v1.1 file and gets its default.
+	 * v1.2 (fog weather, far in the rock) is missing from a v1.1 file and gets its default, as v1.3's echo fields
+	 * ({@code echo...}, D-076) do from any older file: new fields, no step.
 	 */
 	@Override
 	public boolean upgrade() {

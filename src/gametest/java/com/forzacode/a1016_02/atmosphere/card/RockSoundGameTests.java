@@ -36,7 +36,7 @@ import net.minecraft.world.phys.Vec3;
  * Far in the rock (D-070) and the moved sound cards: the card's identity and gates (underground, nobody else within
  * 24), the underground rule on real blocks and light, and where its sound comes from: inside solid rock, 18 to 28
  * blocks off, below or to the side, the rock's own sound, faint, heard through {@link SoundOut}.
- * {@link CardSoundGameTests} extends this.
+ * {@link EchoGameTests} extends this.
  */
 public class RockSoundGameTests {
 	private static final String YARD = "a1016_02:accident/yard";

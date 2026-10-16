@@ -92,4 +92,17 @@ public final class Gates {
 	public static boolean away(boolean sameDimension, double distanceSqr, int minBlocks) {
 		return !sameDimension || distanceSqr >= (double) minBlocks * minBlocks;
 	}
+
+	/**
+	 * The echoes (D-076): something of the player's own to echo, and no combat of theirs within the last
+	 * {@code noCombatTicks} (30 s).
+	 */
+	public static boolean echo(boolean remembered, long ticksSinceCombat, long noCombatTicks) {
+		return remembered && ticksSinceCombat >= noCombatTicks;
+	}
+
+	/** True if {@code value} is in {@code [min, max]}: an echo's age (ticks of play ago) or its distance band (blocks). */
+	public static boolean within(double value, double min, double max) {
+		return value >= min && value <= max;
+	}
 }
