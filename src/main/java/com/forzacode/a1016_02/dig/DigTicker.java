@@ -42,7 +42,8 @@ import net.minecraft.world.phys.Vec3;
 /**
  * The dig workstream's server tick: delayed sound cues, the torches-behind-you followers, explored-cave and
  * planted-sapling tracking, the tunnel that grows between visits, the ENTERED_TUNNEL trigger, "Under you" and the
- * tunnel ladder's steps and detector ({@link LadderSteps}, D-072). With
+ * tunnel ladder's steps and detector ({@link LadderSteps}, D-072), and the blind cards' sounds ({@link BlindCues},
+ * D-077). With
  * friends (D-058 to D-062) it does all of it for every participant, looked up fresh each time and keyed by UUID:
  * each player has their own torch follower and explored-cave sampling, a cue plays at its spot for everyone in
  * hearing range, ENTERED_TUNNEL counts once per occasion ({@link TunnelEntries}), and a player who stops taking part
@@ -81,6 +82,7 @@ public final class DigTicker {
 	private final Map<UUID, TorchSession> torchSessions = new HashMap<>();
 	private final TunnelEntries entries = new TunnelEntries();
 	private final LadderSteps ladder = new LadderSteps();
+	private final BlindCues blind = new BlindCues();
 	private final RandomSource random = RandomSource.create();
 
 	private DigTicker() {
@@ -92,6 +94,7 @@ public final class DigTicker {
 		torchSessions.clear();
 		entries.clear();
 		ladder.clear();
+		blind.clear();
 	}
 
 	/** The tunnel ladder's steps in progress and its detector's samples (D-072). */
@@ -99,15 +102,21 @@ public final class DigTicker {
 		return ladder;
 	}
 
+	/** The blind cards' sounds in progress and the armed debug fires (D-077). */
+	BlindCues blind() {
+		return blind;
+	}
+
 	/**
 	 * D-062.5: a player stopped taking part (left, or turned spectator). Their torch follower stops where it is (the
-	 * torches that already went stay gone, out of view); their sampling forgets them, and their ladder steps stop. Cues
-	 * already queued still play at their spot for whoever is there to hear.
+	 * torches that already went stay gone, out of view); their sampling forgets them, and their ladder steps and blind
+	 * sounds stop. Cues already queued still play at their spot for whoever is there to hear.
 	 */
 	void onStop(UUID player) {
 		torchSessions.remove(player);
 		lastExplored.remove(player);
 		ladder.forget(player);
+		blind.forget(player);
 	}
 
 	/** Plays a vanilla sound at {@code pos} after {@code delay} ticks, for everyone in hearing range there ({@link SoundCues#playAt}). */
@@ -150,6 +159,7 @@ public final class DigTicker {
 		long now = server.getTickCount();
 		playCues(server, now);
 		ladder.tick(server, now);
+		blind.tick(server, now);
 		PlayerWatch watch = Services.watch();
 		List<ServerPlayer> players = watch.participants(server);
 		torchSessions.keySet().removeIf(uuid -> watch.participant(server, uuid).isEmpty()); // gone without a stop event: stop quietly

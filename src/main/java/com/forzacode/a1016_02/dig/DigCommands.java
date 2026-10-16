@@ -33,12 +33,13 @@ import org.jspecify.annotations.Nullable;
 
 /**
  * {@code /a1016 dig network grow <nights> [player] | network info [player] | network reveal [player] | network chest [player]
- * | tunnel <card> [player] | steps [player]}. The network is the one under that player's base: the named player, else the player
+ * | tunnel <card> [player] | steps [player] | blind [player] | blind arm <card> [fake]}. The network is the one under that player's base: the named player, else the player
  * running the command, else (the console) the first participant (D-062.9); {@code info} lists every network. Debug
  * only: the growth and the tunnels still respect the out-of-view rule. Numbers use {@link Locale#ROOT} (D-031).
  */
 final class DigCommands {
 	static final List<String> TUNNELS = List.of("plain", ScarCards.TunnelThatGrows.ID, ScarCards.TunnelIntoMine.ID);
+	static final List<String> BLIND_CARDS = List.of(BlindCards.BlindStep.ID, BlindCards.BlindTorch.ID, BlindCards.BlindDoor.ID);
 	private static final String PLAYER = "player";
 
 	private DigCommands() {
@@ -58,7 +59,44 @@ final class DigCommands {
 								.suggests((ctx, builder) -> SharedSuggestionProvider.suggest(TUNNELS, builder))
 								.executes(ctx -> tunnel(ctx, false))
 								.then(named().executes(ctx -> tunnel(ctx, true)))))
-				.then(Commands.literal("steps").executes(ctx -> steps(ctx, false)).then(named().executes(ctx -> steps(ctx, true))))));
+				.then(Commands.literal("steps").executes(ctx -> steps(ctx, false)).then(named().executes(ctx -> steps(ctx, true))))
+				.then(Commands.literal("blind").executes(ctx -> blind(ctx, false))
+						.then(Commands.literal("arm")
+								.then(Commands.argument("card", StringArgumentType.word())
+										.suggests((ctx, builder) -> SharedSuggestionProvider.suggest(BLIND_CARDS, builder))
+										.executes(ctx -> arm(ctx, false))
+										.then(Commands.literal("fake").executes(ctx -> arm(ctx, true)))))
+						.then(named().executes(ctx -> blind(ctx, true))))));
+	}
+
+	/** {@code /a1016 dig blind [player]}: that player's blind moment (D-077) and each blind card's answer now. */
+	private static int blind(CommandContext<CommandSourceStack> ctx, boolean named) throws CommandSyntaxException {
+		ServerPlayer player = player(ctx, named);
+		if (player == null) {
+			return fail(ctx, "[a1016] dig: no player");
+		}
+		Blind.debugLines(player, Blind.Env.live(ctx.getSource().getServer())).forEach(line -> say(ctx, line));
+		return 1;
+	}
+
+	/**
+	 * {@code /a1016 dig blind arm <card> [fake]}: fires that blind card for the player running it (else the first
+	 * participant) at their next blind moment, once it is {@code blindMinSeconds} old, as {@code /a1016 fire} would (every
+	 * gate of the card still holds); the result goes to the log. Open the inventory to try it.
+	 */
+	private static int arm(CommandContext<CommandSourceStack> ctx, boolean fake) throws CommandSyntaxException {
+		ServerPlayer player = player(ctx, false);
+		if (player == null) {
+			return fail(ctx, "[a1016] dig: no player");
+		}
+		String card = StringArgumentType.getString(ctx, "card");
+		if (!BLIND_CARDS.contains(card)) {
+			return fail(ctx, "[a1016] dig: not a blind card: " + card + " (" + String.join(", ", BLIND_CARDS) + ")");
+		}
+		DigTicker.INSTANCE.blind().arm(ctx.getSource().getServer(), player.getUUID(), card, fake);
+		say(ctx, String.format(Locale.ROOT, "[a1016] dig: %s%s armed for %s: open a menu (the inventory) within %d s", card, fake ? " (fake)" : "",
+				player.getName().getString(), BlindCues.ARM_TICKS / 20));
+		return 1;
 	}
 
 	/** {@code /a1016 dig steps [player]}: that player's tunnel ladder (D-072) and whether the detector sees a run now. */

@@ -8,7 +8,8 @@ import com.forzacode.a1016_02.core.ModConfig;
  * Real-time values are in seconds or minutes and go through {@link ModConfig#realTicks(double)}.
  * <p>
  * Versions (D-075, {@link ModConfig.Versioned}): 1 is v1.2, which only added the tunnel ladder's fields (D-072); a
- * file without them reads their defaults, so step 0 to 1 changes no value.
+ * file without them reads their defaults, so step 0 to 1 changes no value. v1.3's blind moments (D-077) are new fields
+ * only, without a step.
  */
 public final class DigConfig implements ModConfig.Versioned {
 	/** This section's current version. Every later default change adds a step to {@link #upgrade()} and raises it. */
@@ -210,6 +211,46 @@ public final class DigConfig implements ModConfig.Versioned {
 	 * it never hears one. Rungs 1 and 2 stay at 1 at most.
 	 */
 	public float ladderGlimpseVolumeMax = 1.3F;
+
+	// --- blind moments: while a menu is open (D-077, v1.3) ---
+	/**
+	 * Every blind card waits until the player has been blind (a counting screen open, {@code PlayerWatch.blindTicks})
+	 * at least this long (seconds): the director's first recheck of a blind moment comes at 1.5 s.
+	 */
+	public double blindMinSeconds = 1.5;
+	/** Never within this long of combat (seconds). */
+	public double blindNoCombatSeconds = 30;
+	/** {@code blind_step}: one or two steps this many blocks behind the player, against their facing. */
+	public int blindStepBackMin = 3;
+	public int blindStepBackMax = 5;
+	public double blindStepTwoStepsChance = 0.5;
+	/** Ticks between the two steps (a walking step), and how late the fake's own step comes. Plain ticks. */
+	public int blindStepTicks = 8;
+	/**
+	 * A step's volume (at most 1, so its range stays vanilla's 16 blocks and nobody outside the alone radius hears it).
+	 * 0.5 at 4 blocks is, at the ear, about two and a half times the player's own step (vanilla's 0.15 at their feet).
+	 */
+	public float blindStepVolume = 0.5F;
+	/** {@code blind_torch}: a torch or lantern a player placed, this many blocks from the player. */
+	public int blindTorchMinDistance = 6;
+	public int blindTorchMaxDistance = 20;
+	/**
+	 * Only while another light source is within this many blocks of it (the cheap rule for "never the only light of a
+	 * spawn-proof room"): a block giving at least {@link #blindTorchOtherLightMin} light.
+	 */
+	public int blindTorchOtherLightRadius = 8;
+	/** What counts as a light source for those rules: a block whose light is at least this (a redstone torch is 7). */
+	public int blindTorchOtherLightMin = 7;
+	/** Never the last light within this many blocks of a bed (any known player's respawn point, else their base). */
+	public int blindTorchBedRadius = 6;
+	/** {@code blind_door}: a closed door, trapdoor or fence gate this many blocks from the player, out of view. */
+	public int blindDoorMinDistance = 4;
+	public int blindDoorMaxDistance = 12;
+	/** Ticks between its open and its close sound (someone coming through). Plain ticks. */
+	public int blindDoorGapTicksMin = 20;
+	public int blindDoorGapTicksMax = 40;
+	/** Its sounds' volume (vanilla's door is 1: heard within 16 blocks). */
+	public float blindDoorVolume = 1.0F;
 
 	/** D-075: brings an older section up to {@link #CURRENT_VERSION}; values the player changed are kept. */
 	@Override

@@ -2,7 +2,10 @@
 	"required": true,
 	"package": "com.forzacode.a1016_02.dig.mixin",
 	"compatibilityLevel": "JAVA_25",
-	"mixins": [],
+	"mixins": [
+		"FenceGateBlockAccessor",
+		"TrapDoorBlockAccessor"
+	],
 	"client": [],
 	"server": [],
 	"injectors": {
