@@ -175,7 +175,8 @@ public class GlimpseFeedbackTests {
 	 * stays and nothing drops; the torch within 3 blocks of the player (in view by the trace service's rule) stays, and
 	 * one 38 back that lights nothing there stays. The spot is then the darkest cell, the nearest of those (16 back: the
 	 * torch beside her still gives 14 and 15 back a little light); after the steps the dark is checked again and he is
-	 * there.
+	 * there. The light engine takes in the torches, and then their going, before the plan and before the last step
+	 * ({@link DigGround#settleLight}).
 	 */
 	@GameTest(maxTicks = 300)
 	public void glimpseTakesThePlayersLightsBehindEvenWithADarkCell(GameTestHelper helper) {
@@ -191,12 +192,13 @@ public class GlimpseFeedbackTests {
 		}
 		BlockPos spot = g.at(40 - 16, 3, 4);
 		helper.startSequence()
-				.thenWaitUntil(() -> {
+				.thenExecute(() -> {
+					g.settleLight();
 					for (BlockPos torch : List.of(six, twentyEight, two, far)) {
-						helper.assertTrue(g.level.getBrightness(LightLayer.BLOCK, torch) == 14, "the torchlight has not settled yet");
+						helper.assertTrue(g.level.getBrightness(LightLayer.BLOCK, torch) == 14, "the torchlight is not there");
 					}
 					helper.assertTrue(Ladder.light(g.level, g.at(40 - 17, 3, 4)) == 3 && Ladder.light(g.level, g.at(40 - 16, 3, 4)) == 4
-							&& Ladder.light(g.level, g.at(40 - 18, 3, 4)) == 4, "17 back is not the one dark cell yet");
+							&& Ladder.light(g.level, g.at(40 - 18, 3, 4)) == 4, "17 back is not the one dark cell");
 				})
 				.thenExecute(() -> {
 					Ladder.Check check = Ladder.check(Ladder.Rung.GLIMPSE, dee, rig.env(), true);
@@ -214,6 +216,8 @@ public class GlimpseFeedbackTests {
 							"not ledgered with dig:glimpse_torches");
 					LadderSteps.Walk walk = DigTicker.INSTANCE.ladder().walk(dee.getUUID()).orElseThrow();
 					helper.assertTrue(spot.equals(walk.spot) && walk.darkened == 2, "the walk: " + walk.describe() + " to " + walk.spot);
+					g.settleLight(); // the torches' going, long before the last step
+					helper.assertTrue(Ladder.light(g.level, spot) == 0, "the spot is not dark once the torches went: " + Ladder.light(g.level, spot));
 				})
 				.thenWaitUntil(() -> helper.assertFalse(LadderRig.walking(dee), "the steps are still coming"))
 				.thenExecute(() -> {
