@@ -252,12 +252,14 @@ public class BlindGameTests extends LadderGameTests {
 		DigGround g = DigGround.of(helper, 63, 48, 10, 48, Blocks.STONE);
 		g.hollow(2, 2, 2, 45, 7, 45);
 		BlindRig rig = new BlindRig(helper, g, "Alex");
+		rig.config.blindTorchOtherLightRadius = 8; // v1.3's other-light rule, off by default since FIX-GLIMPSE: its code path still holds
 		ServerPlayer alex = rig.stand("Alex", 24, 2, 24, LadderRig.EAST);
 		rig.blind(alex, 60);
 		BlockPos bed = g.at(10, 2, 10);
 		g.level.setBlock(bed, Blocks.BED.red().defaultBlockState(), Block.UPDATE_CLIENTS);
 		alex.setRespawnPosition(new RespawnConfig(LevelData.RespawnData.of(g.level.dimension(), bed, 0.0F, 0.0F), true), false);
-		helper.assertTrue(rig.crew.bases().all(g.level.dimension()).contains(bed), "the bed is not the player's base");
+		helper.assertTrue(rig.crew.bases().all(g.level.dimension()).contains(bed) && rig.crew.bases().beds(g.level).equals(List.of(bed)),
+				"the bed is not the player's base, or not a bed");
 
 		BlockPos near = g.at(20, 2, 24); // 4 away
 		g.place(near, Blocks.TORCH.defaultBlockState());
@@ -291,7 +293,7 @@ public class BlindGameTests extends LadderGameTests {
 				Blocks.JACK_O_LANTERN.defaultBlockState(), Blocks.SEA_LANTERN.defaultBlockState())) {
 			helper.assertFalse(Blind.isBlindLight(other), "a light it may take: " + other);
 		}
-		List<BlockPos> beds = rig.crew.bases().all(g.level.dimension());
+		List<BlockPos> beds = rig.crew.bases().beds(g.level);
 		helper.assertFalse(Blind.torchMayGo(g.level, lone, beds, rig.config), "the only light around it may go");
 		helper.assertFalse(Blind.torchMayGo(g.level, byBed, beds, rig.config), "the bed's last light may go");
 		helper.assertTrue(Blind.torchMayGo(g.level, seen, beds, rig.config) && !rig.outOfView(g.level, List.of(seen)), "the torch in front is not just in view");
@@ -494,7 +496,7 @@ public class BlindGameTests extends LadderGameTests {
 		BlindRig rig = new BlindRig(helper, g, "Alex");
 		ServerPlayer alex = rig.stand("Alex", 12, 2, 12, LadderRig.EAST);
 		List<String> lines = Blind.debugLines(alex, rig.env());
-		helper.assertTrue(lines.size() == 6 && lines.get(0).contains("not blind") && lines.get(1).startsWith("blind_step: no (not blind"), "lines " + lines);
+		helper.assertTrue(lines.size() == 7 && lines.get(0).contains("not blind") && lines.get(1).startsWith("blind_step: no (not blind"), "lines " + lines);
 		rig.blind(alex, 40);
 		lines = Blind.debugLines(alex, rig.env());
 		helper.assertTrue(lines.get(0).contains("blind for 2.0 s") && lines.get(1).equals("blind_step: fits now") && lines.get(2).startsWith("blind_torch: no (")
@@ -510,18 +512,21 @@ public class BlindGameTests extends LadderGameTests {
 		helper.succeed();
 	}
 
-	/** D-075: the blind fields are new fields without a step: a version 1 section without them reads their defaults and stays version 1. */
+	/**
+	 * D-075: the blind fields are new fields without a step: a version 1 section without them reads their defaults; it
+	 * steps to version 2 (FIX-GLIMPSE), which leaves fields it does not have at their (new) defaults.
+	 */
 	@GameTest
 	public void aDigSectionWithoutTheBlindFieldsReadsTheirDefaults(GameTestHelper helper) {
 		JsonObject sections = JsonParser.parseString("{\"dig\": {\"version\": 1, \"ladderMinRun\": 20, \"homeRadius\": 24}}").getAsJsonObject();
 		DigConfig read = ModConfig.readSection(sections, "dig", DigConfig.class, DigConfig::new);
 		DigConfig defaults = new DigConfig();
-		helper.assertTrue(read.version == 1 && DigConfig.CURRENT_VERSION == 1 && read.ladderMinRun == 20, "version " + read.version);
+		helper.assertTrue(read.version == 2 && DigConfig.CURRENT_VERSION == 2 && read.ladderMinRun == 20, "version " + read.version);
 		helper.assertTrue(read.blindMinSeconds == 1.5 && read.blindNoCombatSeconds == 30 && read.blindStepBackMin == 3 && read.blindStepBackMax == 5
-				&& read.blindTorchMinDistance == 6 && read.blindTorchMaxDistance == 20 && read.blindTorchOtherLightRadius == 8 && read.blindTorchBedRadius == 6
+				&& read.blindTorchMinDistance == 6 && read.blindTorchMaxDistance == 20 && read.blindTorchOtherLightRadius == 0 && read.blindTorchBedRadius == 6
 				&& read.blindDoorMinDistance == 4 && read.blindDoorMaxDistance == 12 && read.blindStepVolume == defaults.blindStepVolume
 				&& read.blindDoorVolume == defaults.blindDoorVolume, "the blind fields are not their defaults");
-		helper.assertFalse(read.upgrade(), "a version 1 section upgraded");
+		helper.assertFalse(read.upgrade(), "a version 2 section upgraded");
 		helper.succeed();
 	}
 

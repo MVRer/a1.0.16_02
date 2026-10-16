@@ -25,7 +25,8 @@
 			"com.forzacode.a1016_02.core.R6ReviewCoreTests",
 			"com.forzacode.a1016_02.core.VerifyV13Tests",
 			"com.forzacode.a1016_02.director.VerifyV13DirectorTests",
-			"com.forzacode.a1016_02.entity.VerifyV13ScreenshotTests"
+			"com.forzacode.a1016_02.entity.VerifyV13ScreenshotTests",
+			"com.forzacode.a1016_02.dig.GlimpseFeedbackTests"
 		]
 	},
 	"depends": {

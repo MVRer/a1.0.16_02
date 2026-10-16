@@ -2,6 +2,28 @@
 
 One entry per merge, newest first. Run the game from the main checkout (this folder, on `main`).
 
+## READY TO TRY: the glimpse says why and makes the dark, louder steps, one torch is enough  (branch fix/glimpse-feedback)
+```
+Restart needed: full game restart (server and client jar).
+What changed, in plain words (from Mariano's v1.3 playtest):
+  - The tunnel glimpse: /a1016 fire steps_behind_glimpse that cannot happen now says why in chat, and
+    /a1016 dig steps arm once|coming|glimpse waits up to 2 minutes for the real moment (you facing forward, away from
+    the tunnel behind you) and fires it then. He makes the dark he appears in: before the glimpse's steps, every torch
+    or lantern you placed that lights the tunnel 6 to 24 blocks behind you goes (out of your view, up to 8), so a
+    torch-lit tunnel works.
+  - Louder: the tunnel steps (1.5 far off to 1.0 close, 1.8 for the glimpse's) and the blind step behind you (1.0);
+    still never heard by anyone 48 or more blocks away.
+  - blind_torch: one torch of yours is enough (the "another light within 8" rule is off), only a real bed (your
+    respawn point) protects the light next to it, and the arm says why when no torch may go.
+See it now: the v1.2 entry's step 4 (the ladder) and the v1.3 entry's step 5 (blind_torch) below.
+Existing config files: the dig section steps to version 2 (ladderVolumeFar 0.7 to 1.5, ladderVolumeNear 0.9 to 1.0,
+  ladderGlimpseVolumeMax 1.3 to 1.8, blindStepVolume 0.5 to 1.0, blindTorchOtherLightRadius 8 to 0), each only where
+  it still has v1.3's value; ladderDarkFrom 6, ladderDarkTo 24 and ladderGlimpseMaxTorches 8 are new.
+Still to check in the Dev Client (the game tests cannot hear or see a frame):
+  - the louder steps at 50% master volume are clearly heard but not loud, rung 3's from 14 to 20 back;
+  - the torches behind you are never seen going (only out of view), and the tunnel behind is dark when you turn.
+```
+
 ## READY TO TRY: v1.3  (main 206ab06, with every review fix; jar build/libs/a1016_02-1.3.0-26.3.jar after ./gradlew build)
 ```
 Restart needed: full game restart. Everyone who plays needs the same jar plus Fabric API (the client sends when a menu
@@ -32,9 +54,11 @@ See it now (Dev Client; /a1016 debug overlay on shows each player's "blind" line
      chest is the one you hear.
   4. blind_step: stand with open floor behind you, /a1016 dig blind arm blind_step, then open the inventory (E) and
      wait 2 s: one or two steps 3 to 5 blocks behind you. /a1016 dig blind arm blind_step fake: your own step, late.
-  5. blind_torch: place two torches about 4 blocks apart, 6 to 20 blocks from you and more than 6 from your bed (or
-     your first placed blocks, if you have no bed), turn your back to them, /a1016 dig blind arm blind_torch, open the
-     inventory for 2 s, close it and look: one torch is gone, its wall or floor still there. A lone torch never goes.
+  5. blind_torch: one torch is enough now: place a torch 6 to 20 blocks from you (a cave torch is fine; not the only
+     light within 6 blocks of your bed, if you slept in one), turn your back to it, /a1016 dig blind arm blind_torch,
+     open the inventory for 2 s, close it and look: the torch is gone, its wall or floor still there. The arm tells you
+     in chat when it fired; if no torch may go it says why (none you placed 6 to 20 blocks away, all in view (the
+     nearest named), the last light near your bed). /a1016 dig blind shows the same.
   6. blind_door: a closed wooden door, trapdoor or fence gate 4 to 12 blocks away and out of view,
      /a1016 dig blind arm blind_door, open the inventory: its open, then its close 1 to 2 s later. Close the menu
      before the close and it does not play.
@@ -92,13 +116,23 @@ See it now (Dev Client; /a1016 debug overlay on shows the fog spell and everyone
   3. The fog is weather, outside: walk into a tunnel, or indoors where the sky's light does not reach, and the
      spell's fog clears in about a second (it follows the sky light where you stand, full from sky light 10, none at
      4 or less); step back out and it closes in again. The dusk fog is not weather and stays.
-  4. The ladder: dig a straight 2-high tunnel of 20+ blocks underground (5+ blocks below the surface, dark), walk to
-     its end and face away down it, no torches behind you. Then /a1016 fire steps_behind_once, then
-     /a1016 fire steps_behind_coming (turn around mid-steps: they stop), then /a1016 fire steps_behind_glimpse (keep
-     facing away until the steps stop, then turn slowly). /a1016 dig steps prints your rung, the last events, the used
-     tunnels and whether it sees a tunnel behind you now. A forced fire skips the rung order and spacing, never the
-     rules (underground, alone, the tunnel, no combat). Alone means nobody else within 48 blocks, spectators and
-     dead players included (the steps would reach them): a friend spectating beside you stops it.
+  4. The ladder: dig a straight 2-high tunnel of 20+ blocks underground (5+ blocks below the surface), walk to its end
+     and keep facing forward, away from the tunnel behind you: the steps come from behind, looking back down the
+     tunnel stops them, and the glimpse needs that stretch out of your view. Torches you placed in it are fine now:
+     before the glimpse's steps he takes every torch or lantern you placed that lights the tunnel 6 to 24 blocks back
+     (out of your view, at most 8; never one you did not place, never daylight down a shaft), so it goes dark behind
+     you. The easy way: /a1016 dig steps arm once, then coming, then glimpse, and just keep mining or walking facing
+     forward: each fires the moment the real card's moment comes (alone, a dug run behind you, facing away from it)
+     and tells you in chat when it is armed, when it fires and when it gives up after 2 minutes, with why. For the
+     glimpse: when the steps stop, turn around slowly; he stands where it is dark, and is gone before you look
+     straight at him. /a1016 fire steps_behind_once, steps_behind_coming or steps_behind_glimpse fire at once instead
+     (they skip the rung order, the spacing and the look back, never the rules: underground, alone, the tunnel, no
+     combat), so face forward before you fire; if the glimpse cannot happen it says why in chat ("no spot: 14-20 back
+     are in your view (face down the tunnel away from them)", plus "face away from the tunnel behind you, then fire"
+     while you look back). /a1016 dig steps prints your rung, the last events, the used tunnels, whether it sees a
+     tunnel behind you now, the lights that would go (and those that stay, and why) and each spot 14 to 20 back with
+     its answer. Alone means nobody else within 48 blocks, spectators and dead players included (the steps would reach
+     them): a friend spectating beside you stops it.
   5. /a1016 director shows the fog weather line (the boost while a spell that counts and is not quiet is on; "below
      half: no boost" while it eases in or out) and, per deck, any card parked because its moment never came (the
      tunnel steps on the surface, for half an hour of play).

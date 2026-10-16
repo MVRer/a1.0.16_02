@@ -9,11 +9,14 @@ import com.forzacode.a1016_02.core.ModConfig;
  * <p>
  * Versions (D-075, {@link ModConfig.Versioned}): 1 is v1.2, which only added the tunnel ladder's fields (D-072); a
  * file without them reads their defaults, so step 0 to 1 changes no value. v1.3's blind moments (D-077) are new fields
- * only, without a step.
+ * only, without a step. 2 is v1.3's playtest fixes (FIX-GLIMPSE): louder steps ({@link #ladderVolumeFar} 0.7 to 1.5,
+ * {@link #ladderVolumeNear} 0.9 to 1.0, {@link #ladderGlimpseVolumeMax} 1.3 to 1.8, {@link #blindStepVolume} 0.5 to
+ * 1.0) and no other-light rule for {@code blind_torch} ({@link #blindTorchOtherLightRadius} 8 to 0), each only where it
+ * still equals v1.3's default; rung 3's darkening fields are new.
  */
 public final class DigConfig implements ModConfig.Versioned {
 	/** This section's current version. Every later default change adds a step to {@link #upgrade()} and raises it. */
-	public static final int CURRENT_VERSION = 1;
+	public static final int CURRENT_VERSION = 2;
 
 	/** The version this section was last written at; missing (0) is v1.1 or older. */
 	public int version = 0;
@@ -154,14 +157,16 @@ public final class DigConfig implements ModConfig.Versioned {
 	public double ladderSneakChance = 0.25;
 	public float ladderSneakVolumeFactor = 0.6F;
 	/**
-	 * A step's volume when it is {@link #ladderComingFrom} blocks from the player, rising to {@link #ladderVolumeNear}
-	 * at {@link #ladderComingStopMin}. Never above 1 (it is clamped), so a step's hearing range stays vanilla's 16
-	 * blocks and a friend 48 away never hears it. The client fades a sound linearly to nothing at that range, so a step
-	 * 12 back at 0.73 is about as loud as the player's own step (vanilla's 0.15 at their feet), one 4 back at 0.9 about
-	 * five times as loud.
+	 * A step's volume when it is {@link #ladderComingFrom} blocks from the player, going to {@link #ladderVolumeNear}
+	 * at {@link #ladderComingStopMin}. Vanilla plays a sound at most at full loudness (a volume over 1 only reaches
+	 * farther: its range is {@code 16 * max(volume, 1)} blocks) and fades it linearly to nothing at that range, so 1.5
+	 * far off (a 24-block range) makes a step 15 back about a third as loud as one at the ear, and 1.0 near makes one 4
+	 * back three quarters (at v1.3's 0.7 and 0.9 they were a twentieth and a half: too quiet, FIX-GLIMPSE). Each step
+	 * is also held under what a friend outside the shared moment radius could hear ({@code Ladder.stepVolume}), so a
+	 * friend 48 away never hears one.
 	 */
-	public float ladderVolumeFar = 0.7F;
-	public float ladderVolumeNear = 0.9F;
+	public float ladderVolumeFar = 1.5F;
+	public float ladderVolumeNear = 1.0F;
 	/** The rest of the steps stop the moment the player looks within this many degrees of the tunnel behind. */
 	public double ladderLookBackDegrees = 70;
 	/** Rung 1 ({@code steps_behind_once}): one or two steps this many blocks back, then nothing. */
@@ -199,18 +204,27 @@ public final class DigConfig implements ModConfig.Versioned {
 	public int ladderGlimpseSpotMax = 20;
 	public int ladderGlimpseMaxBlockLight = 3;
 	/**
+	 * Rung 3 makes the dark he appears in (FIX-GLIMPSE, Mariano): before the steps start it takes every light a player
+	 * placed (a torch or lantern, soul and copper ones too, never a redstone torch) that lights the tunnel from this many
+	 * blocks back to {@link #ladderDarkTo} over {@link #ladderGlimpseMaxBlockLight}, out of every player's view, at
+	 * most {@link #ladderGlimpseMaxTorches} of them (0: none), in one silent edit ({@code dig:glimpse_torches}).
+	 */
+	public int ladderDarkFrom = 6;
+	public int ladderDarkTo = 24;
+	public int ladderGlimpseMaxTorches = 8;
+	/**
 	 * Rung 3's steps, coming up the tunnel to the spot (at most a step and a half apart, closer when the spot is far, so
 	 * at least three are in hearing range for a spot up to 19 back), all within the range below where they can be.
 	 */
 	public int ladderGlimpseStepsMin = 4;
 	public int ladderGlimpseStepsMax = 7;
 	/**
-	 * Rung 3's steps play at this volume, the one place a ladder step goes above 1: vanilla's hearing range is
-	 * {@code max(volume, 1) * 16}, so 1.3 reaches about 21 blocks and a step at the spot 14 to 20 back is heard (faint
-	 * from the start, louder as they come). Each step is also held under the shared moment radius, so a friend outside
-	 * it never hears one. Rungs 1 and 2 stay at 1 at most.
+	 * Rung 3's steps play at this volume: vanilla's hearing range is {@code max(volume, 1) * 16}, so 1.8 reaches about
+	 * 29 blocks and a step at the spot 14 to 20 back is heard clearly (a third to a half as loud as one at the ear,
+	 * louder as they come; v1.3's 1.3 left them a twentieth to a third). Each step is also held under the shared moment
+	 * radius, so a friend outside it never hears one.
 	 */
-	public float ladderGlimpseVolumeMax = 1.3F;
+	public float ladderGlimpseVolumeMax = 1.8F;
 
 	// --- blind moments: while a menu is open (D-077, v1.3) ---
 	/**
@@ -228,20 +242,25 @@ public final class DigConfig implements ModConfig.Versioned {
 	public int blindStepTicks = 8;
 	/**
 	 * A step's volume (at most 1, so its range stays vanilla's 16 blocks and nobody outside the alone radius hears it).
-	 * 0.5 at 4 blocks is, at the ear, about two and a half times the player's own step (vanilla's 0.15 at their feet).
+	 * 1.0 at 4 blocks is, at the ear, three quarters of full loudness, five times the player's own step (vanilla's 0.15
+	 * at their feet); v1.3's 0.5 was too quiet in play (FIX-GLIMPSE).
 	 */
-	public float blindStepVolume = 0.5F;
+	public float blindStepVolume = 1.0F;
 	/** {@code blind_torch}: a torch or lantern a player placed, this many blocks from the player. */
 	public int blindTorchMinDistance = 6;
 	public int blindTorchMaxDistance = 20;
 	/**
 	 * Only while another light source is within this many blocks of it (the cheap rule for "never the only light of a
-	 * spawn-proof room"): a block giving at least {@link #blindTorchOtherLightMin} light.
+	 * spawn-proof room"): a block giving at least {@link #blindTorchOtherLightMin} light. 0 (the default since
+	 * FIX-GLIMPSE): no such rule, one torch is enough; v1.3's 8 meant no cave torch ever went (they are spaced farther).
 	 */
-	public int blindTorchOtherLightRadius = 8;
+	public int blindTorchOtherLightRadius = 0;
 	/** What counts as a light source for those rules: a block whose light is at least this (a redstone torch is 7). */
 	public int blindTorchOtherLightMin = 7;
-	/** Never the last light within this many blocks of a bed (any known player's respawn point, else their base). */
+	/**
+	 * Never the last light within this many blocks of a bed: a known player's respawn point (a bed or an anchor), never
+	 * their first placed block (in a new world often a cave torch).
+	 */
 	public int blindTorchBedRadius = 6;
 	/** {@code blind_door}: a closed door, trapdoor or fence gate this many blocks from the player, out of view. */
 	public int blindDoorMinDistance = 4;
@@ -259,6 +278,15 @@ public final class DigConfig implements ModConfig.Versioned {
 			return false;
 		}
 		// 0 to 1 (v1.2): new fields only (the tunnel ladder, D-072), read as their defaults; no old default changed.
+		if (version < 2) {
+			// 1 to 2 (FIX-GLIMPSE, v1.3's playtest): louder steps and no other-light rule, only where still v1.3's default.
+			DigConfig d = new DigConfig();
+			ladderVolumeFar = ModConfig.Upgrades.keepOrNew(ladderVolumeFar, 0.7F, d.ladderVolumeFar);
+			ladderVolumeNear = ModConfig.Upgrades.keepOrNew(ladderVolumeNear, 0.9F, d.ladderVolumeNear);
+			ladderGlimpseVolumeMax = ModConfig.Upgrades.keepOrNew(ladderGlimpseVolumeMax, 1.3F, d.ladderGlimpseVolumeMax);
+			blindStepVolume = ModConfig.Upgrades.keepOrNew(blindStepVolume, 0.5F, d.blindStepVolume);
+			blindTorchOtherLightRadius = ModConfig.Upgrades.keepOrNew(blindTorchOtherLightRadius, 8, d.blindTorchOtherLightRadius);
+		}
 		version = CURRENT_VERSION;
 		return true;
 	}

@@ -52,7 +52,7 @@ public class VerifyV13Tests {
 	}
 
 	private static final List<Part> VERSIONED = List.of(new Part("director", DirectorConfig.class, DirectorConfig::new, 3),
-			new Part("atmosphere", AtmosphereConfig.class, AtmosphereConfig::new, 2), new Part("dig", DigConfig.class, DigConfig::new, 1),
+			new Part("atmosphere", AtmosphereConfig.class, AtmosphereConfig::new, 2), new Part("dig", DigConfig.class, DigConfig::new, 2),
 			new Part("entity", EntityConfig.class, EntityConfig::new, 4));
 
 	private static JsonObject file(String name) throws IOException {
@@ -97,11 +97,15 @@ public class VerifyV13Tests {
 		return tag.copy();
 	}
 
+	/** FIX-GLIMPSE's dig step 1 to 2: these keys, still at v1.2's (and v1.3's) defaults in the files, step to the new ones. */
+	private static final Set<String> DIG_STEPPED = Set.of("ladderVolumeFar", "ladderVolumeNear", "ladderGlimpseVolumeMax", "blindStepVolume",
+			"blindTorchOtherLightRadius");
+
 	/**
 	 * v1.2's file with hand edits in every versioned section: each section reaches v1.3's version (director 2 to 3,
 	 * which only adds two fields; atmosphere 1 to 2, which only steps the preview's {@code echoDoorVolume}, a key v1.2's
-	 * file does not have), every value the file had is kept (defaults and edits alike: no v1.2 default changed in v1.3),
-	 * and every field new in v1.3 is at its default.
+	 * file does not have; dig 1 to 2, FIX-GLIMPSE's louder steps, {@link #DIG_STEPPED}), every other value the file had
+	 * is kept (defaults and edits alike), and every field new in v1.3 is at its default.
 	 */
 	@GameTest
 	public void verifyV12ConfigLoadsInV13(GameTestHelper helper) throws IOException {
@@ -127,7 +131,8 @@ public class VerifyV13Tests {
 				wrong.add(part.name() + ".version " + after.get("version"));
 			}
 			for (Map.Entry<String, JsonElement> e : before.entrySet()) {
-				if (!e.getKey().equals("version") && !numberEquals(e.getValue(), after.get(e.getKey()))) {
+				JsonElement expected = part.name().equals("dig") && DIG_STEPPED.contains(e.getKey()) ? defaults.get(e.getKey()) : e.getValue();
+				if (!e.getKey().equals("version") && !numberEquals(expected, after.get(e.getKey()))) {
 					wrong.add(part.name() + "." + e.getKey() + " was " + e.getValue() + ", now " + after.get(e.getKey()));
 				}
 			}
@@ -172,6 +177,13 @@ public class VerifyV13Tests {
 		helper.assertTrue(Math.abs(atmosphere.echoDoorVolume - new AtmosphereConfig().echoDoorVolume) < 1.0E-6,
 				"a v1.3.0-preview.1 config keeps echoDoorVolume " + atmosphere.echoDoorVolume + " (atmosphere section version "
 						+ atmosphere.version + ", no step): the door echo stays silent at 16 blocks, R4's finding, for that install");
+		// FIX-GLIMPSE: the preview's dig section (version 1) gets the louder steps and the lone torch.
+		com.forzacode.a1016_02.dig.DigConfig dig = ModConfig.readSection(loaded.sections, "dig", com.forzacode.a1016_02.dig.DigConfig.class,
+				com.forzacode.a1016_02.dig.DigConfig::new);
+		com.forzacode.a1016_02.dig.DigConfig digFresh = new com.forzacode.a1016_02.dig.DigConfig();
+		helper.assertTrue(dig.version == 2 && dig.ladderVolumeFar == digFresh.ladderVolumeFar && dig.ladderGlimpseVolumeMax == digFresh.ladderGlimpseVolumeMax
+				&& dig.blindStepVolume == digFresh.blindStepVolume && dig.blindTorchOtherLightRadius == 0, "the preview's dig section did not step: version "
+						+ dig.version + ", far " + dig.ladderVolumeFar + ", other-light radius " + dig.blindTorchOtherLightRadius);
 		helper.succeed();
 	}
 
