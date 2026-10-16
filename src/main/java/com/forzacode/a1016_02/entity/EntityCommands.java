@@ -274,8 +274,12 @@ final class EntityCommands {
 				+ (TheScreenshot.storyOver(server) ? ", the story is over (no arm is kept or made)" : ""));
 		for (UUID id : shot.armed()) {
 			ScreenshotStatePayload told = shot.told(id).orElse(ScreenshotStatePayload.OFF);
+			String paused = shot.paused(server).map(why -> "paused: " + why).orElse("ready");
 			lines.add(String.format(Locale.ROOT, " %s: %.2f in-game days left, %s, fog %s, the weather's fog end %.0f (arm %d)", playerName(server, id),
-					shot.ticksLeft(server, id) / 24000.0, told.armed() ? "ready" : "paused", told.fogOn() ? "on" : "off", told.fogEnd(), told.arm()));
+					shot.ticksLeft(server, id) / 24000.0, paused, told.fogOn() ? "on" : "off", told.fogEnd(), told.arm()));
+		}
+		if (!shot.armed().isEmpty()) {
+			lines.add(" an armed F2 that saves a plain picture says why in the client log (\"" + ScreenshotRules.PLAIN.trim() + " ...\")");
 		}
 		for (String line : lines) {
 			ctx.getSource().sendSuccess(() -> Component.literal(line), false);

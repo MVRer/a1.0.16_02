@@ -1,6 +1,7 @@
 package com.forzacode.a1016_02.entity.client;
 
 import java.util.List;
+import java.util.Locale;
 import java.util.Optional;
 
 import com.forzacode.a1016_02.A1016_02;
@@ -20,6 +21,7 @@ import com.mojang.renderpearl.api.textures.GpuTexture;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
+import net.fabricmc.loader.api.FabricLoader;
 
 import net.minecraft.SharedConstants;
 import net.minecraft.client.Camera;
@@ -34,6 +36,7 @@ import net.minecraft.client.renderer.fog.FogData;
 import net.minecraft.client.renderer.state.GameRenderState;
 import net.minecraft.core.BlockPos;
 import net.minecraft.gizmos.Gizmos;
+import net.minecraft.network.chat.Component;
 import net.minecraft.util.RandomSource;
 import net.minecraft.util.Util;
 import net.minecraft.world.effect.MobEffects;
@@ -44,6 +47,7 @@ import net.minecraft.world.phys.Vec3;
 
 import org.joml.Vector4f;
 import org.joml.Vector4fc;
+import org.jspecify.annotations.Nullable;
 
 /**
  * The screenshot on the client (D-078). The server arms this client ({@link ScreenshotStatePayload}); the next
@@ -65,10 +69,11 @@ import org.joml.Vector4fc;
  * window keeps showing the frame it shows. The client then tells the server ({@link ScreenshotTakenPayload}) and
  * forgets its arm.
  *
- * <p>If a condition fails, no spot fits ({@link ScreenshotSpot#find}) or the level is not being drawn, vanilla takes
- * the screenshot as always and the arm waits for the next one. If the frame fails, the target is made clean (the
- * normal frame again, else a plain clear) and vanilla takes a normal screenshot; should even that fail, nothing is
- * saved until the next frame. After {@link #MAX_FAILURES} failures in a row this client stops trying until its next
+ * <p>If the server has the arm paused, a condition fails, no spot fits ({@link ScreenshotSpot#search}) or the level is
+ * not being drawn, vanilla takes the screenshot as always and the arm waits for the next one; the client log gets one
+ * line saying why ({@code "[a1016] screenshot armed but plain: <reason>"}), and in a development environment only the
+ * chat too. If the frame fails, the target is made clean (the normal frame again, else a plain clear) and vanilla
+ * takes a normal screenshot; should even that fail, nothing is saved until the next frame. After {@link #MAX_FAILURES} failures in a row this client stops trying until its next
  * arm. Render thread only.
  */
 public final class ScreenshotClient {
@@ -81,6 +86,8 @@ public final class ScreenshotClient {
 	private static boolean fogOn;
 	private static float weatherFogEnd = Float.NaN;
 	private static int arm;
+	/** Why the server has the arm paused ({@link ScreenshotStatePayload#paused}), "" when ready. */
+	private static String paused = "";
 	private static int failures;
 	private static int gaveUpArm;
 	/** The main render target may still hold a frame with him: no screenshot is saved until the next client tick. */
@@ -111,6 +118,7 @@ public final class ScreenshotClient {
 		fogOn = payload.fogOn();
 		weatherFogEnd = payload.fogEnd();
 		arm = payload.arm();
+		paused = payload.paused();
 	}
 
 	private static void reset() {
@@ -118,6 +126,7 @@ public final class ScreenshotClient {
 		fogOn = false;
 		weatherFogEnd = Float.NaN;
 		arm = 0;
+		paused = "";
 		failures = 0;
 		gaveUpArm = 0;
 		dirty = false;
@@ -126,21 +135,25 @@ public final class ScreenshotClient {
 	/**
 	 * {@code ScreenshotMixin}: the player pressed the screenshot key. True if this was the screenshot (him in the image,
 	 * the server told), or if the main target may still hold him: vanilla's grab is skipped. False: vanilla takes it as
-	 * always.
+	 * always; while this client has an arm (ready or paused), why the picture stays plain goes to the client log
+	 * ({@link #plain}).
 	 */
 	public static boolean onScreenshotKey(Minecraft minecraft, boolean debugPanoramaRequested) {
 		if (dirty) {
 			return true; // his frame may still be in the main target: nothing is saved until the next frame redraws it
 		}
-		if (!armed() || debugPanoramaRequested && SharedConstants.DEBUG_PANORAMA_SCREENSHOT) {
+		if (arm == 0 || debugPanoramaRequested && SharedConstants.DEBUG_PANORAMA_SCREENSHOT) {
+			return false; // not armed (or the debug panorama): vanilla's screenshot, nothing to say
+		}
+		Attempt attempt = attempt(minecraft);
+		if (attempt.spot() == null) {
+			plain(minecraft, attempt.why());
 			return false;
 		}
-		Optional<ScreenshotSpot.Spot> spot = spot(minecraft);
-		if (spot.isEmpty() || !ClientPlayNetworking.canSend(ScreenshotTakenPayload.TYPE)) {
-			return false;
-		}
+		ScreenshotSpot.Spot spot = attempt.spot();
 		try {
-			if (!shoot(minecraft, spot.get())) {
+			if (!shoot(minecraft, spot)) {
+				plain(minecraft, "the level is not being drawn");
 				return false;
 			}
 		} catch (RuntimeException e) {
@@ -148,13 +161,30 @@ public final class ScreenshotClient {
 			if (dirty) {
 				clean(minecraft);
 			}
+			if (!dirty) {
+				plain(minecraft, "the frame with him failed (" + e + "); this one is vanilla's");
+			}
 			return dirty; // a clean target: vanilla takes a normal screenshot; one that may hold him: none this time
 		}
 		clean(minecraft);
 		failures = 0;
 		armed = false;
 		ClientPlayNetworking.send(ScreenshotTakenPayload.INSTANCE);
+		A1016_02.LOGGER.info("[a1016] screenshot: him in the picture, {} blocks off, {} px tall, fog {}%", Math.round(spot.distance()),
+				Math.round(spot.pixels()), Math.round(spot.fog() * 100.0));
 		return true;
+	}
+
+	/**
+	 * An armed F2 saved a plain picture: one line in the client log with the reason ({@link ScreenshotRules#plainLine}),
+	 * and in a development environment only the same line in chat; never in a player's chat.
+	 */
+	private static void plain(Minecraft minecraft, String reason) {
+		String line = ScreenshotRules.plainLine(reason);
+		A1016_02.LOGGER.info(line);
+		if (FabricLoader.getInstance().isDevelopmentEnvironment()) {
+			minecraft.showDebugChat(Component.literal(line));
+		}
 	}
 
 	private static void failed(RuntimeException e) {
@@ -167,12 +197,25 @@ public final class ScreenshotClient {
 		}
 	}
 
-	/** The conditions, then the spot; empty if either fails (the arm waits). */
-	private static Optional<ScreenshotSpot.Spot> spot(Minecraft minecraft) {
+	/** An F2's try: the spot, or (no spot) why the picture stays plain. */
+	private record Attempt(ScreenshotSpot.@Nullable Spot spot, String why) {
+		static Attempt plain(String why) {
+			return new Attempt(null, why);
+		}
+	}
+
+	/** The server's state, the conditions, then the spot; a reason if any fails (the arm waits). */
+	private static Attempt attempt(Minecraft minecraft) {
+		if (!armed) {
+			return Attempt.plain("paused by the server: " + (paused.isEmpty() ? "it says not now" : paused));
+		}
+		if (arm == gaveUpArm) {
+			return Attempt.plain("the frame with him failed " + MAX_FAILURES + " times in a row: no more tries until the next arm");
+		}
 		ClientLevel level = minecraft.level;
 		LocalPlayer player = minecraft.player;
 		if (level == null || player == null) {
-			return Optional.empty();
+			return Attempt.plain("no level");
 		}
 		EntityConfig config = EntityConfig.get();
 		GameRenderer renderer = minecraft.gameRenderer;
@@ -184,17 +227,27 @@ public final class ScreenshotClient {
 		boolean inFluid = fluid == FogType.WATER || fluid == FogType.LAVA || fluid == FogType.POWDER_SNOW;
 		int sky = level.getBrightness(LightLayer.SKY, BlockPos.containing(camera.position()));
 		boolean blindOrDark = player.hasEffect(MobEffects.BLINDNESS) || player.hasEffect(MobEffects.DARKNESS);
+		double drawnEnd = fog.visibleEnd();
 		Optional<String> why = ScreenshotRules.clientConditions(level.dimension() == Level.OVERWORLD, minecraft.gui.screen() != null, inFluid,
 				minecraft.options.getCameraType().isFirstPerson(), sky, config.screenshotMinSkyLight, IrisShaders.packInUse(), blindOrDark, fogOn,
-				fog.visibleEnd(), weatherFogEnd);
+				drawnEnd, weatherFogEnd);
 		if (why.isPresent()) {
-			return Optional.empty();
+			return Attempt.plain(why.get() + String.format(Locale.ROOT, " (sky light %d of %d, the server's fog flag %s, the drawn fog end %.1f,"
+					+ " the weather's %.1f)", sky, config.screenshotMinSkyLight, fogOn ? "on" : "off", drawnEnd, weatherFogEnd));
 		}
 		RenderTarget target = renderer.mainRenderTarget();
 		double aspect = (double) target.width / Math.max(1, target.height);
 		ScreenshotSpot.View view = new ScreenshotSpot.View(camera.position(), camera.yRot(), camera.xRot(), camera.getFov(), aspect, target.height);
-		return ScreenshotSpot.find(view, fog, config.screenshotSpot(), (x, z) -> ScreenshotSpot.feetY(level, x, z),
+		ScreenshotSpot.Search search = ScreenshotSpot.search(view, fog, config.screenshotSpot(), (x, z) -> ScreenshotSpot.feetY(level, x, z),
 				(from, to) -> ScreenshotSpot.clear(level, from, to), RandomSource.create());
+		if (search.spot().isEmpty()) {
+			return Attempt.plain(search.why() + String.format(Locale.ROOT, " [a %dx%d picture, field of view %.1f]", target.width, target.height,
+					camera.getFov()));
+		}
+		if (!ClientPlayNetworking.canSend(ScreenshotTakenPayload.TYPE)) {
+			return Attempt.plain("the server cannot take the report");
+		}
+		return new Attempt(search.spot().get(), "");
 	}
 
 	/**
