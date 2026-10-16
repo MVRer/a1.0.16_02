@@ -381,11 +381,11 @@ public class SelfCreatedLoreTests {
 		helper.succeed();
 	}
 
-	/** The card: sc_14, MINOR, Traces, TEXT, WATCHER and VISITOR, no fake; the section reads fresh at version 1 with the design's numbers. */
+	/** The card: sc_14, MINOR, Traces, TEXT and UNSHARED, WATCHER and VISITOR, no fake; the section reads fresh at version 1 with the design's numbers. */
 	@GameTest
 	public void theRecordCardAndSection(GameTestHelper helper) {
 		EventCard card = CardRegistry.get("sc_14").orElseThrow(() -> helper.assertionException("sc_14 is not registered"));
-		helper.assertTrue(card.tier() == Tier.MINOR && card.earliestStage() == Stage.TRACES && card.tags().equals(Set.of(CardTag.TEXT))
+		helper.assertTrue(card.tier() == Tier.MINOR && card.earliestStage() == Stage.TRACES && card.tags().equals(Set.of(CardTag.TEXT, CardTag.UNSHARED))
 				&& card.habits().equals(Set.of(Habit.WATCHER, Habit.VISITOR)) && !card.hasFake(), "the card's shape");
 		RecordConfig c = ModConfig.readSection(new JsonObject(), RecordConfig.SECTION, RecordConfig.class, RecordConfig::new);
 		helper.assertTrue(c.version == 1 && c.gapHours == 6.0 && c.nightFromTime().equals(ONE) && c.nightToTime().equals(HALF_FOUR) && c.versionFromStage == 3

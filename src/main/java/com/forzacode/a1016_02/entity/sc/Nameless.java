@@ -61,6 +61,12 @@ public final class Nameless {
 
 		/** The dusk fog and fog spell at the target ({@link Nameless#fogAmount}). */
 		double fogAmount(ServerPlayer target);
+
+		/** Where the target's own drawn fog lets a band start ({@link NamelessReachPayload#fresh}), NaN without a fresh report. */
+		double reach(ServerPlayer target);
+
+		/** True if anyone shares the target's moment now ({@code PlayerWatch.sharingWith}: someone within the shared radius). */
+		boolean shared(ServerPlayer target);
 	}
 
 	static final Hooks LIVE_HOOKS = new Hooks() {
@@ -113,6 +119,16 @@ public final class Nameless {
 		public double fogAmount(ServerPlayer target) {
 			return Nameless.fogAmount(target);
 		}
+
+		@Override
+		public double reach(ServerPlayer target) {
+			return NamelessReachPayload.fresh(target);
+		}
+
+		@Override
+		public boolean shared(ServerPlayer target) {
+			return Services.watch().sharingWith(target).size() > 1;
+		}
 	};
 
 	/** The game's arms. */
@@ -129,7 +145,11 @@ public final class Nameless {
 		this.hooks = hooks;
 	}
 
-	/** Why {@code sc_02} does not fit this target now ({@link ScGates}, then {@link NamelessRules#fit}), or empty. */
+	/**
+	 * Why {@code sc_02} does not fit this target now, or empty: {@link ScGates}, then {@link NamelessRules#fit}, then nobody
+	 * sharing the moment (whoever does would feel it and still see the name), then the band the target's own drawn fog
+	 * leaves ({@link NamelessRules#bandRefusal}, from their client's report).
+	 */
 	public Optional<String> fit(ServerPlayer target) {
 		Optional<String> common = hooks.commonRefusal(target);
 		if (common.isPresent()) {
@@ -139,7 +159,15 @@ public final class Nameless {
 		for (ServerPlayer other : hooks.others(target)) {
 			distances.add(other.position().distanceTo(target.position()));
 		}
-		return NamelessRules.fit(distances, hooks.skyLight(target), hooks.fogAmount(target), NamelessConfig.get());
+		NamelessConfig config = NamelessConfig.get();
+		Optional<String> rules = NamelessRules.fit(distances, hooks.skyLight(target), hooks.fogAmount(target), config);
+		if (rules.isPresent()) {
+			return rules;
+		}
+		if (hooks.shared(target)) {
+			return Optional.of("someone shares the moment");
+		}
+		return NamelessRules.bandRefusal(hooks.reach(target), config);
 	}
 
 	/**

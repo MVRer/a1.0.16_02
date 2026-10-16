@@ -343,7 +343,8 @@ public final class HisViewClient {
 
 	/**
 	 * The grab (render thread, once the GPU has it): cropped and scaled as vanilla's world icon, then written off the render
-	 * thread ({@link HisView#writePicture}); the server is told on success. Any failure ends the arm.
+	 * thread ({@link HisView#writePicture}) only if the layer is still on then; the server is told on success. Any failure
+	 * (the layer switched off meanwhile among them) ends the arm.
 	 */
 	private static void written(Minecraft minecraft, Path folder, NativeImage frame) {
 		int side = HisViewConfig.get().iconSize();
@@ -367,7 +368,8 @@ public final class HisViewClient {
 		}
 		byte[] png = HisViewRules.png(side, side, pixels);
 		Util.ioPool().execute(() -> {
-			Optional<String> failed = HisView.writePicture(folder, png);
+			// The switch is asked again right before the write: turned off since the arm, nothing is written.
+			Optional<String> failed = SelfCreated.enabled() ? HisView.writePicture(folder, png) : Optional.of("the layer is off");
 			minecraft.execute(() -> {
 				busy = false;
 				if (failed.isPresent()) {

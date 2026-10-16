@@ -36,7 +36,9 @@ import org.jspecify.annotations.Nullable;
  * gates open, and they have not seen it this cycle); otherwise it waits, as for a moment that does not fit. A group
  * sharing a moment rolls {@code groupRateFactor} (1.5) solo ambient and minor rates between them, each its share
  * (D-074): together is shared atmosphere, never a multiple of it. A {@code PERSONAL} card (one player alone) is never
- * drawn beside a sharer, and one held from before goes back the moment a sharer is close.
+ * drawn beside a sharer, and one held from before goes back the moment a sharer is close. An {@code UNSHARED} card (a
+ * moment only its target has) is felt by nobody else: it fires beside sharers, waits for none of their gates and touches
+ * none of their pacing ({@link #feeling}).
  *
  * <p>Fog weather (D-071): while a fog spell that is not quiet is on for the player ({@link Env#fogSpell}), the
  * ambient and minor odds are {@code fogWeatherOddsFactor} times higher, SIGHTING cards weigh
@@ -552,7 +554,7 @@ public final class DirectorBrain {
 				FireResult result = env.fire(card, fake);
 				if (result == FireResult.FIRED) {
 					recordFire(w, m, c, card, fake, false, stage, env, sharers, random, rec);
-					return "fired " + card.id() + (fake ? " (fake)" : "") + (sharers.isEmpty() ? "" : ", felt by " + sharers.size() + " more");
+					return "fired " + card.id() + (fake ? " (fake)" : "") + feltBy(card, sharers);
 				}
 				notes.add(card.id() + " " + result + ", kept for later");
 				break;
@@ -677,7 +679,7 @@ public final class DirectorBrain {
 						m.recheckFires++;
 						fired = card;
 						outcome = "fired " + card.id() + (fake ? " (fake)" : "") + (held ? "" : ", released from its park")
-								+ (sharers.isEmpty() ? "" : ", felt by " + sharers.size() + " more");
+								+ feltBy(card, sharers);
 						break;
 					}
 					if (held) {
@@ -857,7 +859,7 @@ public final class DirectorBrain {
 	}
 
 	private static boolean anyHad(CardInfo card, List<Sharer> sharers) {
-		for (Sharer sharer : sharers) {
+		for (Sharer sharer : feeling(card, sharers)) {
 			if (had(card, sharer.memory())) {
 				return true;
 			}
@@ -865,9 +867,23 @@ public final class DirectorBrain {
 		return false;
 	}
 
-	/** The first sharer's reason ({@link #sharedBlock(CardInfo, WorldMemory, PacingMemory, Clock, Stage)}), or null. */
+	/** Who feels this card's fire beside its target (D-060.3): every sharer, nobody for an {@code UNSHARED} card. */
+	static List<Sharer> feeling(CardInfo card, List<Sharer> sharers) {
+		return card.has(CardTag.UNSHARED) ? List.of() : sharers;
+	}
+
+	/** The end of a fire's line: how many more felt it, if any. */
+	private static String feltBy(CardInfo card, List<Sharer> sharers) {
+		List<Sharer> felt = feeling(card, sharers);
+		return felt.isEmpty() ? "" : ", felt by " + felt.size() + " more";
+	}
+
+	/**
+	 * The first sharer's reason ({@link #sharedBlock(CardInfo, WorldMemory, PacingMemory, Clock, Stage)}), or null. Only
+	 * those who would feel it ({@link #feeling}): an {@code UNSHARED} card waits for nobody else's gates.
+	 */
 	public String sharedBlock(CardInfo card, WorldMemory w, List<Sharer> sharers, Stage stage) {
-		for (Sharer sharer : sharers) {
+		for (Sharer sharer : feeling(card, sharers)) {
 			String why = sharedBlock(card, w, sharer.memory(), sharer.clock(), stage);
 			if (why != null) {
 				return "someone close by: " + why;
@@ -1439,7 +1455,7 @@ public final class DirectorBrain {
 			rec.fired(c, card, fake, false, stage, env.tension());
 			checkQuiet(m, c, env, random, rec);
 		}
-		for (Sharer sharer : sharers) {
+		for (Sharer sharer : feeling(card, sharers)) {
 			recordFelt(sharer, card, fake, forced, stage, random);
 		}
 	}

@@ -234,13 +234,19 @@ public final class RecordRules {
 	 * (d): whether this ledgered edit counts in anyone's statistics, by its cause: never what others left
 	 * ({@link TraceLedger#isLeftByOthers}), the figure's own dig (entity's only ledgered edits, {@code entity:}), Ending D's
 	 * ({@code ending:}) or a give-back ({@link TraceService#GIVE_BACK_CAUSE}); nor an undo's own edits and their dependents
-	 * ({@link TraceService#UNDO_CAUSE}, the switch's give-backs) or 08's turning back ({@link #TURNED_BACK}). t0rch's shaft
-	 * ({@code world:left/t0rch/shaft}) is what others left.
+	 * ({@link TraceService#UNDO_CAUSE}, the switch's give-backs) or 08's turning back ({@link #TURNED_BACK}); nor an
+	 * accident's ({@link #ACCIDENT}: a trap's setup leaves exactly one clue, ARCHITECTURE's guardrail 7, and a count in the
+	 * statistics would be a second one, there before anything happened). t0rch's shaft ({@code world:left/t0rch/shaft}) is
+	 * what others left.
 	 */
 	public static boolean causeCounts(String cause) {
 		return cause != null && !TraceLedger.isLeftByOthers(cause) && !cause.startsWith("entity:") && !cause.startsWith("ending:")
-				&& !cause.startsWith(TraceService.GIVE_BACK_CAUSE) && !cause.startsWith(TraceService.UNDO_CAUSE) && !cause.startsWith(TURNED_BACK);
+				&& !cause.startsWith(ACCIDENT) && !cause.startsWith(TraceService.GIVE_BACK_CAUSE) && !cause.startsWith(TraceService.UNDO_CAUSE)
+				&& !cause.startsWith(TURNED_BACK);
 	}
+
+	/** Accident's causes ({@code accident:<trap>}, {@code accident:sc15}): never counted in the statistics. */
+	public static final String ACCIDENT = "accident:";
 
 	/** 08's own turning back when the layer is switched off (world's {@code WorldSc.turnBack}), never his trace. */
 	public static final String TURNED_BACK = "world:sc08/back";

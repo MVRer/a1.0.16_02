@@ -14,9 +14,10 @@ import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 
 /**
- * {@code sc_14} (14 a): MINOR, Traces, TEXT, WATCHER and VISITOR, no fake. It fits only for the host of an integrated server,
- * once per world ({@link TheRecord#fit}); firing arms the world for the host's world list ({@link TheRecord#armLast}) and
- * counts when it arms (D-091). A forced fire skips the fit, never the switch or the story.
+ * {@code sc_14} (14 a): MINOR, Traces, TEXT and UNSHARED, WATCHER and VISITOR, no fake. It fits only for the host of an
+ * integrated server, once per world ({@link TheRecord#fit}); firing arms the world for the host's world list
+ * ({@link TheRecord#armLast}) and counts when it arms (D-091), for the host alone: UNSHARED, so a guest beside them, who has
+ * no world list for this world, never feels it. A forced fire skips the fit, never the switch or the story.
  */
 final class RecordCard implements EventCard {
 	private final TheRecord record;
@@ -47,7 +48,7 @@ final class RecordCard implements EventCard {
 
 	@Override
 	public Set<CardTag> tags() {
-		return Set.of(CardTag.TEXT);
+		return Set.of(CardTag.TEXT, CardTag.UNSHARED);
 	}
 
 	@Override

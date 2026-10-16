@@ -136,16 +136,17 @@ public class SelfCreatedIntegrationTests {
 
 	/**
 	 * 14 (d) counts his traces only: never an undo's own edits or their dependents (core's, the switch's give-backs),
-	 * 08's turning back, Ending D's, what others left (t0rch's shaft), a give-back or the figure's dig; the layer's own
-	 * traces count.
+	 * 08's turning back, Ending D's, what others left (t0rch's shaft), a give-back, the figure's dig or an accident's (a
+	 * trap's taken block is its one clue; 15's is natural anyway); the layer's own traces count.
 	 */
 	@GameTest
 	public void theStatisticsCountHisTracesOnly(GameTestHelper helper) {
 		for (String cause : List.of(TraceService.UNDO_CAUSE, TraceService.UNDO_CAUSE + "/dependent", Turned.CAUSE + "/back", TorchTrail.CAUSE,
-				TorchTrail.CAUSE + "/dependent", "ending:d/undo", TraceService.GIVE_BACK_CAUSE, "entity:dig_under", "lore:left/F07")) {
+				TorchTrail.CAUSE + "/dependent", "ending:d/undo", TraceService.GIVE_BACK_CAUSE, "entity:dig_under", "lore:left/F07", "accident:sc15",
+				"accident:missing_rung")) {
 			helper.assertFalse(RecordRules.causeCounts(cause), cause + " counted");
 		}
-		for (String cause : List.of(Turned.CAUSE, Tracks.CAUSE, Tracks.CAUSE + "/dependent", WhereHeStood.CAUSE, "dig:sc13", "accident:sc15", "world:scar")) {
+		for (String cause : List.of(Turned.CAUSE, Tracks.CAUSE, Tracks.CAUSE + "/dependent", WhereHeStood.CAUSE, "dig:sc13", "world:scar")) {
 			helper.assertTrue(RecordRules.causeCounts(cause), cause + " did not count");
 		}
 		helper.succeed();

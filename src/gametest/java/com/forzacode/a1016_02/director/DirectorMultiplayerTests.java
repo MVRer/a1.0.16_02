@@ -4,6 +4,7 @@ import static com.forzacode.a1016_02.director.DirectorTestSupport.card;
 import static com.forzacode.a1016_02.director.DirectorTestSupport.rules;
 
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Set;
@@ -714,9 +715,18 @@ public class DirectorMultiplayerTests extends DirectorV13Tests {
 		helper.succeed();
 	}
 
-	/** The cards a player went through, in order, from their own play tick {@code from} on. */
+	/**
+	 * The cards a player went through, in order, from their own play tick {@code from} on; never an {@code UNSHARED} card
+	 * (a moment only its target has, which nobody beside them feels: every other fire both feel).
+	 */
 	private static List<String> feltSequence(DirectorSim.Result r, long from) {
-		return r.felt().stream().filter(e -> e.play() >= from).map(e -> e.cardId() + (e.fake() ? "*" : "")).toList();
+		Set<String> unshared = new HashSet<>();
+		for (CardInfo card : DirectorTestSupport.registryDeck()) {
+			if (card.has(CardTag.UNSHARED)) {
+				unshared.add(card.id());
+			}
+		}
+		return r.felt().stream().filter(e -> e.play() >= from && !unshared.contains(e.cardId())).map(e -> e.cardId() + (e.fake() ? "*" : "")).toList();
 	}
 
 	private static void assertNear(GameTestHelper helper, String what, double value, double solo, double low, double high) {

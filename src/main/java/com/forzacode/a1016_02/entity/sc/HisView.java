@@ -2,6 +2,7 @@ package com.forzacode.a1016_02.entity.sc;
 
 import java.io.IOException;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.util.Optional;
 import java.util.UUID;
@@ -77,6 +78,11 @@ public final class HisView {
 
 		/** Ending D's afterward ({@code ending:d_complete}). */
 		boolean dComplete(MinecraftServer server);
+
+		/** The layer's switch ({@link SelfCreated#enabled}). */
+		default boolean enabled() {
+			return SelfCreated.enabled();
+		}
 	}
 
 	static final Hooks LIVE_HOOKS = new Hooks() {
@@ -208,7 +214,9 @@ public final class HisView {
 
 	/**
 	 * The host's client wrote the picture ({@link HisViewTakenPayload}). Only from the player armed last, the host: the
-	 * world's flag is set (once per world). Anything else is ignored. True if it was recorded now.
+	 * world's flag is set (once per world). Anything else is ignored. True if it was recorded now. The switch is asked
+	 * again here: a picture that lands after the layer was switched off (the switch's revert already ran, finding nothing
+	 * taken) is recorded and put back at once, so the world list never keeps it while the layer is off.
 	 */
 	public boolean report(ServerPlayer player) {
 		MinecraftServer server = player.level().getServer();
@@ -220,7 +228,33 @@ public final class HisView {
 		armedFor = null;
 		armedFigure = 0;
 		A1016_02.LOGGER.info("[a1016] {}: done", LOG_ID);
+		if (!hooks.enabled()) {
+			A1016_02.LOGGER.info("[a1016] {}: switched off meanwhile, {}", LOG_ID, restore(server));
+		}
 		return true;
+	}
+
+	/**
+	 * The client's world list (no server running): the picture vanilla's entry shows for a world. While the layer is off on
+	 * this client ({@code enabled} false) and the world keeps a picture from before ({@link HisViewRules#BEFORE}, a plain
+	 * file inside its folder), that one: it is the world's own old icon, or the same picture once it was put back. Else
+	 * vanilla's {@code icon} (the layer on, nothing taken, or a world the list cannot place). Never writes; never throws.
+	 */
+	public static @Nullable Path listedIcon(@Nullable Path icon, boolean enabled) {
+		if (enabled || icon == null) {
+			return icon;
+		}
+		try {
+			Path folder = icon.getParent();
+			Optional<Path> before = folder == null ? Optional.empty() : SelfCreated.inWorld(folder, HisViewRules.BEFORE);
+			if (before.isEmpty() || !Files.isRegularFile(before.get(), LinkOption.NOFOLLOW_LINKS)
+					|| !before.get().toRealPath().startsWith(folder.toRealPath())) {
+				return icon;
+			}
+			return before.get();
+		} catch (IOException | RuntimeException e) {
+			return icon;
+		}
 	}
 
 	/** Debug ({@code /a1016 sc 03 arm}): the next sighting skips the stage and the distances. */
