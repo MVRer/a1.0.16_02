@@ -29,6 +29,13 @@ public final class ClientEffectsClient {
 		default void fogSpell(ClientEffects.FogSpell effect) {
 		}
 
+		/**
+		 * The world's fog places changed (D-085): every place there is now, oldest first (empty: none). Also carried by
+		 * {@link #sync} on join ({@code Sync.fogPlaces}). Default: nothing.
+		 */
+		default void fogPlaces(ClientEffects.FogPlaces effect) {
+		}
+
 		/** Sent on join with every persistent effect. */
 		default void sync(ClientEffects.Sync effect) {
 		}
@@ -54,6 +61,7 @@ public final class ClientEffectsClient {
 		ClientPlayNetworking.registerGlobalReceiver(ClientEffects.MusicOff.TYPE, (payload, context) -> handler.musicOff(payload));
 		ClientPlayNetworking.registerGlobalReceiver(ClientEffects.DuskFog.TYPE, (payload, context) -> handler.duskFog(payload));
 		ClientPlayNetworking.registerGlobalReceiver(ClientEffects.FogSpell.TYPE, (payload, context) -> handler.fogSpell(payload));
+		ClientPlayNetworking.registerGlobalReceiver(ClientEffects.FogPlaces.TYPE, (payload, context) -> handler.fogPlaces(payload));
 		ClientPlayNetworking.registerGlobalReceiver(ClientEffects.Sync.TYPE, (payload, context) -> handler.sync(payload));
 	}
 }

@@ -1,13 +1,22 @@
 package com.forzacode.a1016_02.core;
 
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
 import java.util.UUID;
+
+import com.forzacode.a1016_02.A1016_02;
 
 import net.fabricmc.fabric.api.event.Event;
 import net.fabricmc.fabric.api.event.EventFactory;
 
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.MinecraftServer;
+import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.phys.Vec3;
+
+import org.jspecify.annotations.Nullable;
 
 /** Cross-workstream events. All fire on the server thread. */
 public final class HerobrineEvents {
@@ -71,6 +80,80 @@ public final class HerobrineEvents {
 					listener.onParticipation(server, player, participating);
 				}
 			});
+
+	/** {@link #FIGURE_LEFT}'s path holds at most this many samples (the first ones, oldest first). */
+	public static final int FIGURE_PATH_MAX = 24;
+
+	/**
+	 * Fired by entity once for each figure that is gone (its {@code HimEntity.gone}), whichever way it went, after it
+	 * is gone. {@code stoodAt} is where his feet stood still (his spawn feet, or where he stopped before he left) and
+	 * {@code yaw} where he faced there; {@code path} is his feet on his way out, sampled every 2 blocks, oldest first,
+	 * empty if he vanished or went under; {@code variant} the variant's id ({@code "ridge"}, {@code "close"}, ...);
+	 * {@code appearedFor} the player he appeared for (null if nobody); {@code seen} whether anyone ever saw him (his
+	 * {@code everSeen}). The invoker hands every listener the same unmodifiable copy of the path, cut to the first
+	 * {@link #FIGURE_PATH_MAX}, and a listener that throws is logged and never stops the others or the figure's
+	 * removal. Firing it exactly once per figure is the firer's part. Listeners must be cheap.
+	 */
+	public static final Event<FigureLeft> FIGURE_LEFT = EventFactory.createArrayBacked(FigureLeft.class,
+			listeners -> (level, stoodAt, yaw, path, variant, appearedFor, seen) -> {
+				List<Vec3> samples = figurePath(path);
+				for (FigureLeft listener : listeners) {
+					try {
+						listener.onFigureLeft(level, stoodAt, yaw, samples, variant, appearedFor, seen);
+					} catch (RuntimeException e) {
+						A1016_02.LOGGER.error("[a1016] a FIGURE_LEFT listener failed", e);
+					}
+				}
+			});
+
+	/**
+	 * Fired by core after {@link TraceLedger} records an entry: every entry {@link TraceService}'s edits write
+	 * (removals, moves, conversions, broken dependents, sign text, stack edits; each entry of a committed batch once,
+	 * after the whole batch is applied and ledgered) and {@link TraceLedger#recordName}'s. Never for {@code leave} or
+	 * {@code leaveStack} (nothing is ledgered), never for an entry rewritten in place (a give-back that became a move, a
+	 * stack now worn by a mob), and never for the reverse edits of {@link TraceService#undo}, which are closed at once
+	 * (only what such an undo leaves ledgered, its broken neighbours, fires, after it). {@code placedByPlayer} is
+	 * {@link PlayerWatch#wasPlacedByPlayer} at the entry's position read before the edit (the container's for a stack
+	 * edit; false for NAME). A listener that throws is logged and never stops the others or the edit. Listeners must be
+	 * cheap: this runs inside every edit.
+	 */
+	public static final Event<Traced> TRACED = EventFactory.createArrayBacked(Traced.class,
+			listeners -> (level, entry, placedByPlayer) -> {
+				for (Traced listener : listeners) {
+					try {
+						listener.onTraced(level, entry, placedByPlayer);
+					} catch (RuntimeException e) {
+						A1016_02.LOGGER.error("[a1016] a TRACED listener failed", e);
+					}
+				}
+			});
+
+	/** {@link #FIGURE_LEFT}'s path as listeners get it: unmodifiable, no nulls, at most the first {@link #FIGURE_PATH_MAX}. */
+	static List<Vec3> figurePath(@Nullable List<Vec3> path) {
+		if (path == null || path.isEmpty()) {
+			return List.of();
+		}
+		List<Vec3> samples = new ArrayList<>(Math.min(path.size(), FIGURE_PATH_MAX));
+		for (Vec3 sample : path) {
+			if (samples.size() >= FIGURE_PATH_MAX) {
+				break;
+			}
+			if (sample != null) {
+				samples.add(sample);
+			}
+		}
+		return Collections.unmodifiableList(samples);
+	}
+
+	@FunctionalInterface
+	public interface FigureLeft {
+		void onFigureLeft(ServerLevel level, Vec3 stoodAt, float yaw, List<Vec3> path, String variant, @Nullable UUID appearedFor, boolean seen);
+	}
+
+	@FunctionalInterface
+	public interface Traced {
+		void onTraced(ServerLevel level, TraceLedger.Entry entry, boolean placedByPlayer);
+	}
 
 	@FunctionalInterface
 	public interface Participation {

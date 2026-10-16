@@ -1,5 +1,6 @@
 package com.forzacode.a1016_02.core;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 
@@ -19,7 +20,8 @@ import net.minecraft.server.level.ServerPlayer;
 /**
  * Server-to-client effects. Payload types live here and are registered on both sides; atmosphere does the
  * client side by installing a {@code core.client.ClientEffectsClient.Handler}. Persistent effects (music off,
- * dusk fog, the fog spell) are stored in {@link HerobrineState}, sent to everyone online and sent again on every join.
+ * dusk fog, the fog spell, the fog places) are stored in {@link HerobrineState}, sent to everyone online and sent again
+ * on every join.
  * Fog surges and silences he makes reach everyone sharing the moment ({@link #fogSurgeShared}, {@link #silenceShared},
  * D-060). The payload {@link FogSpell} shares its name with core's {@link com.forzacode.a1016_02.core.FogSpell} record
  * it carries; inside this class the bare name is the payload.
@@ -97,20 +99,48 @@ public final class ClientEffects {
 		}
 	}
 
+	/**
+	 * The world's fog places (D-085), oldest first, all of them (none: the list is empty). Persistent. Every client
+	 * computes their fog from them and its own clock ({@code getDefaultClockTime()}), the same as the server's
+	 * {@link FogLimits#placeAmount}. At most {@link #FOG_PLACES_MAX} on the wire.
+	 */
+	public record FogPlaces(List<FogPlace> places) implements CustomPacketPayload {
+		public static final Type<FogPlaces> TYPE = new Type<>(A1016_02.id("fog_places"));
+		public static final StreamCodec<ByteBuf, FogPlaces> CODEC = FogPlace.STREAM_CODEC.apply(ByteBufCodecs.list(FOG_PLACES_MAX))
+				.map(FogPlaces::new, FogPlaces::places);
+
+		public FogPlaces {
+			places = places != null ? List.copyOf(places) : List.of();
+		}
+
+		@Override
+		public Type<FogPlaces> type() {
+			return TYPE;
+		}
+	}
+
 	/** Every persistent effect at once, sent on join. */
-	public record Sync(boolean musicOff, float duskFogLevel, Optional<com.forzacode.a1016_02.core.FogSpell> fogSpell) implements CustomPacketPayload {
+	public record Sync(boolean musicOff, float duskFogLevel, Optional<com.forzacode.a1016_02.core.FogSpell> fogSpell, List<FogPlace> fogPlaces)
+			implements CustomPacketPayload {
 		public static final Type<Sync> TYPE = new Type<>(A1016_02.id("sync"));
 		public static final StreamCodec<ByteBuf, Sync> CODEC = StreamCodec.composite(
 				ByteBufCodecs.BOOL, Sync::musicOff,
 				ByteBufCodecs.FLOAT, Sync::duskFogLevel,
 				ByteBufCodecs.optional(com.forzacode.a1016_02.core.FogSpell.STREAM_CODEC), Sync::fogSpell,
+				FogPlace.STREAM_CODEC.apply(ByteBufCodecs.list(FOG_PLACES_MAX)), Sync::fogPlaces,
 				Sync::new);
 
 		public Sync {
 			fogSpell = fogSpell != null ? fogSpell : Optional.empty();
+			fogPlaces = fogPlaces != null ? List.copyOf(fogPlaces) : List.of();
 		}
 
-		/** Without a fog spell. */
+		/** Without fog places. */
+		public Sync(boolean musicOff, float duskFogLevel, Optional<com.forzacode.a1016_02.core.FogSpell> fogSpell) {
+			this(musicOff, duskFogLevel, fogSpell, List.of());
+		}
+
+		/** Without a fog spell or fog places. */
 		public Sync(boolean musicOff, float duskFogLevel) {
 			this(musicOff, duskFogLevel, Optional.empty());
 		}
@@ -120,6 +150,12 @@ public final class ClientEffects {
 			return TYPE;
 		}
 	}
+
+	/**
+	 * The most fog places the world keeps at once, whatever a caller asks ({@link #addFogPlace}); the save and the
+	 * payloads hold at most this many.
+	 */
+	public static final int FOG_PLACES_MAX = 16;
 
 	private ClientEffects() {
 	}
@@ -131,6 +167,7 @@ public final class ClientEffects {
 		PayloadTypeRegistry.clientboundPlay().register(MusicOff.TYPE, MusicOff.CODEC);
 		PayloadTypeRegistry.clientboundPlay().register(DuskFog.TYPE, DuskFog.CODEC);
 		PayloadTypeRegistry.clientboundPlay().register(FogSpell.TYPE, FogSpell.CODEC);
+		PayloadTypeRegistry.clientboundPlay().register(FogPlaces.TYPE, FogPlaces.CODEC);
 		PayloadTypeRegistry.clientboundPlay().register(Sync.TYPE, Sync.CODEC);
 	}
 
@@ -174,7 +211,7 @@ public final class ClientEffects {
 	public static void setMusicOff(MinecraftServer server, boolean off) {
 		HerobrineState state = HerobrineState.get(server);
 		HerobrineState.Effects old = state.effects();
-		state.setEffects(new HerobrineState.Effects(off, old.duskFogLevel(), old.fogSpell()));
+		state.setEffects(new HerobrineState.Effects(off, old.duskFogLevel(), old.fogSpell(), old.fogPlaces()));
 		server.getPlayerList().getPlayers().forEach(player -> send(player, new MusicOff(off)));
 	}
 
@@ -183,7 +220,7 @@ public final class ClientEffects {
 		float clamped = Math.clamp(level, 0.0F, 1.0F);
 		HerobrineState state = HerobrineState.get(server);
 		HerobrineState.Effects old = state.effects();
-		state.setEffects(new HerobrineState.Effects(old.musicOff(), clamped, old.fogSpell()));
+		state.setEffects(new HerobrineState.Effects(old.musicOff(), clamped, old.fogSpell(), old.fogPlaces()));
 		server.getPlayerList().getPlayers().forEach(player -> send(player, new DuskFog(clamped)));
 	}
 
@@ -200,12 +237,68 @@ public final class ClientEffects {
 		server.getPlayerList().getPlayers().forEach(player -> send(player, payload));
 	}
 
-	/** Every persistent effect of this state, as {@link #sync} sends it. */
-	public static Sync syncPayload(HerobrineState.Effects effects) {
-		return new Sync(effects.musicOff(), effects.duskFogLevel(), effects.fogSpell());
+	/**
+	 * Adds a fog place (D-085) for the whole world and sends the world's places to everyone online, spectators
+	 * included. First the places that are over on the overworld clock now are dropped; then, while more than
+	 * {@code max} (1 to {@link #FOG_PLACES_MAX}) places are not yet fading, the oldest of them ends early with its own
+	 * fade ({@link FogPlace#endedEarly}: its fog now is unchanged, so nothing pops). False, and nothing stored or sent,
+	 * while the layer is switched off ({@link SelfCreated#enabled}) or for a place that is already over or gives no fog
+	 * (level or radius 0). Server thread.
+	 */
+	public static boolean addFogPlace(MinecraftServer server, FogPlace place, int max) {
+		long now = server.overworld().getDefaultClockTime();
+		if (!SelfCreated.enabled() || place == null || place.endedBy(now) || place.level() <= 0.0F || place.radius() <= 0.0F) {
+			return false;
+		}
+		int cap = Math.clamp(max, 1, FOG_PLACES_MAX);
+		HerobrineState state = HerobrineState.get(server);
+		List<FogPlace> places = new ArrayList<>();
+		for (FogPlace stored : state.effects().fogPlaces()) {
+			if (!stored.endedBy(now)) {
+				places.add(stored);
+			}
+		}
+		places.add(place);
+		for (int i = 0; i < places.size() && full(places, now) > cap; i++) {
+			if (!places.get(i).fadingBy(now)) {
+				places.set(i, places.get(i).endedEarly(now));
+			}
+		}
+		while (places.size() > FOG_PLACES_MAX) {
+			places.removeFirst();
+		}
+		storePlaces(server, state, places);
+		return true;
 	}
 
-	/** Sends every persistent effect. Core calls this on every join, spectators included. */
+	/** How many of these places are not fading yet at {@code now}. */
+	private static int full(List<FogPlace> places, long now) {
+		int count = 0;
+		for (FogPlace place : places) {
+			if (!place.fadingBy(now)) {
+				count++;
+			}
+		}
+		return count;
+	}
+
+	/** Drops every fog place at once (no fade) and tells everyone online. Server thread. */
+	public static void clearFogPlaces(MinecraftServer server) {
+		storePlaces(server, HerobrineState.get(server), List.of());
+	}
+
+	private static void storePlaces(MinecraftServer server, HerobrineState state, List<FogPlace> places) {
+		state.setEffects(state.effects().withFogPlaces(places));
+		FogPlaces payload = new FogPlaces(state.effects().fogPlaces());
+		server.getPlayerList().getPlayers().forEach(player -> send(player, payload));
+	}
+
+	/** Every persistent effect of this state, as {@link #sync} sends it. */
+	public static Sync syncPayload(HerobrineState.Effects effects) {
+		return new Sync(effects.musicOff(), effects.duskFogLevel(), effects.fogSpell(), effects.fogPlaces());
+	}
+
+	/** Sends every persistent effect (the fog places included). Core calls this on every join, spectators included. */
 	public static void sync(ServerPlayer player) {
 		send(player, syncPayload(HerobrineState.get(player.level().getServer()).effects()));
 	}

@@ -42,6 +42,19 @@ public interface MobTamper {
 	}
 
 	/**
+	 * Takes the mob's custom name away for good (D-086), ledgered so it can be given back: refused (false, nothing
+	 * changed) if the mob has no custom name, the layer is switched off ({@link SelfCreated#enabled}) or its box is in
+	 * anyone's view ({@link TraceService#isOutOfView}). The implementation records the name first
+	 * ({@link TraceLedger#recordName} with {@code cause}, which may refuse) and only then clears {@code CustomName} and
+	 * {@code CustomNameVisible}, so nothing visible is left and nothing is lost unrecorded. {@link TraceService#undo}
+	 * gives it back (Ending D's afterward). Not an effect: {@link #isTampered} is not changed by it, and
+	 * {@link #release} does not bring the name back. Default: false (the stub); atmosphere implements it.
+	 */
+	default boolean unname(Mob mob, String cause) {
+		return false;
+	}
+
+	/**
 	 * True while any effect (freeze, face, silence) is on the mob: from the call that started it until its deadline
 	 * passes (cleared within a tick after) or {@link #release}. Use it so two cards never fight over one mob.
 	 */

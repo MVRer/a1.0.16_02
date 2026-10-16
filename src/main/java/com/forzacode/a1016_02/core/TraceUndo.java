@@ -2,6 +2,7 @@ package com.forzacode.a1016_02.core;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 
 import net.minecraft.core.BlockPos;
 import net.minecraft.nbt.CompoundTag;
@@ -11,7 +12,10 @@ import net.minecraft.network.chat.Component;
 import net.minecraft.resources.RegistryOps;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.Container;
+import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.Mob;
 import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.block.entity.SignBlockEntity;
 import net.minecraft.world.level.block.entity.SignText;
 import net.minecraft.world.level.block.state.BlockState;
@@ -23,8 +27,9 @@ import org.jspecify.annotations.Nullable;
  * view-checked, vetoed and silent like every edit). REMOVE and REMOVE_STACK through {@code restoreBlock} and
  * {@code restoreStack} (which close the entry); MOVE, CONVERT, MOVE_STACK and sign text by the reverse edit, after
  * which both the old entry and the one the reverse edit wrote are dropped (its broken neighbours,
- * {@code <cause>/dependent}, stay ledgered). Nothing is created: a moved block goes back only if it is still where it
- * was moved, a stack only if it is still in its slot. Nothing is loaded: an entry whose chunk is not loaded waits.
+ * {@code <cause>/dependent}, stay ledgered). A taken name (NAME) goes back onto its mob wherever the mob is in the
+ * level ({@link #name}). Nothing is created: a moved block goes back only if it is still where it was moved, a stack
+ * only if it is still in its slot. Nothing is loaded: an entry whose chunk is not loaded waits.
  */
 final class TraceUndo {
 	private TraceUndo() {
@@ -36,11 +41,16 @@ final class TraceUndo {
 			// Already undone, never ledgered, another level, or worn by a mob (the mob drops it).
 			return TraceService.UndoResult.BLOCKED;
 		}
+		if (entry.kind() == TraceLedger.Kind.NAME) {
+			// The mob, wherever it is in this level now, not the block it stood on.
+			return name(traces, level, ledger, entry);
+		}
 		BlockPos at = entry.pos().pos();
 		if (!loaded(level, at) || entry.to().isPresent() && !loaded(level, entry.to().get())) {
 			return TraceService.UndoResult.UNLOADED;
 		}
 		return switch (entry.kind()) {
+			case NAME -> TraceService.UndoResult.BLOCKED;
 			case REMOVE -> remove(traces, level, entry);
 			case MOVE -> move(traces, level, ledger, entry, cause);
 			case CONVERT -> convert(traces, level, ledger, entry, cause);
@@ -57,6 +67,37 @@ final class TraceUndo {
 
 	static boolean loaded(ServerLevel level, BlockPos pos) {
 		return level.getChunkSource().getChunkNow(pos.getX() >> 4, pos.getZ() >> 4) != null;
+	}
+
+	/**
+	 * A NAME entry (D-086): the mob, loaded anywhere in this level, alive, out of view and without a name now, gets its
+	 * name back (and shows it again if it showed before): DONE, the entry closed. Named since: BLOCKED (theirs now). In
+	 * view: IN_VIEW. Not in this level now: UNLOADED while the entities of the chunk it was in are not loaded (nothing is
+	 * loaded here), BLOCKED once they are and it is not there (it died, or wandered off; a later pass may still find
+	 * it), so a caller that loads that chunk is never kept waiting.
+	 */
+	private static TraceService.UndoResult name(TraceService traces, ServerLevel level, TraceLedger ledger, TraceLedger.Entry entry) {
+		Optional<Component> name = TraceLedger.storedName(level, entry);
+		if (entry.entity().isEmpty() || name.isEmpty()) {
+			return TraceService.UndoResult.BLOCKED;
+		}
+		Entity found = level.getEntity(entry.entity().get());
+		if (!(found instanceof Mob mob) || mob.level() != level) {
+			BlockPos at = entry.pos().pos();
+			return level.areEntitiesLoaded(ChunkPos.pack(at.getX() >> 4, at.getZ() >> 4)) ? TraceService.UndoResult.BLOCKED : TraceService.UndoResult.UNLOADED;
+		}
+		if (!mob.isAlive() || mob.isRemoved() || mob.hasCustomName()) {
+			return TraceService.UndoResult.BLOCKED;
+		}
+		if (!traces.allowed(level, mob.getBoundingBox())) {
+			return TraceService.UndoResult.IN_VIEW;
+		}
+		mob.setCustomName(name.get());
+		if (entry.blockEntity().map(data -> data.getBooleanOr(TraceLedger.NAME_VISIBLE_KEY, false)).orElse(false)) {
+			mob.setCustomNameVisible(true);
+		}
+		ledger.remove(entry);
+		return TraceService.UndoResult.DONE;
 	}
 
 	private static TraceService.UndoResult remove(TraceService traces, ServerLevel level, TraceLedger.Entry entry) {
