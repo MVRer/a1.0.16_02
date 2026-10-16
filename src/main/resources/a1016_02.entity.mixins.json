@@ -6,10 +6,12 @@
 	"client": [
 		"client.AvatarRendererMixin",
 		"client.CameraMixin",
+		"client.ClientWaypointManagerMixin",
 		"client.GameRendererAccessor",
 		"client.RenderTypeInvoker",
 		"client.ScreenshotMixin",
-		"client.SectionOcclusionGraphAccessor"
+		"client.SectionOcclusionGraphAccessor",
+		"client.WorldListEntryMixin"
 	],
 	"server": [],
 	"injectors": {

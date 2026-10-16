@@ -22,6 +22,7 @@ public final class ScEntityInit {
 		Director.register(new NamelessCard(Nameless.LIVE));
 		NamelessPayload.register();
 		NamelessSpentPayload.register();
+		NamelessReachPayload.register();
 		HisViewPayload.register();
 		HisViewTakenPayload.register();
 		HerobrineEvents.PARTICIPATION.register(Nameless.LIVE::onParticipation);

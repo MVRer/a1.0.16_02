@@ -36,7 +36,7 @@ public class SelfCreatedPacingTests {
 	}
 
 	private static final Map<String, Row> DESIGN = Map.ofEntries(
-			Map.entry("sc_02", new Row(Tier.AMBIENT, Stage.TRACES, EnumSet.of(CardTag.FOG), EnumSet.of(Habit.WATCHER), false)),
+			Map.entry("sc_02", new Row(Tier.AMBIENT, Stage.TRACES, EnumSet.of(CardTag.FOG, CardTag.PERSONAL), EnumSet.of(Habit.WATCHER), false)),
 			Map.entry("sc_05", new Row(Tier.MINOR, Stage.TRACES, EnumSet.of(CardTag.SOUND, CardTag.PERSONAL), EnumSet.of(Habit.VISITOR, Habit.WATCHER), true)),
 			Map.entry("sc_05b", new Row(Tier.AMBIENT, Stage.TRACES, EnumSet.of(CardTag.MOB), EnumSet.of(Habit.WATCHER, Habit.VISITOR), true)),
 			Map.entry("sc_06", new Row(Tier.AMBIENT, Stage.ALONE, EnumSet.of(CardTag.SOUND, CardTag.PERSONAL), EnumSet.of(Habit.WATCHER), true)),
@@ -46,7 +46,7 @@ public class SelfCreatedPacingTests {
 			Map.entry("sc_11", new Row(Tier.MINOR, Stage.TRACES, EnumSet.of(CardTag.LIGHT, CardTag.SCAR), EnumSet.of(Habit.MOURNER, Habit.CARVER), false)),
 			Map.entry("sc_12", new Row(Tier.MINOR, Stage.PROXIMITY, EnumSet.of(CardTag.DIG), EnumSet.of(Habit.CARVER, Habit.WATCHER), false)),
 			Map.entry("sc_13", new Row(Tier.MAJOR, Stage.PROXIMITY, EnumSet.of(CardTag.DIG, CardTag.PERSONAL), EnumSet.of(Habit.CARVER, Habit.STRIPPER), false)),
-			Map.entry("sc_14", new Row(Tier.MINOR, Stage.TRACES, EnumSet.of(CardTag.TEXT), EnumSet.of(Habit.WATCHER, Habit.VISITOR), false)),
+			Map.entry("sc_14", new Row(Tier.MINOR, Stage.TRACES, EnumSet.of(CardTag.TEXT, CardTag.UNSHARED), EnumSet.of(Habit.WATCHER, Habit.VISITOR), false)),
 			Map.entry("sc_15", new Row(Tier.MINOR, Stage.PROXIMITY, EnumSet.of(CardTag.DIG, CardTag.PERSONAL), EnumSet.of(Habit.CARVER, Habit.STRIPPER), false)));
 
 	private static final Predicate<CardInfo> LAYER = card -> card.id().startsWith("sc_");

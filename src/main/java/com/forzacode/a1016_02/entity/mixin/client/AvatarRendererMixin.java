@@ -13,13 +13,16 @@ import net.minecraft.world.entity.Avatar;
 /**
  * The self-created layer's 02: vanilla's own rule for a player's name tag ({@code AvatarRenderer.shouldShowName}, with the
  * squared distance to the camera) answers false while {@link NamelessClient#hides} says so; otherwise vanilla decides.
+ * Vanilla asks only for an avatar it extracts for this frame (one in view, within 64 blocks), so a name left out here is a
+ * name that would have been on screen: only then does the hide time count ({@link NamelessClient#hiddenOnScreen}).
  */
 @Mixin(AvatarRenderer.class)
 public abstract class AvatarRendererMixin {
-	@Inject(method = "shouldShowName(Lnet/minecraft/world/entity/Avatar;D)Z", at = @At("HEAD"), cancellable = true)
+	@Inject(method = "shouldShowName(Lnet/minecraft/world/entity/Avatar;D)Z", at = @At("RETURN"), cancellable = true)
 	private void a1016_02$nameless(Avatar avatar, double distanceToCameraSq, CallbackInfoReturnable<Boolean> cir) {
-		if (NamelessClient.hides(avatar, distanceToCameraSq)) {
+		if (cir.getReturnValueZ() && NamelessClient.hides(avatar, distanceToCameraSq)) {
 			cir.setReturnValue(false);
+			NamelessClient.hiddenOnScreen();
 		}
 	}
 }

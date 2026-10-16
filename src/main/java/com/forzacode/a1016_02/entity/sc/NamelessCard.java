@@ -14,9 +14,10 @@ import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 
 /**
- * {@code sc_02} (02): AMBIENT, Traces, FOG, WATCHER, no fake. It fits only with a friend 48 to 64 blocks off while the target
- * is outdoors in fog ({@link Nameless#fit}); firing arms the target's client ({@link Nameless#arm}) and counts when it arms
- * (D-091). A forced fire skips the fit, never the switch or the story.
+ * {@code sc_02} (02): AMBIENT, Traces, FOG and PERSONAL, WATCHER, no fake. It fits only with a friend 48 to 64 blocks off,
+ * nobody nearer, while the target is outdoors in a fog their client draws thick enough ({@link Nameless#fit}); firing arms
+ * the target's client ({@link Nameless#arm}) and counts when it arms (D-091). PERSONAL: only the target's client hides the
+ * name, so nobody beside them may share (feel) it. A forced fire skips the fit, never the switch or the story.
  */
 final class NamelessCard implements EventCard {
 	private final Nameless nameless;
@@ -47,7 +48,7 @@ final class NamelessCard implements EventCard {
 
 	@Override
 	public Set<CardTag> tags() {
-		return Set.of(CardTag.FOG);
+		return Set.of(CardTag.FOG, CardTag.PERSONAL);
 	}
 
 	@Override

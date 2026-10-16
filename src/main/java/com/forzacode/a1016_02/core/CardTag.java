@@ -28,5 +28,12 @@ public enum CardTag {
 	 * BLIND cards first, held or parked, when core calls {@link Director#recheck} during a blind moment. The card's own
 	 * blind check still runs when it fires.
 	 */
-	BLIND
+	BLIND,
+	/**
+	 * A card whose moment only its target has, outside what anyone near them could see (one player's own client or files):
+	 * it may fire beside sharers, and nobody but its target feels it (D-060.3 does not apply). The sharers' gaps, caps,
+	 * tension, no-repeat cycle and places stay as they were, their gates do not hold it, and one of them having had it does
+	 * not pass it over. Unlike {@link #PERSONAL}, friends close by do not keep it from being drawn.
+	 */
+	UNSHARED
 }

@@ -61,7 +61,7 @@ The point is that he finds these by playing. So nothing he sees in normal play o
 | DESIGN 7, he only removes or moves | Held. Turned blocks are a state change of an existing block (08); prints are grass, snow, crops and plants removed (09, 10); the closed way back is two wall blocks moved (13); names are removed (07). t0rch's torches and sign were left by others (11) |
 | ARCH 3, nothing changes in view | Held. The moon is switched while it is below the horizon (04); fog places ease in over a minute like weather (10) |
 | ARCH 2, never touch the player | Bent once: 12 refuses one bed attempt with vanilla's own reason; the next attempt sleeps |
-| "The mod never tells you" stays inside the world | **Bent (D-081).** The world list's last played time and version, the world icon, `/seed` and the statistics may lie. Only the host's own world folder is touched, only vanilla strings and the canon numbers, never a deletion, each once |
+| "The mod never tells you" stays inside the world | **Bent (D-081).** The world list's last played time and version, the world icon, `/seed` and the statistics may lie. The mod itself writes only in the host's own world folder (vanilla's own backup button, offered by vanilla's question in 14 b, writes vanilla's zip to vanilla's backups folder, as for any world), only vanilla strings and the canon numbers, never a deletion, each once |
 | Vanilla UI shows the truth | **Bent (D-082).** The bed's "monsters nearby" (12) and a friend's missing name tag (02). Each lie is true in the story: the shaft under the bed is real; the figure at the fog edge could be him |
 
 ## Core contracts (SC-0)
@@ -190,7 +190,7 @@ target's combat; UUIDs across ticks (D-062).
 
 ### entity
 
-#### 02 Nameless (card `sc_02`; AMBIENT, Traces; FOG; WATCHER; no fake; `sections.sc02`)
+#### 02 Nameless (card `sc_02`; AMBIENT, Traces; FOG + PERSONAL; WATCHER; no fake; `sections.sc02`)
 Only with friends.
 - **Experience.** Your friend went off to chop wood. At the edge of the fog, a figure stands still with no name over it.
   You ask where they are. They answer. You look again and the figure is walking, and the name is back. Or it is gone
@@ -687,7 +687,7 @@ As built (SC-3, `SelfCreatedWorldTests` and `SelfCreatedWorldTrailTests`, struct
 
 ### lore
 
-#### 14 The record (card `sc_14`, MINOR, Traces, TEXT, WATCHER + VISITOR, no fake; and three rules; `sections.sc14`)
+#### 14 The record (card `sc_14`, MINOR, Traces, TEXT + UNSHARED, WATCHER + VISITOR, no fake; and three rules; `sections.sc14`)
 The game's own records lie, once each (D-081).
 - **(a) Last played (the card).** Fire arms the world. The next time the host opens the world list after at least
   `gapHours` 6 real hours away, the world says it was last played at a time between when they quit and now: at night,
@@ -705,7 +705,7 @@ The game's own records lie, once each (D-081).
 - **(d) The statistics (a rule).** Every block he removes that a player placed counts in "Times Mined" for that block,
   and every stack he takes from a container counts in "Times Dropped" for that item, in the statistics of the online
   participant whose base is nearest within `statsRadius` 64 (else the nearest participant within 64). "Placed" is
-  `TRACED`'s `placedByPlayer`. Never for left-by-others causes, the figure's dig, Ending D or give-backs.
+  `TRACED`'s `placedByPlayer`. Never for left-by-others causes, the figure's dig, Ending D, give-backs or accidents (a trap's taken block is its one clue).
 - **Why scary.** The game itself is lying, outside the world: when the world was opened, which version it is, which
   seed, what you did. A world file that is haunted; "he comes with the world".
 - **Deniable.** The clock; the version is the mod's name; "maybe I did mine those torches".
@@ -769,6 +769,50 @@ As built (SC-4: 02, 03, 10's call, 14; `SelfCreatedEntityTests`, `SelfCreatedLor
 - **For SC-5.** One-line states: `Nameless.LIVE.line`, `HisView.LIVE.line`, `TheRecord.LIVE.line`; overlay reads:
   `Nameless.LIVE.ticksLeft`, `HisView.LIVE.armedFigure`/`forcing`, `RecordData` getters. Reverts registered: `sc02`,
   `sc03`, `sc14`. Verifier: a LAN checklist for 02 (a friend 24 to 64 off in a fog night, standing 1.5 s).
+
+#### Fixed in review (FIX-SC-B: entity and lore, R7 to R9)
+- **02 arms only where its client can hide a name (R8 M1).** The client reads its drawn fog's own cover of a friend
+  (`ScreenshotSpot.Fog.value`, each fog on its own as FIX-PLAIN does: at night the environmental fog runs from the camera
+  to the dusk fog's end) instead of the visible start, and while the layer is on and another player is in its level it
+  tells the server where that fog covers `fogShare` of a player (`NamelessRules.reach`, payload `entity/sc02_reach`, every
+  second and at once on a 2-block change, fresh for 5 s). `Nameless.fit` refuses without a band at least 4 blocks deep from
+  the farther of 24 and that distance to 64 (`NamelessRules.bandRefusal`; no fresh report, no band), since vanilla draws no
+  name past 64. By the drawn dusk fog of the R8 test: at 12 chunks Proximity's dusk fog arms from dusk until it fades
+  before dawn and Traces' around deep dusk only; at 16 chunks Proximity's around deep dusk only and Traces' never; fog
+  spells and fog places as thick as they draw.
+- **The hide time counts on screen only (R8 M2).** `AvatarRendererMixin` acts at the return of vanilla's rule and only
+  where vanilla would draw the name; vanilla asks only for an avatar it extracts for that frame (in view, within 64), so a
+  tick counts toward `hideSecondsTotal` only if a name was left out on screen, and never while the game is paused.
+- **The locator bar (R8 M3).** While the rule hides a friend (the same rule, on screen or not), `ClientWaypointManagerMixin`
+  leaves their dot off vanilla's locator bar (`forEachWaypoint`, which only the bar walks); when theirs is the only
+  waypoint, `hasWaypoints` reads false, so the experience bar shows as vanilla's does for a player it is not sent. Client
+  only, nothing untracked; the dot is back the moment the name is. His own sightings keep vanilla's bar (he has no dot):
+  noted, not changed.
+- **02 with three players (R9 M6, R7 L4).** The card fits only with nobody but the friend in the band, none nearer than
+  `friendMinAtFire` (48), and nobody sharing the moment (`PlayerWatch.sharingWith`); it is PERSONAL (never drawn beside a
+  sharer); and the client hides nothing while another player besides that friend stands within 48 of it
+  (`NamelessRules.witnessed`: they would see the name).
+- **14 (a) is the host's alone (R7 L4).** Core's new `CardTag.UNSHARED` (ARCHITECTURE): a card whose moment only its target
+  has fires beside sharers and nobody else feels it (`DirectorBrain.feeling`: no felt fire, the sharers' gates do not hold
+  it, a sharer having had it does not pass it over). `sc_14` is TEXT and UNSHARED, so a LAN guest beside the host spends
+  nothing on it. The two-player dry runs compare what both felt without UNSHARED cards.
+- **03 follows the switch in the world list (R8 M4 = R7 M3).** `WorldListEntryMixin` gives vanilla's entry
+  `HisView.listedIcon`: the world's `sc03_before.png` while this client's switch is off (its old icon, or the same picture
+  once put back), so the picture follows the switch before the world is opened again (its next server start writes it back,
+  as before); never a write. The client asks the switch again right before it writes the picture (off: nothing written,
+  the arm ends), and `HisView.report` asks it too: a picture whose report lands after the switch went off is recorded and
+  put back at once.
+- **14 (d) and accidents (R9 L7).** `RecordRules.causeCounts` never counts an `accident:` cause: a trap's taken block is
+  its one clue (ARCHITECTURE's guardrail 7), and 15's block is natural anyway.
+- **Rule 1's wording (R7 L5).** ARCHITECTURE's layer rule 1, the guardrail table and D-081 say it as built: the mod itself
+  never writes outside the world's folder; vanilla's own backup button, which 14 (b)'s question offers, writes vanilla's zip
+  to vanilla's backups folder as it does for any world.
+- **Tests.** The reviewers' `R8SelfCreatedClientTests` (its check now asks the card's whole fit, its rules and then the
+  band from the client's report, and the client's rule with the drawn fog), `SelfCreatedR9EntityTests`,
+  `SelfCreatedR9LoreTests` and R7's guest test as `SelfCreatedR7FeltReviewTests`; `SelfCreatedEntityTests` (the fit beside
+  a sharer, the band and the report; the client's rule by the drawn fog's cover, each fog on its own, and a witness;
+  `sc_02` PERSONAL; the list's picture follows the switch, a report after the switch is put back), `sc_14`'s shape, the
+  pacing table's rows, 14 (d)'s causes.
 
 ---
 
@@ -939,7 +983,7 @@ limits over 20 h, and Traces and Proximity rates within 15% of DESIGN 4b, else i
 
 | Card | Feature | Tier | Stage | Tags | Habits | Fake |
 | --- | --- | --- | --- | --- | --- | --- |
-| sc_02 | 02 | AMBIENT | Traces | FOG | WATCHER | no |
+| sc_02 | 02 | AMBIENT | Traces | FOG, PERSONAL | WATCHER | no |
 | sc_05 | 05 | MINOR | Traces | SOUND, PERSONAL | VISITOR, WATCHER | yes |
 | sc_05b | 05 | AMBIENT | Traces | MOB | WATCHER, VISITOR | yes |
 | sc_06 | 06 | AMBIENT | Alone | SOUND, PERSONAL | WATCHER | yes |
@@ -949,7 +993,7 @@ limits over 20 h, and Traces and Proximity rates within 15% of DESIGN 4b, else i
 | sc_11 | 11 | MINOR | Traces | LIGHT, SCAR | MOURNER, CARVER | no |
 | sc_12 | 12 | MINOR | Proximity | DIG | CARVER, WATCHER | no |
 | sc_13 | 13 | MAJOR | Proximity | DIG, PERSONAL | CARVER, STRIPPER | no |
-| sc_14 | 14 | MINOR | Traces | TEXT | WATCHER, VISITOR | no |
+| sc_14 | 14 | MINOR | Traces | TEXT, UNSHARED | WATCHER, VISITOR | no |
 | sc_15 | 15 | MINOR | Proximity | DIG, PERSONAL | CARVER, STRIPPER | no |
 
 Not cards (capped and spaced on their own): 01 (a rate factor), 03 (once, on a sighting), 04 (a night roll, at most 5),
@@ -985,8 +1029,8 @@ Not seen in a client yet, each with its debug: 04's sky and quiet (`/a1016 sc 04
 from 11000 to 1000, no monster spawning within 96 from 12000, animals silent, the next night as vanilla); 10's fog place
 (`/a1016 sc 10 here` on open ground: the fog thickens toward it over a minute, its haze and tint, none in a tunnel or a
 closed house, gone after its days; `/a1016 sc` line 10 counts it); 02 with two clients (`/a1016 sc 02 arm` on one, the
-other 24 to 64 off in a fog night standing still 1.5 s: no name tag; moves or comes within 24: back). Seen by their
-workers and worth a second look: 03 (`/a1016 sc 03 arm`, `/a1016 entity spawn close` near the base at night: the world
+other 24 to 64 off in a fog night standing still 1.5 s: no name tag and no locator dot; moves or comes within 24: both
+back). Seen by their workers and worth a second look: 03 (`/a1016 sc 03 arm`, `/a1016 entity spawn close` near the base at night: the world
 list's picture, the host's 0.7 s pause once), 14 (`/a1016 sc 14 arm last nogap` and `version nogap`, quit to the title:
 last night's time, the italic version and vanilla's backup question; `/a1016 sc 14 seed` then `/seed`), 12 (`/a1016 sc
 12 arm noshaft`, sleep at night: vanilla's message once, then sleep). The switch: `/a1016 sc off` puts back 08 (a
@@ -1008,7 +1052,7 @@ literals, section names, `/a1016 sc`'s index or INFO logs.
 | ID | Decision | Why |
 | --- | --- | --- |
 | D-080 | The self-created layer is a surprise: it lives on `self-created`, every player-visible id is opaque (`sc_NN` cards, `/a1016 sc <NN>`, `sections.scNN`), its docs are this file only, no DESIGN, TRY_IT, DECISIONS or ARCHITECTURE rows (one pointer line) until Mariano has played it | He asked not to know. He reads `/a1016` output, the config and the log |
-| D-081 | Out-of-world records may lie: the world list's last played time and version (with vanilla's own backup prompt), the world icon, `/seed` and the statistics. Only the host's own world folder, only vanilla strings and the canon version and seed, never a deletion, each once (the version for good only after a finished hardcore line), the old icon kept and put back by Ending D | "What would make someone afraid to open their world again?" A haunted world file, a version that should not be |
+| D-081 | Out-of-world records may lie: the world list's last played time and version (with vanilla's own backup prompt), the world icon, `/seed` and the statistics. The mod itself writes only in the host's own world folder (vanilla's own backup button may write vanilla's zip to vanilla's backups folder), only vanilla strings and the canon version and seed, never a deletion, each once (the version for good only after a finished hardcore line), the old icon kept and put back by Ending D | "What would make someone afraid to open their world again?" A haunted world file, a version that should not be |
 | D-082 | Vanilla UI may say something untrue only when it is true in the story: the bed's "monsters nearby" only once the Under-you shaft stands under that bed; a friend's name tag hidden only at the fog edge, where he could be | The game admitting he is there, without the mod ever writing |
 | D-083 | No new in-world text by him. The only new text is "brb" on t0rch's sign, left by a person | Guardrail 2 |
 | D-084 | Places remember: each player's real fires leave places; the ambient and minor rate rises near them (up to 1.8x) and once in the trusted place (1.6x). Never in Alone, the first hour, a gap, a cap or a major slot | Dread of places, built by the director instead of by spectacle |

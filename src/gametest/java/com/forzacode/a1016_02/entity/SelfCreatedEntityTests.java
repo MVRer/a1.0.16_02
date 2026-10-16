@@ -35,6 +35,7 @@ import com.forzacode.a1016_02.entity.sc.HisViewRules;
 import com.forzacode.a1016_02.entity.sc.Nameless;
 import com.forzacode.a1016_02.entity.sc.NamelessConfig;
 import com.forzacode.a1016_02.entity.sc.NamelessPayload;
+import com.forzacode.a1016_02.entity.sc.NamelessReachPayload;
 import com.forzacode.a1016_02.entity.sc.NamelessRules;
 import com.forzacode.a1016_02.entity.sc.ScGates;
 import com.google.gson.JsonObject;
@@ -225,6 +226,9 @@ public class SelfCreatedEntityTests {
 		Optional<String> common = Optional.empty();
 		int sky = 15;
 		double fog = 0.5;
+		/** The target's client's report: its drawn fog covers half of a player from 30 blocks. */
+		double reach = 30.0;
+		boolean shared;
 		boolean canSend = true;
 
 		NameHooks with(ServerPlayer... players) {
@@ -277,9 +281,22 @@ public class SelfCreatedEntityTests {
 		public double fogAmount(ServerPlayer target) {
 			return fog;
 		}
+
+		@Override
+		public double reach(ServerPlayer target) {
+			return reach;
+		}
+
+		@Override
+		public boolean shared(ServerPlayer target) {
+			return shared;
+		}
 	}
 
-	/** The card fits only with another participant 48 to 64 blocks off, the target outdoors, a fog on; never past the gates. */
+	/**
+	 * The card fits only with another participant 48 to 64 blocks off and nobody nearer, the target outdoors, a fog on, nobody
+	 * sharing the moment and a band their own client's fog leaves; never past the gates.
+	 */
 	@GameTest
 	public void namelessFitsOnlyWithAFriend48To64InFogOutdoors(GameTestHelper helper) {
 		NamelessConfig config = new NamelessConfig();
@@ -289,10 +306,24 @@ public class SelfCreatedEntityTests {
 		helper.assertTrue(NamelessRules.fit(List.of(), 15, 0.5, config).isPresent(), "alone");
 		helper.assertTrue(NamelessRules.fit(List.of(30.0), 15, 0.5, config).isPresent(), "a friend inside the shared radius");
 		helper.assertTrue(NamelessRules.fit(List.of(70.0), 15, 0.5, config).isPresent(), "a friend past 64");
-		helper.assertTrue(NamelessRules.fit(List.of(30.0, 55.0), 15, 0.5, config).isEmpty(), "one friend in the band is enough");
+		helper.assertTrue(NamelessRules.fit(List.of(55.0, 90.0), 15, 0.5, config).isEmpty(), "one friend in the band is enough");
+		helper.assertTrue(NamelessRules.fit(List.of(30.0, 55.0), 15, 0.5, config).isPresent(), "someone beside the target would see the name");
 		helper.assertTrue(NamelessRules.fit(List.of(50.0), 9, 0.5, config).isPresent(), "indoors");
 		helper.assertTrue(NamelessRules.fit(List.of(50.0), 15, 0.09, config).isPresent(), "no fog");
 		helper.assertTrue(NamelessRules.fit(List.of(50.0), 15, Double.NaN, config).isPresent(), "an unknown fog");
+		// The band the target's own drawn fog leaves (their client's report): 24 or the report, to 64, at least 4 deep.
+		helper.assertTrue(NamelessRules.bandRefusal(10.0, config).isEmpty() && NamelessRules.bandRefusal(60.0, config).isEmpty(), "a band");
+		helper.assertTrue(NamelessRules.bandRefusal(60.5, config).isPresent() && NamelessRules.bandRefusal(71.0, config).isPresent(), "no band");
+		helper.assertTrue(NamelessRules.bandRefusal(Double.NaN, config).isPresent(), "no report");
+		helper.assertTrue(Math.abs(NamelessRules.reach(ScreenshotSpot.Fog.fromCamera(100.0), config) - 50.0) < 1.0E-9, "the report");
+		helper.assertTrue(NamelessRules.sendReach(Float.NaN, 40.0F, 0) && !NamelessRules.sendReach(40.0F, 41.0F, 5) && NamelessRules.sendReach(40.0F, 43.0F, 5)
+				&& NamelessRules.sendReach(40.0F, 40.0F, NamelessRules.REACH_EVERY_TICKS) && !NamelessRules.sendReach(Float.NaN, Float.NaN, 99),
+				"when the client sends");
+		helper.assertTrue(NamelessRules.freshReach(40.0, NamelessRules.REACH_MAX_AGE_TICKS) == 40.0
+				&& Double.isNaN(NamelessRules.freshReach(40.0, NamelessRules.REACH_MAX_AGE_TICKS + 1)) && Double.isNaN(NamelessRules.freshReach(Double.NaN, 0)),
+				"a fresh report");
+		helper.assertTrue(NamelessReachPayload.TYPE.id().toString().equals("a1016_02:entity/sc02_reach")
+				&& roundTrip(NamelessReachPayload.CODEC, new NamelessReachPayload(37.5F)).equals(new NamelessReachPayload(37.5F)), "the report's payload");
 
 		// The live shape with two real players: B 55 blocks east of A.
 		ServerPlayer a = (ServerPlayer) helper.makeMockServerPlayer(GameType.SURVIVAL);
@@ -306,35 +337,65 @@ public class SelfCreatedEntityTests {
 		b.snapTo(helper.absoluteVec(new Vec3(31.5, 1.0, 1.5)), 0.0F, 0.0F);
 		helper.assertTrue(nameless.fit(a).isPresent(), "B 30 off fits");
 		b.snapTo(helper.absoluteVec(new Vec3(56.5, 1.0, 1.5)), 0.0F, 0.0F);
+		hooks.shared = true;
+		helper.assertTrue(nameless.fit(a).isPresent(), "fits while someone shares the moment");
+		hooks.shared = false;
+		hooks.reach = 71.0; // a clear dusk-fog night at 16 chunks: half fogged only past 64
+		helper.assertTrue(nameless.fit(a).isPresent(), "fits where their client can hide no name");
+		hooks.reach = Double.NaN;
+		helper.assertTrue(nameless.fit(a).isPresent(), "fits without their client's report");
+		hooks.reach = 30.0;
 		hooks.common = Optional.of("the story holds it");
 		helper.assertTrue(nameless.fit(a).isPresent(), "the common gates do not hold it");
 		helper.succeed();
 	}
 
-	/** The client's rule: 24 to 64 blocks, past half the way through the fog, still 1.5 s; armed; any change and the name is back. */
+	/**
+	 * The client's rule: 24 to 64 blocks, the drawn fog covering half of them (each fog on its own), still 1.5 s; armed; any
+	 * change and the name is back. Nobody else may stand near the viewer.
+	 */
 	@GameTest
 	public void namelessHidesOnlyStillFriendsInTheBandPastTheFogShare(GameTestHelper helper) {
 		NamelessConfig config = new NamelessConfig();
 		long still = config.stillTicks();
 		helper.assertTrue(still == 30L, "1.5 s is " + still + " ticks");
-		// A fog from 0 to 75 (a fog night): past 37.5, inside 24 to 64.
-		helper.assertTrue(NamelessRules.hides(40.0, 0.0, 75.0, still, true, config), "40 blocks into a 75-block fog, still");
-		helper.assertFalse(NamelessRules.hides(40.0, 0.0, 75.0, still, false, config), "not armed");
-		helper.assertFalse(NamelessRules.hides(40.0, 0.0, 75.0, still - 1, true, config), "still for less than 1.5 s");
-		helper.assertFalse(NamelessRules.hides(30.0, 0.0, 75.0, still, true, config), "before half the fog");
-		helper.assertFalse(NamelessRules.hides(20.0, 0.0, 30.0, still, true, config), "inside 24");
-		helper.assertFalse(NamelessRules.hides(66.0, 0.0, 75.0, still, true, config), "past 64");
-		helper.assertTrue(NamelessRules.hides(64.0, 0.0, 75.0, still, true, config) && NamelessRules.hides(24.0, 0.0, 30.0, still, true, config),
-				"the band's ends");
-		// The fog share counts from the visible fog start: a fog from 40 to 80 hides from 60 on.
-		helper.assertFalse(NamelessRules.hides(55.0, 40.0, 80.0, still, true, config), "before half of a fog that starts at 40");
-		helper.assertTrue(NamelessRules.hides(61.0, 40.0, 80.0, still, true, config), "past half of a fog that starts at 40");
-		// A clear night at 16 chunks (fog end ~142): half the fog is past 64, so nothing hides.
-		helper.assertFalse(NamelessRules.hides(64.0, 0.0, 142.0, still, true, config), "a clear night hides a name");
-		helper.assertFalse(NamelessRules.hides(40.0, Double.NaN, Double.NaN, still, true, config), "an unknown fog hides a name");
+		// A fog from the camera to 75 (a fog night): half fogged past 37.5, inside 24 to 64.
+		ScreenshotSpot.Fog night = ScreenshotSpot.Fog.fromCamera(75.0);
+		helper.assertTrue(NamelessRules.hides(east(40.0), night, still, true, config), "40 blocks into a 75-block fog, still");
+		helper.assertFalse(NamelessRules.hides(east(40.0), night, still, false, config), "not armed");
+		helper.assertFalse(NamelessRules.hides(east(40.0), night, still - 1, true, config), "still for less than 1.5 s");
+		helper.assertFalse(NamelessRules.hides(east(30.0), night, still, true, config), "before half the fog");
+		helper.assertFalse(NamelessRules.hides(east(20.0), ScreenshotSpot.Fog.fromCamera(30.0), still, true, config), "inside 24");
+		helper.assertFalse(NamelessRules.hides(east(66.0), night, still, true, config), "past 64");
+		helper.assertTrue(NamelessRules.hides(east(64.0), night, still, true, config)
+				&& NamelessRules.hides(east(24.0), ScreenshotSpot.Fog.fromCamera(30.0), still, true, config), "the band's ends");
+		// A fog from 40 to 80 covers half of a player from 60 on.
+		ScreenshotSpot.Fog late = new ScreenshotSpot.Fog(40.0, 80.0, 40.0, 80.0);
+		helper.assertFalse(NamelessRules.hides(east(55.0), late, still, true, config), "before half of a fog that starts at 40");
+		helper.assertTrue(NamelessRules.hides(east(61.0), late, still, true, config), "past half of a fog that starts at 40");
+		// Each fog on its own (FIX-PLAIN): the environmental fog from the camera to just past the render-distance fog's end
+		// covers half at 50, though the visible start (the render-distance fog's, 71.5) put half past 85 (R8 M1).
+		ScreenshotSpot.Fog both = new ScreenshotSpot.Fog(0.0, 100.0001, 71.5, 100.0);
+		helper.assertTrue(both.visibleStart() > 70.0 && NamelessRules.hides(east(52.0), both, still, true, config), "the environmental fog alone covers half");
+		helper.assertTrue(Math.abs(NamelessRules.reach(both, config) - 50.0) < 1.0E-3 && NamelessRules.bandRefusal(NamelessRules.reach(both, config), config).isEmpty(),
+				"its report");
+		// A clear night at 16 chunks (fog end ~142): half the fog is past 64, so nothing hides, and the card has no band.
+		ScreenshotSpot.Fog clear = ScreenshotSpot.Fog.fromCamera(142.0);
+		helper.assertFalse(NamelessRules.hides(east(64.0), clear, still, true, config), "a clear night hides a name");
+		helper.assertTrue(NamelessRules.bandRefusal(NamelessRules.reach(clear, config), config).isPresent(), "a clear night has a band");
+		helper.assertFalse(NamelessRules.hides(east(40.0), new ScreenshotSpot.Fog(Double.NaN, Double.NaN, Double.NaN, Double.NaN), still, true, config)
+				|| NamelessRules.hides(east(40.0), null, still, true, config), "an unknown fog hides a name");
+		// Someone else within 48 of the viewer would see the name.
+		helper.assertTrue(NamelessRules.witnessed(47.9, config) && !NamelessRules.witnessed(48.0, config) && !NamelessRules.witnessed(Double.POSITIVE_INFINITY, config),
+				"a witness is someone else within 48");
 		helper.assertTrue(NamelessRules.moved(Vec3.ZERO, new Vec3(0.1, 0.0, 0.0)) && !NamelessRules.moved(Vec3.ZERO, new Vec3(0.09, 0.0, 0.0)),
 				"moved means 0.1 blocks");
 		helper.succeed();
+	}
+
+	/** A friend this far east of the camera, at its height. */
+	private static Vec3 east(double distance) {
+		return new Vec3(distance, 0.0, 0.0);
 	}
 
 	/**
@@ -394,7 +455,7 @@ public class SelfCreatedEntityTests {
 		helper.succeed();
 	}
 
-	/** The payload round-trips; OFF is not armed; the card is sc_02, AMBIENT, Traces, FOG, WATCHER, no fake. */
+	/** The payload round-trips; OFF is not armed; the card is sc_02, AMBIENT, Traces, FOG and PERSONAL, WATCHER, no fake. */
 	@GameTest
 	public void namelessPayloadAndCard(GameTestHelper helper) {
 		NamelessPayload payload = new NamelessPayload(24_000, 600);
@@ -402,7 +463,7 @@ public class SelfCreatedEntityTests {
 		helper.assertTrue(!NamelessPayload.OFF.armed() && roundTrip(NamelessPayload.CODEC, NamelessPayload.OFF).equals(NamelessPayload.OFF), "OFF");
 		helper.assertTrue(NamelessPayload.TYPE.id().toString().equals("a1016_02:entity/sc02"), "id " + NamelessPayload.TYPE.id());
 		EventCard card = CardRegistry.get("sc_02").orElseThrow(() -> helper.assertionException("sc_02 is not registered"));
-		helper.assertTrue(card.tier() == Tier.AMBIENT && card.earliestStage() == Stage.TRACES && card.tags().equals(java.util.Set.of(CardTag.FOG))
+		helper.assertTrue(card.tier() == Tier.AMBIENT && card.earliestStage() == Stage.TRACES && card.tags().equals(java.util.Set.of(CardTag.FOG, CardTag.PERSONAL))
 				&& card.habits().equals(java.util.Set.of(Habit.WATCHER)) && !card.hasFake(), "the card's shape");
 		helper.succeed();
 	}
@@ -516,6 +577,14 @@ public class SelfCreatedEntityTests {
 		@Override
 		public boolean dComplete(MinecraftServer server) {
 			return dComplete;
+		}
+
+		/** The layer's switch as this test has it (the live one is never touched). */
+		boolean enabled = true;
+
+		@Override
+		public boolean enabled() {
+			return enabled;
 		}
 	}
 
@@ -685,6 +754,50 @@ public class SelfCreatedEntityTests {
 			}
 		} finally {
 			deleteTree(folder);
+		}
+		helper.succeed();
+	}
+
+	/**
+	 * The switch (ARCHITECTURE, the layer's rule 3): with the layer off on this client the world list shows the world's old
+	 * picture, so the icon follows the switch before that world is opened again; with the layer on, or nothing kept, it is
+	 * vanilla's. A picture whose report lands after the switch went off is recorded and put back at once.
+	 */
+	@GameTest
+	public void hisViewFollowsTheSwitchInTheWorldListAndOnTheReport(GameTestHelper helper) throws Exception {
+		MinecraftServer server = helper.getLevel().getServer();
+		Path folder = testFolder(helper, "switch");
+		Path odd = testFolder(helper, "switch_odd");
+		Path icon = folder.resolve(HisViewRules.ICON);
+		Path before = folder.resolve(HisViewRules.BEFORE);
+		byte[] old = {1, 2, 3, 4};
+		byte[] his = HisViewRules.png(1, 1, new int[] {0x123456});
+		try {
+			helper.assertTrue(SelfCreated.writeInWorld(folder, HisViewRules.ICON, old), "the test's own icon");
+			helper.assertTrue(icon.equals(HisView.listedIcon(icon, false)) && icon.equals(HisView.listedIcon(icon, true)), "nothing kept: vanilla's");
+			helper.assertTrue(HisView.listedIcon(null, false) == null, "no icon at all");
+			helper.assertTrue(HisView.writePicture(folder, his).isEmpty(), "the picture was not written");
+			helper.assertTrue(icon.equals(HisView.listedIcon(icon, true)), "the layer on: his picture");
+			Path shown = HisView.listedIcon(icon, false);
+			helper.assertTrue(before.equals(shown) && Arrays.equals(Files.readAllBytes(shown), old) && Arrays.equals(Files.readAllBytes(icon), his),
+					"the layer off: the old picture, and nothing written");
+			Files.createDirectories(odd.resolve(HisViewRules.BEFORE));
+			Path oddIcon = odd.resolve(HisViewRules.ICON);
+			helper.assertTrue(oddIcon.equals(HisView.listedIcon(oddIcon, false)), "a folder where the copy should be");
+
+			// The report lands after the switch went off (its revert found nothing taken): recorded, then put back at once.
+			ServerPlayer host = (ServerPlayer) helper.makeMockServerPlayer(GameType.SURVIVAL);
+			ViewHooks hooks = new ViewHooks(folder);
+			hooks.host = host.getUUID();
+			HisView view = new HisView(hooks);
+			helper.assertTrue(view.arm(host, 77), "not armed");
+			hooks.enabled = false;
+			helper.assertTrue(view.report(host) && hooks.data.sc03Done() && hooks.data.sc03Restored() && Arrays.equals(Files.readAllBytes(icon), old),
+					"a report after the switch went off kept his picture");
+			helper.assertTrue(view.restore(server).equals("already put back"), "put back twice");
+		} finally {
+			deleteTree(folder);
+			deleteTree(odd);
 		}
 		helper.succeed();
 	}
