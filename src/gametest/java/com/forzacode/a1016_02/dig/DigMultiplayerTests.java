@@ -24,7 +24,7 @@ import net.minecraft.world.phys.Vec3;
  * own players, state and {@link DigData} ({@link Crew}); none of their players joins the server. {@link DigGameTests}
  * extends this through {@link NetworkGameTests}; this extends the tunnel ladder's tests ({@link LadderGameTests}).
  */
-public class DigMultiplayerTests extends LadderGameTests {
+public class DigMultiplayerTests extends BlindGameTests {
 	/**
 	 * One network per distinct base: a friend's base within {@code networkShareDistance} shares the founder's network
 	 * (and becomes one of its owners), a far base gets its own after its nights; never one under a base its player

@@ -379,12 +379,17 @@ final class Ladder {
 	 * ({@link SoundCues#playAt}), so a spectating friend beside the player would hear each one and could confirm it.
 	 */
 	static boolean alone(ServerPlayer player, Env env) {
-		if (env.watch().sharingWith(player).size() > 1) {
+		return alone(player, env.watch(), env.sounds());
+	}
+
+	/** {@link #alone(ServerPlayer, Env)} with these players and listeners: the one alone rule for every PERSONAL dig card (D-077 too). */
+	static boolean alone(ServerPlayer player, PlayerWatch watch, Sounds sounds) {
+		if (watch.sharingWith(player).size() > 1) {
 			return false;
 		}
 		ServerLevel level = player.level();
 		double radius = ModConfig.pacing().sharedMomentRadius;
-		for (ServerPlayer other : env.sounds().listeners(level)) {
+		for (ServerPlayer other : sounds.listeners(level)) {
 			if (!other.getUUID().equals(player.getUUID()) && other.level() == level && other.distanceToSqr(player) <= radius * radius) {
 				return false;
 			}
