@@ -54,7 +54,8 @@ public class AtmosphereGameTests extends TamperGameTests {
 		}
 		for (String id : List.of("fog_drift", "animals_face_fog", "distant_cave_sound", "silence", "mining_in_the_dark", "chest_opens",
 				"door_left_open", "one_block_missing", "footstep_late", "compass_drift", "cow_where_nothing_spawns", "villagers_inside_at_noon",
-				"dog_wont_go", "cat_hisses_corner", "patient_skeleton", "empty_water", "bat_in_sealed_room", "zombie_at_dusk", "far_in_the_rock")) {
+				"dog_wont_go", "cat_hisses_corner", "patient_skeleton", "empty_water", "bat_in_sealed_room", "zombie_at_dusk", "far_in_the_rock",
+				"echo_mining", "echo_door")) {
 			helper.assertTrue(CardRegistry.get(id).isPresent(), "missing card " + id);
 		}
 		helper.assertTrue(CardRegistry.get("distant_cave_sound").orElseThrow().hasFake(), "the cave sound is a false positive");

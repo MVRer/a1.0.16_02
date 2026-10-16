@@ -29,6 +29,8 @@ public final class AtmosphereCards {
 				new PatientSkeletonCard(),
 				new EmptyWaterCard(),
 				new BatInSealedRoomCard(),
-				new FarInTheRockCard());
+				new FarInTheRockCard(),
+				new EchoMiningCard(),
+				new EchoDoorCard());
 	}
 }
