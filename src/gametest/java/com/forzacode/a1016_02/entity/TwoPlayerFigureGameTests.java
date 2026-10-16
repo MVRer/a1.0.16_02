@@ -48,7 +48,7 @@ import org.jspecify.annotations.Nullable;
  * empty 24x20x24 structure; each test lays its own floor. {@link EntityGameTests} extends this (through
  * {@link FogAndRunGameTests}).
  */
-public class TwoPlayerFigureGameTests {
+public class TwoPlayerFigureGameTests extends ScreenshotGameTests {
 	private static final String YARD = "a1016_02:accident/yard";
 	/** Who stared him down, by UUID, as FigureApi.STARED reported it (registered once). */
 	private static final List<UUID> STARES = new CopyOnWriteArrayList<>();
