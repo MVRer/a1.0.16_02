@@ -417,7 +417,7 @@ public final class FigureApi {
 				LIVE.remove(him);
 			} else if (him.level() instanceof ServerLevel level
 					&& sweepRemoves(him, level.isPositionEntityTicking(him.blockPosition()), Watchers.of(level))) {
-				him.discard();
+				him.sweptAway(level); // gone by this rule, announced as any figure gone (FIGURE_LEFT)
 				LIVE.remove(him);
 			}
 		}

@@ -37,6 +37,9 @@ public class HimRenderer extends HumanoidMobRenderer<HimEntity, HimRenderState, 
 	/** The glimpse's hide latch comes first, every frame, frustum or not (D-073). */
 	@Override
 	public boolean shouldRender(HimEntity entity, Frustum frustum, double camX, double camY, double camZ, float partialTick) {
+		if (HisViewClient.hiding(entity)) {
+			return false; // the unpresented frames from his own eyes (the self-created layer's 03), before the glimpse's latch sees that camera
+		}
 		if (GlimpseHide.hidden(entity, camX, camY, camZ, partialTick)) {
 			return false;
 		}

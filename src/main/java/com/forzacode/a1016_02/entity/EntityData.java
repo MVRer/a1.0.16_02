@@ -39,7 +39,9 @@ public final class EntityData extends SavedData {
 			Codec.LONG.optionalFieldOf("lastGlimpseDay", -1L).forGetter(d -> d.lastGlimpseDay),
 			Codec.INT.optionalFieldOf("glimpses", 0).forGetter(d -> d.glimpses),
 			Codec.LONG.optionalFieldOf("screenshotDay", -1L).forGetter(d -> d.screenshotDay),
-			UUIDUtil.CODEC.optionalFieldOf("screenshotBy").forGetter(d -> Optional.ofNullable(d.screenshotBy))
+			UUIDUtil.CODEC.optionalFieldOf("screenshotBy").forGetter(d -> Optional.ofNullable(d.screenshotBy)),
+			Codec.BOOL.optionalFieldOf("sc03Done", false).forGetter(d -> d.sc03Done),
+			Codec.BOOL.optionalFieldOf("sc03Restored", false).forGetter(d -> d.sc03Restored)
 	).apply(i, EntityData::new));
 
 	public static final SavedDataType<EntityData> TYPE = new SavedDataType<>(A1016_02.id("entity"), EntityData::new, CODEC, null);
@@ -59,12 +61,16 @@ public final class EntityData extends SavedData {
 	/** The in-game day the world's one screenshot happened (D-078), -1 if not yet, and whose screenshot it was. */
 	private long screenshotDay = -1;
 	private @Nullable UUID screenshotBy;
+	/** The self-created layer's 03: the world's picture was taken (once per world), and the old one put back. Old files load without. */
+	private boolean sc03Done;
+	private boolean sc03Restored;
 
 	public EntityData() {
 	}
 
 	private EntityData(Optional<GlobalPos> lastPos, long lastDay, int countOnLastDay, String lastVariant, int sightings, int fakes, int stared,
-			List<PendingDig> pendingDigs, long lastGlimpseDay, int glimpses, long screenshotDay, Optional<UUID> screenshotBy) {
+			List<PendingDig> pendingDigs, long lastGlimpseDay, int glimpses, long screenshotDay, Optional<UUID> screenshotBy, boolean sc03Done,
+			boolean sc03Restored) {
 		this.lastPos = lastPos.orElse(null);
 		this.lastDay = lastDay;
 		this.countOnLastDay = countOnLastDay;
@@ -77,6 +83,8 @@ public final class EntityData extends SavedData {
 		this.glimpses = glimpses;
 		this.screenshotDay = screenshotDay;
 		this.screenshotBy = screenshotBy.orElse(null);
+		this.sc03Done = sc03Done;
+		this.sc03Restored = sc03Restored;
 	}
 
 	/** Records (or updates, by dig id) a shaft that is open. */
@@ -230,5 +238,34 @@ public final class EntityData extends SavedData {
 
 	public int glimpses() {
 		return glimpses;
+	}
+
+	/** 03: the world's picture was taken (once per world). */
+	public boolean sc03Done() {
+		return sc03Done;
+	}
+
+	/** 03: the picture from before was put back. */
+	public boolean sc03Restored() {
+		return sc03Restored;
+	}
+
+	/** 03: the picture was taken (true) or forgotten (false, debug); forgetting also forgets the putting back. */
+	public void setSc03Done(boolean done) {
+		if (sc03Done != done || !done && sc03Restored) {
+			sc03Done = done;
+			if (!done) {
+				sc03Restored = false;
+			}
+			setDirty();
+		}
+	}
+
+	/** 03: the picture from before was put back (once). */
+	public void setSc03Restored(boolean restored) {
+		if (sc03Restored != restored) {
+			sc03Restored = restored;
+			setDirty();
+		}
 	}
 }

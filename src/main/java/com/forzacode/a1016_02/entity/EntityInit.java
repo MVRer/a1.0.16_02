@@ -3,6 +3,7 @@ package com.forzacode.a1016_02.entity;
 import com.forzacode.a1016_02.core.Director;
 import com.forzacode.a1016_02.core.HerobrineEvents;
 import com.forzacode.a1016_02.core.Services;
+import com.forzacode.a1016_02.entity.sc.ScEntityInit;
 
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
@@ -33,5 +34,6 @@ public final class EntityInit {
 			FigureApi.clearLastSpawn();
 			TheScreenshot.LIVE.clear();
 		});
+		ScEntityInit.init(); // the self-created layer's entity parts (docs/SELF_CREATED.md)
 	}
 }

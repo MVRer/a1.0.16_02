@@ -7,11 +7,14 @@
 		"ItemEntityMixin",
 		"LevelMixin",
 		"PistonBaseBlockMixin",
+		"SeedCommandMixin",
 		"ServerExplosionMixin",
 		"ServerGamePacketListenerImplMixin",
 		"SignBlockEntityMixin"
 	],
-	"client": [],
+	"client": [
+		"client.LevelSummaryMixin"
+	],
 	"server": [],
 	"injectors": {
 		"defaultRequire": 1
