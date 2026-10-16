@@ -655,6 +655,35 @@ The game's own records lie, once each (D-081).
   view, a friend within 48, no cavity, an air drop over 6, a trap zone; once per day.
 - **Force it.** `/a1016 sc 15 arm [player]` (drops `minPasses`), then walk over ground with a cave under it.
 
+#### As built (SC-2: 01, 12, 13, 15; `SelfCreatedDirectorTests`, `SelfCreatedDigTests`, `SelfCreatedAccidentTests`)
+- **01.** `director.sc.Places` (pure), `PlaceMemory` (kept in `PacingMemory.places()`, saved under `sc01` only when
+  not empty), `Sc01Config`, `PlacesCommands`. The brain asks `Env.placeFactor()` (default 1) through
+  `DirectorBrain.placeFactor(env, stage, clock)` (1 in Alone and in the player's own first hour) and hands every fire
+  that is neither fake nor forced to `Env.remember(m, card, clock, felt)` (default nothing), for the target and each
+  sharer. A place is forgotten (counts nowhere, keeps no chunk from trust) below `Places.FORGOTTEN` 0.05. Dwell halves at
+  each whole hour of the player's play clock, so steady presence makes a chunk trusted about 1.5 h in. The live factor
+  is 1 while the layer is off or the story is quiet (the common gates, `Places.storyQuiet`).
+  `DirectorSim.Params.places(cfg)` turns the dread share on (own dice, off by default, so every older run is unchanged);
+  `/a1016 director sim` and timewarp's summary use it while the layer is on. The debug lines are `/a1016 sc 01`'s only, never `/a1016 director`'s.
+  Measured (192 seeds x 3 tempos): with the share, Traces ambients +5 to +11%, Traces minors +7 to +13%, Proximity
+  ambients +4 to +6%, minors +3 to +5%, majors within 2%, the first hour fire for fire the same: `awayFactor` stays 1.
+- **12.** `dig.sc.RestRefusal` (+ card), `dig.mixin.ServerPlayerSleepMixin` (`@ModifyExpressionValue` on the monster
+  list's `isEmpty` in `ServerPlayer.startSleepInBed`, so creative never sees it, as vanilla skips the check there),
+  `Sc12Config`. Arms in `DigData.sc()` (`DigScMemory`, saved under `sc`). The cap counts refusals; an arm is dropped when
+  it runs out, at the cap, or once the shaft no longer stands under that bed; combat within 30 s keeps it. The shared
+  windows are memory. `/a1016 sc 12 [player]` prints the arm, the shaft and the count.
+- **13.** `dig.sc.WayBack` (+ card, trail, debug arm), `Sc13Config`. The trail keeps a sample per block moved, starting
+  again after a jump over 12 blocks. The two wall blocks are taken from beside the next cell further in (toward the
+  player), so the hollow opens onto the passage the player comes back along. Lights are torches and lanterns a player
+  placed: one within 4 of a later trail sample and further in, one within 6 on the way out. Count in `DigData.sc()`.
+- **15.** `accident.sc.StoodOn` (+ card, arms in memory), `StoodOnData` (`data/a1016_02/accident_sc.dat`: days, count),
+  `Sc15Config`; the ring is `RouteSampler.Stand` (server ticks, 10 s, on the ground, only for armed players). The
+  card's moment is standing on a route cell of 3+ passes; behind is 3D; `nobodyWithin` is about the others (the
+  player's own distance is `behindMin`); never a cell flagged as a bridge, ladder or water of theirs.
+- Every part has an `Env` record (the live one is `Env.live(server)`), so tests run on their own data, players and
+  clocks. Reverts: `sc01` debug trusts, `sc12` arms and windows, `sc13` trails and arms, `sc15` arms. The edits of 13
+  and 15 are ordinary ledgered traces (Ending D gives them back); the switch does not undo them.
+
 ---
 
 ### ending

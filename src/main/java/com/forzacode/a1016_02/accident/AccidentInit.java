@@ -1,9 +1,13 @@
 package com.forzacode.a1016_02.accident;
 
+import com.forzacode.a1016_02.accident.sc.Sc15Config;
+import com.forzacode.a1016_02.accident.sc.StoodOn;
+import com.forzacode.a1016_02.accident.sc.StoodOnCommands;
 import com.forzacode.a1016_02.core.AccidentPlanner;
 import com.forzacode.a1016_02.core.DeathMarker;
 import com.forzacode.a1016_02.core.Director;
 import com.forzacode.a1016_02.core.HerobrineEvents;
+import com.forzacode.a1016_02.core.SelfCreated;
 import com.forzacode.a1016_02.core.Services;
 
 import net.fabricmc.fabric.api.entity.event.v1.ServerLivingEntityEvents;
@@ -40,6 +44,19 @@ public final class AccidentInit {
 			Director.register(new AccidentCard(trap, PLANNER));
 		}
 		AccidentCommands.register(PLANNER, MARKER);
+		// docs/SELF_CREATED.md, 15: its section, card, debug command, the standing ring for armed players, and what the
+		// switch puts back (every arm).
+		Sc15Config.get();
+		Director.register(new StoodOn.Card());
+		StoodOnCommands.register();
+		PLANNER.sampler().ringFor(StoodOn::armed);
+		SelfCreated.onSwitchedOff("sc15", server -> StoodOn.clear());
+		HerobrineEvents.PARTICIPATION.register((server, player, participating) -> {
+			if (!participating) {
+				StoodOn.disarm(player);
+			}
+		});
+		ServerLifecycleEvents.SERVER_STOPPED.register(server -> StoodOn.clear());
 
 		ServerLifecycleEvents.SERVER_STARTED.register(server -> {
 			PLANNER.attach(server);
@@ -51,6 +68,7 @@ public final class AccidentInit {
 		ServerChunkEvents.CHUNK_LOAD.register((level, chunk, generated) -> PLANNER.onChunkLoad(level, chunk.getPos()));
 		ServerTickEvents.END_SERVER_TICK.register(server -> {
 			PLANNER.tick(server);
+			StoodOn.tick(server);
 			if (server.getTickCount() % AccidentConfig.cadenceTicks(AccidentConfig.get().crossRetrySeconds) == 0) {
 				MARKER.tick(server);
 			}

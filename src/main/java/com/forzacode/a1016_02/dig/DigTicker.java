@@ -15,10 +15,14 @@ import com.forzacode.a1016_02.core.GameClock;
 import com.forzacode.a1016_02.core.ModConfig;
 import com.forzacode.a1016_02.core.Pacing;
 import com.forzacode.a1016_02.core.PlayerWatch;
+import com.forzacode.a1016_02.core.SelfCreated;
 import com.forzacode.a1016_02.core.Services;
 import com.forzacode.a1016_02.core.SiteRegistry;
 import com.forzacode.a1016_02.core.SiteType;
 import com.forzacode.a1016_02.core.SoundCues;
+import com.forzacode.a1016_02.dig.sc.RestRefusal;
+import com.forzacode.a1016_02.dig.sc.Sc13Config;
+import com.forzacode.a1016_02.dig.sc.WayBack;
 
 import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 
@@ -95,6 +99,8 @@ public final class DigTicker {
 		entries.clear();
 		ladder.clear();
 		blind.clear();
+		WayBack.clear();
+		RestRefusal.clear();
 	}
 
 	/** The tunnel ladder's steps in progress and its detector's samples (D-072). */
@@ -117,6 +123,7 @@ public final class DigTicker {
 		lastExplored.remove(player);
 		ladder.forget(player);
 		blind.forget(player);
+		WayBack.forget(player);
 	}
 
 	/** Plays a vanilla sound at {@code pos} after {@code delay} ticks, for everyone in hearing range there ({@link SoundCues#playAt}). */
@@ -171,6 +178,16 @@ public final class DigTicker {
 		if (now % LADDER_TICKS == 0) {
 			ladder.sample(players, watch, config, now);
 		}
+		if (SelfCreated.enabled()) {
+			// docs/SELF_CREATED.md, 13: the trail ring (underground participants only) and the debug arms.
+			Sc13Config sc13 = Sc13Config.get();
+			if (now % Math.max(1, sc13.trailSampleTicks) == 0) {
+				WayBack.sample(players, now, sc13);
+			}
+			if (now % SAMPLE_TICKS == 0) {
+				WayBack.tickArms(server, now);
+			}
+		}
 		if (now % SAMPLE_TICKS == 0) {
 			for (ServerPlayer player : players) {
 				sampleExplored(player, data, config);
@@ -186,6 +203,7 @@ public final class DigTicker {
 		}
 		if (now % NETWORK_TICKS == 0) {
 			UnderYou.tick(server, Bases.live(server), random);
+			RestRefusal.expire(server);
 		}
 	}
 

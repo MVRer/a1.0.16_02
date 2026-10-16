@@ -92,6 +92,11 @@ import org.jspecify.annotations.Nullable;
  * a client without the blind signal, never freezes a tier). While a menu is open, {@link #recheck} looks again at
  * what the player's pacing already holds or has parked (BLIND cards first) and fires one whose moment fits now,
  * through every gate of {@link #step}, a parked one released first; it never rolls a tier or draws.</li>
+ * <li>Places remember (docs/SELF_CREATED.md, 01; D-084): from Traces on, after the player's own first hour, the
+ * ambient and minor rates are multiplied by {@link Env#placeFactor} (up to 1.8 near where things happened to them, 1.6 in
+ * the one chunk they trust), beside the fog factor and before the refractory wait; never a gap, a cap, a major slot or
+ * a hard limit. Every fire that is neither fake nor forced is handed to {@link Env#remember} for the target and for
+ * every sharer who felt it, each at their own spot.</li>
  * </ul>
  */
 public final class DirectorBrain {
@@ -145,6 +150,25 @@ public final class DirectorBrain {
 		 */
 		default Optional<FogSpell> fogSpell() {
 			return Optional.empty();
+		}
+
+		/**
+		 * Places remember (docs/SELF_CREATED.md, 01; D-084): the rate factor at this player's position now, from the
+		 * places where things happened to them and the one chunk they trust ({@code director.sc.Places}). The brain
+		 * multiplies the ambient and minor rates by it, beside the fog factor, only from Traces on and after the player's
+		 * own first hour ({@link #placeFactor(Env, Stage, Clock)}); never a gap, cap, major slot or hard limit. Live, 1
+		 * while the layer is off; dry runs roll it from a dread share. 1 by default (nothing changes).
+		 */
+		default double placeFactor() {
+			return 1.0;
+		}
+
+		/**
+		 * A fire that is neither fake nor forced reached this player: theirs ({@code felt} false) or one they felt beside
+		 * someone (true), with their own pacing and clock. Live, it remembers where they stand
+		 * ({@code director.sc.Places.remember}). Nothing by default.
+		 */
+		default void remember(PacingMemory m, CardInfo card, Clock c, boolean felt) {
 		}
 	}
 
@@ -462,6 +486,7 @@ public final class DirectorBrain {
 			return "waiting: " + blocked;
 		}
 		boolean fog = boosts(env.fogSpell());
+		double place = placeFactor(env, stage, c);
 		List<String> notes = new ArrayList<>();
 		for (Tier tier : PRIORITY) {
 			// A card parked as it goes back (its moment did not come at any look) hands the roll that drew it to the next
@@ -473,7 +498,7 @@ public final class DirectorBrain {
 			while (true) {
 				CardInfo card = card(m.held.get(tier));
 				if (card == null) {
-					if (tierBlock(tier, m, c, stage) != null || carried == 0 && !due(tier, m, c, stage, random, sharers.size(), fog)) {
+					if (tierBlock(tier, m, c, stage) != null || carried == 0 && !due(tier, m, c, stage, random, sharers.size(), fog, place)) {
 						break;
 					}
 					Set<String> passedOver = new HashSet<>();
@@ -548,6 +573,18 @@ public final class DirectorBrain {
 			return rules.blindHold;
 		}
 		return card.tier() == Tier.AMBIENT || card.tier() == Tier.MINOR ? rules.heldUnfitGiveBack : 0;
+	}
+
+	/**
+	 * The places' rate factor for this decision (docs/SELF_CREATED.md, 01; D-084): {@link Env#placeFactor} from Traces on
+	 * once the player's own first hour is over, else exactly 1 (Alone, the first hour: no places yet).
+	 */
+	public double placeFactor(Env env, Stage stage, Clock c) {
+		if (!stage.atLeast(Stage.TRACES) || c.playTicks() < rules.hourTicks) {
+			return 1.0;
+		}
+		double factor = env.placeFactor();
+		return Double.isFinite(factor) ? Math.max(0, factor) : 1.0;
 	}
 
 	/** True for a fog spell that is on and not quiet (D-071): the director's odds go up. */
@@ -916,13 +953,18 @@ public final class DirectorBrain {
 	 * @param fog     a fog spell that is not quiet is on (D-071): the ambient and minor rate times
 	 *                {@code fogWeatherOddsFactor}, the refractory wait included, so the mean rises by the whole factor;
 	 *                and a major slot due within {@code fogWeatherMajorPull} is due now
+	 * @param place   the places' factor ({@link #placeFactor(Env, Stage, Clock)}, D-084): the ambient and minor rate times it,
+	 *                beside the fog's, before the refractory wait; 1 changes nothing
 	 */
-	private boolean due(Tier tier, PacingMemory m, Clock c, Stage stage, RandomSource random, int sharing, boolean fog) {
+	private boolean due(Tier tier, PacingMemory m, Clock c, Stage stage, RandomSource random, int sharing, boolean fog, double place) {
 		return switch (tier) {
 			case AMBIENT, MINOR -> {
 				double perHour = rate(tier, m, stage);
 				if (fog) {
 					perHour *= rules.fogWeatherOddsFactor;
+				}
+				if (place != 1.0) {
+					perHour *= place;
 				}
 				if (sharing > 0) {
 					perHour *= rules.groupRateFactor;
@@ -1391,6 +1433,9 @@ public final class DirectorBrain {
 				m.fakeFires++;
 			}
 			env.addTension(rules.tensionFor(tier) * (fake ? rules.fakeTensionFactor : 1), "fired " + card.id());
+			if (!fake) {
+				env.remember(m, card, c, false);
+			}
 			rec.fired(c, card, fake, false, stage, env.tension());
 			checkQuiet(m, c, env, random, rec);
 		}
@@ -1447,6 +1492,9 @@ public final class DirectorBrain {
 			m.firstHourFires++;
 		}
 		env.addTension(rules.tensionFor(tier) * (fake ? rules.fakeTensionFactor : 1), "felt " + card.id());
+		if (!fake) {
+			env.remember(m, card, c, true);
+		}
 		rec.felt(c, card, fake, forced, stage, env.tension());
 		checkQuiet(m, c, env, random, rec);
 	}

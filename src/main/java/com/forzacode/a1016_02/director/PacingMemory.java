@@ -13,6 +13,7 @@ import java.util.Set;
 import com.forzacode.a1016_02.core.CardTag;
 import com.forzacode.a1016_02.core.Stage;
 import com.forzacode.a1016_02.core.Tier;
+import com.forzacode.a1016_02.director.sc.PlaceMemory;
 
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.nbt.ListTag;
@@ -101,6 +102,9 @@ public final class PacingMemory {
 	long lowRenderAccum;
 	boolean lowRenderCounted;
 
+	/** docs/SELF_CREATED.md, 01: where things happened to this player, and where they spend their time. Saved under {@code sc01}. */
+	final PlaceMemory places = new PlaceMemory();
+
 	/** A fresh memory whose first in-game day began at day tick 0. */
 	public PacingMemory() {
 		this(0);
@@ -150,6 +154,11 @@ public final class PacingMemory {
 	/** Rechecks that fired a card for this player (D-077). */
 	public int recheckFires() {
 		return recheckFires;
+	}
+
+	/** This player's places and dwell (docs/SELF_CREATED.md, 01). */
+	public PlaceMemory places() {
+		return places;
 	}
 
 	/** This player's clock when a card with this tag last fired for them or was felt by them, or {@link DirectorMemory#NEVER}. */
@@ -250,6 +259,9 @@ public final class PacingMemory {
 
 		tag.putLong("lowRenderAccum", lowRenderAccum);
 		tag.putBoolean("lowRenderCounted", lowRenderCounted);
+		if (!places.isEmpty()) {
+			tag.put("sc01", places.save());
+		}
 		return tag;
 	}
 
@@ -320,6 +332,8 @@ public final class PacingMemory {
 
 		m.lowRenderAccum = tag.getLongOr("lowRenderAccum", 0);
 		m.lowRenderCounted = tag.getBooleanOr("lowRenderCounted", false);
+		// A pacing from before the places (v1.3) has none.
+		m.places.load(tag.getCompoundOrEmpty("sc01"));
 		return m;
 	}
 }

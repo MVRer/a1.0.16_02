@@ -11,6 +11,7 @@ import java.util.Set;
 import java.util.UUID;
 
 import com.forzacode.a1016_02.A1016_02;
+import com.forzacode.a1016_02.dig.sc.DigScMemory;
 import com.mojang.serialization.Codec;
 
 import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
@@ -69,6 +70,8 @@ public final class DigData extends SavedData {
 	final Map<UUID, GlobalPos> bases = new LinkedHashMap<>();
 	/** Each player's tunnel ladder (D-072). A save from before v1.2 has none and loads with every player at rung 0. */
 	final Map<UUID, LadderMemory> ladder = new LinkedHashMap<>();
+	/** docs/SELF_CREATED.md, 12 and 13: the layer's part, saved under {@code sc} (a save without it has none). */
+	final DigScMemory sc = new DigScMemory();
 	/** A save from before multiplayer: the one base the network waited for, until a first known player adopts it. */
 	@Nullable GlobalPos legacyBaseSeen;
 	long legacyBaseSeenNight = Long.MIN_VALUE;
@@ -128,6 +131,11 @@ public final class DigData extends SavedData {
 		if (!base.equals(bases.put(player, base))) {
 			setDirty();
 		}
+	}
+
+	/** The layer's part (docs/SELF_CREATED.md, 12 and 13); mark this data dirty after changing it. */
+	public DigScMemory sc() {
+		return sc;
 	}
 
 	/** The highest tunnel ladder rung this player heard (0 to 3; 0 if never), for the debug overlay (D-072). */
@@ -282,6 +290,9 @@ public final class DigData extends SavedData {
 			ladderList.add(l);
 		});
 		tag.put("ladder", ladderList);
+		if (!sc.isEmpty()) {
+			tag.put("sc", sc.save());
+		}
 		if (legacyBaseSeen != null) {
 			tag.putString("baseSeenDimension", legacyBaseSeen.dimension().identifier().toString());
 			tag.putLong("baseSeen", legacyBaseSeen.pos().asLong());
@@ -330,6 +341,7 @@ public final class DigData extends SavedData {
 			CompoundTag l = ladderList.getCompoundOrEmpty(i);
 			Network.uuid(l.getStringOr("player", "")).ifPresent(uuid -> data.ladder.put(uuid, LadderMemory.load(l)));
 		}
+		data.sc.load(tag.getCompoundOrEmpty("sc"));
 		// A save from before multiplayer: its one base waits for the first known player (adoptLegacy).
 		if (tag.contains("baseSeen")) {
 			data.legacyBaseSeen = GlobalPos.of(dimension(tag.getStringOr("baseSeenDimension", "minecraft:overworld")),
