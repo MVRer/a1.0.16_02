@@ -2,6 +2,9 @@
 
 Oct 16, 2026 · after v1.2 (Mariano: "what can make it feel more omniscient?")
 
+**Status: shipped.** C-2, wave 1, INT-2, the R4 to R6 reviews and their fixes, VERIFY-3 (READY) and its two lows
+(FIX-FINAL2) are done; 661 tests green 3/3 (`docs/TASKS.md`). No tag or release until Mariano says.
+
 Three things that make him feel like he was watching: he copies what you just did, he acts in the moments you are
 not looking (a menu open), and once per world a screenshot you take shows him in the fog. Every worker reads
 `docs/ARCHITECTURE.md`, this file's section for their task, and the decisions below. Same process as v1.2

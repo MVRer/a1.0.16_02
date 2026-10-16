@@ -46,8 +46,8 @@ See it now (Dev Client; /a1016 debug overlay on shows each player's "blind" line
      person (F5 back to it), no menu open, not in water, no Blindness or Darkness, no shaderpack. Press F2 and open
      the picture in run/screenshots: he stands at the fog edge (12 to 192 blocks off, never a speck), off the middle,
      head and chest in plain sight. The screen never showed him. It waits (and he does not appear) while a figure is
-     out anywhere, while a fog surge pulls the fog in, or when no ground spot fits. Once per world: /a1016 entity
-     screenshot reset to try again.
+     out anywhere, on an in-game day that already had a sighting (try the next day), while a fog surge pulls the fog
+     in, or when no ground spot fits. Once per world: /a1016 entity screenshot reset to try again.
   9. The real way: a NEW world, play normally: mine, use doors, open your inventory now and then. The echoes need 5
      minutes or more to pass; the blind cards need you alone with a menu open; the screenshot comes once, from Traces.
 What to look for: whether an echo reads as your own rhythm coming back, whether a step behind you in the inventory
@@ -56,7 +56,8 @@ Multiplayer: the echoes are heard by anyone in range; the blind cards and the sc
   even a spectator, within 48 blocks for the blind ones). The menu signal only ever makes things happen to the player
   who opened the menu.
 Existing worlds and config files are upgraded automatically: the director section steps to version 3 (it only adds
-  blindHoldMinutes 15 and simBlindPerHour 20); the echo, blind and screenshot numbers are new fields with defaults.
+  blindHoldMinutes 15 and simBlindPerHour 20), the atmosphere section to version 2 (a 1.3.0-preview.1 config's
+  echoDoorVolume 1.0 becomes 1.6); the echo, blind and screenshot numbers are new fields with defaults.
 Still to check in the Dev Client (the game tests cannot hear or see a frame):
   - the echoed mining sounds like digging inside the rock (hits then a break), not like blocks breaking next to you;
   - a blind step at 50% master volume is noticeable but not loud;

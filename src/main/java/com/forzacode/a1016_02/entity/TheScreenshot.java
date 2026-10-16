@@ -11,6 +11,7 @@ import com.forzacode.a1016_02.core.FireResult;
 import com.forzacode.a1016_02.core.FogLimits;
 import com.forzacode.a1016_02.core.GameClock;
 import com.forzacode.a1016_02.core.HerobrineState;
+import com.forzacode.a1016_02.core.ModConfig;
 import com.forzacode.a1016_02.core.Stage;
 import com.forzacode.a1016_02.core.TraceService;
 
@@ -34,14 +35,15 @@ import net.minecraft.world.level.LightLayer;
  * <p>Arms live in memory by UUID (an arm ends when its player leaves, so none outlives the server), one in the world at
  * a time: the gate refuses anyone while someone is armed, and a forced arm ends the one before. While an arm lasts the
  * client is told whether it may show him now ({@link ScreenshotStatePayload}: paused while he is out anywhere, since
- * he is one being), whether a dusk fog or fog spell is on at the player ({@link #fogOn}) and the weather's fog end for
- * them ({@link #weatherFogEnd}); they are looked at every {@link #TICK_EVERY} ticks and sent on a change. Every arm
- * ends, and none is made, during Ending D's last minute and once the story is over or quiet for good
- * ({@link ScreenshotRules#storyOver}). An arm also ends when it runs out ({@link ScreenshotStatePayload#OFF} is sent),
- * when its player stops taking part (PARTICIPATION false: they left or turned spectator) and when the screenshot
- * happens for anyone. A report counts only from an arm that is ready at that tick (not run out, not paused); any other
- * report is ignored, and ends the reporter's arm if they had one. Server thread only. {@link #LIVE} is the game's;
- * tests make their own with their own {@link Hooks}.
+ * he is one being, and while today already had a sighting, since he is seen once a day: entity's world-wide day
+ * record, {@link EntityData#dayAllows}, as every sighting card's gate), whether a dusk fog or fog spell is on at the
+ * player ({@link #fogOn}) and the weather's fog end for them ({@link #weatherFogEnd}); they are looked at every
+ * {@link #TICK_EVERY} ticks and sent on a change. Every arm ends, and none is made, during Ending D's last minute and
+ * once the story is over or quiet for good ({@link ScreenshotRules#storyOver}). An arm also ends when it runs out
+ * ({@link ScreenshotStatePayload#OFF} is sent), when its player stops taking part (PARTICIPATION false: they left or
+ * turned spectator) and when the screenshot happens for anyone. A report counts only from an arm that is ready at that
+ * tick (not run out, not paused); any other report is ignored, and ends the reporter's arm if they had one. Server
+ * thread only. {@link #LIVE} is the game's; tests make their own with their own {@link Hooks}.
  */
 public final class TheScreenshot {
 	public static final String CARD_ID = "the_screenshot";
@@ -278,10 +280,10 @@ public final class TheScreenshot {
 
 	/**
 	 * A client says the screenshot happened ({@link ScreenshotTakenPayload}). Only from a player whose arm is ready at
-	 * this tick (armed, not run out, not paused: he is not out anywhere, and the story still holds one): the world's one
-	 * screenshot is recorded (the day, the player; it counts as that day's sighting) and everyone is disarmed. A report
-	 * from an arm that is not ready is ignored and ends that arm (their client forgot it when it reported). No message,
-	 * no sound.
+	 * this tick (armed, not run out, not paused: he is not out anywhere, today had no sighting yet, and the story still
+	 * holds one): the world's one screenshot is recorded (the day, the player; it counts as that day's sighting) and
+	 * everyone is disarmed. A report from an arm that is not ready is ignored and ends that arm (their client forgot it
+	 * when it reported). No message, no sound.
 	 */
 	public Report report(ServerPlayer player) {
 		Arm arm = arms.get(player.getUUID());
@@ -290,7 +292,7 @@ public final class TheScreenshot {
 		}
 		MinecraftServer server = player.level().getServer();
 		long now = hooks.dayTicks(server);
-		boolean ready = now < arm.untilDayTicks() && !player.isSpectator() && !storyHolds(server) && !hooks.heIsOut(server);
+		boolean ready = now < arm.untilDayTicks() && !player.isSpectator() && !storyHolds(server) && mayShowHim(server);
 		if (!ready) {
 			disarm(server, player.getUUID());
 			return Report.IGNORED;
@@ -311,8 +313,19 @@ public final class TheScreenshot {
 		return hooks.lastMinute(server) || hooks.storyOver(server);
 	}
 
+	/**
+	 * An arm that lasts may show him now: he is not out anywhere (one being, D-060.4), and today has room for a sighting
+	 * in entity's world-wide day record ({@link EntityData#dayAllows} with {@code Pacing.sightingsPerDayMax}, the rule
+	 * every sighting card's gate keeps: "already one today"), so a figure seen and gone earlier today is never followed by
+	 * the screenshot the same day; the arm waits for the next day.
+	 */
+	private boolean mayShowHim(MinecraftServer server) {
+		long today = Math.floorDiv(hooks.dayTicks(server), DAY_TICKS);
+		return !hooks.heIsOut(server) && hooks.data(server).dayAllows(today, ModConfig.pacing().sightingsPerDayMax);
+	}
+
 	private ScreenshotStatePayload state(MinecraftServer server, ServerPlayer player, int id) {
-		return new ScreenshotStatePayload(!hooks.heIsOut(server), hooks.fogOn(player), hooks.weatherFogEnd(player), id);
+		return new ScreenshotStatePayload(mayShowHim(server), hooks.fogOn(player), hooks.weatherFogEnd(player), id);
 	}
 
 	/** True if the client should be told {@code now} after {@code sent}. */
