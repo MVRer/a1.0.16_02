@@ -1,5 +1,6 @@
 package com.forzacode.a1016_02.atmosphere;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 
@@ -45,8 +46,11 @@ import net.minecraft.world.phys.Vec3;
  * client, {@link SelfCreated#enabled}). Their amount at the camera ({@link #placeAmount}, core's
  * {@link FogLimits#placeAmount}) is weather like the spell: weighted by the same smoothed sky weight and combined with
  * the spell's ({@link FogLimits#weatherAmount}) before everything above, so the places thicken the same fog, haze and
- * tint, and with no places every number is bit for bit the spell's alone. Continuous in the camera's position and the
- * clock (each place is).
+ * tint, and with no places every number is bit for bit the spell's alone. A place is also seen from outside it: each
+ * place along the camera's view ({@link #seen}, core's {@link FogLimits#placeViews}) brings the far fog in as one would
+ * see it from where the view enters the place ({@link #shape(Curves.Fog, double, double, double, double, List, Curves.Fog, AtmosphereConfig)}),
+ * so from a distance a fog stands over the spot, and the frame's color follows it ({@link #tintAmount}).
+ * Continuous in the camera's position, its yaw and the clock (each place is).
  */
 public final class WeatherFog {
 	/** Vanilla's rain fog multiplier moves this share of the way to its target per tick ({@code AtmosphericFogEnvironment}); the sky weight too. */
@@ -111,6 +115,41 @@ public final class WeatherFog {
 			return spell > 0.0 ? spell * sky : 0.0;
 		}
 		return FogLimits.weatherAmount(spell, place, sky);
+	}
+
+	/**
+	 * A fog place seen along the frame's view, as the frame draws it: from {@code near} blocks out, the weather fog with
+	 * the place's amount there ({@code weather}: the spell's and the place's amounts, each times the frame's sky weight,
+	 * together, {@link FogLimits#weatherAmount}).
+	 */
+	public record Seen(double near, double weather) {
+	}
+
+	/**
+	 * The fog places seen from the camera along its yaw this frame ({@link FogLimits#placeViews}, so the server's
+	 * {@code FogLimits.of(player)} sees the same), each with its weather amount at the sky weight the last
+	 * {@link #frame} stepped to: none where time is fixed, with no places, while the layer is switched off here, or
+	 * with no sky at the camera (a tunnel or a closed house sees none, as it has none of the weather). Call after
+	 * {@link #frame} in the same frame.
+	 */
+	public List<Seen> seen(ResourceKey<Level> dimension, Vec3 camera, double yawDegrees, long clockTime, boolean fixedTime) {
+		if (fixedTime || places.isEmpty() || !SelfCreated.enabled()) {
+			return List.of();
+		}
+		double weight = sky();
+		if (!(weight > 0.0)) {
+			return List.of();
+		}
+		List<FogLimits.PlaceView> views = FogLimits.placeViews(places, dimension, camera, yawDegrees, clockTime);
+		if (views.isEmpty()) {
+			return List.of();
+		}
+		double spell = amount(clockTime, fixedTime);
+		List<Seen> seen = new ArrayList<>(views.size());
+		for (FogLimits.PlaceView view : views) {
+			seen.add(new Seen(view.near(), FogLimits.weatherAmount(spell, view.amount(), weight)));
+		}
+		return seen;
 	}
 
 	/** A new level (joining, a dimension change): the next frame takes the sky weight there at once. */
@@ -200,6 +239,52 @@ public final class WeatherFog {
 		Curves.applyDusk(fog, combined(dusk, spell), haze(duskHaze, spell, cfg.fogSpellHazeFullAmount), cfg.duskMinFogBlocks, cfg.heavyFogStartFraction);
 		Curves.applySurge(fog, surge, cfg.surgeMinFogBlocks, cfg.heavyFogStartFraction);
 		return true;
+	}
+
+	/**
+	 * {@link #shape(Curves.Fog, double, double, double, double, AtmosphereConfig)} for the camera's own weather, then
+	 * each fog place seen along the view ({@link #seen}): the same fog shaped with that place's weather amount in place
+	 * of the camera's, as one would see it standing where the view enters the place, {@code near} blocks further out
+	 * ({@link Curves.Fog#seen}: the render-distance fog and the sky's end only, wherever nearer). So from outside a place
+	 * the fog stands over it and hides what is behind it, nothing nearer than it gets more fog, and inside one the view
+	 * toward its centre is the thicker. The visible fog end is exactly core's {@code FogLimits.seen}. With no seen place
+	 * this is the camera's shaping alone, bit for bit. {@code scratch} is overwritten.
+	 */
+	public static boolean shape(Curves.Fog fog, double dusk, double duskHaze, double weather, double surge, List<Seen> seen, Curves.Fog scratch,
+			AtmosphereConfig cfg) {
+		if (seen.isEmpty()) {
+			return shape(fog, dusk, duskHaze, weather, surge, cfg);
+		}
+		double es = fog.environmentalStart;
+		double ee = fog.environmentalEnd;
+		double rs = fog.renderDistanceStart;
+		double re = fog.renderDistanceEnd;
+		double sky = fog.skyEnd;
+		double cloud = fog.cloudEnd;
+		boolean changed = shape(fog, dusk, duskHaze, weather, surge, cfg);
+		for (Seen s : seen) {
+			scratch.set(es, ee, rs, re, sky, cloud);
+			if (shape(scratch, dusk, duskHaze, s.weather(), surge, cfg)) {
+				changed |= fog.seen(scratch, Math.max(0.0, s.near()));
+			}
+		}
+		return changed;
+	}
+
+	/**
+	 * The weather amount the frame's fog color follows ({@link #color}): the camera's own ({@code weather}) or a seen
+	 * place's, weighted by how much of the camera's fog lies before it ({@code 1 - near / cameraEnd}, 0 once it begins
+	 * past the camera's fog end), whichever is more. The color is one for the whole frame, so a place seen from outside
+	 * tints it only as far as its fog shows: at night the fog over it reads as a pale wall in the dark, as a fog night
+	 * does. Exactly {@code weather} with none seen; continuous in each input.
+	 */
+	public static double tintAmount(double weather, List<Seen> seen, double cameraEnd) {
+		double amount = weather;
+		for (Seen s : seen) {
+			double share = cameraEnd > 0.0 ? Curves.clamp01(1.0 - s.near() / cameraEnd) : 0.0;
+			amount = Math.max(amount, s.weather() * share);
+		}
+		return amount;
 	}
 
 	/** {@link #color(float[], double, long, int, double, int)} with the config's colors and lift. */

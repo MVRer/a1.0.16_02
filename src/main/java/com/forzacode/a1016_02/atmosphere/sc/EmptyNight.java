@@ -178,6 +178,15 @@ public final class EmptyNight {
 		return window.isPresent() && window.get().contains(clock) ? MoonPhase.NEW_MOON : vanilla;
 	}
 
+	/**
+	 * {@link #moonFor(long, Optional, MoonPhase)}, or vanilla's moon while a shaderpack draws the frame
+	 * ({@code shaderPack}): a pack lights and draws the night from the game's own phase, which this does not change, so
+	 * a new moon in the sky would hang over a full moon's light. That client sees the night's quiet only.
+	 */
+	public static MoonPhase moonFor(long clock, Optional<Window> window, MoonPhase vanilla, boolean shaderPack) {
+		return shaderPack ? vanilla : moonFor(clock, window, vanilla);
+	}
+
 	/** Whether this spell gives any fog over {@link #FOG_FROM} to {@link #FOG_UNTIL} of night {@code night}. */
 	public static boolean fogOver(Optional<FogSpell> spell, long night) {
 		if (spell.isEmpty() || !(spell.get().level() > 0.0F)) {

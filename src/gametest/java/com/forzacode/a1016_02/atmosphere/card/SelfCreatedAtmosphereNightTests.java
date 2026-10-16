@@ -13,6 +13,7 @@ import com.forzacode.a1016_02.atmosphere.AtmosphereConfig;
 import com.forzacode.a1016_02.atmosphere.AtmosphereData;
 import com.forzacode.a1016_02.atmosphere.Curves;
 import com.forzacode.a1016_02.atmosphere.WeatherFog;
+import com.forzacode.a1016_02.atmosphere.client.ShaderPacks;
 import com.forzacode.a1016_02.atmosphere.mob.MobTamperImpl;
 import com.forzacode.a1016_02.atmosphere.sc.EmptyNight;
 import com.forzacode.a1016_02.atmosphere.sc.EmptyNightPayload;
@@ -699,6 +700,173 @@ public class SelfCreatedAtmosphereNightTests {
 				}
 			}
 		}
+		helper.succeed();
+	}
+
+	/**
+	 * A fog place is seen from outside it (R8 L5): from 100 blocks off, looking at it, the far fog stands over it (from
+	 * just past its middle, complete a little past its far side) and hides what is behind it; nothing nearer than where
+	 * the view enters it gets more fog; looking past it or away, nothing; under no sky, where time is fixed or in another
+	 * dimension, nothing; the night's fog color follows it only while it is in view.
+	 */
+	@GameTest
+	public void aFogPlaceIsSeenFromOutsideItAsAFogStandingOverIt(GameTestHelper helper) {
+		AtmosphereConfig cfg = AtmosphereConfig.get();
+		Vec3 center = new Vec3(0.5, 70, 0.5);
+		FogPlace place = new FogPlace(Level.OVERWORLD, center, 40, 0.45F, 0, 10 * DAY, 1_200, 1_200);
+		long noon = 2 * DAY + 6_000;
+		Vec3 house = center.add(0, 0, -100);
+		WeatherFog client = new WeatherFog();
+		client.receive(new ClientEffects.FogPlaces(List.of(place)));
+		double weather = client.frame(noon, false, 15, 0.0, Level.OVERWORLD, house);
+		helper.assertTrue(weather == 0.0, "the house is not outside the place: " + weather);
+		// Yaw 0 looks toward +z, at the place's centre.
+		List<WeatherFog.Seen> toward = client.seen(Level.OVERWORLD, house, 0.0, noon, false);
+		helper.assertTrue(toward.size() == 1 && Math.abs(toward.get(0).near() - 60.0) < 1.0E-9 && Math.abs(toward.get(0).weather() - 0.45) < 1.0E-6,
+				"seen from the house: " + toward);
+		double r = 256.0;
+		Curves.Fog eye = vanilla(r);
+		helper.assertTrue(!WeatherFog.shape(eye, 0.0, 0.0, weather, 0.0, cfg), "a clear noon outside the place changed the fog");
+		Curves.Fog seen = vanilla(r);
+		helper.assertTrue(WeatherFog.shape(seen, 0.0, 0.0, weather, 0.0, toward, new Curves.Fog(), cfg), "the seen place changed nothing");
+		helper.assertTrue(seen.end() > 100.0 && seen.end() < 100.0 + 40.0 + 24.0 && fogAt(seen, 140.0) >= 0.5 && fogAt(seen, 170.0) == 1.0
+				&& fogAt(seen, 100.0) < 0.15, String.format(Locale.ROOT, "not a fog standing over it: ends %.1f, %.2f at its far side, %.2f at its middle",
+						seen.end(), fogAt(seen, 140.0), fogAt(seen, 100.0)));
+		for (double d = 0.0; d <= 60.0; d += 0.5) {
+			helper.assertTrue(fogAt(seen, d) == fogAt(eye, d), "more fog nearer than the place at " + d);
+		}
+		// Within the cone's 20 degrees it is whole; past it, it thins out to nothing by the place's edge.
+		helper.assertTrue(client.seen(Level.OVERWORLD, house, 15.0, noon, false).equals(toward) && client.seen(Level.OVERWORLD, house, -15.0, noon, false).equals(toward),
+				"not whole within the cone");
+		List<WeatherFog.Seen> aside = client.seen(Level.OVERWORLD, house, 32.0, noon, false);
+		helper.assertTrue(aside.size() == 1 && aside.get(0).weather() > 0.0 && aside.get(0).weather() < 0.45 && aside.get(0).near() > 60.0, "half aside: " + aside);
+		for (double yaw : new double[] {45.0, -45.0, 90.0, 180.0, -135.0}) {
+			helper.assertTrue(client.seen(Level.OVERWORLD, house, yaw, noon, false).isEmpty(), "seen looking past it or away at yaw " + yaw);
+		}
+		// Inside it, looking away from its centre: exactly the fog at the camera, as before.
+		Vec3 inside = center.add(0, 0, -20);
+		WeatherFog in = new WeatherFog();
+		in.receive(new ClientEffects.FogPlaces(List.of(place)));
+		double here = in.frame(noon, false, 15, 0.0, Level.OVERWORLD, inside);
+		helper.assertTrue(here > 0.0 && in.seen(Level.OVERWORLD, inside, 180.0, noon, false).isEmpty(), "inside, looking away");
+		List<WeatherFog.Seen> inward = in.seen(Level.OVERWORLD, inside, 0.0, noon, false);
+		helper.assertTrue(inward.size() == 1 && inward.get(0).near() == 0.0 && Math.abs(inward.get(0).weather() - 0.45) < 1.0E-6 && inward.get(0).weather() > here,
+				"inside, toward its centre: " + inward);
+		// No sky, fixed time, another dimension: nothing seen.
+		WeatherFog tunnel = new WeatherFog();
+		tunnel.receive(new ClientEffects.FogPlaces(List.of(place)));
+		tunnel.frame(noon, false, FogLimits.SKY_NONE, 0.0, Level.OVERWORLD, house);
+		helper.assertTrue(tunnel.seen(Level.OVERWORLD, house, 0.0, noon, false).isEmpty() && client.seen(Level.OVERWORLD, house, 0.0, noon, true).isEmpty()
+				&& client.seen(Level.NETHER, house, 0.0, noon, false).isEmpty()
+				&& FogLimits.placeViews(List.of(place), Level.OVERWORLD, house, 0.0, 11 * DAY).isEmpty(), "seen under no sky, fixed time, elsewhere or after");
+		// The color: at night the fog over it pales the frame's fog toward the night fog's color, only while it is in view.
+		long night = 2 * DAY + 18_000;
+		double cameraEnd = FogLimits.fogEnd(r, cfg.duskMinFogBlocks, 0.0);
+		double tint = WeatherFog.tintAmount(0.0, toward, cameraEnd);
+		helper.assertTrue(tint > 0.0 && tint < 0.45 && WeatherFog.colorWeight(tint, Math.floorMod(night, DAY), cfg.fogNightColorLift) > 0.0
+				&& WeatherFog.tintAmount(0.0, List.of(), cameraEnd) == 0.0 && WeatherFog.tintAmount(0.0, List.of(new WeatherFog.Seen(cameraEnd, 0.45)), cameraEnd) == 0.0
+				&& WeatherFog.tintAmount(0.3, List.of(), cameraEnd) == 0.3, "the color: " + tint);
+		helper.succeed();
+	}
+
+	/**
+	 * The server's fog end follows a fog place seen along the player's yaw exactly as the client draws it, at every
+	 * stage, view distance, place time and yaw, with a spell; the seen fog has no pop: continuous over the yaw and
+	 * across the radius, and never thinner as one walks toward its centre.
+	 */
+	@GameTest
+	public void theSeenFogPlaceIsTheServersFogEndAndHasNoPop(GameTestHelper helper) {
+		AtmosphereConfig cfg = AtmosphereConfig.get();
+		FogLimits.Shape shape = cfg.fogShape();
+		Vec3 center = new Vec3(0.5, 70, 0.5);
+		FogPlace place = new FogPlace(Level.OVERWORLD, center, 40, 0.45F, 12_000, 60_000, 1_200, 1_200);
+		FogSpell spell = new FogSpell(30_000, 50_000, 0.55F, false);
+		Curves.Fog scratch = new Curves.Fog();
+		int seenAny = 0;
+		for (Vec3 at : List.of(center.add(0, 0, -100), center.add(70, 0, 30), center.add(45, 0, 0), center.add(20, 0, -10), center, center.add(-150, 0, 90))) {
+			for (double yaw = -180.0; yaw < 180.0; yaw += 15.0) {
+				for (long clock = 11_000; clock <= 61_000; clock += 2_500) {
+					WeatherFog client = new WeatherFog();
+					client.receive(new ClientEffects.FogSpell(Optional.of(spell)));
+					client.receive(new ClientEffects.FogPlaces(List.of(place)));
+					double weather = client.frame(clock, false, 15, 0.0, Level.OVERWORLD, at);
+					List<WeatherFog.Seen> seen = client.seen(Level.OVERWORLD, at, yaw, clock, false);
+					double placeAmount = FogLimits.placeAmount(List.of(place), Level.OVERWORLD, at, clock);
+					List<FogLimits.PlaceView> views = FogLimits.placeViews(List.of(place), Level.OVERWORLD, at, yaw, clock);
+					helper.assertTrue(views.size() == seen.size(), "the client sees other places than the server");
+					seenAny += seen.size();
+					for (Stage stage : Stage.values()) {
+						float dusk = cfg.duskFogFor(stage);
+						for (int chunks : new int[] {2, 8, 16, 32}) {
+							FogLimits.Result eye = FogLimits.of(chunks, 32, dusk, clock, shape, FogLimits.weatherAmount(spell.amount(clock), placeAmount, 1.0));
+							FogLimits.Result server = FogLimits.seen(eye, views, chunks, 32, dusk, clock, shape, spell.amount(clock), 1.0);
+							Curves.Fog fog = vanilla(server.renderLimit());
+							WeatherFog.shape(fog, Curves.duskAmount(dusk, clock, shape), Curves.duskHaze(clock, shape), weather, 0.0, seen, scratch, cfg);
+							helper.assertTrue(Math.abs(server.fogEnd() - fog.end()) < 1.0E-9 && server.fogEnd() <= eye.fogEnd(), String.format(Locale.ROOT,
+									"server %.4f != client %.4f at %s, yaw %.0f, clock %d, %s, %d chunks", server.fogEnd(), fog.end(), at, yaw, clock, stage, chunks));
+						}
+					}
+				}
+			}
+		}
+		helper.assertTrue(seenAny > 100, "hardly ever seen: " + seenAny);
+		// No pop: over the yaw at the house, from outside into the place toward its centre (never thinner), across the radius.
+		long clock = 40_000;
+		double last = Double.NaN;
+		for (double yaw = -180.0; yaw <= 180.0; yaw += 0.1) {
+			double end = seenEnd(place, center.add(0, 0, -100), yaw, clock, cfg);
+			helper.assertTrue(Double.isNaN(last) || Math.abs(end - last) < 2.0, String.format(Locale.ROOT, "a pop at yaw %.1f: %.2f to %.2f", yaw, last, end));
+			last = end;
+		}
+		last = Double.NaN;
+		for (double d = 200.0; d >= 0.0; d -= 0.25) {
+			double end = seenEnd(place, center.add(0, 0, -d), 0.0, clock, cfg);
+			helper.assertTrue(Double.isNaN(last) || end <= last + 1.0E-9 && last - end <= 0.25 + 1.0E-9,
+					String.format(Locale.ROOT, "walking in, %.2f to %.2f at %.2f", last, end, d));
+			last = end;
+		}
+		helper.assertTrue(Math.abs(seenEnd(place, center.add(0, 0, -40.01), 0.0, clock, cfg) - seenEnd(place, center.add(0, 0, -39.99), 0.0, clock, cfg)) < 0.05,
+				"a pop at the radius");
+		helper.succeed();
+	}
+
+	/** The client's visible fog end at 16 chunks, noon, no spell: the camera's own and the place seen along {@code yaw}. */
+	private static double seenEnd(FogPlace place, Vec3 at, double yaw, long clock, AtmosphereConfig cfg) {
+		WeatherFog client = new WeatherFog();
+		client.receive(new ClientEffects.FogPlaces(List.of(place)));
+		long noon = Math.floorDiv(clock, DAY) * DAY + 6_000;
+		double weather = client.frame(noon, false, 15, 0.0, Level.OVERWORLD, at);
+		Curves.Fog fog = vanilla(256.0);
+		WeatherFog.shape(fog, 0.0, 0.0, weather, 0.0, client.seen(Level.OVERWORLD, at, yaw, noon, false), new Curves.Fog(), cfg);
+		return fog.end();
+	}
+
+	/** The shader's world fog at this distance: the larger of the environmental and the render-distance fog. */
+	static double fogAt(Curves.Fog fog, double d) {
+		return Math.max(linear(d, fog.environmentalStart, fog.environmentalEnd), linear(d, fog.renderDistanceStart, fog.renderDistanceEnd));
+	}
+
+	private static double linear(double d, double start, double end) {
+		if (d <= start) {
+			return 0.0;
+		}
+		return d >= end ? 1.0 : (d - start) / (end - start);
+	}
+
+	/**
+	 * 04's sky under a shaderpack (R8 L6): a pack lights and draws the night from the game's own moon phase, so while
+	 * one is in use the sky keeps vanilla's moon inside the window too; without one, the new moon. Iris is not loaded
+	 * here, so no pack is in use.
+	 */
+	@GameTest
+	public void theSkyKeepsVanillasMoonWhileAShaderpackDrawsTheNight(GameTestHelper helper) {
+		Optional<EmptyNight.Window> w = Optional.of(EmptyNight.sky(5));
+		helper.assertTrue(EmptyNight.moonFor(5 * DAY + 18_000, w, MoonPhase.FULL_MOON, false) == MoonPhase.NEW_MOON
+				&& EmptyNight.moonFor(5 * DAY + 18_000, w, MoonPhase.FULL_MOON, true) == MoonPhase.FULL_MOON
+				&& EmptyNight.moonFor(5 * DAY + 11_000, w, MoonPhase.WAXING_GIBBOUS, true) == MoonPhase.WAXING_GIBBOUS
+				&& EmptyNight.moonFor(5 * DAY + 10_000, w, MoonPhase.FULL_MOON, true) == MoonPhase.FULL_MOON
+				&& EmptyNight.moonFor(5 * DAY + 10_000, w, MoonPhase.FULL_MOON, false) == MoonPhase.FULL_MOON, "the moon under a shaderpack");
+		helper.assertTrue(!ShaderPacks.inUse(), "a shaderpack in use without Iris");
 		helper.succeed();
 	}
 

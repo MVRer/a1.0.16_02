@@ -1,5 +1,6 @@
 package com.forzacode.a1016_02.core;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
@@ -29,7 +30,8 @@ import net.minecraft.world.phys.Vec3;
  * whatever their configs; for a player the server weights it by the sky light at their eyes ({@link #skyFactor}). Fog
  * places (D-085, {@link FogPlace}: fog weather over one spot) are weather too: their amount at the eyes
  * ({@link #placeAmount}) is weighted by the same sky factor and combined with the spell's
- * ({@link #weatherAmount}) before the dusk fog, so with no places every result is bit for bit what it was. Fog
+ * ({@link #weatherAmount}) before the dusk fog, so with no places every result is bit for bit what it was; a place
+ * can also be seen from outside it, along the view ({@link #placeViews}, {@link #seen}). Fog
  * surges (short, per player) and the client's easing between dusk levels (at most {@code duskLevelChangeSeconds} after
  * a change; the client's own fog report covers it) are not included. Fixed-time dimensions get neither. Atmosphere owns
  * the shape and the weather numbers: it installs its config with {@link #installShape} and
@@ -77,6 +79,11 @@ public final class FogLimits {
 	public static final int SKY_FULL = 10;
 	/** Sky light at or below this gives no fog spell ({@link #skyFactor}). */
 	public static final int SKY_NONE = 4;
+	/**
+	 * How far from the middle of a view a fog place still counts as seen ({@link #placeViews}), in degrees: its best
+	 * line of sight within this of the view's own.
+	 */
+	public static final double VIEW_CONE_DEGREES = 20.0;
 
 	private static volatile Supplier<Shape> shape = () -> Shape.DEFAULT;
 
@@ -146,8 +153,9 @@ public final class FogLimits {
 	 * weather, outside: their amounts (the places' at the player's eyes) are weighted by the sky light at the eyes
 	 * ({@link #skyFactor}), as vanilla gates its rain fog on the sky, so a fog night or a fog place gives no fog in a
 	 * cave or a closed house (the dusk fog is not weighted), and they combine as
-	 * {@code combine(dusk, combine(spell, place))} ({@link #weatherAmount}). With no places the result is bit for bit
-	 * what it was without them. Server thread.
+	 * {@code combine(dusk, combine(spell, place))} ({@link #weatherAmount}). A fog place ahead along the player's yaw
+	 * ({@link #placeViews} from the eyes) brings the fog end in as seen from there ({@link #seen}, the same sky weight),
+	 * as the client draws it. With no places the result is bit for bit what it was without them. Server thread.
 	 */
 	public static Result of(ServerPlayer player) {
 		MinecraftServer server = player.level().getServer();
@@ -159,8 +167,101 @@ public final class FogLimits {
 		Vec3 eyes = player.getEyePosition();
 		double spell = fixed ? 0.0 : spellAmount(effects.fogSpell(), clock);
 		double place = fixed ? 0.0 : placeAmount(effects.fogPlaces(), level.dimension(), eyes, clock);
-		double sky = spell > 0.0 || place > 0.0 ? skyFactor(level.getBrightness(LightLayer.SKY, BlockPos.containing(eyes))) : 1.0;
-		return of(player.requestedViewDistance(), server.getPlayerList().getViewDistance(), dusk, clock, shape(), weatherAmount(spell, place, sky));
+		List<PlaceView> views = fixed ? List.of() : placeViews(effects.fogPlaces(), level.dimension(), eyes, player.getYRot(), clock);
+		double sky = spell > 0.0 || place > 0.0 || !views.isEmpty() ? skyFactor(level.getBrightness(LightLayer.SKY, BlockPos.containing(eyes))) : 1.0;
+		int clientChunks = player.requestedViewDistance();
+		int serverChunks = server.getPlayerList().getViewDistance();
+		Shape shape = shape();
+		Result eye = of(clientChunks, serverChunks, dusk, clock, shape, weatherAmount(spell, place, sky));
+		return views.isEmpty() ? eye : seen(eye, views, clientChunks, serverChunks, dusk, clock, shape, spell, sky);
+	}
+
+	/**
+	 * A fog place seen along a view ({@link #placeViews}): the fog there begins {@code near} blocks out along the view
+	 * (where it enters the place; 0 from inside it) and is as thick as the fog places' amount ({@link #placeAmount}, 0
+	 * to 1, not weighted by the sky) at the point of the view nearest that place's centre.
+	 */
+	public record PlaceView(double near, double amount) {
+	}
+
+	/**
+	 * The fog places seen from {@code eye} looking along {@code yawDegrees} (an entity's yaw: 0 looks toward +z, 90
+	 * toward -x), one per place the view meets, horizontally like the places themselves (D-085: a place is weather over
+	 * one spot, so it can be seen from outside it, a fog standing there). For each place in {@code dim} that gives fog
+	 * at this clock time, the line of sight within {@link #VIEW_CONE_DEGREES} of the view that passes nearest its
+	 * centre: if it passes inside the radius and that nearest point lies ahead of the eye, the view is
+	 * {@link PlaceView}{@code (near, amount)}, {@code near} where the line enters the place (0 from inside) and
+	 * {@code amount} all the places' amount at that nearest point. A place behind the eye or passed by gives none,
+	 * and so does a view from inside a place away from its centre (nothing ahead is thicker than at the eye). Pure,
+	 * the same on both sides from the same places, eye, yaw and clock; continuous in each (a view appears with
+	 * {@code amount} 0 where the line of sight grazes the radius).
+	 */
+	public static List<PlaceView> placeViews(List<FogPlace> places, ResourceKey<Level> dim, Vec3 eye, double yawDegrees, double clockTime) {
+		if (places.isEmpty() || !Double.isFinite(yawDegrees) || !Double.isFinite(eye.x) || !Double.isFinite(eye.z)) {
+			return List.of();
+		}
+		double yaw = Math.toRadians(yawDegrees);
+		double ux = -Math.sin(yaw);
+		double uz = Math.cos(yaw);
+		double cone = Math.toRadians(VIEW_CONE_DEGREES);
+		List<PlaceView> views = null;
+		for (FogPlace place : places) {
+			double r = place.radius();
+			if (!(r > 0.0) || !place.dimension().equals(dim) || !(place.timeAmount(clockTime) > 0.0)) {
+				continue;
+			}
+			double vx = place.center().x - eye.x;
+			double vz = place.center().z - eye.z;
+			double d = Math.sqrt(vx * vx + vz * vz);
+			double nx = d > 1.0E-9 ? vx / d : ux;
+			double nz = d > 1.0E-9 ? vz / d : uz;
+			// The angle from the view to the way to the centre, less the cone: the best line of sight's.
+			double toCentre = Math.acos(Math.clamp(nx * ux + nz * uz, -1.0, 1.0));
+			double off = Math.max(0.0, toCentre - cone);
+			if (off >= Math.PI / 2.0) {
+				continue;
+			}
+			double along = d * Math.cos(off);
+			double side = d * Math.sin(off);
+			if (side >= r) {
+				continue;
+			}
+			// That line of sight: the way to the centre turned by off toward the view.
+			double turn = nx * uz - nz * ux >= 0.0 ? off : -off;
+			double cos = Math.cos(turn);
+			double sin = Math.sin(turn);
+			double wx = nx * cos - nz * sin;
+			double wz = nx * sin + nz * cos;
+			Vec3 nearest = new Vec3(eye.x + wx * along, eye.y, eye.z + wz * along);
+			double amount = placeAmount(places, dim, nearest, clockTime);
+			if (!(amount > 0.0)) {
+				continue;
+			}
+			if (views == null) {
+				views = new ArrayList<>(2);
+			}
+			views.add(new PlaceView(Math.max(0.0, along - Math.sqrt(r * r - side * side)), amount));
+		}
+		return views == null ? List.of() : views;
+	}
+
+	/**
+	 * The fog end along a view: the eye's own ({@code eye}, {@link #of(int, int, float, long, Shape, double)} with the
+	 * fog where the eye is) or, nearer, a seen place's: its {@code near} plus the fog end for the same dusk fog and
+	 * weather with the place's amount there in place of the eye's ({@code weatherAmount(spell, view.amount, sky)}), as
+	 * if one stood where the view enters it. The nearest of them; {@code eye} itself when no view is nearer. Atmosphere's
+	 * client draws exactly this end for the frame ({@code WeatherFog.shape} with its seen places).
+	 */
+	public static Result seen(Result eye, List<PlaceView> views, int clientChunks, int serverChunks, float duskFogLevel, long dayTime, Shape shape,
+			double spell, double sky) {
+		double end = eye.fogEnd();
+		for (PlaceView view : views) {
+			double at = view.near() + of(clientChunks, serverChunks, duskFogLevel, dayTime, shape, weatherAmount(spell, view.amount(), sky)).fogEnd();
+			if (at < end) {
+				end = at;
+			}
+		}
+		return end < eye.fogEnd() ? new Result(eye.chunks(), eye.renderLimit(), end) : eye;
 	}
 
 	/**

@@ -28,7 +28,7 @@ abstract class FogRendererMixin {
 	@Inject(method = "setupFog", at = @At("HEAD"))
 	private void a1016_02$beginFog(Camera camera, int renderDistanceInChunks, DeltaTracker deltaTracker, float darkenWorldAmount, ClientLevel level,
 			CallbackInfoReturnable<FogData> cir) {
-		ClientAtmosphere.beginFog(camera, level, deltaTracker.getGameTimeDeltaPartialTick(false));
+		ClientAtmosphere.beginFog(camera, level, renderDistanceInChunks, deltaTracker.getGameTimeDeltaPartialTick(false));
 	}
 
 	@ModifyExpressionValue(method = "computeFogColor", at = @At(value = "INVOKE",
