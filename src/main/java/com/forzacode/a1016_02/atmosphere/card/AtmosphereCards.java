@@ -31,6 +31,11 @@ public final class AtmosphereCards {
 				new BatInSealedRoomCard(),
 				new FarInTheRockCard(),
 				new EchoMiningCard(),
-				new EchoDoorCard());
+				new EchoDoorCard(),
+				// The self-created layer (docs/SELF_CREATED.md: 05, 06, 07).
+				new SomeoneHomeCard(),
+				new TheyWereWaitingCard(),
+				new InStepCard(),
+				new NameGoneCard());
 	}
 }

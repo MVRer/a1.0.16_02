@@ -1,11 +1,18 @@
 package com.forzacode.a1016_02.atmosphere;
 
+import java.util.List;
 import java.util.Optional;
 
 import com.forzacode.a1016_02.core.ClientEffects;
 import com.forzacode.a1016_02.core.FogLimits;
+import com.forzacode.a1016_02.core.FogPlace;
 import com.forzacode.a1016_02.core.FogSpell;
 import com.forzacode.a1016_02.core.FogWeatherRules;
+import com.forzacode.a1016_02.core.SelfCreated;
+
+import net.minecraft.resources.ResourceKey;
+import net.minecraft.world.level.Level;
+import net.minecraft.world.phys.Vec3;
 
 /**
  * Fog weather as the client draws it (D-071): the world's spell the server sent, and the pure math that puts it on
@@ -32,6 +39,14 @@ import com.forzacode.a1016_02.core.FogWeatherRules;
  * Continuous in every input: the spell's amount is continuous in time (its ease, and every new spell the server
  * stores is joined to the one before), the sky weight moves at most a fifth of the way per tick, and each step above
  * is continuous in the amount, the dusk fog and the time of day.
+ *
+ * <p>Fog places (D-085, the layer's 10, docs/SELF_CREATED.md): the world's places as the server last sent them (the
+ * {@code FogPlaces} payload, {@code Sync} on join, none after a disconnect or while the layer is switched off on this
+ * client, {@link SelfCreated#enabled}). Their amount at the camera ({@link #placeAmount}, core's
+ * {@link FogLimits#placeAmount}) is weather like the spell: weighted by the same smoothed sky weight and combined with
+ * the spell's ({@link FogLimits#weatherAmount}) before everything above, so the places thicken the same fog, haze and
+ * tint, and with no places every number is bit for bit the spell's alone. Continuous in the camera's position and the
+ * clock (each place is).
  */
 public final class WeatherFog {
 	/** Vanilla's rain fog multiplier moves this share of the way to its target per tick ({@code AtmosphericFogEnvironment}); the sky weight too. */
@@ -40,6 +55,7 @@ public final class WeatherFog {
 	public static final double SKY_SNAP = 1.0E-3;
 
 	private Optional<FogSpell> spell = Optional.empty();
+	private List<FogPlace> places = List.of();
 	/** The smoothed sky weight; NaN until the first frame (which takes the target at once). */
 	private double sky = Double.NaN;
 	private double skyAt;
@@ -49,15 +65,52 @@ public final class WeatherFog {
 		spell = payload.spell();
 	}
 
-	/** Joining: the spell is part of every persistent effect. */
+	/** The world's fog places changed (every place there is now). */
+	public void receive(ClientEffects.FogPlaces payload) {
+		places = List.copyOf(payload.places());
+	}
+
+	/** Joining: the spell and the fog places are part of every persistent effect. */
 	public void receive(ClientEffects.Sync payload) {
 		spell = payload.fogSpell();
+		places = List.copyOf(payload.fogPlaces());
 	}
 
 	/** Disconnect: no fog weather until the next join says so. */
 	public void reset() {
 		spell = Optional.empty();
+		places = List.of();
 		resetSky();
+	}
+
+	public List<FogPlace> places() {
+		return places;
+	}
+
+	/**
+	 * The fog places' amount at {@code at} in {@code dimension} at this clock time, under open sky ({@link FogLimits#placeAmount}):
+	 * 0 where time is fixed, with none, or while the layer is switched off here.
+	 */
+	public double placeAmount(ResourceKey<Level> dimension, Vec3 at, long clockTime, boolean fixedTime) {
+		if (fixedTime || places.isEmpty() || !SelfCreated.enabled()) {
+			return 0.0;
+		}
+		return FogLimits.placeAmount(places, dimension, at, clockTime);
+	}
+
+	/**
+	 * One frame's weather fog at the camera ({@link #frame(long, boolean, int, double)} with the fog places): steps the
+	 * sky weight and gives the spell's and the places' amounts, each times it, together
+	 * ({@link FogLimits#weatherAmount}); exactly the spell's alone with no place here.
+	 */
+	public double frame(long clockTime, boolean fixedTime, int skyLight, double now, ResourceKey<Level> dimension, Vec3 camera) {
+		double sky = sky(skyLight, now);
+		double spell = amount(clockTime, fixedTime);
+		double place = placeAmount(dimension, camera, clockTime, fixedTime);
+		if (!(place > 0.0)) {
+			return spell > 0.0 ? spell * sky : 0.0;
+		}
+		return FogLimits.weatherAmount(spell, place, sky);
 	}
 
 	/** A new level (joining, a dimension change): the next frame takes the sky weight there at once. */

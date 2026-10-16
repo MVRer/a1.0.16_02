@@ -2,6 +2,7 @@ package com.forzacode.a1016_02.atmosphere.client;
 
 import com.forzacode.a1016_02.atmosphere.CompassDriftPayload;
 import com.forzacode.a1016_02.atmosphere.DeadMountainsPayload;
+import com.forzacode.a1016_02.atmosphere.sc.EmptyNightPayload;
 import com.forzacode.a1016_02.core.client.ClientEffectsClient;
 
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
@@ -17,6 +18,8 @@ public final class AtmosphereClientInit {
 		ClientEffectsClient.install(ClientAtmosphere.INSTANCE);
 		ClientPlayNetworking.registerGlobalReceiver(CompassDriftPayload.TYPE, (payload, context) -> ClientAtmosphere.INSTANCE.compassDrift(payload));
 		ClientPlayNetworking.registerGlobalReceiver(DeadMountainsPayload.TYPE, (payload, context) -> ClientAtmosphere.INSTANCE.deadMountains(payload));
+		// The layer's 04 (docs/SELF_CREATED.md).
+		ClientPlayNetworking.registerGlobalReceiver(EmptyNightPayload.TYPE, (payload, context) -> ClientAtmosphere.INSTANCE.emptyNight(payload));
 		ClientTickEvents.END_CLIENT_TICK.register(ClientAtmosphere.INSTANCE::tick);
 		ClientPlayConnectionEvents.DISCONNECT.register((listener, client) -> client.execute(ClientAtmosphere.INSTANCE::reset));
 	}

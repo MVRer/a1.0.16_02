@@ -5,6 +5,8 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
 
+import com.forzacode.a1016_02.A1016_02;
+import com.forzacode.a1016_02.atmosphere.sc.EmptyNight;
 import com.forzacode.a1016_02.core.ClientEffects;
 import com.forzacode.a1016_02.core.FogSpell;
 import com.forzacode.a1016_02.core.FogWeatherRules;
@@ -292,12 +294,25 @@ public final class FogWeather {
 		return Gates.quietForGood(server) || HerobrineState.get(server).hasFlag(TraceService.LAST_MINUTE_FLAG);
 	}
 
-	/** Every second: rolls when a roll is due, clears what is over, fades out when the world goes quiet. */
+	/**
+	 * Every second: rolls when a roll is due, clears what is over, fades out when the world goes quiet. Then the layer's
+	 * night roll ({@link EmptyNight#check}, docs/SELF_CREATED.md 04), right after tonight's night roll; a failure there
+	 * is logged and never stops the weather.
+	 */
 	static void check(MinecraftServer server) {
 		ServerLevel overworld = server.overworld();
 		boolean anyone = Gates.hasDayCycle(overworld) && !Services.watch().participants(server).isEmpty();
-		apply(server, step(AtmosphereData.get(server).fogWeather(), HerobrineState.get(server).effects().fogSpell(), overworld.getDefaultClockTime(),
-				HerobrineState.get(server).stage(), overworld.getRandom(), anyone, quiet(server), FogWeatherRules.settings()));
+		FogWeatherRules.Settings settings = FogWeatherRules.settings();
+		long now = overworld.getDefaultClockTime();
+		Outcome outcome = step(AtmosphereData.get(server).fogWeather(), HerobrineState.get(server).effects().fogSpell(), now,
+				HerobrineState.get(server).stage(), overworld.getRandom(), anyone, quiet(server), settings);
+		apply(server, outcome);
+		long night = nightIndex(now, settings);
+		try {
+			EmptyNight.check(server, night, outcome.memory().nightRolled() == night, nightRollTime(settings));
+		} catch (RuntimeException e) {
+			A1016_02.LOGGER.error("[a1016] sc_04 check failed", e);
+		}
 	}
 
 	/** Keeps the outcome's memory and stores (and sends) its spell if it changed. */

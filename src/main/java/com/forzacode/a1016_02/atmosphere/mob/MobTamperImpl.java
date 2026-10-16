@@ -8,16 +8,20 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.UUID;
+import java.util.function.BiPredicate;
 import java.util.function.Predicate;
 
 import com.forzacode.a1016_02.atmosphere.AtmosphereConfig;
 import com.forzacode.a1016_02.core.MobTamper;
 import com.forzacode.a1016_02.core.ModConfig;
 import com.forzacode.a1016_02.core.PlayerWatch;
+import com.forzacode.a1016_02.core.SelfCreated;
 import com.forzacode.a1016_02.core.Services;
+import com.forzacode.a1016_02.core.TraceLedger;
 import com.forzacode.a1016_02.core.TraceService;
 
 import net.minecraft.core.BlockPos;
+import net.minecraft.network.chat.Component;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.util.Mth;
@@ -116,6 +120,37 @@ public final class MobTamperImpl implements MobTamper {
 		mob.teleportTo(dest.x, dest.y, dest.z);
 		mob.setDeltaMovement(Vec3.ZERO);
 		mob.setOldPosAndRot();
+		return true;
+	}
+
+	/**
+	 * Takes the mob's custom name for good (D-086; docs/SELF_CREATED.md 07), out of everyone's view
+	 * ({@code TraceService.isOutOfView}): see {@link #unname(Mob, String, BiPredicate)}.
+	 */
+	@Override
+	public boolean unname(Mob mob, String cause) {
+		return unname(mob, cause, (level, box) -> Services.traces().isOutOfView(level, box));
+	}
+
+	/**
+	 * {@link #unname(Mob, String)} with {@code outOfView} as the view rule (a card's own, for tests): refused (false,
+	 * nothing changed) while the layer is off ({@link SelfCreated#enabled}), for a mob without a custom name, one not
+	 * alive or not in a server level, or whose box is in view. The name is recorded first
+	 * ({@link TraceLedger#recordName}, which may refuse); only then are {@code CustomName} and {@code CustomNameVisible}
+	 * cleared. Not an effect: {@link #isTampered} and {@link #release} never touch it; {@code TraceService.undo} gives it
+	 * back.
+	 */
+	public boolean unname(Mob mob, String cause, BiPredicate<ServerLevel, AABB> outOfView) {
+		if (!SelfCreated.enabled() || mob == null || cause == null || !mob.hasCustomName() || !mob.isAlive() || mob.isRemoved()
+				|| !(mob.level() instanceof ServerLevel level)) {
+			return false;
+		}
+		Component name = mob.getCustomName();
+		if (name == null || !outOfView.test(level, mob.getBoundingBox()) || TraceLedger.recordName(level, mob, name, cause) == null) {
+			return false;
+		}
+		mob.setCustomName(null);
+		mob.setCustomNameVisible(false);
 		return true;
 	}
 
