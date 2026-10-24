@@ -1,0 +1,18 @@
+{
+  "structures": [
+    {
+      "structure": "a1016_02:world/s20",
+      "weight": 1
+    }
+  ],
+  "placement": {
+    "type": "minecraft:random_spread",
+    "spacing": 36,
+    "separation": 16,
+    "salt": 2016220,
+    "exclusion_zone": {
+      "other_set": "minecraft:villages",
+      "chunk_count": 6
+    }
+  }
+}

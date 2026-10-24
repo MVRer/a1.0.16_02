@@ -11,6 +11,7 @@ import java.util.UUID;
 import java.util.function.BiPredicate;
 import java.util.function.Predicate;
 
+import com.forzacode.a1016_02.A1016_02;
 import com.forzacode.a1016_02.atmosphere.AtmosphereConfig;
 import com.forzacode.a1016_02.core.MobTamper;
 import com.forzacode.a1016_02.core.ModConfig;
@@ -22,11 +23,27 @@ import com.forzacode.a1016_02.core.TraceService;
 
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
+import net.minecraft.resources.Identifier;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
+import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.tags.FluidTags;
 import net.minecraft.util.Mth;
 import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.EntityReference;
+import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.Mob;
+import net.minecraft.world.entity.NeutralMob;
+import net.minecraft.world.entity.OwnableEntity;
+import net.minecraft.world.entity.ai.attributes.AttributeInstance;
+import net.minecraft.world.entity.ai.attributes.AttributeModifier;
+import net.minecraft.world.entity.ai.attributes.Attributes;
+import net.minecraft.world.entity.ai.navigation.PathNavigation;
+import net.minecraft.world.entity.animal.golem.AbstractGolem;
+import net.minecraft.world.entity.boss.enderdragon.EnderDragon;
+import net.minecraft.world.entity.boss.wither.WitherBoss;
+import net.minecraft.world.entity.monster.Enemy;
+import net.minecraft.world.entity.npc.villager.AbstractVillager;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.phys.AABB;
@@ -36,8 +53,10 @@ import org.jspecify.annotations.Nullable;
 
 /**
  * The real {@link MobTamper} (D-017). Effects are temporary and in memory only: the state sits in a field the mob
- * mixin adds ({@link TamperedMob}), so nothing is ever written to the mob's save data, and every effect ends on its
- * own deadline, on {@link #release}, when the mob unloads, or when the server stops.
+ * mixin adds ({@link TamperedMob}), and every effect ends on its own deadline, on {@link #release}, when the mob
+ * unloads, or when the server stops. What vanilla itself saves of a hunt (a neutral mob's anger at its player) can reach
+ * the disk in an autosave; such a save also carries the mark {@link #HUNT_SAVED_KEY}, and a mob that loads with it is
+ * calmed ({@link #onLoad}, R12-28). Nothing else is written to a mob's save data.
  * <ul>
  * <li>freeze: the mob's whole AI step is skipped (goals, brain, navigation, move/look/jump controls), its inputs are
  * zeroed and its horizontal drift stopped. Gravity and pushing still apply.</li>
@@ -45,6 +64,13 @@ import org.jspecify.annotations.Nullable;
  * mobs that are not frozen keep their head on the point (set right before the look control runs).</li>
  * <li>silence: the ambient sound timer still runs but the sound is skipped.</li>
  * <li>moveOutOfView: teleports only when both the mob's box and its box at the destination are out of view.</li>
+ * <li>steer (D-096): the mob's AI step runs only its navigation, move, look and jump controls (no goal or target
+ * selector, no mob-specific step), toward a point it walks to by its own path at its own walk speed times a factor;
+ * whatever goals ran are stopped when it starts. It floats in water as its float goal would. A freeze ends it.</li>
+ * <li>hunt (D-096): the mob's own AI runs; each AI step puts the player back as its target while they are within its
+ * follow range, which is doubled for the hunt (a transient modifier, never saved), and lets go of them past it; a
+ * neutral mob keeps its anger at them. Calmed when the player is gone, at its deadline or on {@link #calm}; a hurt from another player ends it
+ * uncalmed (vanilla's anger then).</li>
  * </ul>
  * Everything happens to the mob on the server, so every player sees the same trick (D-060). Atmosphere's cards
  * {@link #bind} what they do to everyone it is for: the target and whoever shared the moment. While any of them is
@@ -59,6 +85,25 @@ public final class MobTamperImpl implements MobTamper {
 	public static final MobTamperImpl INSTANCE = new MobTamperImpl();
 	/** How often bound mobs are checked against their player (also released at once on the participation event). */
 	private static final int OWNER_CHECK_TICKS = 20;
+	/** At most this many mobs steered at once in the whole world (D-104); a new steer past it is refused. */
+	public static final int MAX_STEERED = 48;
+	/** A steered mob's path is made again at most this often (ticks) ... */
+	static final int PATH_EVERY_TICKS = 10;
+	/** ... and only when its target moved more than this (blocks) since, or its walk ended short of it. */
+	static final double PATH_MOVE = 1.5;
+	/** Within this of its target (blocks) a steered mob has arrived and stands still. */
+	static final double ARRIVED = 1.0;
+	/** A tamed or owned mob with its owner online within this (blocks) is never steered. */
+	static final double OWNER_NEAR = 48.0;
+	/** The hunt's doubling of the follow range (transient: never saved with the mob; an opaque id, R13-11). */
+	private static final Identifier RANGE = A1016_02.id("sc_r");
+	/**
+	 * The one mark a mob's save data may carry (R12-28): it was saved (an autosave) while set on a player, so vanilla wrote
+	 * its anger at them. Nothing of a hunt is running after a load, so a mob that loads with the mark is calmed then
+	 * ({@link #onLoad}); a stop calms every hunt before the save anyway. Opaque, and vanilla skips it.
+	 */
+	public static final String HUNT_SAVED_KEY = "a1016_02:h";
+	private static final AttributeModifier DOUBLE_RANGE = new AttributeModifier(RANGE, 1.0, AttributeModifier.Operation.ADD_MULTIPLIED_TOTAL);
 
 	private final Set<Mob> tracked = Collections.newSetFromMap(new IdentityHashMap<>());
 
@@ -74,6 +119,8 @@ public final class MobTamperImpl implements MobTamper {
 		}
 		TamperState state = stateFor(mob);
 		state.freezeUntil = Math.max(state.freezeUntil, now(mob) + ticks);
+		// A freeze wins over a steer: the steer ends.
+		endSteer(state);
 		mob.getNavigation().stop();
 		return true;
 	}
@@ -123,6 +170,233 @@ public final class MobTamperImpl implements MobTamper {
 		return true;
 	}
 
+	// --- instruments (D-096; docs/SELF_CREATED_2.md, "SC2-0a") ---
+
+	/**
+	 * Walks the mob to {@code to} by its own navigation (see {@link MobTamper#steer}). A new call replaces the target
+	 * and the deadline; the first one stops whatever goals were running.
+	 */
+	@Override
+	public boolean steer(Mob mob, Vec3 to, double speed, int ticks) {
+		if (ticks <= 0 || to == null || !Double.isFinite(to.x) || !Double.isFinite(to.y) || !Double.isFinite(to.z) || !(speed > 0.0) || !Double.isFinite(speed)) {
+			return false;
+		}
+		if (mob == null || steerRefusal(mob, SelfCreated.enabled(), steeredCount() - (isSteered(mob) ? 1 : 0)) != null) {
+			return false;
+		}
+		TamperState state = stateFor(mob);
+		long now = now(mob);
+		boolean fresh = !state.steered(now);
+		state.steerTarget = to;
+		state.steerUntil = now + ticks;
+		if (fresh) {
+			state.steerSpeed = speed;
+			state.steerPathTarget = null;
+			state.steerNextPath = Long.MIN_VALUE;
+			// Its own goals stop now (each its own stop: an eating sheep stops eating), and stay off while steered.
+			((TamperedMob) mob).a1016_02$stopGoals();
+			mob.getNavigation().stop();
+		} else if (speed != state.steerSpeed) {
+			state.steerSpeed = speed;
+			mob.getNavigation().setSpeedModifier(speed);
+		}
+		return true;
+	}
+
+	/**
+	 * Why {@code mob} may not be steered now, or null if it may: with the layer {@code on} or off and {@code steeredElsewhere}
+	 * other mobs steered in the world right now (the cap, {@link #MAX_STEERED}). Plain words, never shown to players.
+	 */
+	public @Nullable String steerRefusal(Mob mob, boolean on, int steeredElsewhere) {
+		if (!on) {
+			return "the layer is switched off";
+		}
+		String common = refusal(mob);
+		if (common != null) {
+			return common;
+		}
+		if (mob.isLeashed()) {
+			return "it is on a leash";
+		}
+		if (mob instanceof OwnableEntity ownable && ownable.getOwner() instanceof Player owner && !owner.isRemoved() && owner.level() == mob.level()
+				&& owner.distanceToSqr(mob) <= OWNER_NEAR * OWNER_NEAR) {
+			return "its owner is within " + (int) OWNER_NEAR;
+		}
+		TamperState state = ((TamperedMob) mob).a1016_02$tamper();
+		long now = now(mob);
+		if (state != null && state.frozen(now)) {
+			return "it is frozen (a freeze wins)";
+		}
+		if (state != null && state.hunting(now)) {
+			return "it is set on a player (calm it first)";
+		}
+		if (steeredElsewhere >= MAX_STEERED) {
+			return MAX_STEERED + " mobs are steered already";
+		}
+		return null;
+	}
+
+	/** Refusals both instruments share: not a living mob here, ridden or riding, without AI, a boss, or driven by a brain. */
+	private static @Nullable String refusal(Mob mob) {
+		if (!canTamper(mob)) {
+			return "not a living mob in a server level, or a player rides it";
+		}
+		if (mob.isPassenger() || mob.isVehicle()) {
+			return "it rides or is ridden";
+		}
+		if (mob.isNoAi()) {
+			return "it has no AI";
+		}
+		if (mob instanceof EnderDragon || mob instanceof WitherBoss) {
+			return "a boss";
+		}
+		// Brain-driven mobs (villagers, goats, axolotls, frogs, camels, sniffers, armadillos, allays, piglins, hoglins,
+		// wardens, breezes ...) are moved by their brain, not by goals; a goal-driven mob's brain is empty.
+		if (!mob.getBrain().isBrainDead()) {
+			return "its brain drives it, not goals";
+		}
+		return null;
+	}
+
+	@Override
+	public boolean isSteered(Mob mob) {
+		TamperState state = ((TamperedMob) mob).a1016_02$tamper();
+		return state != null && state.steered(now(mob));
+	}
+
+	/** How many mobs are steered in the world right now (at most {@link #MAX_STEERED}). */
+	public int steeredCount() {
+		int count = 0;
+		for (Mob mob : tracked) {
+			if (isSteered(mob)) {
+				count++;
+			}
+		}
+		return count;
+	}
+
+	/** Sets the mob on {@code target} (see {@link MobTamper#hunt}); it ends a steer. */
+	@Override
+	public boolean hunt(Mob mob, ServerPlayer target, int ticks) {
+		if (ticks <= 0 || mob == null || huntRefusal(mob, target, SelfCreated.enabled()) != null) {
+			return false;
+		}
+		TamperState state = stateFor(mob);
+		long now = now(mob);
+		endSteer(state);
+		state.huntTarget = target;
+		state.huntUntil = now + ticks;
+		state.huntSince = mob.tickCount;
+		AttributeInstance range = mob.getAttribute(Attributes.FOLLOW_RANGE);
+		if (range != null && !range.hasModifier(RANGE)) {
+			range.addTransientModifier(DOUBLE_RANGE);
+		}
+		mob.setTarget(target);
+		if (mob instanceof NeutralMob neutral) {
+			neutral.setPersistentAngerTarget(EntityReference.of(target));
+			neutral.setTimeToRemainAngry(ticks);
+		}
+		return true;
+	}
+
+	/**
+	 * Why {@code mob} may not be set on {@code target} now, or null if it may, with the layer {@code on} or off. Plain
+	 * words, never shown to players.
+	 */
+	public @Nullable String huntRefusal(Mob mob, @Nullable ServerPlayer target, boolean on) {
+		if (!on) {
+			return "the layer is switched off";
+		}
+		String common = refusal(mob);
+		if (common != null) {
+			return common;
+		}
+		if (!(mob instanceof NeutralMob) && !(mob instanceof Enemy)) {
+			return "it cannot attack (neither neutral nor an enemy)";
+		}
+		if (mob instanceof OwnableEntity ownable && ownable.getOwnerReference() != null) {
+			return "it is tamed or owned";
+		}
+		if (mob instanceof AbstractVillager || mob instanceof AbstractGolem) {
+			return "a villager or a golem";
+		}
+		if (target == null || target.isRemoved() || !target.isAlive() || target.level() != mob.level()) {
+			return "the player is not a living player in the mob's level";
+		}
+		if (target.isCreative() || target.isSpectator()) {
+			return "the player is in creative or spectator";
+		}
+		return null;
+	}
+
+	@Override
+	public boolean isHunting(Mob mob) {
+		TamperState state = ((TamperedMob) mob).a1016_02$tamper();
+		return state != null && state.hunting(now(mob));
+	}
+
+	/** The player the mob is set on right now, or null. */
+	public @Nullable ServerPlayer huntTargetOf(Mob mob) {
+		TamperState state = ((TamperedMob) mob).a1016_02$tamper();
+		return state != null && state.hunting(now(mob)) ? state.huntTarget : null;
+	}
+
+	/** Ends the mob's hunt if it has one and clears its anger, target, last attacker and running goals (see {@link MobTamper#calm}). */
+	@Override
+	public void calm(Mob mob) {
+		if (mob == null) {
+			return;
+		}
+		TamperState state = ((TamperedMob) mob).a1016_02$tamper();
+		if (state != null) {
+			endHunt(mob, state, false);
+		}
+		pacify(mob);
+		if (state != null && state.idle(now(mob))) {
+			release(mob);
+		}
+	}
+
+	/** Ends the steer on this state (nothing if none); the navigation is the caller's. */
+	private static void endSteer(TamperState state) {
+		state.steerTarget = null;
+		state.steerUntil = Long.MIN_VALUE;
+		state.steerPathTarget = null;
+	}
+
+	/** Ends the hunt on this state (nothing if none): the follow range back, and calmed if {@code calm}. */
+	private static void endHunt(Mob mob, TamperState state, boolean calm) {
+		if (state.huntTarget == null) {
+			return;
+		}
+		state.huntTarget = null;
+		state.huntUntil = Long.MIN_VALUE;
+		AttributeInstance range = mob.getAttribute(Attributes.FOLLOW_RANGE);
+		if (range != null) {
+			range.removeModifier(RANGE);
+		}
+		if (calm) {
+			pacify(mob);
+		}
+	}
+
+	/** No anger, no target, no memory of who hurt it, no running goal: its own AI starts over. */
+	private static void pacify(Mob mob) {
+		if (mob instanceof NeutralMob neutral) {
+			neutral.stopBeingAngry();
+		}
+		mob.setTarget(null);
+		mob.setLastHurtByMob(null);
+		mob.setAggressive(false);
+		((TamperedMob) mob).a1016_02$stopGoals();
+		mob.getNavigation().stop();
+	}
+
+	/** A player a hunt may go on with: not gone, alive, in the mob's level, neither creative nor spectator. */
+	static boolean validTarget(Mob mob, @Nullable ServerPlayer player) {
+		return player != null && !player.isRemoved() && player.isAlive() && player.level() == mob.level() && !player.isCreative() && !player.isSpectator();
+	}
+
 	/**
 	 * Takes the mob's custom name for good (D-086; docs/SELF_CREATED.md 07), out of everyone's view
 	 * ({@code TraceService.isOutOfView}): see {@link #unname(Mob, String, BiPredicate)}.
@@ -154,10 +428,33 @@ public final class MobTamperImpl implements MobTamper {
 		return true;
 	}
 
+	/**
+	 * 23 (R11-11): holds the mob's arms up (vanilla's own pose for a zombie about to strike: its aggressive flag) while it is
+	 * held; {@link #release} puts them back as they were. False if it may not be touched.
+	 */
+	public boolean raiseArms(Mob mob) {
+		if (!canTamper(mob)) {
+			return false;
+		}
+		TamperState state = stateFor(mob);
+		if (!state.armsRaised) {
+			state.armsWere = mob.isAggressive();
+			state.armsRaised = true;
+		}
+		mob.setAggressive(true);
+		return true;
+	}
+
 	@Override
 	public void release(Mob mob) {
 		TamperedMob duck = (TamperedMob) mob;
-		if (duck.a1016_02$tamper() != null) {
+		TamperState state = duck.a1016_02$tamper();
+		if (state != null && state.armsRaised) {
+			mob.setAggressive(state.armsWere || mob.getTarget() != null);
+		}
+		if (state != null) {
+			// A hunt is calmed (nothing it was set on lingers), a steer stops where it is.
+			endHunt(mob, state, true);
 			duck.a1016_02$setTamper(null);
 			mob.getNavigation().stop();
 		}
@@ -209,9 +506,20 @@ public final class MobTamperImpl implements MobTamper {
 	public int releaseFor(MinecraftServer server, UUID player, PlayerWatch watch) {
 		int released = 0;
 		for (Mob mob : new ArrayList<>(tracked)) {
+			TamperState state = ((TamperedMob) mob).a1016_02$tamper();
+			// A hunt on them is calmed at once, in view or not: there is nobody to be set on any more.
+			boolean calmed = state != null && state.huntTarget != null && state.huntTarget.getUUID().equals(player);
+			if (calmed) {
+				endHunt(mob, state, true);
+			}
 			List<UUID> owners = ownersOf(mob);
 			if (owners.contains(player) && !anyHere(server, watch, mob, owners, player) && outOfView(mob)) {
 				release(mob);
+				released++;
+			} else if (calmed) {
+				if (state.idle(now(mob))) {
+					release(mob);
+				}
 				released++;
 			}
 		}
@@ -294,20 +602,47 @@ public final class MobTamperImpl implements MobTamper {
 
 	// --- lifecycle, called by AtmosphereServer ---
 
-	/** Ends expired effects, forgets removed mobs, and every second releases mobs whose player is gone. Every server tick. */
+	/**
+	 * Ends expired effects, forgets removed mobs, calms hunts whose player is gone, ends steers and hunts while the layer
+	 * is off, and every second releases mobs whose player is gone. Every server tick.
+	 */
 	public void tick(MinecraftServer server) {
 		if (tracked.isEmpty()) {
 			return;
 		}
+		boolean on = SelfCreated.enabled();
 		for (Mob mob : new ArrayList<>(tracked)) {
-			TamperState state = ((TamperedMob) mob).a1016_02$tamper();
-			if (mob.isRemoved() || state == null || state.idle(now(mob))) {
-				release(mob);
-			}
+			expire(mob, on);
 		}
 		if (server.getTickCount() % OWNER_CHECK_TICKS == 0) {
 			releaseOrphans(server, Services.watch());
 		}
+	}
+
+	/**
+	 * {@link #tick}'s step for one mob, with the layer {@code on} or off: a removed mob is forgotten; a steer past its
+	 * deadline, or while the layer is off, ends; a hunt past its deadline, whose player is gone ({@link #validTarget}) or
+	 * while the layer is off, is calmed; then a mob with nothing left on it is released. True if it was released.
+	 */
+	public boolean expire(Mob mob, boolean on) {
+		TamperState state = ((TamperedMob) mob).a1016_02$tamper();
+		if (mob.isRemoved() || state == null) {
+			release(mob);
+			return true;
+		}
+		long now = now(mob);
+		if (state.steerTarget != null && (!on || !state.steered(now))) {
+			endSteer(state);
+			mob.getNavigation().stop();
+		}
+		if (state.huntTarget != null && (!on || !state.hunting(now) || !validTarget(mob, state.huntTarget))) {
+			endHunt(mob, state, true);
+		}
+		if (state.idle(now)) {
+			release(mob);
+			return true;
+		}
+		return false;
 	}
 
 	/** Releases a mob that leaves its level (chunk unload, death, discard, dimension change). */
@@ -315,6 +650,26 @@ public final class MobTamperImpl implements MobTamper {
 		if (entity instanceof Mob mob && (tracked.contains(mob) || isTampered(mob))) {
 			release(mob);
 		}
+	}
+
+	/**
+	 * Fabric's ENTITY_LOAD (R12-28): a mob saved while set on a player (an autosave mid-hunt, then a crash) loads with the
+	 * anger vanilla saved and no hunt running: it is calmed (anger, target and last attacker cleared), so nothing goes on
+	 * without its scene, its tells and its ends.
+	 */
+	public void onLoad(Entity entity) {
+		if (entity instanceof Mob mob && mob instanceof TamperedMob tampered && tampered.a1016_02$takeHuntSaved() && !isHunting(mob)) {
+			if (mob instanceof NeutralMob neutral) {
+				neutral.stopBeingAngry();
+			}
+			mob.setTarget(null);
+			mob.setLastHurtByMob(null);
+		}
+	}
+
+	/** The mob mixin's save hook: true while the mob is set on a player (its save then carries {@link #HUNT_SAVED_KEY}). */
+	public static boolean savedHunting(Mob mob, @Nullable TamperState state) {
+		return state != null && state.hunting(now(mob));
 	}
 
 	/** Releases everything. */
@@ -345,6 +700,82 @@ public final class MobTamperImpl implements MobTamper {
 			turnToward(mob, target, AtmosphereConfig.get().tamperTurnDegreesPerTick);
 		}
 		return true;
+	}
+
+	/**
+	 * At the start of the AI step of a mob that is not frozen: true if it is steered, and the mixin then runs only its
+	 * navigation, move, look and jump controls (no goal or target selector). Makes the path again when the target moved
+	 * more than {@link #PATH_MOVE} since the last one or the walk ended short of it, at most every
+	 * {@link #PATH_EVERY_TICKS}; keeps it afloat in water as its float goal would.
+	 */
+	public static boolean onSteeredStep(Mob mob, TamperState state) {
+		long now = now(mob);
+		Vec3 to = state.steerTarget;
+		if (to == null || !state.steered(now)) {
+			return false;
+		}
+		PathNavigation navigation = mob.getNavigation();
+		Vec3 last = state.steerPathTarget;
+		boolean moved = last == null || last.distanceToSqr(to) > PATH_MOVE * PATH_MOVE;
+		boolean endedShort = navigation.isDone() && !arrived(mob, to);
+		if ((moved || endedShort) && now >= state.steerNextPath) {
+			// To the target's own block (reach 0), so it ends on the point, not a block short of it.
+			navigation.moveTo(to.x, to.y, to.z, 0, state.steerSpeed);
+			state.steerPathTarget = to;
+			state.steerNextPath = now + PATH_EVERY_TICKS;
+		}
+		if ((mob.isInFluidDeeperThan(mob.getFluidJumpThreshold(), FluidTags.ENTITY_FLOATABLE) || mob.isInLava()) && mob.getRandom().nextFloat() < 0.8F) {
+			mob.getJumpControl().jump();
+		}
+		return true;
+	}
+
+	/** A steered mob is at its point: in the point's block, or within {@link #ARRIVED} of it across. */
+	static boolean arrived(Mob mob, Vec3 to) {
+		double dx = mob.getX() - to.x;
+		double dz = mob.getZ() - to.z;
+		return dx * dx + dz * dz <= ARRIVED * ARRIVED || mob.blockPosition().equals(BlockPos.containing(to));
+	}
+
+	/**
+	 * At the start of the AI step of a mob that is neither frozen nor steered: a hunting mob gets its player back as its
+	 * target while they are within its (doubled) follow range, and a neutral one its anger at them; past that range it lets
+	 * go of them (the hunt goes on, and takes them back once they are within it). A hurt from another player since the
+	 * hunt began ends the hunt uncalmed: vanilla's own anger then turns the mob on whoever hit it.
+	 */
+	public static void beforeTargeting(Mob mob, TamperState state) {
+		ServerPlayer target = state.huntTarget;
+		long now = now(mob);
+		if (target == null || !state.hunting(now)) {
+			return;
+		}
+		if (mob.getLastHurtByMobTimestamp() >= state.huntSince && mob.getLastHurtByMob() instanceof Player by && !by.getUUID().equals(target.getUUID())) {
+			endHunt(mob, state, false);
+			return;
+		}
+		if (!validTarget(mob, target)) {
+			return; // calmed by the tick
+		}
+		double keep = mob.getAttributeValue(Attributes.FOLLOW_RANGE);
+		if (mob.distanceToSqr(target) > keep * keep) {
+			// Past twice its follow range the player got away, for now: no mob tracks anyone across the map.
+			if (mob.getTargetUnchecked() == target) {
+				mob.setTarget(null);
+			}
+		} else {
+			if (mob.getTargetUnchecked() != target) {
+				mob.setTarget(target);
+			}
+			if (mob instanceof NeutralMob neutral) {
+				EntityReference<LivingEntity> angry = neutral.getPersistentAngerTarget();
+				if (angry == null || !angry.matches(target)) {
+					neutral.setPersistentAngerTarget(EntityReference.of(target));
+				}
+				if (!neutral.isAngry()) {
+					neutral.setTimeToRemainAngry(Math.max(1L, state.huntUntil - now));
+				}
+			}
+		}
 	}
 
 	/** Right before the look control runs, for mobs that face a point but are not frozen. */

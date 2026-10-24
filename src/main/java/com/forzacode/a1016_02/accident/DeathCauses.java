@@ -9,7 +9,10 @@ import net.minecraft.world.damagesource.DamageSource;
 import net.minecraft.world.damagesource.DamageType;
 import net.minecraft.world.damagesource.DamageTypes;
 import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.animal.wolf.Wolf;
 import net.minecraft.world.entity.monster.Creeper;
+import net.minecraft.world.entity.monster.skeleton.AbstractSkeleton;
+import net.minecraft.world.entity.projectile.arrow.AbstractArrow;
 import net.minecraft.world.entity.monster.Phantom;
 import net.minecraft.world.entity.monster.spider.Spider;
 import net.minecraft.world.entity.monster.warden.Warden;
@@ -37,7 +40,36 @@ public final class DeathCauses {
 	public static final List<String> KNOWN = List.of("fell", "lava", "burned", "drowned", "suffocated", "froze", "crushed", "heard", "exploded",
 			"sleepless", "bitten", "dark", "killed");
 
+	/** The self-created layer's second wave (docs/SELF_CREATED_2.md, 25): a death by the wolves of an armed trap. */
+	public static final String WOLVES = "wolves";
+	/** The same wave (26): a death by an arrow of an armed trap's skeleton or stray. */
+	public static final String SHOT = "shot";
+	/**
+	 * Words the list can show that {@code /a1016 accident mark} does not offer (D-080, D-103: its suggestions would name
+	 * them before they happen). Given only by {@link #byKiller}, for the traps that use it.
+	 */
+	public static final List<String> UNLISTED = List.of(WOLVES, SHOT);
+
 	private DeathCauses() {
+	}
+
+	/**
+	 * The word for a death by a trap's own instruments, by the killer's kind (docs/SELF_CREATED_2.md, 25 and 26): a wolf,
+	 * {@link #WOLVES}; an arrow from a skeleton or a stray, {@link #SHOT}; a spider, "bitten"; anything else
+	 * {@code fallback}. Only the traps that use it ask; every other trap keeps {@link #word}.
+	 */
+	public static String byKiller(DamageSource source, String fallback) {
+		Entity killer = source.getEntity();
+		if (killer instanceof Wolf) {
+			return WOLVES;
+		}
+		if (killer instanceof AbstractSkeleton && source.getDirectEntity() instanceof AbstractArrow) {
+			return SHOT;
+		}
+		if (killer instanceof Spider) {
+			return "bitten";
+		}
+		return fallback;
 	}
 
 	@SafeVarargs

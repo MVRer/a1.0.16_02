@@ -1,0 +1,7 @@
+{
+  "type": "a1016_02:world/sc2",
+  "kind": "s18",
+  "biomes": "#a1016_02:world/s18",
+  "step": "top_layer_modification",
+  "spawn_overrides": {}
+}

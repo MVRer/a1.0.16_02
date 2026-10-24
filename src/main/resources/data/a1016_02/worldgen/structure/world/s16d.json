@@ -1,0 +1,12 @@
+{
+  "type": "a1016_02:world/sc2",
+  "kind": "s16d",
+  "biomes": "#a1016_02:world/s16d",
+  "step": "top_layer_modification",
+  "spawn_overrides": {
+    "creature": {
+      "bounding_box": "full",
+      "spawns": []
+    }
+  }
+}

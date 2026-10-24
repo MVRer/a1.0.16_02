@@ -71,6 +71,15 @@ public final class LoreApi {
 	}
 
 	/**
+	 * Who wrote this stack as a book about him (lore's own-writing marker, stamped when it told), first writer first;
+	 * empty for any other stack (an unmarked book, a copy someone else made is still marked with its writers). For the
+	 * second wave's 17e (SC2-2): a player's own book about him. Any thread; reads only the stack.
+	 */
+	public static List<UUID> bookAboutHimWriters(net.minecraft.world.item.ItemStack stack) {
+		return Telling.bookId(stack).isPresent() ? Telling.bookWriters(stack) : List.of();
+	}
+
+	/**
 	 * F30's twin signs, once lore placed them: one on the oldest poplar of the untouched grove, its twin on bedrock
 	 * under the seed pyramid (where Ending D's team stair goes down to). Each is empty until placed.
 	 */

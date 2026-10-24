@@ -26,6 +26,7 @@ import com.forzacode.a1016_02.core.HerobrineEvents;
 import com.forzacode.a1016_02.core.HerobrineState;
 import com.forzacode.a1016_02.core.ModConfig;
 import com.forzacode.a1016_02.core.PlayerWatch;
+import com.forzacode.a1016_02.core.Remains;
 import com.forzacode.a1016_02.core.SelfCreated;
 import com.forzacode.a1016_02.core.Services;
 import com.forzacode.a1016_02.core.Stage;
@@ -34,6 +35,7 @@ import com.forzacode.a1016_02.core.TraceLedger;
 import com.forzacode.a1016_02.director.sc.PlaceMemory;
 import com.forzacode.a1016_02.director.sc.Places;
 import com.forzacode.a1016_02.director.sc.Sc01Config;
+import com.forzacode.a1016_02.director.sc.ScPacing;
 
 import net.minecraft.core.BlockPos;
 import net.minecraft.resources.ResourceKey;
@@ -275,13 +277,75 @@ public final class DirectorImpl implements Director {
 		}
 	}
 
-	/** The places' factor where this player stands now, on their own pacing (1 while the layer is off or the story is quiet). */
+	/**
+	 * The places' factor where this player stands now, on their own pacing (1 while the layer is off or the story is
+	 * quiet): their places, the trusted chunk, and 01+ (docs/SELF_CREATED_2.md) at least {@code remainsFactor} at one of
+	 * his places ({@link #atRemains}).
+	 */
 	static double placeFactor(MinecraftServer server, ServerPlayer player, PacingMemory pacing) {
 		if (!SelfCreated.enabled() || Places.storyQuiet(HerobrineState.get(server))) {
 			return 1.0;
 		}
+		Sc01Config cfg = Sc01Config.get();
 		return Places.factor(pacing.places(), player.level().dimension(), player.blockPosition(), GameClock.playTicks(server, player.getUUID()),
-				GameClock.dayTicks(server), Math.max(1, ModConfig.realTicks(3600)), Sc01Config.get());
+				GameClock.dayTicks(server), Math.max(1, ModConfig.realTicks(3600)), atRemains(player.level(), player.blockPosition(), cfg.radius), cfg);
+	}
+
+	/**
+	 * 01+ (docs/SELF_CREATED_2.md): {@code pos} is inside one of his places ({@code Remains.containing}: its interior) or
+	 * within {@code reach} blocks (3D) of a known place's way in, in this level. Cheap: one indexed lookup and a walk over
+	 * the level's known places (tens).
+	 */
+	public static boolean atRemains(ServerLevel level, BlockPos pos, int reach) {
+		return atRemains(Services.remains(), level, pos, reach);
+	}
+
+	/** {@link #atRemains(ServerLevel, BlockPos, int)} over these places (tests). */
+	public static boolean atRemains(Remains remains, ServerLevel level, BlockPos pos, int reach) {
+		if (remains.containing(level, pos).isPresent()) {
+			return true;
+		}
+		double reachSqr = (double) reach * reach;
+		for (Remains.Place place : remains.known(level)) {
+			if (place.dimension().equals(level.dimension()) && place.entrance().distSqr(pos) <= reachSqr) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	/**
+	 * 01+ (docs/SELF_CREATED_2.md): one of his places answered this player ({@code REMAINS_ANSWERED}): remembered as a
+	 * place of theirs ({@link Places#rememberAnswer}, a minor's weight) where they are when it answers (they are inside),
+	 * else, offline or in another level, at the place's way in. Nothing while the layer is off, the story is quiet, or the
+	 * director keeps no pacing for them.
+	 *
+	 * @return true if a place was remembered
+	 */
+	boolean onAnswered(ServerLevel level, Remains.Place place, UUID player) {
+		DirectorData data = DirectorData.get(level.getServer());
+		boolean remembered = rememberAnswer(level, data.memory(), place, player);
+		if (remembered) {
+			data.setDirty();
+		}
+		return remembered;
+	}
+
+	/** {@link #onAnswered} into this memory (tests: a memory of their own). */
+	static boolean rememberAnswer(ServerLevel level, DirectorMemory memory, Remains.Place place, UUID player) {
+		MinecraftServer server = level.getServer();
+		if (!SelfCreated.enabled() || Places.storyQuiet(HerobrineState.get(server))) {
+			return false;
+		}
+		Optional<PacingMemory> pacing = memory.find(player);
+		if (pacing.isEmpty()) {
+			return false;
+		}
+		ServerPlayer online = server.getPlayerList().getPlayer(player);
+		BlockPos at = online != null && online.level() == level ? online.blockPosition() : place.entrance();
+		DirectorBrain.Clock c = clock(server, player);
+		Places.rememberAnswer(pacing.get().places(), level.dimension(), at, c.playTicks(), c.dayTicks(), Sc01Config.get());
+		return true;
 	}
 
 	/**
@@ -744,6 +808,18 @@ public final class DirectorImpl implements Director {
 				return;
 			}
 			DirectorImpl.remember(player, felt && momentOf != null ? momentOf : player, m, card, c);
+		}
+
+		/**
+		 * The layer's hunts are called for this player by a trespass in one of his places within one in-game day
+		 * ({@link ScPacing#called}; docs/SELF_CREATED_2.md, R10-4); nothing while the layer is off.
+		 */
+		@Override
+		public boolean called(CardInfo card) {
+			if (uuid == null || !SelfCreated.enabled()) {
+				return false;
+			}
+			return ScPacing.called(card.id(), Services.remains().trespassedAt(uuid), server.overworld().getGameTime());
 		}
 
 		@Override

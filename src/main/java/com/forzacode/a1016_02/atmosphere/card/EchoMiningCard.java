@@ -60,7 +60,7 @@ import org.jspecify.annotations.Nullable;
 public final class EchoMiningCard extends EchoCard {
 	public static final String ID = "echo_mining";
 	/** Vanilla digs with a hit sound every this many ticks (level event 2020), the first as the block starts. */
-	static final int HIT_EVERY = 4;
+	public static final int HIT_EVERY = 4;
 	/** After a break vanilla waits 5 ticks before the next block starts (its destroy delay); the click that starts it is one more. */
 	static final int LEAD = 6;
 	/** Vanilla's dig ticks are {@code DIG_FACTOR * hardness / toolSpeed} with the right tool. */
@@ -148,7 +148,7 @@ public final class EchoMiningCard extends EchoCard {
 	 * iron block or amethyst are pickaxe blocks but not rock: from inside the rock they would be sounds nothing there
 	 * makes.
 	 */
-	static boolean mined(BlockState state) {
+	public static boolean mined(BlockState state) {
 		return (state.is(BlockTags.MINEABLE_WITH_PICKAXE) || state.is(BlockTags.MINEABLE_WITH_SHOVEL)) && hardness(state) > 0.0 && natural(state);
 	}
 
@@ -193,7 +193,7 @@ public final class EchoMiningCard extends EchoCard {
 	}
 
 	/** Hit sounds in a dig of {@code digTicks}: one as it starts and every 4 ticks after, before the break. */
-	static int hits(int digTicks) {
+	public static int hits(int digTicks) {
 		return digTicks <= 0 ? 0 : (digTicks + HIT_EVERY - 1) / HIT_EVERY;
 	}
 
@@ -205,7 +205,7 @@ public final class EchoMiningCard extends EchoCard {
 	 * {@code echoMiningToolSpeed} if no other break says anything, within the same bounds; instant if every other break
 	 * was instant (a creative or instamined run) or if that speed breaks it in under {@link #MIN_DIG}.
 	 */
-	static int[] digTicks(List<PlayerAction.Break> breaks, AtmosphereConfig cfg) {
+	public static int[] digTicks(List<PlayerAction.Break> breaks, AtmosphereConfig cfg) {
 		int[] dig = new int[breaks.size()];
 		double speeds = 0.0;
 		int implied = 0;

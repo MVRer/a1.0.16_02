@@ -130,7 +130,7 @@ final class AccidentCommands {
 		traps.forEach((owner, t) -> {
 			lines.add("  " + planner.name(server, owner) + ": " + t.type() + " " + t.phase().name().toLowerCase(Locale.ROOT) + " at " + Candidate.at(t.pos()) + " in "
 					+ t.dimension().identifier().getPath() + ", " + minutes(t.until() - planner.now(server, owner, t)) + " left");
-			lines.add("    clue: " + t.clue());
+			lines.add("    clue: " + (AccidentPlannerImpl.quietClue(t.type()) ? "(" + t.type() + ")" : t.clue()));
 			t.worn().ifPresent(w -> lines.add("    worn: " + StolenGear.describe(w.stack()) + " in the " + w.slot().getName() + " slot"));
 		});
 		for (ArmedTrap t : d.restoring()) {

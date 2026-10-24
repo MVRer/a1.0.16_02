@@ -36,6 +36,11 @@ import org.jspecify.annotations.Nullable;
  * <li>GLOW: BRIGHT plus a soft emissive spill around the eyes through the vanilla eyes render type (spider and
  * enderman style). The spill is fogged like the terrain.</li>
  * </ul>
+ * While an Iris shaderpack draws the frame ({@link IrisShaders#packInUse()}), BRIGHT goes through vanilla's eyes render
+ * type too: Iris draws every pipeline with the pack's own programs and knows only vanilla's (and those registered with
+ * it), so our pipeline would reach the pack's buffers unmapped (an Iris ERROR in the log and a stray line on screen,
+ * SC2-V's V-1). Vanilla's eyes map to the pack's emissive entity program, as a spider's or an enderman's do; the pack
+ * draws its own fog, so the eye fog resistance has no say there.
  */
 public class HimEyesLayer extends RenderLayer<HimRenderState, HimModel> {
 	private static final Identifier EYES_TEXTURE = A1016_02.id("textures/entity/him_eyes.png");
@@ -63,7 +68,10 @@ public class HimEyesLayer extends RenderLayer<HimRenderState, HimModel> {
 			.withLocation(A1016_02.id("pipeline/entity/him_eyes"))
 			.withColorTargetState(ColorTargetState.DEFAULT)
 			.build();
-	/** Used when our shader does not build: vanilla's eyes, unlit and unshaded but fogged like the body. */
+	/**
+	 * Used when our shader does not build, and under a shaderpack: vanilla's eyes, unlit and unshaded but fogged like
+	 * the body.
+	 */
 	private static final RenderType FALLBACK_EYES = RenderTypes.eyes(EYES_TEXTURE);
 	private static final RenderType GLOW_SPILL = RenderTypes.eyes(GLOW_TEXTURE);
 
@@ -85,7 +93,8 @@ public class HimEyesLayer extends RenderLayer<HimRenderState, HimModel> {
 		}
 		// After the skin (order 1), on exactly its geometry, so the depth test lets the eyes through.
 		OrderedSubmitNodeCollector after = collector.order(1);
-		RenderType eyes = brightEyes();
+		// Under a shaderpack only vanilla's pipelines are drawn right (above), so our own one is not even fetched.
+		RenderType eyes = IrisShaders.packInUse() ? null : brightEyes();
 		if (eyes != null) {
 			after.submitModel(getParentModel(), state, poseStack, eyes, light, OverlayTexture.NO_OVERLAY, fogTint(config.eyeFogResistance()), null,
 					state.outlineColor);

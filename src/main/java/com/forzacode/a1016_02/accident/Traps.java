@@ -3,6 +3,8 @@ package com.forzacode.a1016_02.accident;
 import java.util.List;
 import java.util.Optional;
 
+import com.forzacode.a1016_02.accident.sc2.s25.PackTrap;
+import com.forzacode.a1016_02.accident.sc2.s26.CallTrap;
 import com.forzacode.a1016_02.accident.trap.BareWoolTrap;
 import com.forzacode.a1016_02.accident.trap.BridgeGapTrap;
 import com.forzacode.a1016_02.accident.trap.CairnLureTrap;
@@ -25,8 +27,9 @@ import com.forzacode.a1016_02.accident.trap.WhiteEyesLureTrap;
 import com.forzacode.a1016_02.accident.trap.ZombieSwordTrap;
 
 /**
- * Every trap: the Accidents table in order, the four lure traps, the zombie that has your sword (D-032), and the
- * bridges out of the overworld (D-034).
+ * Every trap: the Accidents table in order, the four lure traps, the zombie that has your sword (D-032), the
+ * bridges out of the overworld (D-034), and the self-created layer's two trap kinds {@code sc25} and {@code sc26}
+ * (docs/SELF_CREATED_2.md, 25 and 26; D-096, D-097).
  */
 public final class Traps {
 	public static final TrapKind LAVA_FLOOR = new LavaFloorTrap();
@@ -50,10 +53,12 @@ public final class Traps {
 	public static final TrapKind VOID_BRIDGE = BridgeGapTrap.overVoid();
 	public static final TrapKind LAVA_BRIDGE = BridgeGapTrap.overLava();
 	public static final TrapKind ENDERMAN_ON_BRIDGE = new EndermanBridgeTrap();
+	public static final TrapKind SC25 = new PackTrap();
+	public static final TrapKind SC26 = new CallTrap();
 
 	public static final List<TrapKind> ALL = List.of(LAVA_FLOOR, LAVA_WALL, HOUSE_FIRE, GRAVEL_CEILING, FALLING_DRIPSTONE, MISSING_RUNG,
 			SHORT_BRIDGE, FLOODED_TUNNEL, DARK_CORNER, MOVED_MOB, NO_BED, POWDER_SNOW, BARE_WOOL, LURE_CAIRN, LURE_GROVE, LURE_WHITE_EYES, LURE_SLEEP,
-			ZOMBIE_SWORD, VOID_BRIDGE, LAVA_BRIDGE, ENDERMAN_ON_BRIDGE);
+			ZOMBIE_SWORD, VOID_BRIDGE, LAVA_BRIDGE, ENDERMAN_ON_BRIDGE, SC25, SC26);
 
 	private Traps() {
 	}

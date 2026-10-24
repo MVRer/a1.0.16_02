@@ -131,7 +131,7 @@ public final class SelfCreated {
 				revert.getValue().accept(server);
 				done.add(revert.getKey());
 			} catch (RuntimeException e) {
-				A1016_02.LOGGER.error("[a1016] sc off: reverting {} failed", revert.getKey(), e);
+				ScLog.error("[a1016] sc off: reverting {} failed", revert.getKey(), e);
 			}
 		}
 		A1016_02.LOGGER.info("[a1016] sc off: reverted {}", done);
@@ -195,7 +195,7 @@ public final class SelfCreated {
 			temp = null;
 			return true;
 		} catch (IOException | RuntimeException e) {
-			A1016_02.LOGGER.warn("[a1016] sc: could not write '{}'", relative, e);
+			ScLog.warn("[a1016] sc: could not write '{}'", relative, e);
 			return false;
 		} finally {
 			if (temp != null) {

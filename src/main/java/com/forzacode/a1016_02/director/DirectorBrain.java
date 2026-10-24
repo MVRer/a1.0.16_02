@@ -99,6 +99,21 @@ import org.jspecify.annotations.Nullable;
  * the one chunk they trust), beside the fog factor and before the refractory wait; never a gap, a cap, a major slot or
  * a hard limit. Every fire that is neither fake nor forced is handed to {@link Env#remember} for the target and for
  * every sharer who felt it, each at their own spot.</li>
+ * <li>A group of cards paced as one (docs/SELF_CREATED_2.md, "Pacing"; FIX-SC2-PACE; the rules' group, beats and own
+ * clock, empty unless the self-created layer sets them, {@code director.sc.ScPacing}). No tier's rate changes: <b>the
+ * group</b> takes a share of a tier's due draws in a stage ({@link DirectorRules#groupShare}): such a draw takes a group
+ * card whose moment fits at that look, by weight ({@link DirectorRules#drawWeight}), else the rest of the deck draws; a
+ * group card is never held for a moment that is not there; the group cycles by itself (its cycle comes back when none of
+ * its cards fits), the same card not within {@code groupRepeat}, and two group moments a player goes through, their own
+ * or felt, are at least {@code groupGap} apart (a held group card goes back when a gap starts). <b>The beats</b>
+ * ({@link DirectorRules#beats}): from {@code beatStage}, each beat's card in turn is the tier's next draw at the first look
+ * its moment fits while the tier may fire, ahead of the tier's roll, every gate held, at dusk or night for the first
+ * {@code beatDarkFirst} of the windows, never a fake; the windows run on active play; the first that comes, fired or felt,
+ * ends them. <b>The own clock</b> ({@link DirectorRules#ownClockCards}): never drawn; at the major tier's turn each one
+ * whose gates are open (from {@code ownClockFrom} instead of the first accident's time, one per {@code ownClockGap}, the
+ * major gap) fires at the first look its moment fits, never a fake, as a major: the player's first, or one the world calls
+ * ({@link Env#called}), whenever it comes; a later one only while the major slot is due within {@code ownClockPull}, which
+ * it then takes at the slot's own time ({@link #majorFired}).</li>
  * </ul>
  */
 public final class DirectorBrain {
@@ -113,6 +128,9 @@ public final class DirectorBrain {
 	static final String UNFIT = "its moment did not come";
 	/** Added to why a card went back when it is parked too ({@link #park}). */
 	static final String PARKED = " (parked)";
+	/** In-game time of day (ticks) from which dusk counts, and until which night lasts, for the first beat. */
+	static final long DUSK_FROM = 12_000L;
+	static final long NIGHT_UNTIL = 23_000L;
 
 	/**
 	 * Shared state and the world-facing half of the cards, for the one player being decided for (tension and the cards
@@ -173,6 +191,15 @@ public final class DirectorBrain {
 		 * Nothing by default.
 		 */
 		default void remember(PacingMemory m, CardInfo card, Clock c, boolean felt) {
+		}
+
+		/**
+		 * The world calls this own-clock card for this player now ({@link DirectorRules#ownClockCards}): it may take their
+		 * major slot whenever it is due (docs/SELF_CREATED_2.md: a trespass in one of his places within one in-game day calls
+		 * a hunt). Live, from the layer's places; dry runs roll visits. False by default.
+		 */
+		default boolean called(CardInfo card) {
+			return false;
 		}
 	}
 
@@ -481,10 +508,12 @@ public final class DirectorBrain {
 		Stage stage = env.stage();
 		endParks(m);
 		releaseFitting(m, env);
+		openBeats(m, c, stage);
 		releaseStaleHolds(w, m, c, stage, rec);
 		List<Sharer> sharers = env.sharers();
 		shareMood(m, c, sharers, random, rec);
 		releaseForSharers(m, c, sharers, rec);
+		releaseGapped(m, c, sharers, rec);
 		String blocked = globalBlock(m, c);
 		if (blocked != null) {
 			return "waiting: " + blocked;
@@ -493,20 +522,38 @@ public final class DirectorBrain {
 		double place = placeFactor(env, stage, c);
 		List<String> notes = new ArrayList<>();
 		for (Tier tier : PRIORITY) {
+			if (tier == Tier.MAJOR) {
+				String own = ownClock(w, m, c, stage, env, sharers, random, rec);
+				if (own != null) {
+					return own;
+				}
+			}
 			// A card parked as it goes back (its moment did not come at any look) hands the roll that drew it to the next
 			// card, so a card whose moment never comes costs its tier no fire (R1, v1.2). Each hand-on parks a card, which
 			// is then out of the draw, so the chain ends within the tier's cards. No smaller cap (INT-2, v1.3): with two a
 			// tick, a deck holding three or more such cards (the tunnel ladder's and far in the rock for a surface player,
 			// a BLIND card struck between menus) lost the roll at the end of nearly every cycle, about a tenth of its fires.
 			int carried = 0;
+			// The part of the deck a handed-on roll stays in while the group shares the tier's draws (FIX-SC2-PACE): a card of
+			// the rest whose moment did not come hands its roll on to the rest, so the group's share is rolled once a draw.
+			Boolean handOnPart = null;
+			boolean[] peeked = {false};
 			while (true) {
 				CardInfo card = card(m.held.get(tier));
+				CardInfo reserved = null;
 				if (card == null) {
-					if (tierBlock(tier, m, c, stage) != null || carried == 0 && !due(tier, m, c, stage, random, sharers.size(), fog, place)) {
+					if (tierBlock(tier, m, c, stage) != null) {
+						break;
+					}
+					// The first beat is the tier's next draw at the first look its moment fits while the tier may fire (R10-2:
+					// ahead of the deck's order and of its roll); its gaps, the quiets and every other gate still hold it, and it
+					// is never held for a moment that does not come.
+					reserved = carried == 0 ? beatDraw(tier, w, m, c, stage, sharers, env) : null;
+					if (reserved == null && carried == 0 && !due(tier, m, c, stage, random, sharers.size(), fog, place)) {
 						break;
 					}
 					Set<String> passedOver = new HashSet<>();
-					card = draw(tier, w, m, c, stage, sharers, random, rec, passedOver, fog);
+					card = reserved != null ? reserved : draw(tier, w, m, c, stage, sharers, random, rec, passedOver, fog, handOnPart, env, peeked);
 					if (card == null) {
 						if (tier == Tier.MAJOR && !passedOver.isEmpty()) {
 							// A stage weight passed the slot's card over: the slot is spent, as a probabilistic tier's
@@ -518,8 +565,14 @@ public final class DirectorBrain {
 					m.held.put(tier, card.id());
 					m.heldSince.put(tier, c.playTicks());
 					m.unfitLooks.remove(tier);
+					if (reserved != null) {
+						m.beatHeld = reserved.id();
+					}
 					rec.drew(c, card);
 				}
+				boolean beat = heldAsBeat(m, c, card);
+				boolean lookedFit = card == reserved || peeked[0];
+				peeked[0] = false;
 				String why = fireBlock(card, w, m, c, stage);
 				if (why != null) {
 					notes.add(card.id() + " waits (" + why + ")");
@@ -530,7 +583,12 @@ public final class DirectorBrain {
 					notes.add(card.id() + " waits (" + shared + ")");
 					break;
 				}
-				if (!env.contextFits(card)) {
+				if (beat && beatWaitsForDark(m, c)) {
+					// The first beat looks for its moment only at dusk or at night for a while (R10-2): a look a gate held back.
+					notes.add(card.id() + " waits (dusk)");
+					break;
+				}
+				if (!lookedFit && !env.contextFits(card)) {
 					m.unfitLooks.merge(tier, 1L, Long::sum);
 					if (unfitHold(card) > 0 && unfitGoesBack(m, c, tier, card)) {
 						// Its moment may be far off (a card only for a tunnel, drawn on the surface; a BLIND card for someone
@@ -545,6 +603,7 @@ public final class DirectorBrain {
 						notes.add(card.id() + " goes back: " + back);
 						if (parks && carried < byTier.get(tier).size()) {
 							carried++;
+							handOnPart = groupDraws(tier, stage) && !rules.groupCards.contains(card.id()) ? Boolean.FALSE : null;
 							continue;
 						}
 					} else {
@@ -552,11 +611,12 @@ public final class DirectorBrain {
 					}
 					break;
 				}
-				boolean fake = card.hasFake() && random.nextDouble() < rules.fakeChance;
+				// A beat is never a fake (R10-2): it is the first contact.
+				boolean fake = !beat && card.hasFake() && random.nextDouble() < rules.fakeChance;
 				FireResult result = env.fire(card, fake);
 				if (result == FireResult.FIRED) {
 					recordFire(w, m, c, card, fake, false, stage, env, sharers, random, rec);
-					return "fired " + card.id() + (fake ? " (fake)" : "") + feltBy(card, sharers);
+					return "fired " + card.id() + (fake ? " (fake)" : "") + (beat ? " (a beat)" : "") + feltBy(card, sharers);
 				}
 				notes.add(card.id() + " " + result + ", kept for later");
 				break;
@@ -619,6 +679,212 @@ public final class DirectorBrain {
 		}
 	}
 
+	// --- the layer's group, beats and own clock (DirectorRules; docs/SELF_CREATED_2.md "Pacing", FIX-SC2-PACE) ---
+
+	/**
+	 * This player's beats' window opens at their first decision from the beats' stage on, and closes (done) once every
+	 * beat's window is over. A player with a registered beat card only.
+	 */
+	private void openBeats(PacingMemory m, Clock c, Stage stage) {
+		if (m.beatDone || !hasBeats()) {
+			return;
+		}
+		long now = c.playTicks();
+		if (m.beatFrom < 0) {
+			if (stage.atLeast(rules.beatStage)) {
+				m.beatFrom = now;
+				m.beatAge = 0;
+				m.beatLast = now;
+			}
+			return;
+		}
+		// The windows run on the player's active play only: a quiet or an empty session (the designed silences) never
+		// spends a beat's window, so the beat comes after the silence instead of being lost to it.
+		long dt = Math.max(0, now - m.beatLast);
+		m.beatLast = Math.max(m.beatLast, now);
+		if (!inQuiet(m, c) && !(m.sessionEmpty && now < m.sessionEmptyUntil)) {
+			m.beatAge += dt;
+		}
+		if (currentBeat(m, c) == null) {
+			m.beatDone = true;
+		}
+	}
+
+	private boolean hasBeats() {
+		for (DirectorRules.Beat beat : rules.beats) {
+			if (card(beat.cardId()) != null) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	/**
+	 * The beat reserved for this player now, or null: from their beats' window opening, each registered beat's window in
+	 * turn, until one comes (fired or felt, never a fake) or every window is over.
+	 */
+	public DirectorRules.@Nullable Beat currentBeat(PacingMemory m, Clock c) {
+		if (m.beatDone || m.beatFrom < 0) {
+			return null;
+		}
+		long t = m.beatAge;
+		for (DirectorRules.Beat beat : rules.beats) {
+			if (card(beat.cardId()) == null) {
+				continue;
+			}
+			if (t < beat.window()) {
+				return beat;
+			}
+			t -= beat.window();
+		}
+		return null;
+	}
+
+	/**
+	 * The current beat's card as this tier's draw (R10-2: ahead of the deck's order and of its roll), or null: only a card
+	 * of this tier that could be drawn now (undrawn this cycle, not the last, not parked, every gate of its own open), not
+	 * while the beats look only at dusk or night and it is neither, beside friends one none of them had and every one of
+	 * them could have now, never a {@code PERSONAL} one, never one a friend's group gap rules out; and only at a look its
+	 * moment fits, so a beat whose moment does not come holds nothing back.
+	 */
+	private @Nullable CardInfo beatDraw(Tier tier, WorldMemory w, PacingMemory m, Clock c, Stage stage, List<Sharer> sharers, Env env) {
+		DirectorRules.Beat beat = currentBeat(m, c);
+		CardInfo card = beat == null ? null : card(beat.cardId());
+		if (card == null || card.tier() != tier || beatWaitsForDark(m, c) || !candidates(tier, w, m, c, stage).contains(card)) {
+			return null;
+		}
+		if (!sharers.isEmpty() && (card.has(CardTag.PERSONAL) || anyHad(card, sharers) || groupGapped(card, sharers))) {
+			return null;
+		}
+		if (sharedBlock(card, w, sharers, stage) != null || !env.contextFits(card)) {
+			return null;
+		}
+		return card;
+	}
+
+	/** True if this held card is held as the current beat: it is never a fake, and looks only at dusk or night at first. */
+	public boolean heldAsBeat(PacingMemory m, Clock c, CardInfo card) {
+		if (!card.id().equals(m.beatHeld)) {
+			return false;
+		}
+		DirectorRules.Beat beat = currentBeat(m, c);
+		return beat != null && beat.cardId().equals(card.id());
+	}
+
+	/** True while the beats look only at dusk or night ({@code beatDarkFirst} of their window) and it is neither now. */
+	private boolean beatWaitsForDark(PacingMemory m, Clock c) {
+		if (m.beatFrom < 0 || m.beatAge >= rules.beatDarkFirst) {
+			return false;
+		}
+		long time = Math.floorMod(c.dayTicks(), DAY_TICKS);
+		return time < DUSK_FROM || time >= NIGHT_UNTIL;
+	}
+
+	/**
+	 * True if this group card came for this player, or for a friend who would feel it, less than {@code groupRepeat} of
+	 * their own play ago (their history, own fires and felt ones, never forced).
+	 */
+	private boolean repeatsTooSoon(CardInfo card, PacingMemory m, Clock c, List<Sharer> sharers) {
+		if (rules.groupRepeat <= 0) {
+			return false;
+		}
+		if (cameWithin(card, m, c)) {
+			return true;
+		}
+		for (Sharer sharer : feeling(card, sharers)) {
+			if (cameWithin(card, sharer.memory(), sharer.clock())) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	private boolean cameWithin(CardInfo card, PacingMemory m, Clock c) {
+		java.util.Iterator<DirectorMemory.HistoryEntry> back = m.history.descendingIterator();
+		while (back.hasNext()) {
+			DirectorMemory.HistoryEntry entry = back.next();
+			if (c.playTicks() - entry.playTicks() >= rules.groupRepeat) {
+				return false;
+			}
+			if (!entry.forced() && entry.cardId().equals(card.id())) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	/** True inside this player's group gap: a group card fired for them or was felt by them less than {@code groupGap} ago. */
+	private boolean inGroupGap(PacingMemory m, Clock c) {
+		return rules.groupGap > 0 && c.playTicks() - m.lastGroup < rules.groupGap;
+	}
+
+	/** True if this group card would reach a friend still inside their own group gap. */
+	private boolean groupGapped(CardInfo card, List<Sharer> sharers) {
+		if (rules.groupGap <= 0 || !rules.groupCards.contains(card.id())) {
+			return false;
+		}
+		for (Sharer sharer : feeling(card, sharers)) {
+			if (inGroupGap(sharer.memory(), sharer.clock())) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	/**
+	 * Held group cards that a group gap now rules out (theirs, or that of a friend who would feel it) go back at once, not
+	 * parked, so the gap never holds a tier: another group card fired in another tier, or a friend came close.
+	 */
+	private void releaseGapped(PacingMemory m, Clock c, List<Sharer> sharers, Recorder rec) {
+		if (rules.groupGap <= 0) {
+			return;
+		}
+		for (Tier tier : PRIORITY) {
+			CardInfo card = card(m.held.get(tier));
+			if (card != null && rules.groupCards.contains(card.id()) && (inGroupGap(m, c) || groupGapped(card, sharers))) {
+				giveUp(m, c, tier, card.id(), "the group's gap", rec);
+			}
+		}
+	}
+
+	/**
+	 * The own-clock cards' look (R10-4), at the major tier's turn: each one whose own gates are open (its clock, its own
+	 * gap, the group's gap, every card and major gate: the stage, the first day, the major gap) fires at the first look its
+	 * moment fits, never a fake, as the major it is, spending the major slot ({@link #scheduleNextMajor}): the player's
+	 * first whenever it comes, a later one only while the slot is due within {@code ownClockPull}, one the world calls
+	 * ({@link Env#called}) whenever it comes. Beside friends, every sharer's gates too, and never a {@code PERSONAL} one.
+	 * Never drawn, never held: it holds nothing back.
+	 *
+	 * @return the decision's line if one fired, else null
+	 */
+	private @Nullable String ownClock(WorldMemory w, PacingMemory m, Clock c, Stage stage, Env env, List<Sharer> sharers, RandomSource random,
+			Recorder rec) {
+		if (rules.ownClockCards.isEmpty() || tierBlock(Tier.MAJOR, m, c, stage) != null) {
+			return null;
+		}
+		for (CardInfo card : byTier.get(Tier.MAJOR)) {
+			if (!rules.ownClockCards.contains(card.id()) || !sharers.isEmpty() && card.has(CardTag.PERSONAL)) {
+				continue;
+			}
+			if (cardBlock(card, w, m, c, stage) != null || sharedBlock(card, w, sharers, stage) != null) {
+				continue;
+			}
+			boolean called = env.called(card);
+			if (!called && m.lastOwnClock != DirectorMemory.NEVER && !(m.nextMajorDue >= 0 && m.nextMajorDue - c.playTicks() <= rules.ownClockPull)) {
+				continue;
+			}
+			if (!env.contextFits(card)) {
+				continue;
+			}
+			FireResult result = env.fire(card, false);
+			if (result == FireResult.FIRED) {
+				recordFire(w, m, c, card, false, false, stage, env, sharers, random, rec);
+				return "fired " + card.id() + " (its own clock" + (called ? ", asked for" : "") + ")" + feltBy(card, sharers);
+			}
+		}
+		return null;
+	}
+
 	// --- blind moments (D-077) ---
 
 	/**
@@ -662,7 +928,11 @@ public final class DirectorBrain {
 				outcome = null;
 				for (CardInfo card : waiting) {
 					boolean held = card.id().equals(m.held.get(card.tier()));
+					boolean beat = held && heldAsBeat(m, c, card);
 					String why = recheckBlock(card, held, w, m, c, stage, sharers, fog);
+					if (why == null && beat && beatWaitsForDark(m, c)) {
+						why = "dusk";
+					}
 					if (why != null) {
 						notes.add(card.id() + " waits (" + why + ")");
 						continue;
@@ -674,7 +944,7 @@ public final class DirectorBrain {
 					if (!held) {
 						m.parkedUntil.remove(card.id());
 					}
-					boolean fake = card.hasFake() && random.nextDouble() < rules.fakeChance;
+					boolean fake = !beat && card.hasFake() && random.nextDouble() < rules.fakeChance;
 					FireResult result = env.fire(card, fake);
 					if (result == FireResult.FIRED) {
 						recordFire(w, m, c, card, fake, false, stage, env, sharers, random, rec);
@@ -899,8 +1169,19 @@ public final class DirectorBrain {
 		if (fixed != null) {
 			return fixed;
 		}
-		if (card.has(CardTag.ACCIDENT) && c.playTicks() < rules.firstAccident) {
+		if (rules.ownClockCards.contains(card.id())) {
+			// Its own clock instead of the first accident's time (R10-4): from ownClockFrom, one per ownClockGap.
+			if (c.playTicks() < rules.ownClockFrom) {
+				return "not on its clock yet";
+			}
+			if (c.playTicks() - m.lastOwnClock < rules.ownClockGap) {
+				return "its own gap";
+			}
+		} else if (card.has(CardTag.ACCIDENT) && c.playTicks() < rules.firstAccident) {
 			return "no accident yet";
+		}
+		if (rules.groupCards.contains(card.id()) && inGroupGap(m, c)) {
+			return "the group's gap";
 		}
 		if (card.has(CardTag.SIGHTING) && m.sightingDay == c.day() && m.sightingsThatDay >= rules.sightingsPerDayMax) {
 			return "sighting already today";
@@ -1025,7 +1306,8 @@ public final class DirectorBrain {
 		String last = m.lastFired.get(tier);
 		List<CardInfo> out = new ArrayList<>();
 		for (CardInfo card : byTier.get(tier)) {
-			if (!cycle.contains(card.id()) && !card.id().equals(last) && !parked(m, c, card.id()) && cardBlock(card, w, m, c, stage) == null) {
+			if (!cycle.contains(card.id()) && !card.id().equals(last) && !parked(m, c, card.id()) && !rules.ownClockCards.contains(card.id())
+					&& cardBlock(card, w, m, c, stage) == null) {
 				out.add(card);
 			}
 		}
@@ -1057,16 +1339,99 @@ public final class DirectorBrain {
 	 * @param fog     a fog spell that is not quiet is on: SIGHTING cards weigh more ({@link #stageWeight})
 	 */
 	private CardInfo draw(Tier tier, WorldMemory w, PacingMemory m, Clock c, Stage stage, List<Sharer> sharers, RandomSource random, Recorder rec,
-			Set<String> skipped, boolean fog) {
+			Set<String> skipped, boolean fog, @Nullable Boolean part, Env env, boolean[] looked) {
+		if (!groupDraws(tier, stage)) {
+			return draw(tier, null, w, m, c, stage, sharers, random, rec, skipped, fog);
+		}
+		// The group's share of this tier's draws (FIX-SC2-PACE): a draw from the group takes one of its cards whose moment
+		// fits at this look; when none does, the rest of the deck draws, as it does for every other draw. A roll handed on
+		// (a card of the rest parked) stays with the rest ({@code part}).
+		boolean fromGroup = part != null ? part : random.nextDouble() < rules.groupShare(stage, tier);
+		if (fromGroup) {
+			CardInfo picked = drawGroup(tier, w, m, c, stage, sharers, random, rec, fog, env);
+			if (picked != null) {
+				looked[0] = true;
+				return picked;
+			}
+		}
+		return draw(tier, Boolean.FALSE, w, m, c, stage, sharers, random, rec, skipped, fog);
+	}
+
+	/**
+	 * A draw from the group (FIX-SC2-PACE): its cards that could be drawn now (undrawn in the group's own cycle, not the
+	 * tier's last, not parked, every gate of theirs open; beside friends none a friend had, no {@code PERSONAL} one, none a
+	 * friend's group gap rules out, every friend's gates open), picked by weight and looked at one by one: the first whose
+	 * moment fits now is drawn (the caller does not look again). None that came for this player (or reached a friend who
+	 * would feel it) less than {@code groupRepeat} ago. When none fits, the group's cycle comes back once and the same look
+	 * is made, so a card of the wave whose moment never comes (a friend's for a player alone, a place's for one who never
+	 * travels) never keeps the others from coming again. A second-wave moment that is not there never holds the tier:
+	 * nothing is held for it, nothing parks.
+	 */
+	private @Nullable CardInfo drawGroup(Tier tier, WorldMemory w, PacingMemory m, Clock c, Stage stage, List<Sharer> sharers, RandomSource random,
+			Recorder rec, boolean fog, Env env) {
+		for (int pass = 0; pass < 2; pass++) {
+			List<CardInfo> eligible = candidates(tier, w, m, c, stage);
+			eligible.removeIf(card -> !rules.groupCards.contains(card.id()) || repeatsTooSoon(card, m, c, sharers)
+					|| !sharers.isEmpty() && (card.has(CardTag.PERSONAL) || groupGapped(card, sharers) || anyHad(card, sharers)));
+			while (!eligible.isEmpty()) {
+				CardInfo picked = weightedPick(eligible, stage, random, fog);
+				if (picked == null) {
+					break;
+				}
+				eligible.remove(picked);
+				double tagWeight = stageWeight(stage, picked, fog);
+				if (tagWeight < 1 && random.nextDouble() >= tagWeight) {
+					continue;
+				}
+				if (sharedBlock(picked, w, sharers, stage) == null && env.contextFits(picked)) {
+					return picked;
+				}
+			}
+			if (pass > 0 || !m.cycleFired.get(tier).removeIf(rules.groupCards::contains)) {
+				break;
+			}
+			rec.refilled(c, tier);
+		}
+		return null;
+	}
+
+	/**
+	 * True if this tier's draws in this stage are shared with the group ({@link DirectorRules#groupShare} above 0 and a
+	 * group card of this tier is registered); otherwise the group's cards are drawn as any other card.
+	 */
+	private boolean groupDraws(Tier tier, Stage stage) {
+		if (rules.groupShare(stage, tier) <= 0) {
+			return false;
+		}
+		for (CardInfo card : byTier.get(tier)) {
+			if (rules.groupCards.contains(card.id()) && !rules.ownClockCards.contains(card.id())) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	/** True if this card is in the part of the deck asked for: every card ({@code group} null), the group's, or the rest. */
+	private boolean inPart(String id, @Nullable Boolean group) {
+		return group == null || rules.groupCards.contains(id) == group;
+	}
+
+	/**
+	 * The draw from one part of the deck ({@code group}: null for all of it, false for every card but the group's), with
+	 * that part's run-out and refill: the rest's refill leaves the group's cycle as it is ({@link #drawGroup} keeps it).
+	 */
+	private @Nullable CardInfo draw(Tier tier, @Nullable Boolean group, WorldMemory w, PacingMemory m, Clock c, Stage stage, List<Sharer> sharers,
+			RandomSource random, Recorder rec, Set<String> skipped, boolean fog) {
 		boolean refilled = false;
 		String givenUp = m.lastGivenUp.get(tier);
 		while (true) {
 			List<CardInfo> eligible = candidates(tier, w, m, c, stage);
-			eligible.removeIf(card -> skipped.contains(card.id()));
+			eligible.removeIf(card -> skipped.contains(card.id()) || !inPart(card.id(), group));
 			if (!sharers.isEmpty()) {
 				// A card for one player alone is out of a shared moment, as a stage rule would rule it out (D-074): a deck
-				// whose only undrawn cards are such turns over by the solo rule, so a pair never deadlocks on them.
-				eligible.removeIf(card -> card.has(CardTag.PERSONAL));
+				// whose only undrawn cards are such turns over by the solo rule, so a pair never deadlocks on them. A group
+				// card a friend's gap rules out is out of the moment too.
+				eligible.removeIf(card -> card.has(CardTag.PERSONAL) || groupGapped(card, sharers));
 			}
 			boolean onlyTheirs = false;
 			if (!eligible.isEmpty() && !sharers.isEmpty()) {
@@ -1074,13 +1439,13 @@ public final class DirectorBrain {
 				onlyTheirs = eligible.isEmpty();
 			}
 			if (eligible.isEmpty()) {
-				if (refilled || tier == Tier.SIGNATURE || m.cycleFired.get(tier).isEmpty()) {
+				if (refilled || tier == Tier.SIGNATURE || m.cycleFired.get(tier).stream().noneMatch(id -> inPart(id, group))) {
 					return null;
 				}
-				if (onlyTheirs && !refillHelps(tier, w, m, c, stage, sharers)) {
+				if (onlyTheirs && !refillHelps(tier, group, w, m, c, stage, sharers)) {
 					return null; // only cards a friend had are left, and nothing that would come back is new to everyone here
 				}
-				if (!runOut(tier, w, m, c, stage, sharers)) {
+				if (!runOut(tier, group, w, m, c, stage, sharers)) {
 					Long stuckSince = m.deckStuckSince.get(tier);
 					if (stuckSince == null || stuckSince > c.dayTicks()) {
 						stuckSince = c.dayTicks();
@@ -1090,7 +1455,11 @@ public final class DirectorBrain {
 						return null;
 					}
 				}
-				m.cycleFired.get(tier).clear();
+				if (group == null) {
+					m.cycleFired.get(tier).clear();
+				} else {
+					m.cycleFired.get(tier).removeIf(id -> inPart(id, group));
+				}
 				m.deckStuckSince.remove(tier);
 				rec.refilled(c, tier);
 				refilled = true;
@@ -1115,23 +1484,26 @@ public final class DirectorBrain {
 
 	/**
 	 * A deck has run out when every card it has not fired this cycle is ruled out by the stage or the profile (or
-	 * already fired once per world), or is parked (its moment did not come, {@link #park}). A card that only waits on a
-	 * passing gate (a sighting today, no accident yet, a skip roll) keeps it going.
+	 * already fired once per world), or is parked (its moment did not come, {@link #park}), or comes on its own clock. A
+	 * card that only waits on a passing gate (a sighting today, no accident yet, a skip roll) keeps it going. While the
+	 * group shares this tier's draws ({@link DirectorRules#groupShare}), the group's cards keep a cycle of their own and are
+	 * left out here.
 	 */
 	public boolean runOut(Tier tier, WorldMemory w, PacingMemory m, Clock c, Stage stage) {
-		return runOut(tier, w, m, c, stage, List.of());
+		return runOut(tier, groupDraws(tier, stage) ? Boolean.FALSE : null, w, m, c, stage, List.of());
 	}
 
 	/**
-	 * Beside friends: true if refilling this player's deck now would give them a card to draw, one of this cycle's
-	 * (not their last) whose gates are open and that none of the friends had. Otherwise the refill would only throw
-	 * their cycle away.
+	 * Beside friends: true if refilling this player's deck (that part of it) now would give them a card to draw, one of
+	 * this cycle's (not their last) whose gates are open and that none of the friends had. Otherwise the refill would only
+	 * throw their cycle away.
 	 */
-	private boolean refillHelps(Tier tier, WorldMemory w, PacingMemory m, Clock c, Stage stage, List<Sharer> sharers) {
+	private boolean refillHelps(Tier tier, @Nullable Boolean group, WorldMemory w, PacingMemory m, Clock c, Stage stage, List<Sharer> sharers) {
 		String last = m.lastFired.get(tier);
 		for (String id : m.cycleFired.get(tier)) {
 			CardInfo card = card(id);
-			if (card != null && !id.equals(last) && !parked(m, c, id) && cardBlock(card, w, m, c, stage) == null && !spentForTheMoment(card, sharers)) {
+			if (card != null && inPart(id, group) && !id.equals(last) && !parked(m, c, id) && !rules.ownClockCards.contains(id)
+					&& cardBlock(card, w, m, c, stage) == null && !spentForTheMoment(card, sharers)) {
 				return true;
 			}
 		}
@@ -1139,13 +1511,14 @@ public final class DirectorBrain {
 	}
 
 	/**
-	 * {@link #runOut(Tier, WorldMemory, PacingMemory, Clock, Stage)} beside friends: a card one of them had, and a
-	 * {@code PERSONAL} card, are spent for the moment too.
+	 * {@link #runOut(Tier, WorldMemory, PacingMemory, Clock, Stage)} of one part of the deck ({@code group}: null for all
+	 * of it), beside friends: a card one of them had, and a {@code PERSONAL} card, are spent for the moment too.
 	 */
-	private boolean runOut(Tier tier, WorldMemory w, PacingMemory m, Clock c, Stage stage, List<Sharer> sharers) {
+	private boolean runOut(Tier tier, @Nullable Boolean group, WorldMemory w, PacingMemory m, Clock c, Stage stage, List<Sharer> sharers) {
 		Set<String> cycle = m.cycleFired.get(tier);
 		for (CardInfo card : byTier.get(tier)) {
-			if (!cycle.contains(card.id()) && staticBlock(card, w, stage) == null && !parked(m, c, card.id()) && !spentForTheMoment(card, sharers)) {
+			if (inPart(card.id(), group) && !cycle.contains(card.id()) && staticBlock(card, w, stage) == null && !parked(m, c, card.id())
+					&& !rules.ownClockCards.contains(card.id()) && !spentForTheMoment(card, sharers)) {
 				return false;
 			}
 		}
@@ -1175,7 +1548,7 @@ public final class DirectorBrain {
 		double[] weights = new double[eligible.size()];
 		for (int i = 0; i < weights.length; i++) {
 			CardInfo card = eligible.get(i);
-			weights[i] = Math.max(0, rules.habitWeight(card) * stageWeight(stage, card, fog));
+			weights[i] = Math.max(0, rules.drawWeight(card) * stageWeight(stage, card, fog));
 			total += weights[i];
 		}
 		if (total <= 0) {
@@ -1203,9 +1576,12 @@ public final class DirectorBrain {
 				continue;
 			}
 			CardInfo card = card(id);
+			boolean asBeat = id.equals(m.beatHeld);
 			String why;
 			if (card == null) {
 				why = "no longer registered";
+			} else if (rules.ownClockCards.contains(id)) {
+				why = "on its own clock"; // held from before its clock (an older save, or rules changed live)
 			} else if (c.playTicks() - m.heldSince.getOrDefault(tier, c.playTicks()) >= rules.holdGiveUp) {
 				why = HELD_TOO_LONG;
 			} else {
@@ -1224,6 +1600,9 @@ public final class DirectorBrain {
 					m.held.remove(tier);
 					m.heldSince.remove(tier);
 					m.unfitLooks.remove(tier);
+					if (asBeat) {
+						m.beatHeld = null;
+					}
 					rec.gaveUp(c, tier, id, why);
 				}
 			}
@@ -1236,6 +1615,9 @@ public final class DirectorBrain {
 		m.heldSince.remove(tier);
 		m.unfitLooks.remove(tier);
 		m.lastGivenUp.put(tier, id);
+		if (id.equals(m.beatHeld)) {
+			m.beatHeld = null;
+		}
 		rec.gaveUp(c, tier, id, why);
 	}
 
@@ -1411,11 +1793,17 @@ public final class DirectorBrain {
 			m.heldSince.remove(tier);
 			m.unfitLooks.remove(tier);
 		}
-		m.cycleFired.get(tier).add(card.id());
-		m.lastFired.put(tier, card.id());
-		m.lastGivenUp.remove(tier);
-		m.deckStuckSince.remove(tier);
+		if (!rules.ownClockCards.contains(card.id())) {
+			// An own-clock card is outside its deck: never in its cycle, never its last (it repeats on its own gap).
+			m.cycleFired.get(tier).add(card.id());
+			m.lastFired.put(tier, card.id());
+			m.lastGivenUp.remove(tier);
+			m.deckStuckSince.remove(tier);
+		}
 		m.parkedUntil.remove(card.id());
+		if (!forced) {
+			countGroupBeatAndClock(m, c, card, fake, stage);
+		}
 		if (oncePerWorld(card)) {
 			// D-062.3: set in the same call that fired it, so nobody else's decision can fire it again this tick.
 			w.signaturesFired.add(card.id());
@@ -1435,7 +1823,7 @@ public final class DirectorBrain {
 				m.lastMajorOrSignature = now;
 			}
 			if (tier == Tier.MAJOR) {
-				scheduleNextMajor(m, now, random);
+				majorFired(m, now, card, random);
 			}
 			if (tier == Tier.AMBIENT && stage == Stage.ALONE) {
 				m.aloneAmbientCount++;
@@ -1482,8 +1870,10 @@ public final class DirectorBrain {
 			m.heldSince.remove(tier);
 			m.unfitLooks.remove(tier);
 		}
-		m.cycleFired.get(tier).add(card.id());
-		m.lastFired.put(tier, card.id());
+		if (!rules.ownClockCards.contains(card.id())) {
+			m.cycleFired.get(tier).add(card.id());
+			m.lastFired.put(tier, card.id());
+		}
 		m.parkedUntil.remove(card.id());
 		for (CardTag tag : card.tags()) {
 			m.lastTag.put(tag, now);
@@ -1495,13 +1885,14 @@ public final class DirectorBrain {
 			return;
 		}
 		m.feltFires++;
+		countGroupBeatAndClock(m, c, card, fake, stage);
 		m.lastFireAny = now;
 		m.lastFireTier.put(tier, now);
 		if (tier == Tier.MAJOR || tier == Tier.SIGNATURE) {
 			m.lastMajorOrSignature = now;
 		}
 		if (tier == Tier.MAJOR) {
-			scheduleNextMajor(m, now, random);
+			majorFired(m, now, card, random);
 		}
 		if (tier == Tier.AMBIENT && stage == Stage.ALONE) {
 			m.aloneAmbientCount++;
@@ -1517,6 +1908,39 @@ public final class DirectorBrain {
 		checkQuiet(m, c, env, random, rec);
 	}
 
+	/**
+	 * A fire (never a forced one) reached this player, theirs or felt: a group card starts their group gap, a beat card
+	 * that is no fake ends their beats (from the beats' stage on), an own-clock card starts its own gap; a card held as a
+	 * beat is held no more.
+	 */
+	private void countGroupBeatAndClock(PacingMemory m, Clock c, CardInfo card, boolean fake, Stage stage) {
+		long now = c.playTicks();
+		if (rules.groupCards.contains(card.id())) {
+			m.lastGroup = now;
+		}
+		if (rules.ownClockCards.contains(card.id())) {
+			m.lastOwnClock = now;
+		}
+		if (card.id().equals(m.beatHeld) && !card.id().equals(m.held.get(card.tier()))) {
+			m.beatHeld = null;
+		}
+		if (!fake && !m.beatDone && stage.atLeast(rules.beatStage) && isBeatCard(card.id())) {
+			if (m.beatFrom < 0) {
+				m.beatFrom = now;
+			}
+			m.beatDone = true;
+		}
+	}
+
+	private boolean isBeatCard(String id) {
+		for (DirectorRules.Beat beat : rules.beats) {
+			if (beat.cardId().equals(id)) {
+				return true;
+			}
+		}
+		return false;
+	}
+
 	private static void countSighting(PacingMemory m, Clock c, CardInfo card) {
 		if (card.has(CardTag.SIGHTING)) {
 			if (m.sightingDay != c.day()) {
@@ -1524,6 +1948,30 @@ public final class DirectorBrain {
 				m.sightingsThatDay = 0;
 			}
 			m.sightingsThatDay++;
+		}
+	}
+
+	/**
+	 * True if this major's fire takes this player's major slot ({@link #scheduleNextMajor}): every major but an own-clock
+	 * card that comes while the slot is further off than {@code ownClockPull} (the player's first hunt, a called one), which
+	 * leaves the schedule as it is (the major gap after it still holds the slot's card back), so the traps on the accident
+	 * clock keep their first time.
+	 */
+	private boolean spendsSlot(PacingMemory m, long now, CardInfo card) {
+		return !rules.ownClockCards.contains(card.id()) || m.nextMajorDue >= 0 && m.nextMajorDue - now <= rules.ownClockPull;
+	}
+
+	/**
+	 * A major fired for this player (or was felt): the slot is used ({@link #scheduleNextMajor}); an own-clock card takes
+	 * the slot due within {@code ownClockPull} as if at its due time, so the majors keep their cadence, and leaves a
+	 * slot further off as it is ({@link #spendsSlot}).
+	 */
+	private void majorFired(PacingMemory m, long now, CardInfo card, RandomSource random) {
+		if (!rules.ownClockCards.contains(card.id())) {
+			scheduleNextMajor(m, now, random);
+		} else if (spendsSlot(m, now, card)) {
+			long slot = Math.max(0, m.nextMajorDue);
+			m.nextMajorDue = Math.max(slot + rules.majorEvery.pick(random), now + rules.majorEvery.min());
 		}
 	}
 

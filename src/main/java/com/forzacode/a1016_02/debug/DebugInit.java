@@ -23,5 +23,6 @@ public final class DebugInit {
 		PlaytestCommands.register();
 		ScIndex.register();
 		DebugOverlay.init();
+		com.forzacode.a1016_02.debug.gallery.GalleryInit.init();
 	}
 }

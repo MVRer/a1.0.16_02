@@ -13,6 +13,7 @@ import com.forzacode.a1016_02.world.live.NewScarCard;
 import com.forzacode.a1016_02.world.live.NewScarPlacer;
 import com.forzacode.a1016_02.world.live.WorldWatch;
 import com.forzacode.a1016_02.world.sc.WorldSc;
+import com.forzacode.a1016_02.world.sc2.WorldSc2;
 import com.forzacode.a1016_02.world.sig.HouseCopier;
 import com.forzacode.a1016_02.world.sig.LoneTorch;
 import com.forzacode.a1016_02.world.sig.SignatureCards;
@@ -62,6 +63,7 @@ public final class WorldInit {
 		Director.register(new SignatureCards.CrossRowCard());
 		Director.register(new SignatureCards.LoneRedstoneTorchCard());
 		WorldSc.init();
+		WorldSc2.init(); // the self-created layer's second wave (docs/SELF_CREATED_2.md)
 		PlayerBlockBreakEvents.AFTER.register((level, player, pos, state, blockEntity) -> {
 			if (level instanceof ServerLevel serverLevel && player instanceof ServerPlayer serverPlayer) {
 				WorldWatch.onBroken(serverLevel, serverPlayer, pos, state);

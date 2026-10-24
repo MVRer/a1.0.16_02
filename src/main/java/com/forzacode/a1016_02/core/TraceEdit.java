@@ -106,7 +106,7 @@ final class TraceEdit {
 			}
 			case TraceBatch.Move(BlockPos from, BlockPos to) -> {
 				BlockState state = current(from);
-				if (state.isAir() || !current(to).canBeReplaced() || hasBlockEntity(to)) {
+				if (state.isAir() || !current(to).canBeReplaced() || hasBlockEntity(to) || intoSomeone(to, state)) {
 					yield false;
 				}
 				CompoundTag data = blockEntity(from);
@@ -133,7 +133,7 @@ final class TraceEdit {
 
 	/** Places a block (and its block entity data) into a replaceable spot without a block entity. Not recorded. */
 	private boolean place(BlockPos pos, BlockState state, @Nullable CompoundTag data) {
-		if (!current(pos).canBeReplaced() || hasBlockEntity(pos) || data != null && !state.hasBlockEntity()) {
+		if (!current(pos).canBeReplaced() || hasBlockEntity(pos) || data != null && !state.hasBlockEntity() || intoSomeone(pos, state)) {
 			return false;
 		}
 		changes.put(pos, state);
@@ -141,6 +141,18 @@ final class TraceEdit {
 			moveInto.put(pos, data);
 		}
 		return true;
+	}
+
+	/**
+	 * R12-11: a block with a body (a collision shape) never goes into a cell a player or a living mob stands in: it would
+	 * smother them unseen (a pet told to stay in a tunnel he closes). Torches, plants and the like pass.
+	 */
+	private boolean intoSomeone(BlockPos pos, BlockState state) {
+		if (state.getCollisionShape(level, pos).isEmpty()) {
+			return false;
+		}
+		return !level.getEntitiesOfClass(net.minecraft.world.entity.LivingEntity.class, new net.minecraft.world.phys.AABB(pos),
+				e -> e.isAlive() && !e.isSpectator()).isEmpty();
 	}
 
 	/** Lets this planned fall happen after the edit instead of refusing it. Call before {@link #expand()}. */

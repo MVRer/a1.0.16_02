@@ -1,0 +1,18 @@
+{
+  "type": "a1016_02:world/sc2",
+  "kind": "s20",
+  "biomes": "#a1016_02:world/s20",
+  "step": "top_layer_modification",
+  "spawn_overrides": {
+    "creature": {
+      "bounding_box": "full",
+      "spawns": [
+        {
+          "type": "minecraft:cow",
+          "count": 4,
+          "weight": 1
+        }
+      ]
+    }
+  }
+}

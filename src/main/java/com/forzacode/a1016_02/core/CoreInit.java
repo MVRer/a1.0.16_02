@@ -48,7 +48,9 @@ public final class CoreInit {
 			Services.watch().onJoin(handler.player);
 			ClientEffects.sync(handler.player);
 		});
-		ServerPlayConnectionEvents.DISCONNECT.register((handler, server) -> Services.watch().onLeave(handler.player));
+		// Fabric may run DISCONNECT on the network thread (a client that quits or crashes): the watch hands the leave to
+		// the server thread, so PARTICIPATION false always reaches its listeners there (R12-4).
+		ServerPlayConnectionEvents.DISCONNECT.register((handler, server) -> Services.watch().onDisconnect(server, handler.player));
 
 		ServerTickEvents.END_SERVER_TICK.register(server -> {
 			// Participation first (known players, the clocks, PARTICIPATION events), so everything after sees this tick's.

@@ -1,8 +1,11 @@
 package com.forzacode.a1016_02.director;
 
 import java.util.EnumMap;
+import java.util.HashMap;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 
 import com.forzacode.a1016_02.core.CardTag;
 import com.forzacode.a1016_02.core.HerobrineState;
@@ -11,6 +14,7 @@ import com.forzacode.a1016_02.core.Pacing;
 import com.forzacode.a1016_02.core.Stage;
 import com.forzacode.a1016_02.core.Tier;
 import com.forzacode.a1016_02.core.WorldProfile;
+import com.forzacode.a1016_02.director.sc.ScPacing;
 
 /**
  * Every number the director's logic uses, in ticks, resolved once from {@link Pacing}, {@link DirectorConfig}
@@ -19,6 +23,13 @@ import com.forzacode.a1016_02.core.WorldProfile;
  * Fields are public and mutable so tests can tighten a rule; the live director builds a fresh copy every tick.
  */
 public final class DirectorRules {
+	/**
+	 * One beat of {@link #beats}: this card is reserved as the player's next draw of its tier for {@code window} play ticks
+	 * (R10-2).
+	 */
+	public record Beat(String cardId, long window) {
+	}
+
 	public WorldProfile profile;
 
 	// cadence and gates
@@ -100,6 +111,41 @@ public final class DirectorRules {
 	/** In-game day ticks a deck may stay stuck on gated cards before it reshuffles anyway. */
 	public long deckStall;
 
+	// a group of cards paced as one (the self-created layer's second wave, docs/SELF_CREATED_2.md "Pacing"; FIX-SC2-PACE).
+	// Empty (the default, and live while the layer is off): every card is drawn as ever.
+	/** The group's cards. */
+	public Set<String> groupCards = Set.of();
+	/**
+	 * Per stage and tier: the share of that tier's due draws that come from the group, which then has a no-repeat cycle of
+	 * its own; a stage and tier without a share (or 0) draws the group's cards as any other card.
+	 */
+	public final Map<Stage, Map<Tier, Double>> groupShare = new EnumMap<>(Stage.class);
+	/** A card's own weight in a draw, times its habit and stage weights (1 if missing). */
+	public final Map<String, Double> cardWeights = new HashMap<>();
+	/** A group card's habit weight is never below this (a card whose habits miss the world's still comes). */
+	public double groupHabitFloor;
+	/** Play ticks between two group moments one player goes through, their own or felt; 0: no gap. */
+	public long groupGap;
+	/** Play ticks before the same group card comes again for one player (their own or felt); 0: only its group's cycle. */
+	public long groupRepeat;
+
+	// the first beat (R10-2): from beatStage on, each card of the list in turn is reserved as the player's next draw of its tier
+	/** The beats in order, each with its window of play ticks; empty: none. */
+	public List<Beat> beats = List.of();
+	public Stage beatStage = Stage.PROXIMITY;
+	/** For this many play ticks of the beats' window a beat looks for its moment only at dusk or at night. */
+	public long beatDarkFirst;
+
+	// cards on a clock of their own (the layer's hunts, R10-4): never drawn from their deck; each comes at a passing look
+	/** The cards; empty: none. */
+	public Set<String> ownClockCards = Set.of();
+	/** None before this much of the player's play (the tempo applied); used instead of {@link #firstAccident}. */
+	public long ownClockFrom;
+	/** At most one of them per this many play ticks for one player. */
+	public long ownClockGap;
+	/** After the player's first, one may take a major slot due within this many play ticks (the first, or a called one: any). */
+	public long ownClockPull;
+
 	// flags set by other workstreams ({@link DirectorFlags}); defaults when no flag is set
 	/** No fire at all while the in-game day is below this ({@link DirectorFlags#FOREVER} for good). */
 	public long silenceUntilDay = DirectorFlags.NO_SILENCE;
@@ -112,14 +158,20 @@ public final class DirectorRules {
 	private DirectorRules() {
 	}
 
-	/** The rules from the loaded config and this profile, without any {@link DirectorFlags} (dry runs of a profile). */
+	/**
+	 * The rules from the loaded config and this profile, without any {@link DirectorFlags} (dry runs of a profile): the
+	 * self-created layer's pacing from its loaded section while the layer is on, none while it is off ({@link ScPacing}).
+	 */
 	public static DirectorRules current(WorldProfile profile) {
-		return from(ModConfig.pacing(), DirectorConfig.get(), profile);
+		return ScPacing.live(from(ModConfig.pacing(), DirectorConfig.get(), profile), null);
 	}
 
-	/** The live rules: the loaded config, this world's profile and the director's flags in the shared state. */
+	/**
+	 * The live rules: the loaded config, this world's profile and the director's flags in the shared state; the layer's
+	 * pacing only while the layer is on and its story goes on ({@link ScPacing#live}).
+	 */
 	public static DirectorRules live(HerobrineState state) {
-		return DirectorFlags.apply(current(state.profile()), DirectorFlags.parse(state.flags()));
+		return DirectorFlags.apply(ScPacing.live(from(ModConfig.pacing(), DirectorConfig.get(), state.profile()), state), DirectorFlags.parse(state.flags()));
 	}
 
 	public static DirectorRules from(Pacing pacing, DirectorConfig config, WorldProfile profile) {
@@ -206,6 +258,8 @@ public final class DirectorRules {
 				rules.stageTagWeights.put(stage, byTag);
 			});
 		}
+		// The self-created layer's pacing at its code defaults (dry runs and tests); live rules take the loaded section.
+		ScPacing.apply(rules, ScPacing.defaults(), pacing.paceFactor(profile.tempo()));
 		return rules;
 	}
 
@@ -233,6 +287,25 @@ public final class DirectorRules {
 		}
 		long matches = card.habits().stream().filter(profile.habits()::contains).count();
 		return matches == 0 ? habitMissWeight : 1 + (habitMatchWeight - 1) * matches;
+	}
+
+	/**
+	 * A card's weight in a draw before its stage weight: its habit weight (never below {@link #groupHabitFloor} for a
+	 * group card) times its own weight ({@link #cardWeights}).
+	 */
+	public double drawWeight(CardInfo card) {
+		double habit = habitWeight(card);
+		if (groupCards.contains(card.id())) {
+			habit = Math.max(habit, groupHabitFloor);
+		}
+		return habit * cardWeights.getOrDefault(card.id(), 1.0);
+	}
+
+	/** The group's share of this tier's due draws in this stage (0: the group's cards are drawn as any). */
+	public double groupShare(Stage stage, Tier tier) {
+		Map<Tier, Double> byTier = groupShare.get(stage);
+		Double share = byTier == null ? null : byTier.get(tier);
+		return share == null ? 0 : Math.max(0, Math.min(1, share));
 	}
 
 	public double tensionFor(Tier tier) {

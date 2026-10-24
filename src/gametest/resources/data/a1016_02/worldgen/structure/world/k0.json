@@ -1,0 +1,7 @@
+{
+  "type": "a1016_02:world/sc2",
+  "kind": "k0",
+  "biomes": "#minecraft:is_overworld",
+  "step": "surface_structures",
+  "spawn_overrides": {}
+}

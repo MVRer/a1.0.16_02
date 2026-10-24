@@ -66,12 +66,15 @@ public final class TraceLedger extends SavedData {
 	 * {@code toSlot}, where it was in {@code to}); if the mob died the item dropped and there is nothing to undo. NAME
 	 * (D-086) is a mob's custom name taken ({@link #recordName}): {@code entity} is the mob, {@code pos} its block when
 	 * the name was taken, {@code blockEntity} holds {@code {name: <component>}} (and {@code visible: true} if the name
-	 * showed without being looked at).
+	 * showed without being looked at). MOVE_MOB (the self-created layer, R13-7) is a mob taken from where it stood
+	 * ({@link #recordMobMove}): {@code entity} is the mob, {@code pos} where it stood, {@code to} where it was first put.
 	 */
-	public enum Kind { REMOVE, MOVE, CONVERT, REMOVE_STACK, MOVE_STACK, BLOCK_ENTITY, EQUIP, NAME }
+	public enum Kind { REMOVE, MOVE, CONVERT, REMOVE_STACK, MOVE_STACK, BLOCK_ENTITY, EQUIP, NAME, MOVE_MOB }
 
 	/** Where NAME entries are stored in {@code traces.dat}, apart from the others (v1.3 skips the key). */
 	public static final String NAMES_KEY = "names";
+	/** Where MOVE_MOB entries are stored in {@code traces.dat}, apart from the others (v1.3 and older layer jars skip the key). */
+	public static final String MOBS_KEY = "mobs";
 	/** Where the marks of the CONVERT entries changed since are stored in {@code traces.dat}: their indexes (v1.3 skips the key). */
 	public static final String CHANGED_KEY = "changed";
 	/** The name's key in a NAME entry's {@code blockEntity}. */
@@ -125,7 +128,7 @@ public final class TraceLedger extends SavedData {
 		).apply(i, Entry::new));
 	}
 
-	/** A NAME entry and its index in the whole ledger, stored under {@value #NAMES_KEY}. */
+	/** A NAME (or MOVE_MOB) entry and its index in the whole ledger, stored under {@value #NAMES_KEY} (or {@value #MOBS_KEY}). */
 	private record Placed(int at, Entry entry) {
 		static final Codec<Placed> CODEC = RecordCodecBuilder.create(i -> i.group(
 				Codec.INT.fieldOf("at").forGetter(Placed::at),
@@ -136,7 +139,8 @@ public final class TraceLedger extends SavedData {
 	public static final Codec<TraceLedger> CODEC = RecordCodecBuilder.create(i -> i.group(
 			Entry.CODEC.listOf().fieldOf("entries").forGetter(TraceLedger::unnamed),
 			Placed.CODEC.listOf().lenientOptionalFieldOf(NAMES_KEY, List.of()).forGetter(TraceLedger::names),
-			Codec.INT.listOf().lenientOptionalFieldOf(CHANGED_KEY, List.of()).forGetter(TraceLedger::changedIndexes)
+			Codec.INT.listOf().lenientOptionalFieldOf(CHANGED_KEY, List.of()).forGetter(TraceLedger::changedIndexes),
+			Placed.CODEC.listOf().lenientOptionalFieldOf(MOBS_KEY, List.of()).forGetter(TraceLedger::mobs)
 	).apply(i, TraceLedger::merged));
 	public static final SavedDataType<TraceLedger> TYPE = new SavedDataType<>(A1016_02.id("traces"), TraceLedger::new, CODEC, null);
 
@@ -163,17 +167,17 @@ public final class TraceLedger extends SavedData {
 	}
 
 	/**
-	 * The codec's: the other entries in their order, each NAME entry put back at its index (ascending, clamped), then
-	 * the marks of the CONVERT entries changed since, by index (an index that names no CONVERT is skipped).
+	 * The codec's: the other entries in their order, each NAME and MOVE_MOB entry put back at its index (ascending,
+	 * clamped), then the marks of the CONVERT entries changed since, by index (an index that names no CONVERT is skipped).
 	 */
-	private static TraceLedger merged(List<Entry> unnamed, List<Placed> names, List<Integer> changedAt) {
+	private static TraceLedger merged(List<Entry> unnamed, List<Placed> names, List<Integer> changedAt, List<Placed> mobs) {
 		List<Entry> all = new ArrayList<>(unnamed);
-		List<Placed> sorted = new ArrayList<>(names);
+		List<Placed> sorted = new ArrayList<>();
+		names.stream().filter(p -> p.entry().kind() == Kind.NAME).forEach(sorted::add);
+		mobs.stream().filter(p -> p.entry().kind() == Kind.MOVE_MOB).forEach(sorted::add);
 		sorted.sort(Comparator.comparingInt(Placed::at));
 		for (Placed placed : sorted) {
-			if (placed.entry().kind() == Kind.NAME) {
-				all.add(Math.clamp(placed.at(), 0, all.size()), placed.entry());
-			}
+			all.add(Math.clamp(placed.at(), 0, all.size()), placed.entry());
 		}
 		TraceLedger ledger = new TraceLedger(all);
 		for (int at : changedAt) {
@@ -195,20 +199,29 @@ public final class TraceLedger extends SavedData {
 		return at;
 	}
 
-	/** What is stored under {@code entries}: every entry but NAME, in order. */
+	/** What is stored under {@code entries}: every entry but NAME and MOVE_MOB, in order (what v1.3 can read). */
 	private List<Entry> unnamed() {
-		return entries.stream().filter(e -> e.kind() != Kind.NAME).toList();
+		return entries.stream().filter(e -> e.kind() != Kind.NAME && e.kind() != Kind.MOVE_MOB).toList();
 	}
 
 	/** What is stored under {@value #NAMES_KEY}: each NAME entry with its index in the whole ledger. */
 	private List<Placed> names() {
-		List<Placed> names = new ArrayList<>();
+		return placed(Kind.NAME);
+	}
+
+	/** What is stored under {@value #MOBS_KEY}: each MOVE_MOB entry with its index in the whole ledger. */
+	private List<Placed> mobs() {
+		return placed(Kind.MOVE_MOB);
+	}
+
+	private List<Placed> placed(Kind kind) {
+		List<Placed> found = new ArrayList<>();
 		for (int at = 0; at < entries.size(); at++) {
-			if (entries.get(at).kind() == Kind.NAME) {
-				names.add(new Placed(at, entries.get(at)));
+			if (entries.get(at).kind() == kind) {
+				found.add(new Placed(at, entries.get(at)));
 			}
 		}
-		return names;
+		return found;
 	}
 
 	public static TraceLedger get(MinecraftServer server) {
@@ -269,6 +282,22 @@ public final class TraceLedger extends SavedData {
 		Entry entry = get(server).add(new Entry(Kind.NAME, cause, GameClock.day(server), GlobalPos.of(level.dimension(), mob.blockPosition().immutable()),
 				Optional.empty(), Optional.empty(), Optional.of(data), Optional.empty(), -1, -1, Optional.of(mob.getUUID())));
 		A1016_02.LOGGER.debug("[a1016] trace name of {} ({})", mob, cause);
+		TraceService.traced(level, entry, false);
+		return entry;
+	}
+
+	/**
+	 * Records a mob as taken from where it stood (kind MOVE_MOB, the self-created layer's animals; R13-7) under
+	 * {@code cause}: {@code pos} is {@code from} (where it stood before anything moved it), {@code to} where it was first
+	 * put, {@code entity} its UUID, the day today. Record it once per mob and scene, when it is first moved, so the one
+	 * entry keeps the spot it came from. Fires {@link HerobrineEvents#TRACED} (not placed). {@link TraceService#undo}
+	 * puts the mob back there (out of view), so the switch and Ending D give it back. Server thread.
+	 */
+	public static Entry recordMobMove(ServerLevel level, Mob mob, BlockPos from, BlockPos to, String cause) {
+		Objects.requireNonNull(cause, "cause");
+		MinecraftServer server = level.getServer();
+		Entry entry = get(server).add(new Entry(Kind.MOVE_MOB, cause, GameClock.day(server), GlobalPos.of(level.dimension(), from.immutable()),
+				Optional.of(to.immutable()), Optional.empty(), Optional.empty(), Optional.empty(), -1, -1, Optional.of(mob.getUUID())));
 		TraceService.traced(level, entry, false);
 		return entry;
 	}

@@ -41,11 +41,22 @@ public enum Variant {
 	 * puts him ({@link GlimpseFigure}). Not a director card of its own; never rushes, never goes under, no fake, silent,
 	 * eyes FLAT. The one figure that vanishes in view: gone before anyone looks straight at him.
 	 */
-	GLIMPSE("glimpse", Tier.MINOR, Stage.TRACES, Spot.GIVEN, Pose.STAND, Facing.PLAYER, false, Ending.VANISH, Gait.WALK, Fake.NONE);
+	GLIMPSE("glimpse", Tier.MINOR, Stage.TRACES, Spot.GIVEN, Pose.STAND, Facing.PLAYER, false, Ending.VANISH, Gait.WALK, Fake.NONE),
+	/**
+	 * 31 of the self-created layer's second wave (docs/SELF_CREATED_2.md): still on the top block of one of his places at
+	 * dusk, facing the player, where {@code entity.sc2.s31} puts him ({@link FigureApi#spawnGiven}); the ridge's stare back
+	 * and leaving, down the far side, never going under. Its card is {@code sc_31}, not {@code sighting_*}.
+	 */
+	APEX("s31", Tier.MINOR, Stage.TRACES, Spot.GIVEN, Pose.STAND, Facing.PLAYER, false, Ending.STARE_LEAVE, Gait.WALK, Fake.ZOMBIE),
+	/**
+	 * 31c: half of him behind a given trunk inside one of his places, in the dark, eyes FLAT; between the trunks' hiding.
+	 * Its card is {@code sc_31c}.
+	 */
+	INSIDE_TRUNKS("s31c", Tier.MINOR, Stage.PROXIMITY, Spot.GIVEN, Pose.STAND, Facing.PLAYER, true, Ending.HIDE, Gait.WALK, Fake.NONE);
 
 	/**
 	 * Where the spot finder looks. ENDERMEN and PIGLINS: beside existing mobs of that kind, never spawning one. GIVEN:
-	 * the caller gives the spot (the glimpse), the spot finder never looks.
+	 * the caller gives the spot (the glimpse, 31 and 31c), the spot finder never looks, and no {@code sighting_*} card.
 	 */
 	public enum Spot { OPEN, RIDGE, TRUNK, LIGHT, SHORE, KNOWN, ENDERMEN, PIGLINS, GIVEN }
 
@@ -151,7 +162,8 @@ public enum Variant {
 	 * in the End (the void) or the Nether (netherrack, and no shrine imagery).
 	 */
 	public boolean mayGoUnder() {
-		return dimension() == Level.OVERWORLD && (ending == Ending.STARE_LEAVE || ending == Ending.RISE_STARE_LEAVE);
+		// 31 leaves down the far side of the place it stands on, never through its top block.
+		return this != APEX && dimension() == Level.OVERWORLD && (ending == Ending.STARE_LEAVE || ending == Ending.RISE_STARE_LEAVE);
 	}
 
 	/** True if a chaser he cannot outrun may make him rush past them (D-037). Never Ending A's last one, never the glimpse. */
@@ -172,9 +184,12 @@ public enum Variant {
 		return ending == Ending.VANISH;
 	}
 
-	/** The eye style this variant always has, whatever the config says, or empty for the configured one. The glimpse: FLAT. */
+	/**
+	 * The eye style this variant always has, whatever the config says, or empty for the configured one. The glimpse and
+	 * 31c (the dark among the trunks inside): FLAT.
+	 */
 	public Optional<EyeStyle> eyeStyle() {
-		return this == GLIMPSE ? Optional.of(EyeStyle.FLAT) : Optional.empty();
+		return this == GLIMPSE || this == INSIDE_TRUNKS ? Optional.of(EyeStyle.FLAT) : Optional.empty();
 	}
 
 	/**

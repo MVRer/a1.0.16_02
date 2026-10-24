@@ -198,11 +198,88 @@ public final class TorchTrail {
 		}
 	}
 
-	/** A search's answer: the plan, or why there is none. */
-	public record Result(@Nullable Plan plan, String reason) {
+	/** A search's answer: the plan (or 11+'s breach, docs/SELF_CREATED_2.md), or why there is none. */
+	public record Result(@Nullable Plan plan, String reason, @Nullable BreachPlan breach) {
+		public Result(@Nullable Plan plan, String reason) {
+			this(plan, reason, null);
+		}
+
 		static Result none(String reason) {
 			return new Result(null, reason);
 		}
+
+		/** True if something would be (or was) left: a shaft's plan or a breach. */
+		public boolean found() {
+			return plan != null || breach != null;
+		}
+	}
+
+	// --- 11+ (the second wave, docs/SELF_CREATED_2.md: "t0rch went in") ---
+
+	/**
+	 * Where a walk may end instead of at a shaft: a way dug from a walk cell through a wall of someone's cells into the
+	 * lit room beyond. Set by the second wave's archive ({@link #setBreach}); none by default.
+	 */
+	@FunctionalInterface
+	public interface Breach {
+		/**
+		 * A way from one of the walk's cells (each with its steps from the start), or null; asked once per search, after
+		 * the walk. Roll any chance only once a way exists (the search's random is shared).
+		 */
+		@Nullable Way find(ServerLevel level, Map<BlockPos, Integer> walk, BlockPos start, Config config, RandomSource random);
+	}
+
+	/**
+	 * A way in: from the walk's cell {@code end}, {@code dig} cells (feet and head) straight along {@code toward}, then
+	 * {@code beyond}, the first open cell inside.
+	 */
+	public record Way(BlockPos end, Direction toward, int dig, BlockPos beyond) {
+		/** The dug cells, feet and head, in order. */
+		public List<BlockPos> dug() {
+			List<BlockPos> out = new ArrayList<>(dig * 2);
+			for (int k = 1; k <= dig; k++) {
+				BlockPos feet = end.relative(toward, k);
+				out.add(feet);
+				out.add(feet.above());
+			}
+			return out;
+		}
+	}
+
+	/**
+	 * 11+'s plan: the walk to the way's end with the torches and the sign as 11 leaves them, then the hole dug through
+	 * (cause {@value #BREACH_CAUSE}, left by others, never undone), and the lit room beyond. No shaft, no floor torch.
+	 */
+	public record BreachPlan(List<BlockPos> path, int mouth, List<Left> torches, Way way, Left sign) {
+		public BlockPos beyond() {
+			return way.beyond();
+		}
+
+		public Set<BlockPos> cells() {
+			Set<BlockPos> cells = new LinkedHashSet<>(way.dug());
+			torches.forEach(t -> cells.add(t.pos()));
+			cells.add(sign.pos());
+			return cells;
+		}
+
+		public String summary() {
+			return torches.size() + " torches over " + (path.size() - 1 - mouth) + " cells from the mouth, a hole of " + way.dig() + " through to "
+					+ way.beyond().toShortString();
+		}
+	}
+
+	/** 11+'s hole: left by others, never undone. */
+	public static final String BREACH_CAUSE = "world:left/t0rch/breach";
+	private static volatile Breach breach = (level, walk, start, config, random) -> null;
+
+	/** The second wave's archive sets where a walk may end (in init). */
+	public static void setBreach(Breach way) {
+		breach = way == null ? (level, walk, start, config, random) -> null : way;
+	}
+
+	/** The breach in use (tests put theirs and the live one back). */
+	public static Breach breach() {
+		return breach;
 	}
 
 	private TorchTrail() {
@@ -230,7 +307,7 @@ public final class TorchTrail {
 			}
 			return List.copyOf(lines.subList(0, SignText.LINES));
 		} catch (Exception e) {
-			A1016_02.LOGGER.warn("[a1016] world: {}'s text could not be read", ID, e);
+			com.forzacode.a1016_02.core.ScLog.warn("[a1016] world: {}'s text could not be read", ID, e);
 			return FALLBACK_LINES;
 		}
 	}
@@ -460,9 +537,17 @@ public final class TorchTrail {
 			return Result.none("no cave " + config.pathMin + " to " + config.pathMax + " cells from " + first.toShortString() + " (" + dist.size()
 					+ " cells walked)");
 		}
-		Util.shuffle(ends, random);
 		List<BlockPos> bases = env.bases().all(level.dimension());
 		List<ServerPlayer> people = env.people().in(level);
+		// 11+: a walk that passes someone's cells may end at a hole dug into them instead (the second wave's archive).
+		Way way = breach.find(level, Collections.unmodifiableMap(dist), first, config, random);
+		if (way != null) {
+			Result through = buildBreach(env, level, parent, first, way, config, visits, bases, people);
+			if (through.found()) {
+				return through;
+			}
+		}
+		Util.shuffle(ends, random);
 		// Why each end failed, by how far it got: 0 no shaft, 1 not a dead end, 2 not a branch nobody visited, 3 the torches,
 		// sign or a rule.
 		List<Map<String, Integer>> why = List.of(new HashMap<>(), new HashMap<>(), new HashMap<>(), new HashMap<>());
@@ -670,6 +755,76 @@ public final class TorchTrail {
 	}
 
 	/**
+	 * 11+: the walk to a way's end with every rule of 11 but the shaft's (the mouth in land nobody visited, the torches on
+	 * the right, the sign 2 to 5 cells before the end, far from bases, nobody near, out of view); a plan or why not.
+	 */
+	static Result buildBreach(ScEnv env, ServerLevel level, Map<BlockPos, BlockPos> parent, BlockPos first, Way way, Config config,
+			NewScarPlacer.@Nullable VisitLookup visits, List<BlockPos> bases, List<ServerPlayer> people) {
+		if (!parent.containsKey(way.end())) {
+			return Result.none("the way in is not on the walk");
+		}
+		List<BlockPos> path = new ArrayList<>();
+		for (BlockPos at = way.end(); ; at = parent.get(at)) {
+			path.add(at);
+			if (at.equals(first)) {
+				break;
+			}
+		}
+		Collections.reverse(path);
+		if (path.size() - 1 < config.pathMin) {
+			return Result.none("the way in is under " + config.pathMin + " cells from the spot");
+		}
+		int mouth = mouth(level, path, visits);
+		if (mouth < 0) {
+			return Result.none("the way there is not a branch nobody visited");
+		}
+		Set<BlockPos> taken = new LinkedHashSet<>(way.dug());
+		Left sign = sign(level, path, mouth, 0, taken);
+		if (sign == null) {
+			return Result.none("no wall " + SIGN_BACK_MIN + " to " + SIGN_BACK_MAX + " cells before the way in for the sign");
+		}
+		taken.add(sign.pos());
+		List<Left> torches = torches(level, path, mouth, config, taken);
+		if (torches == null) {
+			return Result.none("no right-hand wall for a torch every " + config.spacingMin + " to " + config.spacingMax + " cells");
+		}
+		BreachPlan plan = new BreachPlan(List.copyOf(path), mouth, List.copyOf(torches), way, sign);
+		Set<BlockPos> cells = plan.cells();
+		if (!ScEnv.loaded(level, cells)) {
+			return Result.none("not loaded");
+		}
+		for (BlockPos cell : cells) {
+			if (Bases.near(bases, cell, config.baseClearance)) {
+				return Result.none("within " + (int) config.baseClearance + " of a base");
+			}
+		}
+		if (env.anyProtected(level, cells)) {
+			return Result.none("a protected area");
+		}
+		ServerPlayer near = ScGates.within(people, cells, config.nobodyWithin);
+		if (near != null) {
+			return Result.none(ScGates.name(near) + " is within " + (int) config.nobodyWithin);
+		}
+		if (!env.view().outOfView(level, cells)) {
+			return Result.none("in view");
+		}
+		return new Result(null, plan.summary(), plan);
+	}
+
+	/** 11+: leaves a breach in one batch, left by others: the hole dug, the torches and the sign; false if refused. */
+	static boolean leaveBreach(ScEnv env, ServerLevel level, BreachPlan plan, List<String> lines) {
+		TraceBatch batch = env.traces().batch(level, BREACH_CAUSE);
+		for (BlockPos cell : plan.way().dug()) {
+			batch.remove(cell);
+		}
+		for (Left torch : plan.torches()) {
+			batch.leave(torch.pos(), torch.state());
+		}
+		batch.leave(plan.sign().pos(), plan.sign().state(), signData(level, lines));
+		return batch.commit();
+	}
+
+	/**
 	 * Leaves the plan in one batch, left by others: the shaft dug down to its floor, the water at its foot, the torches and
 	 * the sign; false (nothing left) if it was refused.
 	 */
@@ -715,17 +870,19 @@ public final class TorchTrail {
 		String last = "nothing";
 		for (BlockPos start : from) {
 			Result found = search(env, level, start, config, visits, random);
-			if (found.plan() == null) {
+			if (!found.found()) {
 				last = found.reason();
 				continue;
 			}
-			if (!leave(env, level, found.plan(), lines(env.server()))) {
+			boolean left = found.plan() != null ? leave(env, level, found.plan(), lines(env.server())) : leaveBreach(env, level, found.breach(), lines(env.server()));
+			if (!left) {
 				last = "the trail was refused (in view)";
 				continue;
 			}
 			// In this tick: once per world, whoever's card asks next.
-			env.marks().addTrail(new ScMarks.Trail(GlobalPos.of(level.dimension(), found.plan().hole()), GameClock.day(env.server())));
-			A1016_02.LOGGER.info("[a1016] world: {} at {}", ID, found.plan().hole().toShortString());
+			BlockPos end = found.plan() != null ? found.plan().hole() : found.breach().beyond();
+			env.marks().addTrail(new ScMarks.Trail(GlobalPos.of(level.dimension(), end), GameClock.day(env.server())));
+			A1016_02.LOGGER.info("[a1016] world: {} at {}", ID, end.toShortString());
 			return found;
 		}
 		return Result.none(last);
@@ -812,7 +969,7 @@ public final class TorchTrail {
 		public FireResult fire(FireContext ctx) {
 			ScEnv env = ScEnv.live(ctx.level().getServer());
 			Result result = leaveFor(env, ctx.player(), null, env.watch()::lastVisitDay, config(), ctx.random(), ctx.forced());
-			if (result.plan() != null) {
+			if (result.found()) {
 				return FireResult.FIRED;
 			}
 			return ScGates.targetRefusal(env.state(), env.watch(), ctx.player(), ctx.level(), ctx.forced()) != null

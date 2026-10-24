@@ -4,6 +4,7 @@ import com.forzacode.a1016_02.core.Director;
 import com.forzacode.a1016_02.core.HerobrineEvents;
 import com.forzacode.a1016_02.core.Services;
 import com.forzacode.a1016_02.entity.sc.ScEntityInit;
+import com.forzacode.a1016_02.entity.sc2.EntitySc2;
 
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
@@ -35,5 +36,6 @@ public final class EntityInit {
 			TheScreenshot.LIVE.clear();
 		});
 		ScEntityInit.init(); // the self-created layer's entity parts (docs/SELF_CREATED.md)
+		EntitySc2.init(); // the self-created layer's second wave (docs/SELF_CREATED_2.md)
 	}
 }

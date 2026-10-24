@@ -14,12 +14,15 @@ import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.Container;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.Mob;
+import net.minecraft.world.entity.OwnableEntity;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.block.entity.SignBlockEntity;
 import net.minecraft.world.level.block.entity.SignText;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.state.properties.Property;
+import net.minecraft.world.phys.AABB;
+import net.minecraft.world.phys.Vec3;
 
 import org.jspecify.annotations.Nullable;
 
@@ -46,12 +49,15 @@ final class TraceUndo {
 			// The mob, wherever it is in this level now, not the block it stood on.
 			return name(traces, level, ledger, entry);
 		}
+		if (entry.kind() == TraceLedger.Kind.MOVE_MOB) {
+			return mobBack(traces, level, ledger, entry);
+		}
 		BlockPos at = entry.pos().pos();
 		if (!loaded(level, at) || entry.to().isPresent() && !loaded(level, entry.to().get())) {
 			return TraceService.UndoResult.UNLOADED;
 		}
 		return switch (entry.kind()) {
-			case NAME -> TraceService.UndoResult.BLOCKED;
+			case NAME, MOVE_MOB -> TraceService.UndoResult.BLOCKED;
 			case REMOVE -> remove(traces, level, entry);
 			case MOVE -> move(traces, level, ledger, entry, cause);
 			case CONVERT -> convert(traces, level, ledger, entry, cause);
@@ -97,6 +103,47 @@ final class TraceUndo {
 		if (entry.blockEntity().map(data -> data.getBooleanOr(TraceLedger.NAME_VISIBLE_KEY, false)).orElse(false)) {
 			mob.setCustomNameVisible(true);
 		}
+		ledger.remove(entry);
+		return TraceService.UndoResult.DONE;
+	}
+
+	/**
+	 * A MOVE_MOB entry (the self-created layer's animals, R13-7): the mob, loaded anywhere in this level, alive and free
+	 * (no leash, no rider, no vehicle, no owner, no name: none of them came since, or it is someone's now: BLOCKED), goes
+	 * back to where it stood, into room for its body (none there: BLOCKED), out of view where it is and where it goes
+	 * (else IN_VIEW), and not while something else holds it (IN_VIEW): DONE, the entry closed. Where it stood not loaded:
+	 * UNLOADED. Not in this level now: UNLOADED while the entities where it was put are not loaded, BLOCKED once they are
+	 * (it died or wandered; a later pass may still find it), as for a name. Nothing is loaded here.
+	 */
+	private static TraceService.UndoResult mobBack(TraceService traces, ServerLevel level, TraceLedger ledger, TraceLedger.Entry entry) {
+		if (entry.entity().isEmpty()) {
+			return TraceService.UndoResult.BLOCKED;
+		}
+		Entity found = level.getEntity(entry.entity().get());
+		if (!(found instanceof Mob mob) || mob.level() != level) {
+			BlockPos at = entry.to().orElse(entry.pos().pos());
+			return level.areEntitiesLoaded(ChunkPos.pack(at.getX() >> 4, at.getZ() >> 4)) ? TraceService.UndoResult.BLOCKED : TraceService.UndoResult.UNLOADED;
+		}
+		if (!mob.isAlive() || mob.isRemoved() || mob.isLeashed() || mob.isPassenger() || mob.isVehicle() || mob.hasCustomName()
+				|| mob instanceof OwnableEntity owned && owned.getOwnerReference() != null) {
+			return TraceService.UndoResult.BLOCKED;
+		}
+		BlockPos home = entry.pos().pos();
+		if (!loaded(level, home)) {
+			return TraceService.UndoResult.UNLOADED;
+		}
+		Vec3 dest = Vec3.atBottomCenterOf(home);
+		AABB destBox = mob.getDimensions(mob.getPose()).makeBoundingBox(dest);
+		if (!level.noCollision(mob, destBox)) {
+			return TraceService.UndoResult.BLOCKED;
+		}
+		if (Services.mobs().isTampered(mob) || !traces.allowed(level, mob.getBoundingBox()) || !traces.allowed(level, destBox)) {
+			return TraceService.UndoResult.IN_VIEW;
+		}
+		mob.getNavigation().stop();
+		mob.teleportTo(dest.x, dest.y, dest.z);
+		mob.setDeltaMovement(Vec3.ZERO);
+		mob.setOldPosAndRot();
 		ledger.remove(entry);
 		return TraceService.UndoResult.DONE;
 	}

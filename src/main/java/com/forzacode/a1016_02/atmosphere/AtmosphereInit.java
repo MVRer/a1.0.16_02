@@ -3,6 +3,7 @@ package com.forzacode.a1016_02.atmosphere;
 import com.forzacode.a1016_02.atmosphere.card.AtmosphereCards;
 import com.forzacode.a1016_02.atmosphere.mob.MobTamperImpl;
 import com.forzacode.a1016_02.atmosphere.sc.AtmosphereSc;
+import com.forzacode.a1016_02.atmosphere.sc2.AtmosphereSc2;
 import com.forzacode.a1016_02.core.Director;
 import com.forzacode.a1016_02.core.FogLimits;
 import com.forzacode.a1016_02.core.FogWeatherRules;
@@ -27,5 +28,6 @@ public final class AtmosphereInit {
 		AtmosphereCommands.register();
 		// The self-created layer's part (docs/SELF_CREATED.md): sections, payload, commands and the switch's reverts.
 		AtmosphereSc.init();
+		AtmosphereSc2.init(); // the self-created layer's second wave (docs/SELF_CREATED_2.md)
 	}
 }

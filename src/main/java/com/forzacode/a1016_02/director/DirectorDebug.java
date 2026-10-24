@@ -137,6 +137,9 @@ final class DirectorDebug {
 				name, m.totalFires, m.fakeFires, m.fakeableFires, m.feltFires, m.quietCount, m.emptySessionCount, m.sessionCount));
 		long blind = Services.watch().participant(server, player).map(Services.watch()::blindTicks).orElse(0L);
 		lines.add(recheckLine(name, m, blind, director.lastRecheck(player), now, rules));
+		if (!rules.groupCards.isEmpty()) {
+			lines.add(layerLine(name, m, c, rules, brain));
+		}
 		for (Tier tier : Tier.values()) {
 			List<String> undrawn = new ArrayList<>();
 			List<String> fired = new ArrayList<>();
@@ -163,6 +166,46 @@ final class DirectorDebug {
 					e.cardId(), e.fake() ? " fake" : "", e.forced() ? " forced" : "", e.stage()));
 		}
 		return lines;
+	}
+
+	/**
+	 * The layer's pacing for {@code /a1016 director} (docs/SELF_CREATED_2.md, "Pacing"; FIX-SC2-PACE): the beat reserved now
+	 * (its card and how much of its window is left) or whether they had it, what is left of the group's gap, and the own
+	 * clock (closed until when, its own gap, or open). Card ids only.
+	 */
+	static String layerLine(String name, PacingMemory m, DirectorBrain.Clock c, DirectorRules rules, DirectorBrain brain) {
+		long now = c.playTicks();
+		DirectorRules.Beat beat = brain.currentBeat(m, c);
+		String beats;
+		if (beat != null) {
+			long left = 0;
+			long age = m.beatAge;
+			for (DirectorRules.Beat b : rules.beats) {
+				if (brain.card(b.cardId()) == null) {
+					continue;
+				}
+				if (b == beat) {
+					left = b.window() - age;
+					break;
+				}
+				age -= b.window();
+			}
+			beats = "beat " + beat.cardId() + " (" + dur(rules, left) + " of its window left)";
+		} else {
+			beats = m.beatDone ? "beat done" : m.beatFrom < 0 ? "beat not yet" : "no beat";
+		}
+		long gap = Math.max(0, m.lastGroup + rules.groupGap - now);
+		String own;
+		if (rules.ownClockCards.isEmpty()) {
+			own = "own clock none";
+		} else if (now < rules.ownClockFrom) {
+			own = "own clock opens in " + dur(rules, rules.ownClockFrom - now);
+		} else if (now - m.lastOwnClock < rules.ownClockGap) {
+			own = "own clock gap " + dur(rules, m.lastOwnClock + rules.ownClockGap - now);
+		} else {
+			own = "own clock open";
+		}
+		return String.format(Locale.ROOT, "director: %s: layer: %s | group gap %s | %s", name, beats, gap == 0 ? "open" : dur(rules, gap), own);
 	}
 
 	/**

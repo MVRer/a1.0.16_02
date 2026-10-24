@@ -159,7 +159,8 @@ class DirectorTestSupport {
 						majors++;
 					}
 					CardInfo card = byId.get(e.cardId());
-					if (!accident && card != null && card.has(CardTag.ACCIDENT)) {
+					// The first accident of the traps on the accident clock: the layer's hunts have their own (R10-4).
+					if (!accident && card != null && card.has(CardTag.ACCIDENT) && !r.rules.ownClockCards.contains(card.id())) {
 						accident = true;
 						accidents.add((e.play() - r.startPlay) / (double) hour);
 					}
@@ -312,7 +313,12 @@ class DirectorTestSupport {
 				out.add(at + "moment number " + firstHour + " in their first hour");
 			}
 			CardInfo card = byId.get(e.cardId());
-			if (card != null && card.has(CardTag.ACCIDENT) && e.play() < rules.firstAccident) {
+			if (card != null && rules.ownClockCards.contains(card.id())) {
+				// The layer's hunts run on their own clock instead of the first accident's time (FIX-SC2-PACE, R10-4).
+				if (e.play() < rules.ownClockFrom) {
+					out.add(at + "an own-clock card before " + rules.ownClockFrom);
+				}
+			} else if (card != null && card.has(CardTag.ACCIDENT) && e.play() < rules.firstAccident) {
 				out.add(at + "an accident before " + rules.firstAccident);
 			}
 		}

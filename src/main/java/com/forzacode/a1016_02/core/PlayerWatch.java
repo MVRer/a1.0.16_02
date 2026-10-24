@@ -14,6 +14,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
+import java.util.function.Function;
 import java.util.function.Predicate;
 
 import net.minecraft.core.BlockPos;
@@ -101,8 +102,15 @@ public final class PlayerWatch {
 			return HerobrineState.get(server);
 		}
 
+		/** Always on the server thread (R12-4): a call from any other thread is handed to the server thread's next turn. */
 		@Override
 		public void participation(MinecraftServer server, UUID player, boolean participating) {
+			if (!server.isSameThread()) {
+				if (server.isRunning()) {
+					server.execute(() -> HerobrineEvents.PARTICIPATION.invoker().onParticipation(server, player, participating));
+				}
+				return;
+			}
 			HerobrineEvents.PARTICIPATION.invoker().onParticipation(server, player, participating);
 		}
 	};
@@ -458,6 +466,13 @@ public final class PlayerWatch {
 		return WatchData.get(level.getServer()).footprint(level.dimension()).visits.get(chunk.pack());
 	}
 
+	/** Tests and debug: a participant was in or next to this chunk today, as the 5-second sample records it. */
+	public void markVisit(ServerLevel level, ChunkPos chunk) {
+		WatchData data = WatchData.get(level.getServer());
+		data.footprint(level.dimension()).visits.put(chunk.pack(), (int) GameClock.day(level.getServer()));
+		data.setDirty();
+	}
+
 	/** True if a player placed the block now at {@code pos} (and nobody broke it since). */
 	public boolean wasPlacedByPlayer(ServerLevel level, BlockPos pos) {
 		return footprint(level).placed.contains(pos);
@@ -523,8 +538,62 @@ public final class PlayerWatch {
 	}
 
 	/**
-	 * Fabric's DISCONNECT (the player is still listed while it runs). Ends that player's participation only, and forgets
-	 * their recent actions and blind moment.
+	 * Fabric's DISCONNECT, from whichever thread closed the connection (R12-4). A disconnect the server makes (a kick, a
+	 * stop) runs on the server thread, the player still listed: the leave is handled at once. One the client makes (a
+	 * quit, a crash, a timeout) reaches Fabric on the network thread first, where nothing of the watch's, and no
+	 * {@link HerobrineEvents#PARTICIPATION} listener, may run (they share their maps with the server's tick): the leave
+	 * is handed to the server thread's next turn, and skipped if another object is listed for that player by then (a new
+	 * session) or the server is no longer running (no participation events on a stop). Vanilla takes the player off the
+	 * list on the server thread too, and {@link #onRemoving} handles the leave there if that comes first, so the stop
+	 * fires exactly once, always on the server thread, with the player still listed.
+	 */
+	public void onDisconnect(MinecraftServer server, ServerPlayer player) {
+		afterDisconnect(server, player, uuid -> source.online(server, uuid), () -> onLeave(player));
+	}
+
+	/**
+	 * Core's {@code PlayerList.remove} hook, at its head: on the server thread, the player still listed. Every disconnect
+	 * ends there, so a leave Fabric only saw on the network thread is handled here at the latest, while the player is
+	 * still online (R12-4); one handled already does nothing again.
+	 */
+	public void onRemoving(ServerPlayer player) {
+		UUID uuid = player.getUUID();
+		MinecraftServer server = player.level().getServer();
+		if (server.isSameThread() && source.online(server, uuid) == player && (participating.contains(uuid) || connected.contains(uuid))) {
+			onLeave(player);
+		}
+	}
+
+	/**
+	 * Runs {@code work} for Fabric's DISCONNECT of {@code player} on the server thread (R12-4), for anyone's own
+	 * DISCONNECT listener that touches what the server's tick touches: at once when called there; from another thread
+	 * (the network thread, for a client that quit or crashed) on the server thread's next turn, unless the server is no
+	 * longer running or another object is listed for that player by then (they joined again).
+	 */
+	public static void afterDisconnect(MinecraftServer server, ServerPlayer player, Runnable work) {
+		afterDisconnect(server, player, uuid -> server.getPlayerList().getPlayer(uuid), work);
+	}
+
+	private static void afterDisconnect(MinecraftServer server, ServerPlayer player, Function<UUID, @Nullable ServerPlayer> listed,
+			Runnable work) {
+		if (server.isSameThread()) {
+			work.run();
+			return;
+		}
+		if (!server.isRunning()) {
+			return;
+		}
+		server.execute(() -> {
+			ServerPlayer now = listed.apply(player.getUUID());
+			if (now == null || now == player) {
+				work.run();
+			}
+		});
+	}
+
+	/**
+	 * A leave on the server thread ({@link #onDisconnect}). Ends that player's participation only, and forgets their
+	 * recent actions and blind moment.
 	 */
 	void onLeave(ServerPlayer player) {
 		UUID uuid = player.getUUID();

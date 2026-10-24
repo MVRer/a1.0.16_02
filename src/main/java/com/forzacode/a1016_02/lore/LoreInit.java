@@ -3,6 +3,7 @@ package com.forzacode.a1016_02.lore;
 import com.forzacode.a1016_02.core.HerobrineEvents;
 import com.forzacode.a1016_02.core.Services;
 import com.forzacode.a1016_02.lore.sc.ScLoreInit;
+import com.forzacode.a1016_02.lore.sc2.LoreSc2;
 
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
@@ -89,5 +90,6 @@ public final class LoreInit {
 		});
 		LoreCommands.register(engine);
 		ScLoreInit.init(); // the self-created layer's lore part (docs/SELF_CREATED.md)
+		LoreSc2.init(); // the self-created layer's second wave (docs/SELF_CREATED_2.md)
 	}
 }

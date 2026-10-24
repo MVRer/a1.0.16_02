@@ -48,18 +48,29 @@ public class SelfCreatedPacingTests {
 			Map.entry("sc_13", new Row(Tier.MAJOR, Stage.PROXIMITY, EnumSet.of(CardTag.DIG, CardTag.PERSONAL), EnumSet.of(Habit.CARVER, Habit.STRIPPER), false)),
 			Map.entry("sc_14", new Row(Tier.MINOR, Stage.TRACES, EnumSet.of(CardTag.TEXT, CardTag.UNSHARED), EnumSet.of(Habit.WATCHER, Habit.VISITOR), false)),
 			Map.entry("sc_15", new Row(Tier.MINOR, Stage.PROXIMITY, EnumSet.of(CardTag.DIG, CardTag.PERSONAL), EnumSet.of(Habit.CARVER, Habit.STRIPPER), false)));
+	// The second wave's rows (docs/SELF_CREATED_2.md, "Pacing and director integration") are SelfCreated2PacingTests' (SC2-9).
 
 	private static final Predicate<CardInfo> LAYER = card -> card.id().startsWith("sc_");
 	/** A look at a card of the layer fits this often in the rare runs. */
 	static final double RARE_FIT = 0.02;
 
-	/** Every card of the layer is registered with its row of the design's table, and no other card is named sc_. */
+	/**
+	 * Every card of the layer's first wave is registered with its row of the design's table, and no other first-wave card is
+	 * named sc_; a second-wave card ({@code sc_16} on) that has a row here matches it too (since SC2-9 none has: the second
+	 * wave's table is {@code SelfCreated2PacingTests}', docs/SELF_CREATED_2.md).
+	 */
 	@GameTest
 	public void everyCardOfTheLayerIsInTheDeckWithTheDesignsRow(GameTestHelper helper) {
+		String firstWave = "sc_(0\\d|1[0-5])\\D*";
 		List<CardInfo> layer = DirectorTestSupport.registryDeck().stream().filter(LAYER).toList();
-		helper.assertTrue(layer.size() == DESIGN.size(), "the layer's cards: " + layer.stream().map(CardInfo::id).toList());
+		List<String> first = layer.stream().map(CardInfo::id).filter(id -> id.matches(firstWave)).toList();
+		long designed = DESIGN.keySet().stream().filter(id -> id.matches(firstWave)).count();
+		helper.assertTrue(first.size() == designed, "the layer's first-wave cards: " + first);
 		for (CardInfo card : layer) {
 			Row row = DESIGN.get(card.id());
+			if (row == null && !card.id().matches(firstWave)) {
+				continue;
+			}
 			helper.assertTrue(row != null, card.id() + " is not in the design's table");
 			Row now = new Row(card.tier(), card.earliestStage(), card.tags(), card.habits(), card.hasFake());
 			helper.assertTrue(row.equals(now), card.id() + ": " + now + ", the design says " + row);

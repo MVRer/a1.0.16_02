@@ -2,7 +2,7 @@ package com.forzacode.a1016_02.atmosphere.client;
 
 import java.lang.reflect.Method;
 
-import com.forzacode.a1016_02.A1016_02;
+import com.forzacode.a1016_02.core.ScLog;
 
 import net.fabricmc.loader.api.FabricLoader;
 
@@ -40,7 +40,7 @@ public final class ShaderPacks {
 			return Boolean.TRUE.equals(inUse.invoke(getInstance.invoke(null)));
 		} catch (ReflectiveOperationException | RuntimeException | LinkageError e) {
 			broken = true;
-			A1016_02.LOGGER.warn("[a1016] Iris is loaded but its API cannot be read; a shader pack counts as in use", e);
+			ScLog.warn("[a1016] Iris is loaded but its API cannot be read; a shader pack counts as in use", e);
 			return true;
 		}
 	}

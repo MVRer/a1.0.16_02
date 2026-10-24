@@ -96,8 +96,26 @@ final class Away {
 
 	/** Runs {@code then} on the first tick the patch is {@link #ready()}; {@code then} ends the test. */
 	void whenReady(Runnable then) {
-		helper.startSequence().thenWaitUntil(() -> helper.assertTrue(ready(), "the patch in " + level.dimension().identifier() + " is not loaded yet: " + why()))
-				.thenExecute(then);
+		// First in real time (at most 30 s) until the chunks are entity-ticking, as SC2-3's patches wait: a loaded machine's
+		// chunk system can take longer than a test's ticks (SC2-H); then the entities' loading, in real time too (FarPatches,
+		// SC2-9).
+		helper.startSequence().thenExecute(() -> {
+			long until = net.minecraft.util.Util.getMillis() + 30_000L;
+			level.getServer().managedBlock(() -> ticking() || net.minecraft.util.Util.getMillis() > until);
+		}).thenWaitUntil(com.forzacode.a1016_02.core.FarPatches.until(helper, this::ready, () -> "the patch in " + level.dimension().identifier() + " ("
+				+ why() + ")")).thenExecute(then);
+	}
+
+	/** Every chunk of the patch is entity-ticking by its tickets (its entities may still be loading). */
+	private boolean ticking() {
+		for (int cx = (origin.getX() - REACH) >> 4; cx <= (origin.getX() + REACH) >> 4; cx++) {
+			for (int cz = (origin.getZ() - 32) >> 4; cz <= (origin.getZ() + 32) >> 4; cz++) {
+				if (!level.isPositionEntityTicking(new net.minecraft.core.BlockPos((cx << 4) + 8, origin.getY(), (cz << 4) + 8))) {
+					return false;
+				}
+			}
+		}
+		return true;
 	}
 
 	private String why() {

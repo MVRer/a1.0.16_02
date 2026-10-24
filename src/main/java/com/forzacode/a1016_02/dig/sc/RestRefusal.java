@@ -23,6 +23,7 @@ import com.forzacode.a1016_02.core.Habit;
 import com.forzacode.a1016_02.core.HerobrineState;
 import com.forzacode.a1016_02.core.ModConfig;
 import com.forzacode.a1016_02.core.PlayerWatch;
+import com.forzacode.a1016_02.core.ScLog;
 import com.forzacode.a1016_02.core.SelfCreated;
 import com.forzacode.a1016_02.core.Services;
 import com.forzacode.a1016_02.core.Stage;
@@ -233,7 +234,7 @@ public final class RestRefusal {
 		try {
 			return refuse(player, bed, envFor(player));
 		} catch (RuntimeException e) {
-			A1016_02.LOGGER.error("[a1016] {}: the check failed; vanilla decides", CARD_ID, e);
+			ScLog.error("[a1016] {}: the check failed; vanilla decides", CARD_ID, e);
 			return false;
 		}
 	}

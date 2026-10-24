@@ -21,6 +21,7 @@ import com.forzacode.a1016_02.core.DeathMarker;
 import com.forzacode.a1016_02.core.GameClock;
 import com.forzacode.a1016_02.core.HerobrineState;
 import com.forzacode.a1016_02.core.PlayerWatch;
+import com.forzacode.a1016_02.core.ScLog;
 import com.forzacode.a1016_02.core.Services;
 import com.forzacode.a1016_02.core.SiteRegistry;
 import com.forzacode.a1016_02.core.TrapType;
@@ -422,14 +423,25 @@ public final class AccidentPlannerImpl implements AccidentPlanner {
 				if (!debug) {
 					sessionArms.merge(id, 1, Integer::sum);
 				}
-				String line = "day " + ctx.day() + ": " + kind.id() + " (" + who + "'s)" + (kind.live() ? " watching " : " set ") + Candidate.at(candidate.pos)
-						+ " / clue: " + candidate.clue;
+				// The self-created layer's clue is the feature in one sentence (R13-1, D-080): its line ends at the position,
+				// and its log line before it (SC2-V's V-6: a player tailing latest.log never learns where one waits).
+				boolean quiet = quietClue(kind.id());
+				String head = "day " + ctx.day() + ": " + kind.id() + " (" + who + "'s)" + (kind.live() ? " watching" : " set");
+				String line = head + " " + Candidate.at(candidate.pos) + (quiet ? "" : " / clue: " + candidate.clue);
 				d.log(line);
-				A1016_02.LOGGER.info("[a1016] accident: {}", line);
+				A1016_02.LOGGER.info("[a1016] accident: {}", quiet ? head : line);
 				return new ArmResult(Status.ARMED, trap, candidate, kind.live() ? "watching" : "set");
 			}
 		}
 		return new ArmResult(Status.IN_VIEW, null, candidates.get(0), "every spot was in view or refused (" + Math.min(tries, candidates.size()) + " tried)");
+	}
+
+	/**
+	 * A trap kind of the self-created layer ({@code sc25}, {@code sc26}: an {@code sc} id with a number): its clue is never
+	 * written to the log, the history or {@code /a1016 accident} (R13-1, D-080), only found in the world.
+	 */
+	public static boolean quietClue(String type) {
+		return type.length() >= 4 && type.startsWith("sc") && Character.isDigit(type.charAt(2)) && Character.isDigit(type.charAt(3));
 	}
 
 	static ArmedTrap build(TrapKind kind, TrapContext ctx, Candidate candidate, AccidentConfig cfg) {
@@ -812,7 +824,11 @@ public final class AccidentPlannerImpl implements AccidentPlanner {
 		try {
 			count = kind.blocked() != null ? 0 : candidates(player, kind).size();
 		} catch (RuntimeException e) {
-			A1016_02.LOGGER.error("[a1016] accident: candidate scan for {} failed", kind.id(), e);
+			if (quietClue(kind.id())) {
+				ScLog.error("[a1016] accident: candidate scan for {} failed", kind.id(), e); // the layer's: no frames (R13-5)
+			} else {
+				A1016_02.LOGGER.error("[a1016] accident: candidate scan for {} failed", kind.id(), e);
+			}
 			count = 0;
 		}
 		remember(player.getUUID(), kind, count);

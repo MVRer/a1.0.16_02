@@ -10,6 +10,7 @@ import java.util.UUID;
 
 import com.forzacode.a1016_02.A1016_02;
 import com.forzacode.a1016_02.core.HerobrineState;
+import com.forzacode.a1016_02.core.ScLog;
 import com.forzacode.a1016_02.core.SelfCreated;
 import com.forzacode.a1016_02.core.Services;
 import com.forzacode.a1016_02.core.Stage;
@@ -327,7 +328,7 @@ public final class HisView {
 		try {
 			bytes = Files.readAllBytes(before.get());
 		} catch (IOException e) {
-			A1016_02.LOGGER.warn("[a1016] {}: could not read the file from before", LOG_ID, e);
+			ScLog.warn("[a1016] {}: could not read the file from before", LOG_ID, e);
 			return "the picture from before could not be read";
 		}
 		if (!SelfCreated.writeInWorld(folder, HisViewRules.ICON, bytes)) {

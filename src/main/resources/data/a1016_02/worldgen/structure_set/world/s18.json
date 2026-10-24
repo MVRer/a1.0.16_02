@@ -1,0 +1,14 @@
+{
+  "structures": [
+    {
+      "structure": "a1016_02:world/s18",
+      "weight": 1
+    }
+  ],
+  "placement": {
+    "type": "minecraft:random_spread",
+    "salt": 180457,
+    "spacing": 24,
+    "separation": 10
+  }
+}

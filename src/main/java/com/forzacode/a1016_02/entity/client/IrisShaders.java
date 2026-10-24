@@ -7,11 +7,12 @@ import com.forzacode.a1016_02.A1016_02;
 import net.fabricmc.loader.api.FabricLoader;
 
 /**
- * Whether an Iris shaderpack draws the frame (D-078: the screenshot waits then). A shaderpack's temporal effects (TAA's
+ * Whether an Iris shaderpack draws the frame (D-078: the screenshot waits then; {@link HimEyesLayer} draws the eyes
+ * through vanilla's eyes render type then, SC2-V's V-1). A shaderpack's temporal effects (TAA's
  * history, motion blur) carry what the last frame held into the next one, so the extra frame with him could reach the
  * screen. Read through Iris's public API ({@code net.irisshaders.iris.api.v0.IrisApi}) by reflection, without a
  * compile dependency: false when Iris is not loaded; true when it is and a pack is in use, or when its API cannot be
- * read (unknown counts as in use: the arm waits). Render thread.
+ * read (unknown counts as in use: the arm waits, the eyes stay vanilla's). Render thread.
  */
 final class IrisShaders {
 	private static final String MOD_ID = "iris";

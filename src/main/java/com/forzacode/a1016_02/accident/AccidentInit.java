@@ -3,6 +3,7 @@ package com.forzacode.a1016_02.accident;
 import com.forzacode.a1016_02.accident.sc.Sc15Config;
 import com.forzacode.a1016_02.accident.sc.StoodOn;
 import com.forzacode.a1016_02.accident.sc.StoodOnCommands;
+import com.forzacode.a1016_02.accident.sc2.AccidentSc2;
 import com.forzacode.a1016_02.core.AccidentPlanner;
 import com.forzacode.a1016_02.core.DeathMarker;
 import com.forzacode.a1016_02.core.Director;
@@ -57,6 +58,7 @@ public final class AccidentInit {
 			}
 		});
 		ServerLifecycleEvents.SERVER_STOPPED.register(server -> StoodOn.clear());
+		AccidentSc2.init(); // the self-created layer's second wave (docs/SELF_CREATED_2.md)
 
 		ServerLifecycleEvents.SERVER_STARTED.register(server -> {
 			PLANNER.attach(server);

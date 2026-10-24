@@ -13,6 +13,7 @@ import com.forzacode.a1016_02.core.SelfCreated;
 import com.forzacode.a1016_02.core.Stage;
 import com.forzacode.a1016_02.director.CommandTarget;
 import com.forzacode.a1016_02.director.DirectorData;
+import com.forzacode.a1016_02.director.DirectorImpl;
 import com.forzacode.a1016_02.director.DirectorMemory;
 import com.forzacode.a1016_02.director.PacingMemory;
 import com.mojang.brigadier.context.CommandContext;
@@ -82,7 +83,8 @@ public final class PlacesCommands {
 		long hour = Math.max(1, ModConfig.realTicks(3600));
 		boolean applies = SelfCreated.enabled() && HerobrineState.get(server).stage().atLeast(Stage.TRACES) && play >= hour;
 		List<String> lines = Places.describe(player.getName().getString(), pacing.get().places(), player.level().dimension(), player.blockPosition(),
-				play, GameClock.dayTicks(server), hour, applies, Sc01Config.get());
+				play, GameClock.dayTicks(server), hour, applies, DirectorImpl.atRemains(player.level(), player.blockPosition(), Sc01Config.get().radius),
+				Sc01Config.get());
 		if (!SelfCreated.enabled()) {
 			source.sendSuccess(() -> Component.literal("sc 01: the layer is switched off (sections.sc.enabled): the factor is 1"), false);
 		}

@@ -26,6 +26,8 @@ public final class DirectorInit {
 		PlacesCommands.register();
 		SelfCreated.onSwitchedOff("sc01", PlacesCommands::revert);
 		HerobrineEvents.TRACED.register((level, entry, placedByPlayer) -> DIRECTOR.onTraced(level, entry));
+		// docs/SELF_CREATED_2.md, 01+: an answer of one of his places is a place the player remembers.
+		HerobrineEvents.REMAINS_ANSWERED.register((level, place, answer, player) -> DIRECTOR.onAnswered(level, place, player));
 
 		// Sessions are per player (D-062.4): one player starting or stopping touches only their own pacing.
 		HerobrineEvents.PARTICIPATION.register((server, player, participating) -> {

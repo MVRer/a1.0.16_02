@@ -5,6 +5,12 @@ Oct 16, 2026 · lead horror design for the branch `self-created` (from `99ddb51`
 **Spoilers. Mariano plays this layer blind. He must not read this file, the task branches' commits or the SC test
 names.** Everything here lives on `self-created`; `main` is untouched until he says.
 
+**The second wave** (features 16 to 31 and the upgrades 01+, 04+, 11+) is `docs/SELF_CREATED_2.md`. It builds on this
+file and changes it only where it says so: `sc01` is version 4 there (01+, keys `o` and `p`), the `/a1016 sc` index runs
+to 31 and the overlay's rows carry the second wave's arms, and its pacing (both waves in the decks, the dry runs' own
+moments for its cards) is measured there. Read this file's spoiler rules, guardrails, core contracts and common gates
+first; they hold for the second wave too.
+
 ## Vision
 
 v1.0 to v1.3 built him: the fog, the figure, the scars, the list, the director that waits, the tunnel ladder, the
@@ -183,6 +189,7 @@ target's combat; UUIDs across ticks (D-062).
   `e` weightAmbient 0.15, `f` weightMinor 0.3, `g` weightMajor 0.5, `h` weightSighting 0.2, `i` trustedFactor 1.6,
   `j` trustedMinHours 1, `k` awayFactor 0.9 (1.0 in v1; SC-5's step lowers it where it is still 1.0, see "As built
   (SC-5)"), `l` simDreadShare 0.3, `m` simDreadFactor 1.4, `n` simTrustedShare 0.05. Step 2 to 3: the keys opaque.
+  Version 4 (the second wave's 01+, docs/SELF_CREATED_2.md) adds `o` remainsFactor 1.5 and `p` simRemainsShare 0.03.
 - **Build.** `director.sc.Places` (pure: weights, decay, factor, trusted chunk); `PacingMemory.places` and `dwell`
   (saved, optional; old `director.dat` loads empty); `DirectorBrain.Env.placeFactor()` (default 1.0; live env reads the
   player's position); `DirectorSim` models a dread share (`simDreadShare` of ticks at `simDreadFactor`,
@@ -942,7 +949,8 @@ refuses new ones from the last minute on, and the afterward keeps them gone (rev
 ### debug (SC-5)
 `/a1016 sc` with no number lists the numbers and each one's state in one line (armed, done, counts), never names;
 `/a1016 debug overlay sc` (dev only) adds per participant: the place factor (01), any arm (02, 03, 05, 06, 12, 13, 14,
-15) with time left, tonight's empty night (04), fog places (10).
+15) with time left, tonight's empty night (04), fog places (10). The second wave's lines 16 to 31 and its overlay parts
+are in docs/SELF_CREATED_2.md (SC2-9).
 
 #### As built (SC-5, integration: `SelfCreatedIntegrationTests`, `SelfCreatedPacingTests`, `SelfCreatedDebugTests`)
 - **The merge.** SC-0 to SC-4 together compiled and registered cleanly (12 cards, 16 reverts, every `sc <NN>` under one
@@ -1000,6 +1008,9 @@ refuses new ones from the last minute on, and the afterward keeps them gone (rev
   resolves inside the world's folder, so a link never gets a folder made outside before the write is refused.
 
 ## Pacing
+
+The second wave's cards and the dry runs with both waves: docs/SELF_CREATED_2.md, "Pacing and director integration"
+(its `SelfCreated2PacingTests`; this section's table and `SelfCreatedPacingTests` are the first wave's).
 
 New cards join the decks. Alone gains one ambient (sc_06), Traces four minors and two ambients, Proximity three minors
 and one major. Rates per tier are unchanged; the decks spread over more kinds of moment. Cards that need a base,

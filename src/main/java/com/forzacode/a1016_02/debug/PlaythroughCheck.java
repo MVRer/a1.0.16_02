@@ -4,6 +4,7 @@ import java.util.ArrayList;
 import java.util.EnumMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import com.forzacode.a1016_02.core.CardTag;
 import com.forzacode.a1016_02.core.Stage;
@@ -32,14 +33,16 @@ final class PlaythroughCheck {
 	 * The numbers the checks use, in play ticks.
 	 *
 	 * @param majorEveryMin the Proximity major gap, already scaled by the tempo (2 to 4 h times its pace factor)
+	 * @param ownClockCards the cards on a clock of their own (the self-created layer's hunts, FIX-SC2-PACE), held to
+	 *                      {@code ownClockFrom} instead of {@code firstAccident}
 	 */
 	record Limits(long hourTicks, long tickInterval, long joinGrace, long minorGap, int noMajorBeforeDay, int aloneMaxAmbient,
 			long firstAccident, double firstAccidentHours, double paceFactor, double tracesAmbientPerHour, double minorsPerHourMin,
-			double minorsPerHourMax, long majorEveryMin, long majorEveryMax, double emptyChance) {
+			double minorsPerHourMax, long majorEveryMin, long majorEveryMax, double emptyChance, Set<String> ownClockCards, long ownClockFrom) {
 		static Limits of(DirectorRules rules, double firstAccidentHours, double paceFactor) {
 			return new Limits(rules.hourTicks, rules.tickInterval, rules.joinGrace, rules.minorGap, rules.noMajorBeforeDay, rules.aloneMaxAmbient,
 					rules.firstAccident, firstAccidentHours, paceFactor, rules.tracesAmbientPerHour, rules.minorsPerHourMin, rules.minorsPerHourMax,
-					rules.majorEvery.min(), rules.majorEvery.max(), rules.emptySessionChance);
+					rules.majorEvery.min(), rules.majorEvery.max(), rules.emptySessionChance, Set.copyOf(rules.ownClockCards), rules.ownClockFrom);
 		}
 
 		double hours(long ticks) {
@@ -232,7 +235,12 @@ final class PlaythroughCheck {
 			if (firstAccident == null) {
 				firstAccident = e;
 			}
-			if (e.play() < limits.firstAccident()) {
+			if (limits.ownClockCards().contains(e.cardId())) {
+				// Its own clock instead of the first accident's time (the self-created layer's hunts, FIX-SC2-PACE).
+				if (e.play() < limits.ownClockFrom()) {
+					breaches.add(at(e, h) + "own-clock card " + e.cardId());
+				}
+			} else if (e.play() < limits.firstAccident()) {
 				breaches.add(at(e, h) + "accident card " + e.cardId());
 			}
 		}

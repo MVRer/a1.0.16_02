@@ -5,6 +5,7 @@
 	"mixins": [
 		"BlockItemMixin",
 		"LevelSetBlockMixin",
+		"PlayerListMixin",
 		"ServerPlayerGameModeMixin"
 	],
 	"client": [],

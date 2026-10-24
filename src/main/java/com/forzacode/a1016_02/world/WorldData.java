@@ -12,6 +12,7 @@ import java.util.concurrent.ThreadLocalRandom;
 
 import com.forzacode.a1016_02.A1016_02;
 import com.forzacode.a1016_02.world.sc.ScMarks;
+import com.forzacode.a1016_02.world.sc2.kit.Sc2Data;
 import com.mojang.serialization.Codec;
 import com.mojang.serialization.codecs.RecordCodecBuilder;
 
@@ -29,7 +30,8 @@ import org.jspecify.annotations.Nullable;
  * build (for the emptied house), the light on the mountain while it burns, what the players did at pyramids and
  * bare groves, where the one-per-world sites (the hut, the core pyramid) were recorded, the signature moments
  * ({@link SignatureData}), the last base world saw for each player (by UUID, D-061) and the day of the last real new
- * scar (the world-wide rate), and the self-created layer's world marks ({@link ScMarks}, optional). A save from before
+ * scar (the world-wide rate), the self-created layer's world marks ({@link ScMarks}, optional) and its second wave's
+ * places ({@link Sc2Data}, optional key {@code sc2}). A save from before
  * multiplayer has no bases and no new-scar day: both start empty, and every other field was already about the world,
  * not one player. Server thread only.
  */
@@ -87,7 +89,8 @@ public final class WorldData extends SavedData {
 			PlayerBase.CODEC.listOf().optionalFieldOf("bases", List.of()).forGetter(d -> d.bases.entrySet().stream()
 					.map(e -> new PlayerBase(e.getKey(), e.getValue())).toList()),
 			Codec.LONG.optionalFieldOf("lastNewScarDay", Long.MIN_VALUE).forGetter(d -> d.lastNewScarDay),
-			ScMarks.CODEC.lenientOptionalFieldOf("sc").forGetter(d -> d.sc.isEmpty() ? Optional.empty() : Optional.of(d.sc))
+			ScMarks.CODEC.lenientOptionalFieldOf("sc").forGetter(d -> d.sc.isEmpty() ? Optional.empty() : Optional.of(d.sc)),
+			Sc2Data.CODEC.lenientOptionalFieldOf("sc2").forGetter(d -> d.sc2.isEmpty() ? Optional.empty() : Optional.of(d.sc2))
 	).apply(i, WorldData::new));
 
 	static final SavedDataType<WorldData> TYPE = new SavedDataType<>(A1016_02.id("world"), WorldData::new, CODEC, null);
@@ -103,6 +106,7 @@ public final class WorldData extends SavedData {
 	private final Map<UUID, GlobalPos> bases = new HashMap<>();
 	private long lastNewScarDay = Long.MIN_VALUE;
 	private final ScMarks sc;
+	private final Sc2Data sc2;
 
 	/** A fresh world's data (tests make their own to keep the shared one untouched). */
 	public WorldData() {
@@ -111,14 +115,19 @@ public final class WorldData extends SavedData {
 		this.signatures.onChange(this::setDirty);
 		this.sc = new ScMarks();
 		this.sc.onChange(this::setDirty);
+		this.sc2 = new Sc2Data();
+		this.sc2.onChange(this::setDirty);
 		setDirty();
 	}
 
 	private WorldData(long salt, List<Build> builds, List<GlobalPos> emptied, Optional<Light> light, List<GlobalPos> pyramidsDug, List<Grove> groves,
-			Map<String, GlobalPos> singles, Optional<SignatureData> signatures, List<PlayerBase> bases, long lastNewScarDay, Optional<ScMarks> sc) {
+			Map<String, GlobalPos> singles, Optional<SignatureData> signatures, List<PlayerBase> bases, long lastNewScarDay, Optional<ScMarks> sc,
+			Optional<Sc2Data> sc2) {
 		this.salt = salt;
 		this.sc = sc.orElseGet(ScMarks::new);
 		this.sc.onChange(this::setDirty);
+		this.sc2 = sc2.orElseGet(Sc2Data::new);
+		this.sc2.onChange(this::setDirty);
 		this.signatures = signatures.orElseGet(SignatureData::new);
 		this.signatures.onChange(this::setDirty);
 		builds.forEach(b -> this.builds.put(b.site(), b));
@@ -146,6 +155,14 @@ public final class WorldData extends SavedData {
 	 */
 	public ScMarks sc() {
 		return sc;
+	}
+
+	/**
+	 * The second wave's places: every one generated so far, who went in, what each answered (optional key {@code sc2}:
+	 * absent in older saves, skipped by older readers, read leniently; docs/SELF_CREATED_2.md, SC2-0b).
+	 */
+	public Sc2Data sc2() {
+		return sc2;
 	}
 
 	/** Random per world, made on the first load: where old scars are depends on it (with the seed and profile). */

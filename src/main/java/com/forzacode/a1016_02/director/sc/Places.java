@@ -150,12 +150,34 @@ public final class Places {
 	 */
 	public static double factor(PlaceMemory memory, ResourceKey<Level> dimension, BlockPos pos, long playTicks, long dayTicks, long hourTicks,
 			Sc01Config cfg) {
+		return factor(memory, dimension, pos, playTicks, dayTicks, hourTicks, false, cfg);
+	}
+
+	/**
+	 * {@link #factor(PlaceMemory, ResourceKey, BlockPos, long, long, long, Sc01Config)}, and 01+ (docs/SELF_CREATED_2.md):
+	 * {@code atRemains} (the position inside one of his places or within {@code radius} of its way in) makes it at least
+	 * {@code remainsFactor}, never above {@code maxFactor}.
+	 */
+	public static double factor(PlaceMemory memory, ResourceKey<Level> dimension, BlockPos pos, long playTicks, long dayTicks, long hourTicks,
+			boolean atRemains, Sc01Config cfg) {
 		double factor = dread(memory, dimension, pos, dayTicks, cfg);
+		double max = Math.max(1, cfg.maxFactor);
 		Optional<PlaceMemory.Chunk> trusted = trusted(memory, playTicks, dayTicks, hourTicks, cfg);
 		if (trusted.isPresent() && trusted.get().contains(dimension, pos)) {
-			factor = Math.min(Math.max(1, cfg.maxFactor), Math.max(factor, cfg.trustedFactor));
+			factor = Math.min(max, Math.max(factor, cfg.trustedFactor));
+		}
+		if (atRemains) {
+			factor = Math.min(max, Math.max(factor, cfg.remainsFactor));
 		}
 		return factor == 1.0 ? Math.max(0, cfg.awayFactor) : factor;
+	}
+
+	/** 01+: an answer of one of his places ({@code REMAINS_ANSWERED}) weighs as a minor's place (it is not a card, and no sighting). */
+	public static final Tier ANSWER_TIER = Tier.MINOR;
+
+	/** 01+: remembers an answer of one of his places for the player, at this position and time ({@link #ANSWER_TIER}). */
+	public static void rememberAnswer(PlaceMemory memory, ResourceKey<Level> dimension, BlockPos pos, long playTicks, long dayTicks, Sc01Config cfg) {
+		memory.record(new PlaceMemory.Place(dimension, pos.immutable(), playTicks, dayTicks, ANSWER_TIER, false), cfg.maxPlaces);
 	}
 
 	/**
@@ -204,12 +226,19 @@ public final class Places {
 	/** {@code /a1016 sc 01}'s lines for one player, in plain words: the factor now, the nearest places and the trusted chunk. */
 	public static List<String> describe(String name, PlaceMemory memory, ResourceKey<Level> dimension, BlockPos pos, long playTicks, long dayTicks,
 			long hourTicks, boolean applies, Sc01Config cfg) {
+		return describe(name, memory, dimension, pos, playTicks, dayTicks, hourTicks, applies, false, cfg);
+	}
+
+	/** {@link #describe(String, PlaceMemory, ResourceKey, BlockPos, long, long, long, boolean, Sc01Config)} with 01+'s {@code atRemains}. */
+	public static List<String> describe(String name, PlaceMemory memory, ResourceKey<Level> dimension, BlockPos pos, long playTicks, long dayTicks,
+			long hourTicks, boolean applies, boolean atRemains, Sc01Config cfg) {
 		List<String> lines = new ArrayList<>();
 		double dread = dread(memory, dimension, pos, dayTicks, cfg);
 		Optional<PlaceMemory.Chunk> trusted = trusted(memory, playTicks, dayTicks, hourTicks, cfg);
 		boolean inTrusted = trusted.isPresent() && trusted.get().contains(dimension, pos);
-		lines.add(String.format(Locale.ROOT, "sc 01: %s: factor here x%.2f (places x%.2f%s)%s", name,
-				factor(memory, dimension, pos, playTicks, dayTicks, hourTicks, cfg), dread, inTrusted ? ", in the trusted chunk" : "",
+		lines.add(String.format(Locale.ROOT, "sc 01: %s: factor here x%.2f (places x%.2f%s%s)%s", name,
+				factor(memory, dimension, pos, playTicks, dayTicks, hourTicks, atRemains, cfg), dread, inTrusted ? ", in the trusted chunk" : "",
+				atRemains ? String.format(Locale.ROOT, ", at a place of 16 to 20: at least x%.2f", Math.min(Math.max(1, cfg.maxFactor), cfg.remainsFactor)) : "",
 				applies ? "" : "; not applied now (only from Traces, after their first hour)"));
 		List<PlaceMemory.Place> sorted = new ArrayList<>(memory.places);
 		sorted.sort(Comparator.comparingDouble((PlaceMemory.Place p) -> p.dimension().equals(dimension) ? p.pos().distSqr(pos) : Double.MAX_VALUE));

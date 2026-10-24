@@ -2,6 +2,7 @@ package com.forzacode.a1016_02.entity.client;
 
 import com.forzacode.a1016_02.A1016_02;
 import com.forzacode.a1016_02.entity.ModEntities;
+import com.forzacode.a1016_02.entity.client.sc2.EntitySc2Client;
 
 import net.fabricmc.fabric.api.resource.v1.ResourceLoader;
 import net.fabricmc.fabric.api.resource.v1.reloader.ResourceReloaderKeys;
@@ -25,6 +26,7 @@ public final class EntityClientInit {
 		ScreenshotClient.init(); // the screenshot's arm (D-078); the key goes through ScreenshotMixin
 		NamelessClient.init(); // the self-created layer's 02 (AvatarRendererMixin) and 03 (CameraMixin)
 		HisViewClient.init();
+		EntitySc2Client.init(); // the self-created layer's second wave (docs/SELF_CREATED_2.md)
 		// After the shaders reload, the eyes try their own pipeline again (see HimEyesLayer#brightEyes).
 		ResourceLoader resources = ResourceLoader.get(PackType.CLIENT_RESOURCES);
 		resources.registerReloadListener(EYE_SHADER_RELOAD, (ResourceManagerReloadListener) manager -> HimEyesLayer.resetAfterReload());

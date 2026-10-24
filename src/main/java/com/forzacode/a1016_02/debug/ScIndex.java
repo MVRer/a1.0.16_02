@@ -30,6 +30,7 @@ import com.forzacode.a1016_02.dig.sc.Sc12Config;
 import com.forzacode.a1016_02.dig.sc.Sc13Config;
 import com.forzacode.a1016_02.dig.sc.WayBack;
 import com.forzacode.a1016_02.director.DirectorData;
+import com.forzacode.a1016_02.director.DirectorImpl;
 import com.forzacode.a1016_02.director.PacingMemory;
 import com.forzacode.a1016_02.director.sc.PlaceMemory;
 import com.forzacode.a1016_02.director.sc.Places;
@@ -55,8 +56,8 @@ import net.minecraft.server.level.ServerPlayer;
 
 /**
  * The self-created layer's index (docs/SELF_CREATED.md, SC-5): {@code /a1016 sc} with no number prints the switch and
- * then one line per number, 01 to 15, with its state in opaque words only (armed, done, waiting, counts, days, time
- * left), never what a number is; each number's own command ({@code /a1016 sc <NN>}) says more. The dev overlay's
+ * then one line per number, 01 to 15 and the second wave's 16 to 31 ({@link Sc2Index}, docs/SELF_CREATED_2.md SC2-9),
+ * with its state in opaque words only (armed, done, waiting, counts, days, time left), never what a number is; each number's own command ({@code /a1016 sc <NN>}) says more. The dev overlay's
  * layer rows ({@code /a1016 debug overlay sc}) are {@link #overlay}. The index and the overlay are read-only: nothing
  * there changes the world, a memory or an arm. {@code /a1016 sc on|off} is the layer's switch. Lines go only to
  * whoever ran the command.
@@ -95,7 +96,7 @@ final class ScIndex {
 		return 1;
 	}
 
-	/** The switch, then 01 to 15, one line each. */
+	/** The switch, then 01 to 31, one line each. */
 	static List<String> lines(MinecraftServer server) {
 		List<String> lines = new ArrayList<>();
 		lines.add("[a1016] sc: " + (SelfCreated.enabled() ? "on" : "off (sections.sc.enabled false: nothing below acts)")
@@ -117,6 +118,7 @@ final class ScIndex {
 		lines.add(safe(() -> line13(server, players), "13"));
 		lines.add(safe(() -> TheRecord.LIVE.line(server), "14"));
 		lines.add(safe(() -> line15(server, players), "15"));
+		lines.addAll(Sc2Index.lines(server, players));
 		return lines;
 	}
 
@@ -156,7 +158,8 @@ final class ScIndex {
 		if (notYet != null) {
 			return "x1.00 (not now: " + notYet + "; " + what + ")";
 		}
-		double factor = Places.factor(places, player.level().dimension(), player.blockPosition(), play, day, hour, cfg);
+		double factor = Places.factor(places, player.level().dimension(), player.blockPosition(), play, day, hour,
+				DirectorImpl.atRemains(player.level(), player.blockPosition(), cfg.radius), cfg);
 		return Fmt.f("x%.2f (%s)", factor, what);
 	}
 
@@ -279,7 +282,8 @@ final class ScIndex {
 	/**
 	 * The overlay's layer rows (label, value): the switch with the world's numbers (04's window, 10's places, the
 	 * counts), then one row per participant (the viewer first, at most {@link #MAX_OVERLAY_PLAYERS}) with their factor
-	 * (01) and every arm they hold with its time left (02, 03, 05, 06, 12, 13, 14, 15).
+	 * (01), every arm they hold with its time left (02, 03, 05, 06, 12, 13, 14, 15), and the second wave's: the place they
+	 * are inside as its number and their scenes and arms of 21 to 27 ({@link Sc2Index#arms}).
 	 */
 	static List<String[]> overlay(MinecraftServer server, UUID viewer) {
 		List<String[]> rows = new ArrayList<>();
@@ -339,6 +343,11 @@ final class ScIndex {
 		long stood = StoodOn.ticksLeft(id, GameClock.playTicks(server, id));
 		if (stood >= 0) {
 			out.add(Fmt.f("15 %.1fm", stood / 1200.0));
+		}
+		try {
+			Sc2Index.arms(server, player, out);
+		} catch (RuntimeException e) {
+			out.add("16-31 could not be read (" + e.getClass().getSimpleName() + ")");
 		}
 		return out.toString();
 	}

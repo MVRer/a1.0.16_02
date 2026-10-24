@@ -5,12 +5,12 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
 
-import com.forzacode.a1016_02.A1016_02;
 import com.forzacode.a1016_02.atmosphere.sc.EmptyNight;
 import com.forzacode.a1016_02.core.ClientEffects;
 import com.forzacode.a1016_02.core.FogSpell;
 import com.forzacode.a1016_02.core.FogWeatherRules;
 import com.forzacode.a1016_02.core.HerobrineState;
+import com.forzacode.a1016_02.core.ScLog;
 import com.forzacode.a1016_02.core.Services;
 import com.forzacode.a1016_02.core.Stage;
 import com.forzacode.a1016_02.core.TraceService;
@@ -311,7 +311,7 @@ public final class FogWeather {
 		try {
 			EmptyNight.check(server, night, outcome.memory().nightRolled() == night, nightRollTime(settings));
 		} catch (RuntimeException e) {
-			A1016_02.LOGGER.error("[a1016] sc_04 check failed", e);
+			ScLog.error("[a1016] sc_04 check failed", e);
 		}
 	}
 

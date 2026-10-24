@@ -3,6 +3,7 @@ package com.forzacode.a1016_02.core;
 import java.util.UUID;
 
 import net.minecraft.core.BlockPos;
+import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.entity.Mob;
 import net.minecraft.world.phys.Vec3;
 
@@ -27,7 +28,7 @@ public interface MobTamper {
 	/** Moves the mob to {@code pos}, only if both its current spot and {@code pos} are out of view. */
 	boolean moveOutOfView(Mob mob, BlockPos pos);
 
-	/** Ends every effect on the mob now. */
+	/** Ends every effect on the mob now (a hunt is calmed, a steer stops where it is). */
 	void release(Mob mob);
 
 	/**
@@ -55,8 +56,64 @@ public interface MobTamper {
 	}
 
 	/**
-	 * True while any effect (freeze, face, silence) is on the mob: from the call that started it until its deadline
-	 * passes (cleared within a tick after) or {@link #release}. Use it so two cards never fight over one mob.
+	 * Walks the mob to {@code to} by its own navigation for {@code ticks} (D-096; docs/SELF_CREATED_2.md, "SC2-0a"):
+	 * at {@code speed} (its walk speed factor, 1.0 its normal walk), its goals and target selector skipped while steered
+	 * (they do not run: no grazing, panic, tempting, wandering or targeting; whatever ran is stopped), its look along its
+	 * path unless a {@link #face} is on. A new call replaces the target and the deadline; the path is made again when the
+	 * target moved more than 1.5 blocks (or the walk ended short of it), at most every 10 ticks. Once there it stands
+	 * still. Ends at the deadline, {@link #release}, or a {@link #freeze} (a freeze wins: it ends the steer, and a frozen
+	 * mob is not steered). Refused (false, nothing changed) for a mob on anyone's leash, riding or ridden, tamed or owned
+	 * with its owner online within 48 blocks, a boss, one driven by a brain instead of goals (villagers, goats, axolotls,
+	 * frogs, camels, sniffers, armadillos, allays, piglins, hoglins, wardens, breezes and the like), one without AI, one
+	 * set on a player ({@link #hunt}: {@link #calm} it first), past the world's cap of steered mobs (48, D-104; a mob
+	 * already steered may be steered again), and while the layer is switched off ({@link SelfCreated#enabled}; switching
+	 * it off ends every steer within a tick). An effect: {@link #isTampered} is true while it lasts, and it can be
+	 * {@link #bind bound}. Default: false (the stub).
+	 */
+	default boolean steer(Mob mob, Vec3 to, double speed, int ticks) {
+		return false;
+	}
+
+	/** True while the mob is steered ({@link #steer}). Default: false. */
+	default boolean isSteered(Mob mob) {
+		return false;
+	}
+
+	/**
+	 * Sets the mob on {@code target} for {@code ticks} (D-096). Callers: only {@code accident.sc2}, as an armed trap of
+	 * that player's (a source test, {@code VerifySc2SideTests}, holds it). A {@code NeutralMob} gets the persistent anger
+	 * timer and target (vanilla's angry wolf: angry face, attacks); a mob that is an {@code Enemy} gets the target. While
+	 * it lasts the mob keeps that target out to twice its follow range (its follow range is doubled, and the target is
+	 * put back each AI step while within it; past it the target is let go until they are within it again), its own goals
+	 * do the attacking, and it ends a {@link #steer}. Bound to the
+	 * target: calmed as soon as they are not a living player in the mob's level any more (left, died, turned spectator or
+	 * creative, changed dimension). Ends at the deadline (calmed), {@link #calm} or {@link #release}; a hurt from another
+	 * player ends it without calming, so vanilla's anger turns the mob on whoever hit it. Refused (false, nothing
+	 * changed) for a mob that cannot attack (neither neutral nor an enemy), a tamed or owned mob, villagers and golems, a
+	 * boss, one driven by a brain, one without AI, a target that is not a living player in the mob's level, in creative
+	 * or spectator, and while the layer is switched off (switching it off calms every hunt within a tick). Default:
+	 * false (the stub).
+	 */
+	default boolean hunt(Mob mob, ServerPlayer target, int ticks) {
+		return false;
+	}
+
+	/**
+	 * Calms the mob: ends its {@link #hunt} if it has one, and clears its anger (a {@code NeutralMob}'s), its target,
+	 * whom it last was hurt by, and its running goals, so the mob's own AI starts over. Works on any mob, hunted or not
+	 * (a hunt's end calms every mob of it, whoever angered it). Never refused. Default: does nothing.
+	 */
+	default void calm(Mob mob) {
+	}
+
+	/** True while the mob is set on a player ({@link #hunt}). Default: false. */
+	default boolean isHunting(Mob mob) {
+		return false;
+	}
+
+	/**
+	 * True while any effect (freeze, face, silence, steer, hunt) is on the mob: from the call that started it until its
+	 * deadline passes (cleared within a tick after) or {@link #release}. Use it so two cards never fight over one mob.
 	 */
 	boolean isTampered(Mob mob);
 

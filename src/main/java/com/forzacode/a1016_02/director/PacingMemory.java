@@ -18,6 +18,8 @@ import com.forzacode.a1016_02.director.sc.PlaceMemory;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.nbt.ListTag;
 
+import org.jspecify.annotations.Nullable;
+
 /**
  * One player's own pacing (D-059): their session and join grace, empty sessions, the gaps and hard limits, the major
  * schedule, the forced quiet, pity, the decks with their held cards and no-repeat cycles, the fake counts, the
@@ -105,6 +107,22 @@ public final class PacingMemory {
 	/** docs/SELF_CREATED.md, 01: where things happened to this player, and where they spend their time. Saved under {@code sc01}. */
 	final PlaceMemory places = new PlaceMemory();
 
+	// --- the layer's group, beats and own clock (DirectorRules; docs/SELF_CREATED_2.md "Pacing"). Saved under "scp" ---
+	/** This player's clock when a group card last fired for them or was felt by them. */
+	long lastGroup = DirectorMemory.NEVER;
+	/** This player's clock when their beats' window opened (their first decision from the beats' stage on), or -1. */
+	long beatFrom = -1;
+	/** Their active play (outside quiets and empty sessions) since their beats' window opened: the windows run on it. */
+	long beatAge;
+	/** Their clock at the last update of {@link #beatAge}. */
+	long beatLast = -1;
+	/** A beat came for them (fired or felt, never a fake), or their beats' window is over. */
+	boolean beatDone;
+	/** The card their deck holds as a beat (drawn as one), or null. */
+	@Nullable String beatHeld;
+	/** This player's clock when one of the own-clock cards last fired for them. */
+	long lastOwnClock = DirectorMemory.NEVER;
+
 	/** A fresh memory whose first in-game day began at day tick 0. */
 	public PacingMemory() {
 		this(0);
@@ -159,6 +177,26 @@ public final class PacingMemory {
 	/** This player's places and dwell (docs/SELF_CREATED.md, 01). */
 	public PlaceMemory places() {
 		return places;
+	}
+
+	/** This player's clock when a group card last fired for them or was felt by them, or {@link DirectorMemory#NEVER}. */
+	public long lastGroup() {
+		return lastGroup;
+	}
+
+	/** This player's clock when their beats' window opened, or -1. */
+	public long beatFrom() {
+		return beatFrom;
+	}
+
+	/** True once a beat came for them or their beats' window is over. */
+	public boolean beatDone() {
+		return beatDone;
+	}
+
+	/** This player's clock when an own-clock card last fired for them, or {@link DirectorMemory#NEVER}. */
+	public long lastOwnClock() {
+		return lastOwnClock;
 	}
 
 	/** This player's clock when a card with this tag last fired for them or was felt by them, or {@link DirectorMemory#NEVER}. */
@@ -262,6 +300,19 @@ public final class PacingMemory {
 		if (!places.isEmpty()) {
 			tag.put("sc01", places.save());
 		}
+		if (lastGroup != DirectorMemory.NEVER || beatFrom >= 0 || beatDone || beatHeld != null || lastOwnClock != DirectorMemory.NEVER) {
+			CompoundTag scp = new CompoundTag();
+			scp.putLong("g", lastGroup);
+			scp.putLong("b", beatFrom);
+			scp.putLong("a", beatAge);
+			scp.putLong("l", beatLast);
+			scp.putBoolean("d", beatDone);
+			if (beatHeld != null) {
+				scp.putString("k", beatHeld);
+			}
+			scp.putLong("h", lastOwnClock);
+			tag.put("scp", scp);
+		}
 		return tag;
 	}
 
@@ -334,6 +385,16 @@ public final class PacingMemory {
 		m.lowRenderCounted = tag.getBooleanOr("lowRenderCounted", false);
 		// A pacing from before the places (v1.3) has none.
 		m.places.load(tag.getCompoundOrEmpty("sc01"));
+		// A pacing from before the layer's group, beats and own clock (FIX-SC2-PACE) has none: every field at its start.
+		CompoundTag scp = tag.getCompoundOrEmpty("scp");
+		m.lastGroup = scp.getLongOr("g", DirectorMemory.NEVER);
+		m.beatFrom = scp.getLongOr("b", -1);
+		m.beatAge = scp.getLongOr("a", 0);
+		m.beatLast = scp.getLongOr("l", -1);
+		m.beatDone = scp.getBooleanOr("d", false);
+		String beatHeld = scp.getStringOr("k", "");
+		m.beatHeld = beatHeld.isEmpty() ? null : beatHeld;
+		m.lastOwnClock = scp.getLongOr("h", DirectorMemory.NEVER);
 		return m;
 	}
 }

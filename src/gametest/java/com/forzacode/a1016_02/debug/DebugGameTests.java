@@ -431,7 +431,7 @@ public class DebugGameTests {
 	}
 
 	private static PlaythroughCheck.Limits limits(long hour) {
-		return new PlaythroughCheck.Limits(hour, 600, 6_000, 18_000, 1, 1, 6 * hour, 6, 1.0, 1.0, 1, 2, 2 * hour, 4 * hour, 0.25);
+		return new PlaythroughCheck.Limits(hour, 600, 6_000, 18_000, 1, 1, 6 * hour, 6, 1.0, 1.0, 1, 2, 2 * hour, 4 * hour, 0.25, java.util.Set.of(), 0);
 	}
 
 	private static Event session(long play, Stage stage) {

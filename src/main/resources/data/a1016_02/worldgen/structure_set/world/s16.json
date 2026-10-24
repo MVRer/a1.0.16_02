@@ -1,0 +1,25 @@
+{
+  "structures": [
+    {
+      "structure": "a1016_02:world/s16",
+      "weight": 1
+    },
+    {
+      "structure": "a1016_02:world/s16d",
+      "weight": 1
+    }
+  ],
+  "placement": {
+    "type": "a1016_02:world/sc2r",
+    "salt": 160721,
+    "rays": 4,
+    "first": 640,
+    "step": 640,
+    "jitter_degrees": 8,
+    "jitter_blocks": 48,
+    "exclusion_zone": {
+      "other_set": "minecraft:villages",
+      "chunk_count": 4
+    }
+  }
+}

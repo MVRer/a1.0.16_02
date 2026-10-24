@@ -19,6 +19,7 @@ public final class Services {
 	private static AccidentPlanner accidents = new AccidentPlanner.Stub();
 	private static DeathMarker deaths = new DeathMarker.Stub();
 	private static Figure figure = new Figure.Stub();
+	private static Remains remains = new Remains.Stub();
 
 	private Services() {
 	}
@@ -65,6 +66,11 @@ public final class Services {
 		return figure;
 	}
 
+	/** His places, the second wave's worldgen (docs/SELF_CREATED_2.md): what the world generated and who went in. */
+	public static Remains remains() {
+		return remains;
+	}
+
 	/** Director workstream. */
 	public static void installDirector(Director impl) {
 		director = Objects.requireNonNull(impl);
@@ -93,5 +99,10 @@ public final class Services {
 	/** Entity workstream (D-073). */
 	public static void installFigure(Figure impl) {
 		figure = Objects.requireNonNull(impl);
+	}
+
+	/** World workstream (docs/SELF_CREATED_2.md, SC2-0b). */
+	public static void installRemains(Remains impl) {
+		remains = Objects.requireNonNull(impl);
 	}
 }

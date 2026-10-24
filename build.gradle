@@ -18,14 +18,36 @@ fabricApi {
 	}
 
 	// Game tests: source set "gametest" (its own fabric.mod.json), task runGameTest, wired into check/build.
+	// Client game tests (the gallery, docs/SELF_CREATED_2.md SC2-0c): task runClientGameTest, which opens a game window.
+	// Loom never wires it into check or build (./gradlew build --dry-run lists it nowhere); run it with ./gradlew gallery.
 	configureTests {
 		createSourceSet = true
 		modId = "a1016_02_gametest"
 		enableGameTests = true
-		enableClientGameTests = false
+		enableClientGameTests = true
 		eula = true
 	}
 }
+
+// The gallery (dev only): ./gradlew gallery -Pgallery=00,16 (exhibit ids, or "all"; default 00) writes screenshots to
+// build/gallery/<id>/. -Pgallery.rd=<chunks> sets the render distance (default 16). See docs/SELF_CREATED_2.md.
+def galleryIds = providers.gradleProperty("gallery").getOrElse("00")
+def galleryRenderDistance = providers.gradleProperty("gallery.rd").getOrElse("16")
+def galleryOut = file("build/gallery").absolutePath
+// runGalleryPlans runs only the blueprint game test; -Pgallery.tests=all runs every gallery server test instead (a quick check
+// of the gallery's own code without the whole suite).
+def galleryTests = providers.gradleProperty("gallery.tests").getOrElse("") == "all" ? "a1016_02_gametest:self_created2gallery_tests_*"
+		: "a1016_02_gametest:self_created2gallery_tests_blueprints_of_the_named_exhibits_when_asked"
+// Shaders in Fallback A (dev only, opt in): ./gradlew runDevGallery -Pgallery=31 -Pgallery.iris[=<a minecraft folder>]
+// copies Iris and Sodium (mods/iris-*.jar, mods/sodium-*.jar), the shaderpacks with their settings and
+// config/iris.properties (shaders turned on) from a real install (default: the macOS launcher's folder, else
+// ~/.minecraft) into run/gallery, and writes the PNGs to build/gallery-iris. A run without the flag takes them out again.
+// Only runDevGallery reads it: never build, check, the game tests or the jar.
+def galleryIris = providers.gradleProperty("gallery.iris").orNull
+def galleryIrisInstall = galleryIris == null ? null : file(galleryIris ?: (new File(System.getProperty("user.home"),
+		"Library/Application Support/minecraft").isDirectory() ? System.getProperty("user.home") + "/Library/Application Support/minecraft"
+		: System.getProperty("user.home") + "/.minecraft"))
+def devGalleryOut = file(galleryIris == null ? "build/gallery" : "build/gallery-iris").absolutePath
 
 loom {
 	runs {
@@ -47,6 +69,91 @@ loom {
 			property("a1016_02.devSeed", "-4180345853331630785")
 			// Inherits --username Dev from client.
 		}
+
+		// The gallery's client run (./gradlew gallery): which exhibits, the render distance and where the PNGs go.
+		clientGameTest {
+			property("a1016_02.gallery", galleryIds)
+			property("a1016_02.galleryRenderDistance", galleryRenderDistance)
+			property("a1016_02.galleryOut", galleryOut)
+		}
+
+		// Fallback A (docs/SELF_CREATED_2.md, SC2-0c): ./gradlew runDevGallery -Pgallery=00 runs the same script from the
+		// dev client's ticks in a fresh deep flat world (run/gallery, its own game folder and options), then quits.
+		devGallery {
+			inherit client
+			configName = "Dev Gallery"
+			runDir = "run/gallery"
+			property("a1016_02.devWorld", "a1016_gallery")
+			property("a1016_02.devFlat", "deep")
+			property("a1016_02.gallery", galleryIds)
+			property("a1016_02.galleryRenderDistance", galleryRenderDistance)
+			property("a1016_02.galleryOut", devGalleryOut)
+		}
+
+		// Fallback B: ./gradlew runGalleryPlans -Pgallery=00 runs only the game test that writes the blueprint renders
+		// (headless, no window) on a test server of its own.
+		galleryPlans {
+			inherit gameTest
+			configName = "Gallery Plans"
+			runDir = "build/run/galleryPlans"
+			property("fabric-api.gametest.filter", galleryTests)
+			property("fabric-api.gametest.report-file", file("build/run/galleryPlans/report.xml").absolutePath)
+			property("a1016_02.gallery", galleryIds)
+			property("a1016_02.galleryOut", galleryOut)
+		}
+	}
+}
+
+// ./gradlew gallery: the client game test run (a window opens for the run). Never part of check or build.
+tasks.register("gallery") {
+	group = "a1016"
+	description = "Screenshots of the gallery's exhibits (-Pgallery=<ids>|all) into build/gallery (dev only; opens a window)."
+	dependsOn("runClientGameTest")
+}
+
+// Fallback A always starts from a fresh gallery world, and Fallback B from a fresh test world.
+def devGalleryWorld = file("run/gallery/saves/a1016_gallery")
+def devGalleryDir = file("run/gallery")
+tasks.named("runDevGallery") {
+	doFirst {
+		devGalleryWorld.deleteDir()
+		// -Pgallery.iris (above): put Iris, Sodium, the packs and Iris's settings in, or take the mods out again.
+		def mods = new File(devGalleryDir, "mods")
+		mods.listFiles()?.findAll { it.name.startsWith("iris-") || it.name.startsWith("sodium-") }?.each { it.delete() }
+		if (galleryIrisInstall == null) {
+			return
+		}
+		def jars = new File(galleryIrisInstall, "mods").listFiles()?.findAll {
+			it.name.endsWith(".jar") && (it.name.startsWith("iris-") || it.name.startsWith("sodium-"))
+		} ?: []
+		def packs = new File(galleryIrisInstall, "shaderpacks").listFiles() ?: []
+		if (!jars.any { it.name.startsWith("iris-") } || !jars.any { it.name.startsWith("sodium-") } || packs.size() == 0) {
+			throw new GradleException("-Pgallery.iris: no mods/iris-*.jar, mods/sodium-*.jar or shaderpacks in " + galleryIrisInstall)
+		}
+		mods.mkdirs()
+		def packDir = new File(devGalleryDir, "shaderpacks")
+		packDir.mkdirs()
+		(jars.collect { [it, new File(mods, it.name)] } + packs.findAll { it.isFile() }.collect { [it, new File(packDir, it.name)] }).each {
+			java.nio.file.Files.copy(it[0].toPath(), it[1].toPath(), java.nio.file.StandardCopyOption.REPLACE_EXISTING)
+		}
+		def settings = new Properties()
+		def theirs = new File(galleryIrisInstall, "config/iris.properties")
+		if (theirs.isFile()) {
+			theirs.withInputStream { settings.load(it) }
+		}
+		if (!settings.getProperty("shaderPack")) {
+			settings.setProperty("shaderPack", packs.find { it.name.endsWith(".zip") }?.name ?: packs[0].name)
+		}
+		settings.setProperty("enableShaders", "true")
+		def ours = new File(devGalleryDir, "config/iris.properties")
+		ours.parentFile.mkdirs()
+		ours.withOutputStream { settings.store(it, "written by runDevGallery -Pgallery.iris") }
+	}
+}
+def galleryPlansWorld = file("build/run/galleryPlans/world")
+tasks.named("runGalleryPlans") {
+	doFirst {
+		galleryPlansWorld.deleteDir()
 	}
 }
 

@@ -1,0 +1,329 @@
+package com.forzacode.a1016_02.world.sc2.kit;
+
+import com.forzacode.a1016_02.world.gen.Terrain;
+import com.forzacode.a1016_02.world.live.LiveTerrain;
+
+import java.util.function.Predicate;
+
+import it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap;
+import it.unimi.dsi.fastutil.longs.Long2ObjectLinkedOpenHashMap;
+
+import net.minecraft.core.Holder;
+import net.minecraft.core.QuartPos;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.level.ChunkPos;
+import net.minecraft.world.level.LevelHeightAccessor;
+import net.minecraft.world.level.NoiseColumn;
+import net.minecraft.world.level.biome.Biome;
+import net.minecraft.world.level.biome.BiomeResolver;
+import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.chunk.ChunkGenerator;
+import net.minecraft.world.level.levelgen.Heightmap;
+import net.minecraft.world.level.levelgen.NoiseBasedChunkGenerator;
+import net.minecraft.world.level.levelgen.NoiseSettings;
+import net.minecraft.world.level.levelgen.RandomState;
+import net.minecraft.world.level.levelgen.structure.BoundingBox;
+
+import org.jspecify.annotations.Nullable;
+
+/**
+ * The two terrains a {@link Shape} is built over: the noise in worldgen (and for rebuilding a recorded place's shape),
+ * the level's blocks as they were before the shape in the gallery and tests ({@link Frozen}). Both answer
+ * {@link Terrain#ground} as the top solid block (under water, plants and trees) and {@link Terrain#surface} counting
+ * water.
+ */
+public final class Terrains {
+	private Terrains() {
+	}
+
+	/** The noise of this generator (thread-safe; nothing is loaded or generated). */
+	public static Terrain noise(ChunkGenerator generator, RandomState randomState, LevelHeightAccessor height) {
+		return new Noise(generator, randomState, height.getMinY(), height.getMaxY(), height);
+	}
+
+	/** The noise of this level's generator. */
+	public static Terrain noise(ServerLevel level) {
+		return noise(level.getChunkSource().getGenerator(), level.getChunkSource().randomState(), level);
+	}
+
+	/**
+	 * What two terrains are the same land by (the noise of one generator and random state at one height), or null for a
+	 * terrain that is only itself (the gallery's and tests'): a cache of shapes built over the noise may key on it.
+	 */
+	public static @Nullable Object identity(Terrain terrain) {
+		return terrain instanceof Noise noise ? noise.owner : null;
+	}
+
+	/** The level's blocks, each column remembered the first time it is asked (gallery and tests only, server thread). */
+	public static Frozen frozen(ServerLevel level) {
+		return new Frozen(level);
+	}
+
+	/**
+	 * Terrain from the noise: the same answer on every thread and for every chunk, generated or not. A column is read as
+	 * the generator reads it ({@code getBaseHeight}, {@code getBaseColumn}); a chunk asked about {@value #DENSE_AFTER}
+	 * times on one thread (a shape filling it reads every column) is read whole at once, one volume of the noise
+	 * ({@link NoiseVolume}: the same blocks, a tenth of the cost a column), and answered from that.
+	 */
+	private static final class Noise implements Terrain {
+		/** A chunk asked about this often on a thread is read whole. */
+		static final int DENSE_AFTER = 24;
+		/** Chunks kept read whole per thread. */
+		static final int DENSE_KEPT = 4;
+
+		private record Column(int x, int z, NoiseColumn column) {
+		}
+
+		/** A chunk read whole: each column's ground and surface (as {@code getBaseHeight} - 1) and its blocks. */
+		private record Dense(int[] ground, int[] surface, BlockState[] blocks) {
+		}
+
+		/** The land a noise terrain reads: its generator, random state and height (equal for every terrain of one level). */
+		private record Owner(ChunkGenerator generator, RandomState randomState, int minY, int maxY) {
+		}
+
+		/**
+		 * One thread's reads of one land: its biome resolver, the last column, the chunks read whole and how often each other
+		 * chunk was asked about. One per thread for every terrain (R12-19: a terrain is made per candidate and per piece, so
+		 * caches of their own lingered in the pool's threads), started again when the thread reads another land.
+		 */
+		private static final class Cache {
+			@Nullable Owner owner;
+			@Nullable BiomeResolver resolver;
+			@Nullable Column last;
+			final Long2ObjectLinkedOpenHashMap<Dense> dense = new Long2ObjectLinkedOpenHashMap<>();
+			final Long2IntOpenHashMap asks = new Long2IntOpenHashMap();
+		}
+
+		private static final ThreadLocal<Cache> CACHE = ThreadLocal.withInitial(Cache::new);
+
+		private final ChunkGenerator generator;
+		private final RandomState randomState;
+		private final int minY;
+		private final int maxY;
+		private final LevelHeightAccessor height;
+		private final Owner owner;
+		private final @Nullable NoiseBasedChunkGenerator noise;
+		/** The noise's own height in this level (as the generator clamps it to the level). */
+		private final int noiseMinY;
+		private final int noiseHeight;
+
+		Noise(ChunkGenerator generator, RandomState randomState, int minY, int maxY, LevelHeightAccessor height) {
+			this.generator = generator;
+			this.randomState = randomState;
+			this.minY = minY;
+			this.maxY = maxY;
+			this.height = LevelHeightAccessor.create(minY, height.getHeight());
+			this.owner = new Owner(generator, randomState, minY, maxY);
+			if (generator instanceof NoiseBasedChunkGenerator noiseBased) {
+				NoiseSettings settings = noiseBased.generatorSettings().value().noiseSettings().clampToHeightAccessor(this.height);
+				this.noise = settings.height() > 0 ? noiseBased : null;
+				this.noiseMinY = settings.minY();
+				this.noiseHeight = settings.height();
+			} else {
+				this.noise = null;
+				this.noiseMinY = minY;
+				this.noiseHeight = 0;
+			}
+		}
+
+		/** This thread's reads of this terrain's land (started again if the thread last read another). */
+		private Cache cache() {
+			Cache c = CACHE.get();
+			if (!owner.equals(c.owner)) {
+				c.owner = owner;
+				c.resolver = null;
+				c.last = null;
+				c.dense.clear();
+				c.asks.clear();
+			}
+			return c;
+		}
+
+		@Override
+		public int seaLevel() {
+			return generator.getSeaLevel();
+		}
+
+		@Override
+		public int minY() {
+			return minY;
+		}
+
+		/** The chunk of this column read whole, or null (asked too few times yet, or not the noise). */
+		private @Nullable Dense dense(int x, int z) {
+			if (noise == null) {
+				return null;
+			}
+			Cache c = cache();
+			long key = ChunkPos.pack(x >> 4, z >> 4);
+			Dense d = c.dense.getAndMoveToFirst(key);
+			if (d != null) {
+				return d;
+			}
+			int asks = c.asks.addTo(key, 1) + 1;
+			if (asks < DENSE_AFTER) {
+				if (c.asks.size() > 4096) {
+					c.asks.clear();
+				}
+				return null;
+			}
+			c.asks.remove(key);
+			d = read(x & ~15, z & ~15);
+			c.dense.putAndMoveToFirst(key, d);
+			if (c.dense.size() > DENSE_KEPT) {
+				c.dense.removeLast();
+			}
+			return d;
+		}
+
+		private Dense read(int x0, int z0) {
+			int sy = noiseHeight;
+			BlockState[] blocks = NoiseVolume.blocks(noise, randomState, x0, noiseMinY, z0, 16, sy, 16);
+			int[] ground = new int[256];
+			int[] surface = new int[256];
+			Predicate<BlockState> solid = Heightmap.Types.OCEAN_FLOOR_WG.isOpaque();
+			Predicate<BlockState> filled = Heightmap.Types.WORLD_SURFACE_WG.isOpaque();
+			for (int i = 0; i < 256; i++) {
+				int g = minY - 1;
+				int s = minY - 1;
+				int base = i * sy;
+				for (int y = sy - 1; y >= 0; y--) {
+					BlockState state = blocks[base + y];
+					if (s == minY - 1 && filled.test(state)) {
+						s = noiseMinY + y;
+					}
+					if (solid.test(state)) {
+						g = noiseMinY + y;
+						break;
+					}
+				}
+				ground[i] = g;
+				surface[i] = s;
+			}
+			return new Dense(ground, surface, blocks);
+		}
+
+		@Override
+		public int ground(int x, int z) {
+			Dense d = dense(x, z);
+			if (d != null) {
+				return d.ground()[(x & 15) + (z & 15) * 16];
+			}
+			return generator.getBaseHeight(x, z, Heightmap.Types.OCEAN_FLOOR_WG, height, randomState) - 1;
+		}
+
+		@Override
+		public int surface(int x, int z) {
+			Dense d = dense(x, z);
+			if (d != null) {
+				return d.surface()[(x & 15) + (z & 15) * 16];
+			}
+			return generator.getBaseHeight(x, z, Heightmap.Types.WORLD_SURFACE_WG, height, randomState) - 1;
+		}
+
+		@Override
+		public Holder<Biome> biome(int x, int y, int z) {
+			Cache c = cache();
+			if (c.resolver == null) {
+				c.resolver = generator.getBiomeSource().createUncachedResolver(randomState);
+			}
+			return c.resolver.getNoiseBiome(QuartPos.fromBlock(x), QuartPos.fromBlock(y), QuartPos.fromBlock(z));
+		}
+
+		@Override
+		public BlockState block(int x, int y, int z) {
+			if (y < minY || y > maxY) {
+				return Blocks.AIR.defaultBlockState();
+			}
+			Cache c = cache();
+			Column cached = c.last;
+			if (cached == null || cached.x() != x || cached.z() != z) {
+				Dense d = dense(x, z);
+				if (d != null) {
+					int index = y - noiseMinY;
+					return index < 0 || index >= noiseHeight ? Blocks.AIR.defaultBlockState() : d.blocks()[index + ((x & 15) + (z & 15) * 16) * noiseHeight];
+				}
+				cached = new Column(x, z, generator.getBaseColumn(x, z, height, randomState));
+				c.last = cached;
+			}
+			return cached.column().getBlock(y);
+		}
+	}
+
+	/**
+	 * The level's blocks as they were before a shape was placed: {@link #ground} and {@link #surface} of each column are
+	 * remembered the first time they are asked, and {@link Live#place} asks for every column of the shape's box before it
+	 * writes, so a column read after its chunk was written still answers what was there. Loads (generates) the chunk of a
+	 * column it is asked about. {@link #block} and {@link #biome} read the level now. Gallery and tests only.
+	 */
+	public static final class Frozen implements Terrain {
+		private final ServerLevel level;
+		private final LiveTerrain live;
+		private final Long2IntOpenHashMap ground = new Long2IntOpenHashMap();
+		private final Long2IntOpenHashMap surface = new Long2IntOpenHashMap();
+
+		Frozen(ServerLevel level) {
+			this.level = level;
+			this.live = new LiveTerrain(level);
+		}
+
+		/** Remembers every column of this box now. */
+		public void freeze(BoundingBox box) {
+			for (int x = box.minX(); x <= box.maxX(); x++) {
+				for (int z = box.minZ(); z <= box.maxZ(); z++) {
+					ground(x, z);
+					surface(x, z);
+				}
+			}
+		}
+
+		private void load(int x, int z) {
+			if (!level.hasChunk(x >> 4, z >> 4)) {
+				level.getChunk(x >> 4, z >> 4);
+			}
+		}
+
+		@Override
+		public int seaLevel() {
+			return level.getSeaLevel();
+		}
+
+		@Override
+		public int minY() {
+			return level.getMinY();
+		}
+
+		@Override
+		public int ground(int x, int z) {
+			long key = ChunkPos.pack(x, z);
+			if (!ground.containsKey(key)) {
+				load(x, z);
+				ground.put(key, live.ground(x, z));
+			}
+			return ground.get(key);
+		}
+
+		@Override
+		public int surface(int x, int z) {
+			long key = ChunkPos.pack(x, z);
+			if (!surface.containsKey(key)) {
+				load(x, z);
+				surface.put(key, live.surface(x, z));
+			}
+			return surface.get(key);
+		}
+
+		@Override
+		public Holder<Biome> biome(int x, int y, int z) {
+			return live.biome(x, y, z);
+		}
+
+		@Override
+		public BlockState block(int x, int y, int z) {
+			load(x, z);
+			return live.block(x, y, z);
+		}
+	}
+}

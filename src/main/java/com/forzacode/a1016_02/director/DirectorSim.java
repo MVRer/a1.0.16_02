@@ -13,6 +13,7 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.function.Predicate;
 import java.util.function.ToDoubleFunction;
+import java.util.function.ToIntFunction;
 
 import com.forzacode.a1016_02.core.CardTag;
 import com.forzacode.a1016_02.core.FireResult;
@@ -21,6 +22,8 @@ import com.forzacode.a1016_02.core.FogWeatherRules;
 import com.forzacode.a1016_02.core.Stage;
 import com.forzacode.a1016_02.core.Tier;
 import com.forzacode.a1016_02.director.sc.Sc01Config;
+import com.forzacode.a1016_02.director.sc.ScPacing;
+import com.forzacode.a1016_02.director.sc.SimFits;
 
 import net.minecraft.util.RandomSource;
 
@@ -55,13 +58,19 @@ import org.jspecify.annotations.Nullable;
  * rolled once per director tick on dice of their own: {@link Params#dreadShare} of the ticks at
  * {@link Params#dreadFactor}, {@link Params#trustedShare} at {@link Params#trustedFactor}, the rest at
  * {@link Params#awayFactor}. The brain applies it as it applies the live one (from Traces, after the first hour, the
- * ambient and minor rates only). Without a share (the default) every run is exactly as before.
+ * ambient and minor rates only). Without a share (the default) every run is exactly as before. 01+
+ * (docs/SELF_CREATED_2.md): {@link Params#remainsShare} of the ticks at {@link Params#remainsFactor}, his places.
  */
 public final class DirectorSim {
 	/** The player of a one-player dry run. */
 	public static final UUID SOLO = new UUID(0L, 0xA1016L);
 	/** The note of a fire that came from a blind moment's recheck (D-077). */
 	public static final String RECHECK = "recheck";
+	/** In-game time of day (ticks) from which, and until which, a {@link Params#dark} card's night lasts. */
+	public static final long NIGHT_FROM = 13_000L;
+	public static final long NIGHT_UNTIL = 23_000L;
+	/** A {@link Params#dark} card's chance a look on a night its moment is there. */
+	public static final double DARK_LOOK = 0.5;
 
 	/** The sky over a stretch of a run (D-071): no spell on, a quiet spell (no boost), or a fog spell that boosts. */
 	public enum Sky { CLEAR, QUIET, FOG }
@@ -140,6 +149,40 @@ public final class DirectorSim {
 		 */
 		public @Nullable ToDoubleFunction<CardInfo> fitChanceOf;
 		/**
+		 * Cards whose moment needs their player alone (nobody within the shared radius: the second wave's hunts and
+		 * friend at a distance): they never fit while someone shares the moment with them, whatever the dice say. Null:
+		 * none ({@link #from} sets the second wave's, {@link SimFits#ALONE}).
+		 */
+		public @Nullable Predicate<CardInfo> needsAlone;
+		/**
+		 * Cards whose moment needs another player taking part (a friend's base, a friend's mining, a friend far off):
+		 * they never fit while nobody else is online in the run. Null: none ({@link #from} sets the second wave's,
+		 * {@link SimFits#COMPANY}).
+		 */
+		public @Nullable Predicate<CardInfo> needsCompany;
+		/**
+		 * Cards whose moment exists only in the dark (the hunts: night, and their player out far from home): they fit only
+		 * at night (in-game time {@link #NIGHT_FROM} to {@link #NIGHT_UNTIL}) on a night their player is out
+		 * ({@link #nightOut}, rolled per player per night on dice of its own), and their looks roll dice of their own, so
+		 * the rest of the run's draws are unchanged. Null: none ({@link #from} sets the hunts', {@link SimFits#DARK}).
+		 */
+		public @Nullable Predicate<CardInfo> dark;
+		/** The share of nights a player is out far from home, for the {@link #dark} cards. */
+		public double nightOut = 1;
+		/** The share of the nights within a day of a visit to one of his places that the player is out far from home. */
+		public double calledNightOut = 1;
+		/** Cards whose moment needs a fog spell (any sky but a clear one) unless the world calls them. Null: none. */
+		public @Nullable Predicate<CardInfo> needsFog;
+		/** A {@link #dark} card's chance a look while the world calls it ({@link DirectorBrain.Env#called}); null: as uncalled. */
+		public @Nullable ToDoubleFunction<CardInfo> calledChanceOf;
+		/**
+		 * Visits inside one of his places per hour of a player's play, from Traces on: each calls the own-clock cards
+		 * ({@link DirectorRules#ownClockCards}) for that player for one in-game day. 0: none.
+		 */
+		public double visitsPerHour;
+		/** At most this many fires of a card in a run, whoever got it (a world cap); null or negative: none. */
+		public @Nullable ToIntFunction<CardInfo> worldCap;
+		/**
 		 * Hours into the run at which someone names him: lore's naming {@code HerobrineEvents.TELLING}, so the
 		 * run reaches Telling and Stage 3's pacing is exercised. Negative: never (the director alone never gets there).
 		 */
@@ -162,27 +205,51 @@ public final class DirectorSim {
 		/** The share of director ticks at {@link #trustedFactor}. */
 		public double trustedShare;
 		public double trustedFactor = 1;
+		/** 01+ (docs/SELF_CREATED_2.md): the share of director ticks spent at one of his places, at {@link #remainsFactor}. */
+		public double remainsShare;
+		public double remainsFactor = 1;
 		/** The factor of every other director tick. */
 		public double awayFactor = 1;
 
-		/** The dread share of this section ({@code simDreadShare} at {@code simDreadFactor}, {@code simTrustedShare} at {@code trustedFactor}, the rest at {@code awayFactor}). */
+		/**
+		 * The dread share of this section ({@code simDreadShare} at {@code simDreadFactor}, {@code simTrustedShare} at
+		 * {@code trustedFactor}, {@code simRemainsShare} at {@code remainsFactor} never past {@code maxFactor} (01+), the
+		 * rest at {@code awayFactor}).
+		 */
 		public Params places(Sc01Config config) {
 			dreadShare = Math.max(0, config.simDreadShare);
 			dreadFactor = config.simDreadFactor;
 			trustedShare = Math.max(0, config.simTrustedShare);
 			trustedFactor = config.trustedFactor;
+			remainsShare = Math.max(0, config.simRemainsShare);
+			remainsFactor = Math.min(Math.max(1, config.maxFactor), Math.max(1, config.remainsFactor));
 			awayFactor = config.awayFactor;
+			visitsPerHour = SimFits.visitsPerHour(config);
 			return this;
 		}
 
 		/** True if the run rolls a place factor at all. */
 		boolean modelsPlaces() {
-			return dreadShare > 0 || trustedShare > 0 || awayFactor != 1;
+			return dreadShare > 0 || trustedShare > 0 || remainsShare > 0 || awayFactor != 1;
 		}
 
+		/**
+		 * The section's dry-run numbers; every card's moment at {@code simFitChance} but the second wave's, at their own
+		 * rarer chances ({@link SimFits}, SC2-9).
+		 */
 		public static Params from(DirectorConfig config, DirectorRules rules) {
 			Params p = new Params();
 			p.fitChance = config.simFitChance;
+			p.fitChanceOf = SimFits.of(config.simFitChance);
+			p.needsAlone = card -> SimFits.ALONE.contains(card.id());
+			p.needsCompany = card -> SimFits.COMPANY.contains(card.id());
+			p.dark = card -> SimFits.DARK.contains(card.id());
+			p.nightOut = SimFits.NIGHT_OUT;
+			p.calledNightOut = SimFits.CALLED_NIGHT_OUT;
+			p.needsFog = card -> SimFits.FOG.contains(card.id());
+			p.calledChanceOf = SimFits.called(config.simFitChance);
+			p.visitsPerHour = SimFits.visitsPerHour(new Sc01Config());
+			p.worldCap = card -> SimFits.CAPS.getOrDefault(card.id(), -1);
 			p.noSpotChance = config.simNoSpotChance;
 			p.sessionMin = Math.max(rules.tickInterval, Math.round(config.simSessionMinMinutes * 60 / 3600.0 * rules.hourTicks));
 			p.sessionMax = Math.max(p.sessionMin, Math.round(config.simSessionMaxMinutes * 60 / 3600.0 * rules.hourTicks));
@@ -659,6 +726,8 @@ public final class DirectorSim {
 		Event pendingQuiet = null;
 		Stage stage = result.startStage;
 		long namedAt = -1;
+		long lastGroup = start.lastGroup;
+		long lastOwnClock = start.lastOwnClock;
 
 		for (Event e : result.events) {
 			String at = time(e.play(), rules) + " ";
@@ -752,8 +821,27 @@ public final class DirectorSim {
 					if (rules.firstHourMaxFires >= 0 && now < rules.hourTicks && !"forced".equals(e.note()) && ++firstHour > rules.firstHourMaxFires) {
 						broken.add(at + "moment number " + firstHour + " in their first hour");
 					}
+					boolean counted = !"forced".equals(e.note());
+					if (counted && rules.groupCards.contains(e.cardId())) {
+						// The group's gap (FIX-SC2-PACE): two of its moments, own or felt, never closer than groupGap.
+						if (rules.groupGap > 0 && now - lastGroup < rules.groupGap) {
+							broken.add(at + "group moments " + minutes(now - lastGroup, rules) + " min apart");
+						}
+						lastGroup = now;
+					}
 					if (card != null) {
-						if (card.has(CardTag.ACCIDENT) && now < rules.firstAccident) {
+						if (rules.ownClockCards.contains(card.id())) {
+							// Its own clock instead of the first accident's time (R10-4).
+							if (now < rules.ownClockFrom) {
+								broken.add(at + "own-clock card " + what + " before " + time(rules.ownClockFrom, rules));
+							}
+							if (counted && now - lastOwnClock < rules.ownClockGap) {
+								broken.add(at + "own-clock cards " + minutes(now - lastOwnClock, rules) + " min apart");
+							}
+							if (counted) {
+								lastOwnClock = now;
+							}
+						} else if (card.has(CardTag.ACCIDENT) && now < rules.firstAccident) {
 							broken.add(at + "accident card " + what + " before " + time(rules.firstAccident, rules));
 						}
 						if (!e.stage().atLeast(card.earliestStage())) {
@@ -766,13 +854,17 @@ public final class DirectorSim {
 							broken.add(at + what + " fired as a fake but has none");
 						}
 					}
-					if (e.cardId().equals(last.get(tier))) {
+					if (rules.ownClockCards.contains(e.cardId())) {
+						// Outside its deck: its own gap above, never the deck's no-repeat rule.
+					} else if (e.cardId().equals(last.get(tier))) {
 						broken.add(at + what + " fired twice in a row");
 					} else if (cycle.get(tier).contains(e.cardId())) {
 						broken.add(at + what + " repeated before its deck ran out");
 					}
-					cycle.get(tier).add(e.cardId());
-					last.put(tier, e.cardId());
+					if (!rules.ownClockCards.contains(e.cardId())) {
+						cycle.get(tier).add(e.cardId());
+						last.put(tier, e.cardId());
+					}
 					if (e.value() >= rules.tensionThreshold) {
 						pendingQuiet = e;
 					}
@@ -871,6 +963,12 @@ public final class DirectorSim {
 		final RandomSource blindDice;
 		/** Places (01): dice of their own for each seat's place factor. */
 		final RandomSource placeDice;
+		/** The dark cards' looks and each seat's nights out: dice of their own. */
+		final RandomSource darkDice;
+		/** Visits to his places: dice of their own. */
+		final RandomSource visitDice;
+		/** Fires per card in the run, whoever got them (the world caps). */
+		final Map<String, Integer> capFires = new HashMap<>();
 		Optional<FogSpell> fogSpell;
 		FogWeatherRules.History fogHistory;
 		long weatherClock;
@@ -884,6 +982,8 @@ public final class DirectorSim {
 			this.weather = RandomSource.create(mix(params.seed ^ 0xF065_9E11L));
 			this.blindDice = RandomSource.create(mix(params.seed ^ 0xB11D_0077L));
 			this.placeDice = RandomSource.create(mix(params.seed ^ 0x5C01_0084L));
+			this.darkDice = RandomSource.create(mix(params.seed ^ 0x5C25_0026L));
+			this.visitDice = RandomSource.create(mix(params.seed ^ 0x5C16_0020L));
 			this.world = world;
 			this.stage = stage;
 			this.worldStart = worldTicks;
@@ -1009,6 +1109,13 @@ public final class DirectorSim {
 						seat.place = rollPlace();
 					}
 				}
+				double visitChance = params.visitsPerHour <= 0 ? 0 : 1 - Math.exp(-params.visitsPerHour * interval / rules.hourTicks);
+				for (SeatRun seat : deciding) {
+					// A visit inside one of his places (from Traces on, as they generate): it calls the own-clock cards for a day.
+					if (visitChance > 0 && stage.atLeast(Stage.TRACES) && visitDice.nextDouble() < visitChance) {
+						seat.trespassDay = dayTicks;
+					}
+				}
 				for (int k = 0; k < deciding.size(); k++) {
 					// Players take turns going first, as the live director staggers them.
 					SeatRun seat = deciding.get((tick + k) % deciding.size());
@@ -1035,13 +1142,16 @@ public final class DirectorSim {
 			}
 		}
 
-		/** One director tick's place factor for a seat (01): the dread share, the trusted share, else away. */
+		/** One director tick's place factor for a seat (01): the dread share, the trusted share, his places' share (01+), else away. */
 		double rollPlace() {
 			double roll = placeDice.nextDouble();
 			if (roll < params.dreadShare) {
 				return params.dreadFactor;
 			}
-			return roll < params.dreadShare + params.trustedShare ? params.trustedFactor : params.awayFactor;
+			if (roll < params.dreadShare + params.trustedShare) {
+				return params.trustedFactor;
+			}
+			return roll < params.dreadShare + params.trustedShare + params.remainsShare ? params.remainsFactor : params.awayFactor;
 		}
 
 		/** The world's stage moved: one world event, and one in every online player's record on their own clock. */
@@ -1085,6 +1195,47 @@ public final class DirectorSim {
 		boolean blind;
 		/** This director tick's place factor (01), 1 without a dread share. */
 		double place = 1;
+		/** The day ticks of this player's last visit inside one of his places, or -1 (it calls the own-clock cards for a day). */
+		long trespassDay = -1;
+		/** The in-game day whose night {@link #outRoll} was rolled for, and that roll (0 to 1). */
+		long outNight = Long.MIN_VALUE;
+		double outRoll;
+
+		/**
+		 * True at night on a night this player is out far from home: {@link Params#nightOut} of the nights, or
+		 * {@link Params#calledNightOut} on a night after a visit to one of his places (they walked far out to it), on one
+		 * roll a night.
+		 */
+		boolean outTonight(boolean called) {
+			long time = Math.floorMod(table.dayTicks, DirectorBrain.DAY_TICKS);
+			if (time < NIGHT_FROM || time >= NIGHT_UNTIL) {
+				return false;
+			}
+			long night = Math.floorDiv(table.dayTicks, DirectorBrain.DAY_TICKS);
+			if (night != outNight) {
+				outNight = night;
+				outRoll = table.darkDice.nextDouble();
+			}
+			return outRoll < (called ? Math.max(table.params.nightOut, table.params.calledNightOut) : table.params.nightOut);
+		}
+
+		/** The night {@link #darkRolls} were rolled for, and tonight's roll for each dark card (0 to 1). */
+		long darkNight = Long.MIN_VALUE;
+		final Map<String, Double> darkRolls = new HashMap<>();
+
+		/** Tonight's roll for this dark card (after {@link #outTonight}): one per card per night, on the dark cards' dice. */
+		double darkRoll(CardInfo card) {
+			if (darkNight != outNight) {
+				darkNight = outNight;
+				darkRolls.clear();
+			}
+			return darkRolls.computeIfAbsent(card.id(), id -> table.darkDice.nextDouble());
+		}
+
+		/** True if the world calls this own-clock card for this player now: a visit within one in-game day. */
+		boolean called(CardInfo card) {
+			return table.rules.ownClockCards.contains(card.id()) && trespassDay >= 0 && table.dayTicks - trespassDay <= ScPacing.CALL_TICKS;
+		}
 
 		SeatRun(Table table, UUID player, long joinAt, @Nullable PacingMemory pacing, long play, double tension) {
 			this.table = table;
@@ -1207,8 +1358,58 @@ public final class DirectorSim {
 			if (table.params.fits != null) {
 				return table.params.fits.test(card);
 			}
+			Params p = table.params;
+			if (p.worldCap != null) {
+				int cap = p.worldCap.applyAsInt(card);
+				if (cap >= 0 && table.capFires.getOrDefault(card.id(), 0) >= cap) {
+					return false;
+				}
+			}
+			if (p.dark != null && p.dark.test(card)) {
+				return darkFits(card);
+			}
 			double chance = table.params.fitChanceOf != null ? table.params.fitChanceOf.applyAsDouble(card) : table.params.fitChance;
-			return table.random.nextDouble() < chance;
+			boolean fits = table.random.nextDouble() < chance;
+			// After the dice (so a run without these rules draws exactly as before): a moment that needs its player
+			// alone never comes beside a sharer, and one that needs another player never comes with nobody else online.
+			if (fits && table.params.needsAlone != null && table.params.needsAlone.test(card) && !table.sharers(seat).isEmpty()) {
+				return false;
+			}
+			if (fits && table.params.needsCompany != null && table.params.needsCompany.test(card) && table.online().size() < 2) {
+				return false;
+			}
+			return fits;
+		}
+
+		/**
+		 * A dark card's moment ({@link Params#dark}): only at night on a night this player is out, under a fog spell for
+		 * one that needs it unless the world calls it, then its chance a look (its called chance while called), on dice
+		 * of its own; never beside a sharer for one that needs its player alone.
+		 */
+		private boolean darkFits(CardInfo card) {
+			Params p = table.params;
+			boolean called = seat.called(card);
+			if (!seat.outTonight(called)) {
+				return false;
+			}
+			if (p.needsFog != null && p.needsFog.test(card) && !called && table.sky() == Sky.CLEAR) {
+				return false;
+			}
+			// Its chance is a night's (the moment is there tonight or not: wolves near, the day's roll), rolled once per
+			// night on one roll, so a moment that is there stays there through the night's gates; then each look finds it
+			// with DARK_LOOK (the player stays out, the pack stays near).
+			double chance = called && p.calledChanceOf != null ? p.calledChanceOf.applyAsDouble(card)
+					: p.fitChanceOf != null ? p.fitChanceOf.applyAsDouble(card) : p.fitChance;
+			boolean fits = seat.darkRoll(card) < chance && table.darkDice.nextDouble() < DARK_LOOK;
+			if (fits && p.needsAlone != null && p.needsAlone.test(card) && !table.sharers(seat).isEmpty()) {
+				return false;
+			}
+			return fits;
+		}
+
+		@Override
+		public boolean called(CardInfo card) {
+			return seat.called(card);
 		}
 
 		@Override
@@ -1292,6 +1493,7 @@ public final class DirectorSim {
 			seat.add(Kind.FIRE, c, stage, card.tier(), card.id(), fake, tensionAfter, -1, card.hasFake(), forced ? "forced" : seat.blind ? RECHECK : "");
 			if (!forced) {
 				seat.result.skyFires.merge(seat.table.sky(), 1, Integer::sum);
+				seat.table.capFires.merge(card.id(), 1, Integer::sum);
 			}
 			HourRow row = ensureRow(c.playTicks());
 			row.fires.merge(card.tier(), 1, Integer::sum);

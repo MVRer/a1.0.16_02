@@ -11,6 +11,7 @@ import java.util.WeakHashMap;
 import com.forzacode.a1016_02.A1016_02;
 import com.forzacode.a1016_02.atmosphere.AtmosphereData;
 import com.forzacode.a1016_02.atmosphere.mob.MobTamperImpl;
+import com.forzacode.a1016_02.atmosphere.sc2.s21.S21;
 import com.forzacode.a1016_02.core.FogSpell;
 import com.forzacode.a1016_02.core.HerobrineState;
 import com.forzacode.a1016_02.core.SelfCreated;
@@ -375,6 +376,9 @@ public final class EmptyNight {
 		snapshot(new Snapshot(quiet, positions, cfg.spawnRadius));
 		if (quiet.isPresent() && cfg.quietAnimals && server.getTickCount() % SILENCE_EVERY == 0) {
 			silence(overworld, here, cfg.quietRadius, silenceTicks(now, quiet.get()));
+		}
+		if (quiet.isPresent() && quiet.get().contains(now)) {
+			S21.emptyNight(server, overworld, here); // 04+ (docs/SELF_CREATED_2.md 21)
 		}
 	}
 

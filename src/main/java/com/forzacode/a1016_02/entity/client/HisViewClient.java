@@ -10,6 +10,7 @@ import java.util.concurrent.TimeoutException;
 import java.util.function.Consumer;
 
 import com.forzacode.a1016_02.A1016_02;
+import com.forzacode.a1016_02.core.ScLog;
 import com.forzacode.a1016_02.core.SelfCreated;
 import com.forzacode.a1016_02.entity.HimEntity;
 import com.forzacode.a1016_02.entity.mixin.client.SectionOcclusionGraphAccessor;
@@ -206,7 +207,7 @@ public final class HisViewClient {
 		try {
 			shot = shoot(minecraft, view, him.getId(), image -> written(minecraft, folder, image));
 		} catch (RuntimeException e) {
-			A1016_02.LOGGER.warn("[a1016] sc_03: the frame failed", e);
+			ScLog.warn("[a1016] sc_03: the frame failed", e);
 			busy = false;
 			forget("the frame failed");
 			return;
@@ -302,7 +303,7 @@ public final class HisViewClient {
 			}
 			waitForGraph(minecraft, settle.cleanWait(Util.getMillis(), HisViewRules.Settle.GRAPH_WAIT_MS));
 		} catch (RuntimeException e) {
-			A1016_02.LOGGER.warn("[a1016] sc_03: the normal frame after it failed", e);
+			ScLog.warn("[a1016] sc_03: the normal frame after it failed", e);
 		}
 	}
 
@@ -352,7 +353,7 @@ public final class HisViewClient {
 				}
 			}
 		} catch (RuntimeException e) {
-			A1016_02.LOGGER.warn("[a1016] sc_03: the grab could not be read", e);
+			ScLog.warn("[a1016] sc_03: the grab could not be read", e);
 			minecraft.execute(() -> {
 				busy = false;
 				forget("the grab could not be read");

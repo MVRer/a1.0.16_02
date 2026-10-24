@@ -35,7 +35,7 @@ public class AccidentGameTests extends CrossGameTests {
 	public void realServicesAndCardsAreInstalled(GameTestHelper helper) {
 		helper.assertTrue(Services.accidents() instanceof AccidentPlannerImpl, "the real planner is not installed");
 		helper.assertTrue(Services.deaths() instanceof DeathMarkerImpl, "the real death marker is not installed");
-		helper.assertTrue(Traps.ALL.size() == 21, "13 accidents, 4 lures, the zombie's sword and 3 bridges, got " + Traps.ALL.size());
+		helper.assertTrue(Traps.ALL.size() == 23, "13 accidents, 4 lures, the zombie's sword, 3 bridges and the layer's 2, got " + Traps.ALL.size());
 		for (TrapKind trap : Traps.ALL) {
 			helper.assertTrue(trap.blocked() == null || trap.blocked().contains("MobTamper"), trap.id() + " is still blocked: " + trap.blocked());
 		}

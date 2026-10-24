@@ -660,6 +660,8 @@ public class DirectorMultiplayerTests extends DirectorV13Tests {
 					helper.assertTrue(hard.isEmpty(), at + "seed " + player.params.seed + ": " + hard);
 				}
 			}
+			// 0.95 again since SC2-9: the second wave's moments come in the dry runs as rarely as in a world, and those that
+			// need their player alone (27 and the hunts) never beside a friend (director.sc.SimFits).
 			assertNear(helper, at + "felt minors/h", felt.minorsPerHour(), solo.minorsPerHour(), 0.95, 1.7);
 			assertNear(helper, at + "felt majors/h", felt.majorsPerHour(), solo.majorsPerHour(), 0.7, 1.25);
 			assertNear(helper, at + "felt Traces ambients/h", felt.tracesAmbientsPerHour(), solo.tracesAmbientsPerHour(), 1.2, 1.7);

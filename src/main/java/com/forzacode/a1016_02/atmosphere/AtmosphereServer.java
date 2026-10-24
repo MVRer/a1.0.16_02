@@ -6,6 +6,7 @@ import com.forzacode.a1016_02.atmosphere.sc.AtmosphereSc;
 import com.forzacode.a1016_02.core.ClientEffects;
 import com.forzacode.a1016_02.core.HerobrineEvents;
 import com.forzacode.a1016_02.core.HerobrineState;
+import com.forzacode.a1016_02.core.PlayerWatch;
 import com.forzacode.a1016_02.core.Services;
 import com.forzacode.a1016_02.core.Stage;
 
@@ -38,11 +39,13 @@ public final class AtmosphereServer {
 	static void init() {
 		ServerTickEvents.END_SERVER_TICK.register(AtmosphereServer::tick);
 		ServerEntityEvents.ENTITY_UNLOAD.register((entity, level) -> MobTamperImpl.INSTANCE.onUnload(entity));
+		ServerEntityEvents.ENTITY_LOAD.register((entity, level) -> MobTamperImpl.INSTANCE.onLoad(entity));
 		ServerPlayConnectionEvents.JOIN.register((handler, sender, server) -> ActiveEffects.onConnect(handler.player.getUUID()));
-		ServerPlayConnectionEvents.DISCONNECT.register((handler, server) -> {
+		// Their maps are the server tick's: a client that quits or crashes is handled on the server thread (R12-4).
+		ServerPlayConnectionEvents.DISCONNECT.register((handler, server) -> PlayerWatch.afterDisconnect(server, handler.player, () -> {
 			ActiveEffects.onDisconnect(handler.player.getUUID());
 			DeadMountains.onLeave(handler.player);
-		});
+		}));
 		HerobrineEvents.PARTICIPATION.register((server, player, participating) -> {
 			if (participating) {
 				ActiveEffects.onParticipating(server, player);

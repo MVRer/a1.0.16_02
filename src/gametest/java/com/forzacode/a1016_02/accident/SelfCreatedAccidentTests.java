@@ -312,8 +312,10 @@ public class SelfCreatedAccidentTests {
 		sampler.sample(field.player, data, AccidentConfig.get(), 20, 0);
 		helper.assertTrue(sampler.standing(uuid).size() == 1 && sampler.standing(uuid).getFirst().feet().equals(field.player.blockPosition()),
 				"no stand: " + sampler.standing(uuid));
-		sampler.stand(uuid, new RouteSampler.Stand(Level.OVERWORLD, field.feet(1), 10_000));
-		sampler.stand(uuid, new RouteSampler.Stand(Level.OVERWORLD, field.feet(2), 10_000 + RouteSampler.STANDING_TICKS + 1));
+		// After the sample's own stand (at the server's tick now), whatever the tick is when this test runs.
+		long later = helper.getLevel().getServer().getTickCount() + 10_000;
+		sampler.stand(uuid, new RouteSampler.Stand(Level.OVERWORLD, field.feet(1), later));
+		sampler.stand(uuid, new RouteSampler.Stand(Level.OVERWORLD, field.feet(2), later + RouteSampler.STANDING_TICKS + 1));
 		helper.assertTrue(sampler.standing(uuid).size() == 1, "the ring kept more than 10 s: " + sampler.standing(uuid));
 		sampler.reset(uuid);
 		helper.assertTrue(sampler.standing(uuid).isEmpty(), "the ring outlived a reset");

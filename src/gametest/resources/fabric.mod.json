@@ -28,11 +28,14 @@
 			"com.forzacode.a1016_02.entity.VerifyV13ScreenshotTests",
 			"com.forzacode.a1016_02.dig.GlimpseFeedbackTests",
 			"com.forzacode.a1016_02.core.SelfCreatedCoreTests",
+			"com.forzacode.a1016_02.core.SelfCreated2CoreTests",
+			"com.forzacode.a1016_02.core.VerifySc2SideTests",
 			"com.forzacode.a1016_02.entity.ScreenshotPlainTests",
 			"com.forzacode.a1016_02.director.SelfCreatedDirectorTests",
 			"com.forzacode.a1016_02.dig.SelfCreatedDigTests",
 			"com.forzacode.a1016_02.accident.SelfCreatedAccidentTests",
 			"com.forzacode.a1016_02.world.SelfCreatedWorldTests",
+			"com.forzacode.a1016_02.world.SelfCreated2KitTests",
 			"com.forzacode.a1016_02.atmosphere.card.SelfCreatedAtmosphereTests",
 			"com.forzacode.a1016_02.entity.SelfCreatedEntityTests",
 			"com.forzacode.a1016_02.lore.SelfCreatedLoreTests",
@@ -51,11 +54,34 @@
 			"com.forzacode.a1016_02.director.SelfCreatedR7FeltReviewTests",
 			"com.forzacode.a1016_02.core.VerifyScSwitchTests",
 			"com.forzacode.a1016_02.core.VerifyScCostTests",
-			"com.forzacode.a1016_02.core.VerifyScSpoilerTests"
+			"com.forzacode.a1016_02.core.VerifyScSpoilerTests",
+			"com.forzacode.a1016_02.debug.gallery.SelfCreated2GalleryTests",
+			"com.forzacode.a1016_02.world.SelfCreated2PyramidTests",
+			"com.forzacode.a1016_02.world.SelfCreated2ArchiveTests",
+			"com.forzacode.a1016_02.world.SelfCreated2HollowTests",
+			"com.forzacode.a1016_02.world.SelfCreated2HeightsTests",
+			"com.forzacode.a1016_02.world.SelfCreated2LineTests",
+			"com.forzacode.a1016_02.world.SelfCreated2BorrowedTests",
+			"com.forzacode.a1016_02.atmosphere.SelfCreated2InstrumentTests",
+			"com.forzacode.a1016_02.atmosphere.SelfCreated2NotYouTests",
+			"com.forzacode.a1016_02.accident.SelfCreated2HuntTests",
+			"com.forzacode.a1016_02.entity.SelfCreated2EntityTests",
+			"com.forzacode.a1016_02.lore.SelfCreated2MapTests",
+			"com.forzacode.a1016_02.director.SelfCreated2PacingTests",
+			"com.forzacode.a1016_02.core.VerifySc2CostTests",
+			"com.forzacode.a1016_02.core.SelfCreated2ReviewCoreTests",
+			"com.forzacode.a1016_02.core.VerifySc2FinalTests"
+		],
+		"fabric-client-gametest": [
+			"com.forzacode.a1016_02.debug.gallery.GalleryClientTest",
+			"com.forzacode.a1016_02.world.SelfCreated2RealWorldClientTest"
 		]
 	},
 	"depends": {
 		"a1016_02": "*",
 		"fabric-gametest-api-v1": "*"
+	},
+	"suggests": {
+		"fabric-client-gametest-api-v1": "*"
 	}
 }

@@ -228,6 +228,81 @@ public final class FigureApi {
 		return new Spawned(FireResult.FIRED, him.get());
 	}
 
+	/**
+	 * The self-created layer's second wave (docs/SELF_CREATED_2.md, 31 and 31c): a sighting whose spot its caller gives
+	 * ({@link Variant#APEX}, {@link Variant#INSIDE_TRUNKS}), set up for {@code player}, seen by everyone in their level.
+	 * {@link FireResult#NO_SPOT} while he is out anywhere (one him) or when the spot breaks the spawn rule (in anyone's
+	 * view, or nearer than the minimum distance to anyone; not entity-ticking); {@link FireResult#SKIPPED} for any other
+	 * variant (the glimpse has its own way, {@link GlimpseFigure}). Records the sighting as every sighting does: the day,
+	 * the place, the variant.
+	 *
+	 * @param anchor the trunk he hides behind (31c), or null
+	 */
+	public static Spawned spawnGiven(ServerPlayer player, Variant variant, Vec3 feet, float yaw, @Nullable BlockPos anchor) {
+		ServerLevel level = player.level();
+		MinecraftServer server = level.getServer();
+		if (anyOut(server)) {
+			return new Spawned(isGivenBySc2(variant) ? FireResult.NO_SPOT : FireResult.SKIPPED, null);
+		}
+		return spawnGiven(level, player, variant, feet, yaw, anchor, Watchers.of(level), EntityData.get(server));
+	}
+
+	/**
+	 * {@link #spawnGiven(ServerPlayer, Variant, Vec3, float, BlockPos)} as seen by these watchers, without the one-him check
+	 * (its callers make it): game tests (mock players) and the dev gallery (nobody watching, {@code player} null: he
+	 * appears for nobody and nothing is recorded).
+	 *
+	 * @param record where the sighting is recorded, or null for nowhere
+	 */
+	public static Spawned spawnGiven(ServerLevel level, @Nullable ServerPlayer player, Variant variant, Vec3 feet, float yaw, @Nullable BlockPos anchor,
+			Watchers watchers, @Nullable EntityData record) {
+		if (!isGivenBySc2(variant)) {
+			return new Spawned(FireResult.SKIPPED, null);
+		}
+		Optional<HimEntity> him = spawn(level, variant, feet, yaw, anchor, watchers);
+		if (him.isEmpty()) {
+			return new Spawned(FireResult.NO_SPOT, null);
+		}
+		if (player != null) {
+			him.get().appearFor(player.getUUID());
+			him.get().setSpawnDistance(SpotFinder.horizontal(player.position(), feet));
+		}
+		if (record != null) {
+			record.recordSighting(variant.shortName(), GlobalPos.of(level.dimension(), BlockPos.containing(feet)), GameClock.day(level.getServer()));
+		}
+		A1016_02.LOGGER.debug("[a1016] given figure ({}) at {}", variant.shortName(), BlockPos.containing(feet).toShortString());
+		return new Spawned(FireResult.FIRED, him.get());
+	}
+
+	/** The variants whose spot the second wave's 31 and 31c give ({@link #spawnGiven}). */
+	public static boolean isGivenBySc2(Variant variant) {
+		return variant == Variant.APEX || variant == Variant.INSIDE_TRUNKS;
+	}
+
+	/**
+	 * 31c: where he would stand half behind this trunk as seen from {@code eye}, on either side ({@link SpotFinder#behindTrunk}
+	 * for each), on a floor within a block of the trunk's foot, with his head and the shoulder that sticks out in plain
+	 * sight and his other half behind the logs ({@link SpotFinder#halfVisible}). Works under a ceiling (no heightmap).
+	 * Nearest side first; empty if neither works.
+	 *
+	 * @param trunk the trunk's lowest log
+	 */
+	public static List<Vec3> behindGivenTrunk(ServerLevel level, Vec3 eye, BlockPos trunk) {
+		List<Vec3> spots = new ArrayList<>();
+		for (int sign : new int[] {1, -1}) {
+			Vec3 at = SpotFinder.behindTrunk(eye, trunk, sign);
+			if (at == null) {
+				continue;
+			}
+			Vec3 feet = SpotFinder.standNear(level, at.x, at.z, trunk.getY(), 1, 1, ModEntities.HIM.getDimensions());
+			if (feet != null && SpotFinder.halfVisible(level, eye, feet, trunk)) {
+				spots.add(feet);
+			}
+		}
+		spots.sort(java.util.Comparator.comparingDouble(feet -> feet.distanceToSqr(eye)));
+		return spots;
+	}
+
 	/** The last fog-edge spawn since the server started, or null. */
 	public static @Nullable LastSpawn lastSpawn() {
 		return lastSpawn;

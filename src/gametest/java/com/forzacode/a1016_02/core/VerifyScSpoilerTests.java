@@ -60,7 +60,8 @@ import net.minecraft.server.MinecraftServer;
  * and ERROR line of the layer (its {@code sc} packages, its files outside them, and any line anywhere that names an
  * {@code sc} id), read from the sources: the format and every string in the call. All held to the layer's own list of
  * words that name a feature ({@code SelfCreatedDebugTests.NAMES}, which the index and the overlay already pass) and a
- * few more ({@link #MORE}).
+ * few more ({@link #MORE}). SC2-0a (D-103) adds the second wave's words ({@link #SC2}, {@link #SC2_GENERIC}), its
+ * {@code sc2} packages to the log check, and its sections, found by themselves ({@link #secondWave}).
  */
 public class VerifyScSpoilerTests {
 	/** {@code SelfCreatedDebugTests.NAMES} (D-080), word for word. */
@@ -70,20 +71,53 @@ public class VerifyScSpoilerTests {
 	/** More words that would name a part (FIX-SC-FINAL: the old literals and the old log lines). */
 	static final List<String> MORE = List.of("sky", "trust", "circle", "loop", "phantom", "sign", "spawn", "mob", "gap", "behind", "hollow", "list",
 			"water", "landing");
+	/**
+	 * The second wave's words (D-103, SC2-0a; docs/SELF_CREATED_2.md, "Spoilers for this wave"): its places, its mobs, its
+	 * hunts and its friend; {@code record}, {@code hollow}, {@code circle} and {@code friend} are in the lists above.
+	 */
+	public static final List<String> SC2 = List.of("pyramid", "brick", "archive", "library", "bookshelf", "glowstone", "mountain", "obsidian", "ring", "snake",
+			"procession", "breath", "follower", "wolf", "wolves", "pack", "howl", "hunt", "horde", "elsewhere", "ghost", "borrow", "apex", "aisle", "trunk",
+			"pit", "marker");
+	/**
+	 * The second wave's generic words, kept because no line of the layer trips them ({@code wall}, {@code house},
+	 * {@code chest}, {@code door} and {@code step} are in {@link #NAMES}). Left out, as an existing line of the layer
+	 * uses them and R13 watches them by hand: see {@link #SC2_DROPPED}.
+	 */
+	public static final List<String> SC2_GENERIC = List.of("line", "floor", "call", "book", "map");
+	/**
+	 * The generic words of the second wave that a line of the first already uses, so they are not held here (R13 watches
+	 * them by hand): {@code file} (03's "could not read the file from before").
+	 */
+	static final List<String> SC2_DROPPED = List.of("file");
+	/** Phrases that name no feature, taken out of a text before it is held to the lists: vanilla's and Iris's own words. */
+	static final List<String> PLAIN_PHRASES = List.of("shader pack");
+	/** Every list a word of the layer is held to. */
+	static final List<List<String>> LISTS = List.of(NAMES, MORE, SC2, SC2_GENERIC);
 	/** The keys every section may keep in plain words: its schema version, and the layer's switch. */
 	private static final Set<String> PLAIN_KEYS = Set.of("version", "enabled");
 	/** An opaque key: a letter, at most one more letter or digit. */
 	private static final Pattern OPAQUE = Pattern.compile("[a-z][a-z0-9]?");
 
-	/** A section: its class, a fresh one, and the version its keys were made opaque at (a file below it has the old keys). */
-	record Section(Class<?> type, Supplier<?> fresh, int opaqueFrom) {
+	/**
+	 * A section: its class, a fresh one, the version its keys were made opaque at (a file below it has the old keys), the
+	 * version a file is read up to now, and the fields added after the keys were made opaque (opaque from the start, so
+	 * they have no key from before: an old file reads them at their defaults).
+	 */
+	record Section(Class<?> type, Supplier<?> fresh, int opaqueFrom, int current, Set<String> newer) {
+		Section(Class<?> type, Supplier<?> fresh, int opaqueFrom) {
+			this(type, fresh, opaqueFrom, opaqueFrom, Set.of());
+		}
 	}
 
 	/** Every section of the layer, by its name under {@code sections}. */
 	static Map<String, Section> sections() {
 		Map<String, Section> sections = new LinkedHashMap<>();
 		sections.put("sc", new Section(SelfCreated.Config.class, SelfCreated.Config::new, 0));
-		sections.put("sc01", new Section(Sc01Config.class, Sc01Config::new, 3));
+		// SC2-9, 01+ (docs/SELF_CREATED_2.md): version 4 adds o and p, which never had a key in words; FIX-SC2-PACE's version 5
+		// adds q to z (the second wave's pacing), the same.
+		sections.put("sc01", new Section(Sc01Config.class, Sc01Config::new, 3, Sc01Config.CURRENT, Set.of("remainsFactor", "simRemainsShare", "weights",
+				"tracesShares", "laterShares", "gapMinutes", "repeatHours", "beatMinutes", "beatDarkMinutes", "huntFromHours", "huntGapHours",
+				"huntPullMinutes")));
 		sections.put("sc02", new Section(NamelessConfig.class, NamelessConfig::new, 2));
 		sections.put("sc03", new Section(HisViewConfig.class, HisViewConfig::new, 2));
 		sections.put("sc04", new Section(Sc04Config.class, Sc04Config::new, 2));
@@ -98,7 +132,53 @@ public class VerifyScSpoilerTests {
 		sections.put("sc13", new Section(Sc13Config.class, Sc13Config::new, 2));
 		sections.put("sc14", new Section(RecordConfig.class, RecordConfig::new, 2));
 		sections.put("sc15", new Section(Sc15Config.class, Sc15Config::new, 3));
+		sections.putAll(secondWave());
 		return sections;
+	}
+
+	/** An sc2 section's class: {@code ScNNConfig}, in its feature's {@code sc2} package (docs/SELF_CREATED_2.md, "Config sections"). */
+	private static final Pattern SC2_CONFIG = Pattern.compile("Sc(\\d\\d)Config\\.java");
+
+	/**
+	 * The second wave's sections, found by themselves so no later task edits this file (SC2-0a): every class
+	 * {@code ScNNConfig} in an {@code sc2} package of the mod's sources, under its {@code SECTION} (else {@code scNN}),
+	 * opaque from its first version (it has no keys from before).
+	 */
+	static Map<String, Section> secondWave() {
+		Map<String, Section> found = new LinkedHashMap<>();
+		Path sources = sourceRoot();
+		if (sources == null) {
+			return found;
+		}
+		try (Stream<Path> files = Files.walk(sources)) {
+			for (Path file : files.filter(p -> p.toString().replace('\\', '/').contains("/sc2/")).sorted().toList()) {
+				Matcher name = SC2_CONFIG.matcher(file.getFileName().toString());
+				if (!name.matches()) {
+					continue;
+				}
+				String rel = sources.relativize(file).toString().replace('\\', '/');
+				Class<?> type = Class.forName(rel.substring(0, rel.length() - ".java".length()).replace('/', '.'));
+				String section = "sc" + name.group(1);
+				try {
+					Field declared = type.getField("SECTION");
+					if (Modifier.isStatic(declared.getModifiers()) && declared.get(null) instanceof String value) {
+						section = value;
+					}
+				} catch (NoSuchFieldException none) {
+					// scNN from the class name
+				}
+				found.put(section, new Section(type, () -> {
+					try {
+						return type.getDeclaredConstructor().newInstance();
+					} catch (ReflectiveOperationException e) {
+						throw new IllegalStateException("cannot make a fresh " + type.getName(), e);
+					}
+				}, 0));
+			}
+		} catch (IOException | ReflectiveOperationException e) {
+			throw new IllegalStateException("the second wave's config sections could not be read from " + sources, e);
+		}
+		return found;
 	}
 
 	@SuppressWarnings({"unchecked", "rawtypes"})
@@ -149,7 +229,8 @@ public class VerifyScSpoilerTests {
 				if (!name.equals("sc") && !name.matches("sc\\d\\d")) {
 					continue;
 				}
-				helper.assertTrue(sections().containsKey(name), "the section " + name + " is not held to D-080 here");
+				helper.assertTrue(sections().containsKey(name), "the section " + name + " is not held to D-080 here (a second-wave section's class is ScNNConfig"
+						+ " in its sc2 package; a first-wave one is listed in sections())");
 				if (sections.get(name) instanceof JsonObject section) {
 					for (String key : section.keySet()) {
 						String why = keyRefusal(key);
@@ -181,9 +262,19 @@ public class VerifyScSpoilerTests {
 			JsonObject old = new JsonObject();
 			old.addProperty("version", s.opaqueFrom() - 1);
 			Map<Field, Object> edited = new LinkedHashMap<>();
+			List<Field> newer = new ArrayList<>();
 			for (Field field : s.type().getFields()) {
 				SerializedName named = field.getAnnotation(SerializedName.class);
 				if (Modifier.isStatic(field.getModifiers()) || field.getName().equals("version")) {
+					continue;
+				}
+				if (s.newer().contains(field.getName())) {
+					// Added after the keys were made opaque: no key from before, and an old file reads it at its default.
+					if (named == null || named.alternate().length != 0) {
+						wrong.add(entry.getKey() + "." + field.getName() + " is newer than its opaque step but has " + (named == null ? "no letter" : "an old key"));
+					} else {
+						newer.add(field);
+					}
 					continue;
 				}
 				if (named == null || named.alternate().length == 0) {
@@ -194,11 +285,23 @@ public class VerifyScSpoilerTests {
 				edited.put(field, value);
 				old.add(named.alternate()[0], gson.toJsonTree(value));
 			}
+			if (newer.size() != s.newer().size()) {
+				wrong.add(entry.getKey() + ": newer fields " + s.newer() + ", found " + newer.stream().map(Field::getName).toList());
+			}
 			JsonObject file = new JsonObject();
 			file.add(entry.getKey(), old);
 			Object read = read(file, entry.getKey(), s);
-			if (s.type().getField("version").getInt(read) != s.opaqueFrom()) {
-				wrong.add(entry.getKey() + " at version " + s.type().getField("version").getInt(read));
+			if (s.type().getField("version").getInt(read) != s.current()) {
+				wrong.add(entry.getKey() + " at version " + s.type().getField("version").getInt(read) + ", not " + s.current());
+			}
+			JsonObject writtenNewer = gson.toJsonTree(read).getAsJsonObject();
+			for (Field field : newer) {
+				if (!same(field.get(read), field.get(defaults))) {
+					wrong.add(entry.getKey() + "." + field.getName() + " " + gson.toJson(field.get(read)) + " from a file without it, not its default");
+				}
+				if (!writtenNewer.has(field.getAnnotation(SerializedName.class).value())) {
+					wrong.add(entry.getKey() + " wrote " + writtenNewer.keySet() + " without " + field.getName());
+				}
 			}
 			for (Map.Entry<Field, Object> e : edited.entrySet()) {
 				Object now = e.getKey().get(read);
@@ -224,6 +327,32 @@ public class VerifyScSpoilerTests {
 			}
 		}
 		helper.assertTrue(wrong.isEmpty(), wrong.size() + " wrong: " + wrong);
+		helper.succeed();
+	}
+
+	/**
+	 * SC2-0a: the second wave's words are held in every form the checks read (a log line's words, a literal's letters, a
+	 * key's camelCase parts, plurals and -ed), Iris's "shader pack" is not a word of the layer, and a dropped generic
+	 * word is not held; an sc2 section is found by itself (none exists before the wave's features).
+	 */
+	@GameTest
+	public void theSecondWavesWordsAreHeld(GameTestHelper helper) {
+		helper.assertTrue("pyramid".equals(namedIn("[a1016] {}: the pyramid at {}", false)), "a log line's word");
+		helper.assertTrue("wolves".equals(namedIn("[a1016] calmed 3 wolves", false)), "a plural listed as itself");
+		helper.assertTrue("hunt".equals(namedIn("[a1016] hunted for 40 s", false)), "a word with -ed");
+		helper.assertTrue("ring".equals(namedIn("noring", true)) && "apex".equals(namedIn("toapex", true)), "a word inside a literal");
+		helper.assertTrue("hunt".equals(namedWord("huntSecondsMax")) && "follower".equals(namedWord("followerDays")), "a key's part");
+		helper.assertTrue("map".equals(namedIn("[a1016] the map changed", false)) && "book".equals(namedIn("[a1016] 2 books moved", false)), "a generic word");
+		helper.assertTrue(namedIn("[a1016] Iris is loaded; a shader pack counts as in use", false) == null, "Iris's shader pack counted as a word of the layer");
+		helper.assertTrue(namedIn("[a1016] could not read the file", false) == null && SC2_DROPPED.contains("file"), "a dropped word is held");
+		for (List<String> list : List.of(SC2, SC2_GENERIC)) {
+			for (String word : list) {
+				helper.assertTrue(word.equals(namedIn("[a1016] " + word, false)), "'" + word + "' is not held");
+			}
+		}
+		for (Map.Entry<String, Section> entry : secondWave().entrySet()) {
+			helper.assertTrue(entry.getKey().matches("sc\\d\\d") && entry.getValue().opaqueFrom() == 0, "an sc2 section: " + entry.getKey());
+		}
 		helper.succeed();
 	}
 
@@ -287,7 +416,7 @@ public class VerifyScSpoilerTests {
 		try (Stream<Path> files = Files.walk(sources)) {
 			for (Path file : files.filter(p -> p.toString().endsWith(".java")).sorted().toList()) {
 				String rel = sources.relativize(file).toString().replace('\\', '/');
-				boolean layer = rel.contains("/sc/") || LAYER_FILES.contains(rel);
+				boolean layer = rel.contains("/sc/") || rel.contains("/sc2/") || LAYER_FILES.contains(rel);
 				String text = Files.readString(file);
 				Matcher call = LOG_CALL.matcher(text);
 				while (call.find()) {
@@ -297,7 +426,7 @@ public class VerifyScSpoilerTests {
 					}
 					lines++;
 					for (String s : strings) {
-						String word = namedIn(s, false);
+						String word = namedInLog(s);
 						if (word != null) {
 							int line = (int) text.substring(0, call.start()).chars().filter(c -> c == '\n').count() + 1;
 							named.add(rel + ":" + line + " \"" + s + "\" ('" + word + "')");
@@ -309,6 +438,187 @@ public class VerifyScSpoilerTests {
 		helper.assertTrue(lines >= 30, "only " + lines + " log lines of the layer were found in " + sources);
 		helper.assertTrue(named.isEmpty(), named.size() + " log lines of the layer name a feature (D-080): " + named);
 		helper.succeed();
+	}
+
+	/**
+	 * R13-6: no INFO, WARN or ERROR line of the second wave gives a position (a stack moved between two bases, a spot in
+	 * the rock: the evidence that it was the mod); where is at DEBUG. The dev-only galleries aside.
+	 */
+	@GameTest
+	public void noLogLineOfTheSecondWaveGivesAPosition(GameTestHelper helper) throws IOException {
+		Path sources = sourceRoot();
+		helper.assertTrue(sources != null, "the mod's sources (src/main/java) were not found from " + Paths.get("").toAbsolutePath());
+		List<String> placed = new ArrayList<>();
+		int lines = 0;
+		try (Stream<Path> files = Files.walk(sources)) {
+			for (Path file : files.filter(p -> p.toString().endsWith(".java")).sorted().toList()) {
+				String rel = sources.relativize(file).toString().replace('\\', '/');
+				if (!rel.contains("/sc2/") || rel.contains("Gallery")) {
+					continue;
+				}
+				String text = Files.readString(file);
+				Matcher call = LOG_CALL.matcher(text);
+				while (call.find()) {
+					lines++;
+					String args = arguments(text, call.end());
+					if (args.contains("toShortString") || args.contains("getX()") || args.contains("blockPosition()")) {
+						int line = (int) text.substring(0, call.start()).chars().filter(c -> c == '\n').count() + 1;
+						placed.add(rel + ":" + line);
+					}
+				}
+			}
+		}
+		helper.assertTrue(lines >= 10, "only " + lines + " log lines of the second wave were found in " + sources);
+		helper.assertTrue(placed.isEmpty(), placed.size() + " log lines of the second wave give a position at INFO or above: " + placed);
+		helper.succeed();
+	}
+
+	/** The text of the call's arguments whose list starts at {@code from} (just past its open parenthesis). */
+	static String arguments(String text, int from) {
+		int depth = 1;
+		boolean quoted = false;
+		for (int i = from; i < text.length(); i++) {
+			char c = text.charAt(i);
+			if (quoted) {
+				if (c == '\\') {
+					i++;
+				} else if (c == '"') {
+					quoted = false;
+				}
+			} else if (c == '"') {
+				quoted = true;
+			} else if (c == '(') {
+				depth++;
+			} else if (c == ')' && --depth == 0) {
+				return text.substring(from, i);
+			}
+		}
+		return text.substring(from);
+	}
+
+	/**
+	 * R13-5: no WARN or ERROR line of the layer hands its throwable to the logger, whose frames would print the layer's class
+	 * names into latest.log: the layer's go through {@code ScLog} (its line, the exception's neutral name; the trace at
+	 * DEBUG). The layer's lines as {@link #noLogLineOfTheLayerNamesAFeature} finds them; {@link #THROWN_PENDING} aside.
+	 */
+	@GameTest
+	public void noWarnOrErrorOfTheLayerHandsItsThrowableToTheLogger(GameTestHelper helper) throws IOException {
+		helper.assertTrue(thrownLast("A1016_02.LOGGER.error(\"[a1016] s2: {} failed\", kind, e);", 0) && !thrownLast("LOGGER.warn(\"[a1016] x {}\", e.toString());", 0)
+				&& thrownLast("LOGGER.error(\"[a1016] x\", new IllegalStateException(\"y\"));", 0), "the rule's own check");
+		Path sources = sourceRoot();
+		helper.assertTrue(sources != null, "the mod's sources (src/main/java) were not found");
+		List<String> found = new ArrayList<>();
+		int calls = 0;
+		try (Stream<Path> files = Files.walk(sources)) {
+			for (Path file : files.filter(p -> p.toString().endsWith(".java")).sorted().toList()) {
+				String rel = sources.relativize(file).toString().replace('\\', '/');
+				boolean layer = rel.contains("/sc/") || rel.contains("/sc2/") || LAYER_FILES.contains(rel);
+				String text = Files.readString(file);
+				Matcher call = LOGGER_WARN.matcher(text);
+				while (call.find()) {
+					List<String> strings = strings(text, call.end());
+					if (!layer && strings.stream().noneMatch(s -> SC_ID.matcher(s).find())) {
+						continue;
+					}
+					calls++;
+					if (thrownLast(text, call.start()) && !THROWN_PENDING.contains(rel)) {
+						int line = (int) text.substring(0, call.start()).chars().filter(c -> c == '\n').count() + 1;
+						found.add(rel + ":" + line);
+					}
+				}
+			}
+		}
+		helper.assertTrue(calls >= 5, "only " + calls + " WARN and ERROR lines of the layer were found");
+		helper.assertTrue(found.isEmpty(), found.size() + " WARN or ERROR lines of the layer hand their throwable to the logger (use ScLog): " + found);
+		helper.succeed();
+	}
+
+	/**
+	 * R13-16: what tab completion offers outside {@code /a1016 sc} names no feature of the layer either: every layer id it
+	 * offers is opaque ({@code sc25}, {@code sc_21}, {@code accident_sc25}), the debug mark offers none of the layer's
+	 * words for the list, and the figure's spawn offers none of the layer's variants.
+	 */
+	@GameTest
+	public void noSuggestionOutsideScNamesAFeature(GameTestHelper helper) {
+		MinecraftServer server = helper.getLevel().getServer();
+		com.mojang.brigadier.CommandDispatcher<CommandSourceStack> dispatcher = server.getCommands().getDispatcher();
+		CommandSourceStack source = server.createCommandSourceStack();
+		List<String> wrong = new ArrayList<>();
+		int offered = 0;
+		for (String input : List.of("a1016 accident arm ", "a1016 accident candidates ", "a1016 accident mark ", "a1016 fire ", "a1016 entity spawn ")) {
+			List<String> texts = dispatcher.getCompletionSuggestions(dispatcher.parse(input, source)).join().getList().stream()
+					.map(com.mojang.brigadier.suggestion.Suggestion::getText).toList();
+			helper.assertTrue(!texts.isEmpty(), "nothing offered for '/" + input + "'");
+			offered += texts.size();
+			for (String text : texts) {
+				if (LAYER_ID.matcher(text).find() && !OPAQUE_ID.matcher(text).matches()) {
+					wrong.add("/" + input + text + " (not opaque)");
+				}
+				if (com.forzacode.a1016_02.accident.DeathCauses.UNLISTED.contains(text)) {
+					wrong.add("/" + input + text + " (a word of the list before its death)");
+				}
+				if (input.contains("spawn") && (text.equals(com.forzacode.a1016_02.entity.Variant.APEX.shortName())
+						|| text.equals(com.forzacode.a1016_02.entity.Variant.INSIDE_TRUNKS.shortName()))) {
+					wrong.add("/" + input + text + " (a variant of the layer)");
+				}
+			}
+		}
+		helper.assertTrue(offered > 20, "only " + offered + " suggestions");
+		helper.assertTrue(wrong.isEmpty(), wrong.size() + " suggestions name a feature: " + wrong);
+		helper.succeed();
+	}
+
+	/** An id of the layer in a suggestion: {@code sc} and two digits anywhere in it. */
+	private static final Pattern LAYER_ID = Pattern.compile("sc_?\\d\\d");
+	/** An opaque id of the layer: a card ({@code sc_21}, {@code sc_31c}), a trap kind ({@code sc25}) or its card ({@code accident_sc25}). */
+	private static final Pattern OPAQUE_ID = Pattern.compile("(accident_)?sc_?\\d\\d[a-z]?");
+
+	/** True if the call starting at {@code from} (its name) passes, as its last argument, the caught exception. */
+	static boolean thrownLast(String text, int from) {
+		int open = text.indexOf('(', from);
+		if (open < 0) {
+			return false;
+		}
+		int depth = 0;
+		int lastComma = -1;
+		for (int i = open; i < text.length(); i++) {
+			char c = text.charAt(i);
+			if (c == '"') {
+				for (i++; i < text.length() && text.charAt(i) != '"'; i++) {
+					if (text.charAt(i) == '\\') {
+						i++;
+					}
+				}
+			} else if (c == '\'') {
+				i += text.charAt(i + 1) == '\\' ? 3 : 2;
+			} else if (c == '(') {
+				depth++;
+			} else if (c == ')') {
+				depth--;
+				if (depth == 0) {
+					String last = text.substring(lastComma < 0 ? open + 1 : lastComma + 1, i).trim();
+					return lastComma >= 0 && THROWN_ARG.matcher(last).matches();
+				}
+			} else if (c == ',' && depth == 1) {
+				lastComma = i;
+			}
+		}
+		return false;
+	}
+
+	/** {@link #namedIn} for a log line, and the nouns that describe ({@link #LOG_NOUNS}, R13-6). */
+	static String namedInLog(String text) {
+		String word = namedIn(text, false);
+		if (word != null) {
+			return word;
+		}
+		String lower = text.toLowerCase(Locale.ROOT);
+		for (String noun : LOG_NOUNS) {
+			if (noun.contains(" ") ? lower.contains(noun) : Arrays.stream(lower.split("[^a-z]+")).anyMatch(t -> t.equals(noun) || t.equals(noun + "s"))) {
+				return noun;
+			}
+		}
+		return null;
 	}
 
 	/** The layer's own files outside its {@code sc} packages (from {@code main/java/com/forzacode/a1016_02}). */
@@ -324,7 +634,22 @@ public class VerifyScSpoilerTests {
 			"com/forzacode/a1016_02/entity/mixin/client/CameraMixin.java", "com/forzacode/a1016_02/entity/mixin/client/ClientWaypointManagerMixin.java",
 			"com/forzacode/a1016_02/entity/mixin/client/WorldListEntryMixin.java", "com/forzacode/a1016_02/lore/client/WorldListMarks.java",
 			"com/forzacode/a1016_02/lore/mixin/SeedCommandMixin.java", "com/forzacode/a1016_02/lore/mixin/client/LevelSummaryMixin.java");
-	private static final Pattern LOG_CALL = Pattern.compile("LOGGER\\s*\\.\\s*(info|warn|error)\\s*\\(");
+	/** A log call at INFO or above: the logger's own, or the layer's {@code ScLog} (R13-5). */
+	private static final Pattern LOG_CALL = Pattern.compile("(?:LOGGER|ScLog)\\s*\\.\\s*(info|warn|error)\\s*\\(");
+	/** A WARN or ERROR straight to the logger. */
+	private static final Pattern LOGGER_WARN = Pattern.compile("LOGGER\\s*\\.\\s*(warn|error)\\s*\\(");
+	/** A last argument that is the caught exception (a throwable logs its frames). */
+	private static final Pattern THROWN_ARG = Pattern.compile("(e|ex|t|th|err|error|exception|thrown|cause|failure)|new\\s+[\\w.]*(Exception|Error)\\s*\\(.*");
+	/**
+	 * Files of the layer whose throwables still reach the logger, each with its reason; empty once every one goes through
+	 * {@code ScLog}. FIX-SC2-REST left the world workstream's own to FIX-WORLD (R13-5, R13-9).
+	 */
+	static final Set<String> THROWN_PENDING = Set.of();
+	/**
+	 * R13-6: nouns that describe what happened without being a feature's name; held in the layer's log lines only, where a
+	 * line at INFO carries ids and bare numbers (the index's and overlay's lines are SC2-9's).
+	 */
+	static final List<String> LOG_NOUNS = List.of("held", "sound", "pixel", "formed", "of them");
 	/** An sc id in a log string: {@code sc_04}, {@code sc04}, {@code sc 04}, {@code sc:} or {@code sc off}. */
 	private static final Pattern SC_ID = Pattern.compile("\\bsc(_?\\d\\d|\\b)");
 
@@ -384,7 +709,7 @@ public class VerifyScSpoilerTests {
 
 	/** The listed word this one is (itself, a plural, or with -ed or -ing), or null. */
 	private static String wordFor(String token) {
-		for (List<String> list : List.of(NAMES, MORE)) {
+		for (List<String> list : LISTS) {
 			for (String word : list) {
 				if (!word.contains(" ") && (token.equals(word) || token.equals(word + "s") || token.equals(word + "es") || token.equals(word + "ed")
 						|| token.equals(word + "d") || token.equals(word + "ing"))) {
@@ -401,7 +726,10 @@ public class VerifyScSpoilerTests {
 	 */
 	static String namedIn(String text, boolean joined) {
 		String lower = text.toLowerCase(Locale.ROOT);
-		for (List<String> list : List.of(NAMES, MORE)) {
+		for (String phrase : PLAIN_PHRASES) {
+			lower = lower.replace(phrase, " ");
+		}
+		for (List<String> list : LISTS) {
 			for (String word : list) {
 				if (word.contains(" ") ? lower.contains(word) : joined && lower.contains(word)) {
 					return word;
