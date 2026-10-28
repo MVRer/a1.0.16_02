@@ -102,11 +102,17 @@ public class SelfCreated2PacingTests {
 	static final Predicate<CardInfo> LAYER = card -> card.id().startsWith("sc_") || WAVE2.test(card);
 	/** A second-wave card id by its shape (sc_16 to sc_39, a letter or none after it), or one of the hunts' planner cards. */
 	private static final String WAVE2_ID = "sc_(1[6-9]|[23]\\d)\\D*|accident_sc2\\d";
-	/** The features the second wave's cards are (31 and 31c are one), for the per-feature shares. */
-	static final List<String> FEATURES = List.of("21", "22", "23", "24", "25", "26", "27", "28", "29", "30", "31");
+	/**
+	 * The features the second wave's cards are (31 and 31c are one), and its moments that are no card (32b and 32c, a visit
+	 * below a pyramid's pit: R3-P), for the per-feature shares.
+	 */
+	static final List<String> FEATURES = List.of("21", "22", "23", "24", "25", "26", "27", "28", "29", "30", "31", "32", "33");
 
-	/** The feature a second-wave card is, or null. */
+	/** The feature a second-wave card or moment ({@code DirectorSim.Kind.MOMENT}: 32b, 32c, 33) is, or null. */
 	static String feature(String cardId) {
+		if (cardId.startsWith("32") || cardId.equals("33")) {
+			return cardId.substring(0, 2);
+		}
 		if (cardId.startsWith("accident_sc")) {
 			return cardId.substring("accident_sc".length());
 		}
@@ -207,16 +213,21 @@ public class SelfCreated2PacingTests {
 				boolean beat = false;
 				boolean hunted = false;
 				List<Long> times = new ArrayList<>();
-				for (DirectorSim.Event e : r.felt()) {
-					all += e.kind() == DirectorSim.Kind.FIRE ? 1 : 0;
+				for (DirectorSim.Event e : r.met()) {
+					// The wave's moments that are no card (R3-P) count as its fires.
+					boolean moment = e.kind() == DirectorSim.Kind.MOMENT;
+					all += e.kind() == DirectorSim.Kind.FIRE || moment ? 1 : 0;
 					CardInfo card = byId.get(e.cardId());
 					String f = feature(e.cardId());
-					if (card == null || f == null) {
+					if (card == null && !moment || f == null) {
 						continue;
 					}
-					wave += e.kind() == DirectorSim.Kind.FIRE ? 1 : 0;
-					times.add(e.play());
-					if (!e.stage().atLeast(card.earliestStage()) || e.stage() == Stage.ALONE) {
+					wave += e.kind() == DirectorSim.Kind.FIRE || moment ? 1 : 0;
+					if (!"33".equals(e.cardId())) {
+						// The most in an hour is the director's (its cards and the crumbs): 33 comes when the player goes down.
+						times.add(e.play());
+					}
+					if (moment ? !e.stage().atLeast(Stage.TRACES) : !e.stage().atLeast(card.earliestStage()) || e.stage() == Stage.ALONE) {
 						early++;
 					}
 					if (e.stage() == Stage.TRACES) {
@@ -249,7 +260,7 @@ public class SelfCreated2PacingTests {
 					long end = ends.get(n - 1);
 					sessionRuns.merge(n, 1, Integer::sum);
 					Set<String> features = new HashSet<>();
-					for (DirectorSim.Event e : r.felt()) {
+					for (DirectorSim.Event e : r.met()) {
 						String f = feature(e.cardId());
 						if (f != null && !e.fake() && e.play() <= end) {
 							features.add(f);
@@ -890,7 +901,7 @@ public class SelfCreated2PacingTests {
 	public void theDryRunsModelTheShareOfPlayAtHisPlaces(GameTestHelper helper) {
 		Sc01Config cfg = new Sc01Config();
 		DirectorSim.Params params = new DirectorSim.Params().places(cfg);
-		helper.assertTrue(params.remainsShare == 0.06 && params.remainsFactor == 1.5, "the share " + params.remainsShare + " at " + params.remainsFactor);
+		helper.assertTrue(params.remainsShare == 0.10 && params.remainsFactor == 1.5, "the share " + params.remainsShare + " at " + params.remainsFactor);
 		Sc01Config high = new Sc01Config();
 		high.remainsFactor = 2.5;
 		helper.assertTrue(new DirectorSim.Params().places(high).remainsFactor == high.maxFactor, "past maxFactor");
@@ -921,8 +932,9 @@ public class SelfCreated2PacingTests {
 	}
 
 	/**
-	 * 01+ and FIX-SC2-PACE: {@code sc01} version 3 (opaque keys, hand edits) steps to 5, and version 4 to 5: every value
-	 * kept, o and p and the second wave's pacing (q to z) at their defaults and written under their letters.
+	 * 01+ and FIX-SC2-PACE: {@code sc01} version 3 (opaque keys, hand edits) steps to the current version, and version 4
+	 * too: every value kept, o and p and the second wave's pacing (q to z) at their defaults and written under their
+	 * letters (p through 0.06, version 5's, to 0.10, version 6's: R3-P).
 	 */
 	@GameTest
 	public void theSectionStepsFromThreeOnAddingOnlyItsKeys(GameTestHelper helper) {
@@ -941,9 +953,9 @@ public class SelfCreated2PacingTests {
 			sections.add(Sc01Config.SECTION, old);
 			Sc01Config cfg = ModConfig.readSection(sections, Sc01Config.SECTION, Sc01Config.class, Sc01Config::new);
 			String at = "from version " + from + ": ";
-			helper.assertTrue(cfg.version == 5 && Sc01Config.CURRENT == 5, at + "version " + cfg.version);
+			helper.assertTrue(cfg.version == Sc01Config.CURRENT && Sc01Config.CURRENT == 6, at + "version " + cfg.version);
 			helper.assertTrue(cfg.maxPlaces == 30 && cfg.awayFactor == 0.8 && cfg.simDreadShare == 0.25, at + "a hand edit was lost");
-			helper.assertTrue(cfg.remainsFactor == (from == 4 ? 1.4 : 1.5) && cfg.simRemainsShare == 0.06, at + "o and p: " + cfg.remainsFactor + ", "
+			helper.assertTrue(cfg.remainsFactor == (from == 4 ? 1.4 : 1.5) && cfg.simRemainsShare == 0.10, at + "o and p: " + cfg.remainsFactor + ", "
 					+ cfg.simRemainsShare);
 			helper.assertTrue(cfg.weights.equals(fresh.weights) && java.util.Arrays.equals(cfg.tracesShares, fresh.tracesShares)
 					&& java.util.Arrays.equals(cfg.laterShares, fresh.laterShares) && cfg.gapMinutes == fresh.gapMinutes && cfg.repeatHours == fresh.repeatHours

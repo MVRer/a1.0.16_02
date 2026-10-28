@@ -45,7 +45,7 @@ public final class Sc18Gallery {
 	private record Spec(String id, boolean window, long seed, boolean section) {
 	}
 
-	private static final List<Spec> SPECS = List.of(new Spec("18", false, 0x18A1L, true), new Spec("18w", true, 0x18B2L, false));
+	private static final List<Spec> SPECS = List.of(new Spec("18", false, 0x18A1L, true), new Spec("18w", true, 0x18B2L, false), new Spec("18p", false, 0x18A1L, false));
 
 	private Sc18Gallery() {
 	}
@@ -81,6 +81,8 @@ public final class Sc18Gallery {
 		A1016_02.LOGGER.info("[a1016] gallery 18: rise {}, base {}, valid {}, tallest {}, lane {}, length {}, opening {} {}",
 				HollowSiting.rise(grid, floor, config.minRise), floor, shape.valid(), shape.maxTop() - floor, shape.lane(), shape.tunnelLength(), shape.hasWindow(),
 				shape.windowCells().isEmpty() ? "-" : shape.windowCells().getFirst().toShortString() + " to " + shape.windowCells().getLast().toShortString());
+		HollowShape.Summit summit = shape.summit();
+		A1016_02.LOGGER.info("[a1016] gallery 18: v{}, s {}, f {}", shape.version(), summit, shape.foot());
 		leaks(level, shape, built.box());
 		return built;
 	}
@@ -125,6 +127,9 @@ public final class Sc18Gallery {
 			return new Gallery.Placed(built.box(), views, List.of());
 		}
 		Direction right = facing.getClockWise();
+		if (spec.id().equals("18p")) {
+			return piece(level, built, shape);
+		}
 		GalleryProps.scaleFigure(level, groundAt(level, entrance.relative(facing, 3).relative(right, -2)), -90.0F);
 		monsters(level, shape);
 
@@ -137,7 +142,57 @@ public final class Sc18Gallery {
 		if (spec.section()) {
 			views.add(section(level, origin, facing, spec));
 		}
+		// The error sign (D-110): 64, 128 and 200 out from the way in, noon and midnight; and the summit cut from a slope.
+		views.addAll(Gallery.signViews(level, shape.sign(), facing, 4.0));
+		if (shape.summit() != null) {
+			Gallery.View summit = summitView(level, shape, facing);
+			views.add(summit);
+			// FIX-R3-B (R3A-2): version 4's bite lit at night, from the same spot.
+			views.add(summit.named("summit_night").at(Gallery.NIGHT, Gallery.Sky.CLEAR).noted("the same at midnight: the bite lit on its floor and up its faces"));
+		}
 		return new Gallery.Placed(built.box(), views, torchlit(shape));
+	}
+
+	/** {@code summit}: the cut from 90 out and 50 over it toward the way in's side, noon. */
+	private static Gallery.View summitView(ServerLevel level, HollowShape shape, Direction facing) {
+		HollowShape.Summit s = shape.summit();
+		net.minecraft.world.level.levelgen.structure.BoundingBox bite = s.bite();
+		Vec3 middle = new Vec3((bite.minX() + bite.maxX() + 1) / 2.0, s.cut() + 1.0, (bite.minZ() + bite.maxZ() + 1) / 2.0);
+		Vec3 eye = middle.add(facing.getStepX() * 90.0 + facing.getClockWise().getStepX() * 30.0, 50.0, facing.getStepZ() * 90.0 + facing.getClockWise().getStepZ() * 30.0);
+		return Gallery.View.looking("summit", eye, middle, Gallery.NOON, Gallery.Sky.CLEAR, false).noted("the summit cut from 90 out and 50 over it, noon");
+	}
+
+	/**
+	 * {@code 18p}: the piece. {@code in_1} from the square at eye height looking up at it, true light (the one lit thing);
+	 * {@code survey_p} the same with night vision (its shape); {@code in_3} from the tunnel's inner end, true light.
+	 */
+	private static Gallery.Placed piece(ServerLevel level, Live.Result built, HollowShape shape) {
+		List<Gallery.View> views = new ArrayList<>();
+		HollowShape.Summit s = shape.summit();
+		BlockPos grove = shape.groveCenter();
+		if (s == null || !s.hasPiece()) {
+			A1016_02.LOGGER.info("[a1016] gallery 18p: none");
+			views.addAll(Gallery.standardViews(level, built.box(), shape.entrance(), shape.facing()));
+			return new Gallery.Placed(built.box(), views, List.of());
+		}
+		Vec3 under = new Vec3(s.minX() + 8.0, s.pieceTop() - s.pieceHeight(), s.minZ() + 8.0);
+		Vec3 eye = Vec3.atBottomCenterOf(grove).add(2.0, Gallery.EYE, 3.0);
+		views.add(Gallery.View.looking("in_1", eye, under, Gallery.NOON, Gallery.Sky.CLEAR, false)
+				.noted("from the square at eye height, looking up at the piece, true light"));
+		views.add(Gallery.View.looking("survey_p", eye, under, Gallery.NOON, Gallery.Sky.CLEAR, true)
+				.noted("the same with night vision: the piece hanging, the ceiling over it"));
+		List<BlockPos> mouth = shape.innerMouth();
+		Vec3 inner = point(shape, shape.lane() + 1.0, shape.floorY() + 1 + Gallery.EYE, shape.along(mouth.getFirst().getX(), mouth.getFirst().getZ()) - 1.5);
+		views.add(Gallery.View.looking("in_3", inner, under, Gallery.NOON, Gallery.Sky.CLEAR, false)
+				.noted("from the tunnel's inner end toward the piece, true light"));
+		BoundingBox lights = HollowShape.pieceOf(shape.extra()).orElse(null);
+		Gallery.View cam = Gallery.View.looking("in_2", eye, under, Gallery.NOON, Gallery.Sky.CLEAR, false);
+		Gallery.Frames dark = new Gallery.Frames("in_2", 10, 30, cam, level2 -> {
+			if (lights != null) {
+				HollowAnswers.stageDark(level2, lights, 100);
+			}
+		}).noted("18c forced: from the square, the piece's light going a quarter at a time, 5 s apart, true light");
+		return new Gallery.Placed(built.box(), views, List.of(dark));
 	}
 
 	/** The inside: true light where a player would stand with their torch, and night vision for the shape of it. */

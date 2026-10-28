@@ -59,8 +59,19 @@ public final class S16 {
 		HerobrineEvents.REMAINS_ENTERED.register((level, place, player) -> PyramidAnswers.LIVE.entered(place, player, level.getServer().getTickCount()));
 		HerobrineEvents.REMAINS_LEFT.register((level, place, player) -> PyramidAnswers.LIVE.left(place, player));
 		ServerTickEvents.END_SERVER_TICK.register(PyramidAnswers.LIVE::tick);
-		ServerLifecycleEvents.SERVER_STOPPED.register(server -> PyramidAnswers.reset());
-		SelfCreated.onSwitchedOff("sc16v", server -> PyramidAnswers.reset());
+		ServerTickEvents.END_SERVER_TICK.register(server -> {
+			if (SelfCreated.enabled()) {
+				PyramidOpening.LIVE.tick(server);
+			}
+		});
+		ServerLifecycleEvents.SERVER_STOPPED.register(server -> {
+			PyramidAnswers.reset();
+			PyramidOpening.LIVE.clear();
+		});
+		SelfCreated.onSwitchedOff("sc16v", server -> {
+			PyramidAnswers.reset();
+			PyramidOpening.LIVE.clear();
+		});
 		PlayerBlockBreakEvents.AFTER.register((level, player, pos, state, blockEntity) -> {
 			if (level instanceof ServerLevel serverLevel && player instanceof ServerPlayer serverPlayer) {
 				broken(serverLevel, serverPlayer, pos);
@@ -70,6 +81,7 @@ public final class S16 {
 		if (com.forzacode.a1016_02.core.Gallery.active()) {
 			Sc16Gallery.register();
 		}
+		com.forzacode.a1016_02.world.sc2.s16.deep.Depths.init();
 	}
 
 	/** A player broke a block: if it was of a closed one's mass, the first time for that place, {@code DUG_INTO_PYRAMID}. */
@@ -85,7 +97,8 @@ public final class S16 {
 
 	/**
 	 * True (and remembered in {@code data}) the first time a block of a closed one's mass is broken at {@code pos}: a
-	 * known pyramid whose box holds it, closed (no way in, or the sea form), the cell of its mass.
+	 * known pyramid whose box holds it, closed (no way in: a sealed one, or the sea form before version 4), the cell of
+	 * its mass.
 	 */
 	public static boolean dug(ServerLevel level, BlockPos pos, Remains remains, Sc2Data data, Function<Remains.Place, @Nullable PyramidShape> shapes) {
 		Remains.Place place = remains.nearest(level, pos, EnumSet.of(Remains.Kind.PYRAMID), 0).orElse(null);
@@ -93,7 +106,7 @@ public final class S16 {
 			return false;
 		}
 		PyramidShape shape = shapes.apply(place);
-		if (shape == null || !shape.inMass(pos.getX(), pos.getY(), pos.getZ()) || data.spent(place, DUG).ever() > 0) {
+		if (shape == null || shape.hasWayIn() || !shape.inMass(pos.getX(), pos.getY(), pos.getZ()) || data.spent(place, DUG).ever() > 0) {
 			return false;
 		}
 		data.spend(place, DUG, List.of(), GameClock.day(level.getServer()));

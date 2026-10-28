@@ -12,9 +12,9 @@
   "placement": {
     "type": "a1016_02:world/sc2r",
     "salt": 160721,
-    "rays": 4,
-    "first": 640,
-    "step": 640,
+    "rays": 6,
+    "first": 416,
+    "step": 448,
     "jitter_degrees": 8,
     "jitter_blocks": 48,
     "exclusion_zone": {

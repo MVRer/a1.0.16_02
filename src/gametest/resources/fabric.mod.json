@@ -70,11 +70,21 @@
 			"com.forzacode.a1016_02.director.SelfCreated2PacingTests",
 			"com.forzacode.a1016_02.core.VerifySc2CostTests",
 			"com.forzacode.a1016_02.core.SelfCreated2ReviewCoreTests",
-			"com.forzacode.a1016_02.core.VerifySc2FinalTests"
+			"com.forzacode.a1016_02.core.VerifySc2FinalTests",
+			"com.forzacode.a1016_02.world.SelfCreated3KitTests",
+			"com.forzacode.a1016_02.world.SelfCreated3FindTests",
+			"com.forzacode.a1016_02.world.SelfCreated3BooksTests",
+			"com.forzacode.a1016_02.world.SelfCreated3ArchiveTests",
+			"com.forzacode.a1016_02.world.SelfCreated3PyramidTests",
+			"com.forzacode.a1016_02.world.SelfCreated3HollowFloorTests",
+			"com.forzacode.a1016_02.world.SelfCreated3CrumbTests",
+			"com.forzacode.a1016_02.world.SelfCreated3DepthsTests",
+			"com.forzacode.a1016_02.director.SelfCreated3PacingTests"
 		],
 		"fabric-client-gametest": [
 			"com.forzacode.a1016_02.debug.gallery.GalleryClientTest",
-			"com.forzacode.a1016_02.world.SelfCreated2RealWorldClientTest"
+			"com.forzacode.a1016_02.world.SelfCreated2RealWorldClientTest",
+			"com.forzacode.a1016_02.world.sc2.s17.ArchiveBooksClientTest"
 		]
 	},
 	"depends": {

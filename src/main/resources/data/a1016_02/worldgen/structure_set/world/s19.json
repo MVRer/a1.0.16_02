@@ -1,0 +1,12 @@
+{
+  "structures": [
+    {
+      "structure": "a1016_02:world/s19",
+      "weight": 1
+    }
+  ],
+  "placement": {
+    "type": "a1016_02:world/sc2a",
+    "kind": "s19"
+  }
+}

@@ -8,11 +8,13 @@ import com.forzacode.a1016_02.world.gen.Hash;
 import com.forzacode.a1016_02.world.gen.Terrain;
 import com.forzacode.a1016_02.world.gen.Vegetation;
 import com.forzacode.a1016_02.world.sc2.kit.Draw;
+import com.forzacode.a1016_02.world.sc2.kit.Fault;
 import com.forzacode.a1016_02.world.sc2.kit.Interior;
 import com.forzacode.a1016_02.world.sc2.kit.Seal;
 import com.forzacode.a1016_02.world.sc2.kit.Shape;
 import com.forzacode.a1016_02.world.sc2.kit.Start;
 import com.forzacode.a1016_02.world.sc2.kit.Writer;
+import com.forzacode.a1016_02.world.sc2.s16.deep.Depths;
 
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
@@ -25,13 +27,15 @@ import net.minecraft.world.level.block.state.properties.Half;
 import net.minecraft.world.level.block.state.properties.SlabType;
 import net.minecraft.world.level.levelgen.structure.BoundingBox;
 
+import org.jspecify.annotations.Nullable;
+
 /**
  * Feature 16's shape (docs/SELF_CREATED_2.md, 16): the stepped pyramid of the first versions' bricks, its hollow core,
  * its negative dug out under it, its way in toward the origin, and his pass over it.
  *
  * <p>The start's origin is the base's centre at the height of its lowest course (the first cell over the ground); its
- * facing is the side the way in looks out of. With {@code R} the base's half width (31, 47, 63 for a base of 63, 95,
- * 127), the column whose Chebyshev distance from the centre is {@code d} holds courses 0 to {@code R - d}: every course
+ * facing is the side the way in looks out of. With {@code R} the base's half width (31, 47, 63, 95 for a base of 63, 95,
+ * 127, 191), the column whose Chebyshev distance from the centre is {@code d} holds courses 0 to {@code R - d}: every course
  * one block in on every side, the apex course {@code R} a single block. Measured in the column's own course, the core
  * is the same shape inset by {@value #SHELL}: air from the floor to {@value #SHELL} under the apex, three blocks of
  * shell over it everywhere and a stepped vault you only see from below. Under the core (land only) the pit: its
@@ -55,10 +59,26 @@ import net.minecraft.world.level.levelgen.structure.BoundingBox;
  * and one outside it none, no leaf left with no log near (R11-7). 3 (the review, R11-17): from the pit's 3 x 3 floor a
  * dead-end tunnel 2 wide and 2 high runs {@value #TUNNEL_LENGTH} under the steps toward the way in's side, unlit (someone
  * went further); its mouth takes the two lowest treads of its strip (a drop of 3 at most), the seal kept round it.
+ * 4 (round 3, R3-2, D-110, D-115): the 191, 96 high (its grounds {@value #GROUNDS_HALF_191} past the base, within the
+ * kit's reach); the sign: on the face of the way in, the chunk-aligned 16-wide strip round it set back
+ * {@code stripDepth} (the variant's; 1) and laid fresh, no wear, no damp, no brick missing (two chunks that disagree), and
+ * the lighting fault over it from the apex down the face to the far edge of the chunk at its foot ({@link #litCells}:
+ * at night a band of the face lit as at noon for nobody, the mouth left dark); on sealed ones too. The sea form gets a
+ * way in at the waterline ({@link #wayLayer}: a 2 x 2 whose sill is one over the water, into the dry core) and a flight
+ * 2 wide down from it to the core's floor, every step 1 high, kerbed both sides; its strip's foot is the sea, lit.
+ * 5 (round 3, R3-D, D-120 to D-124): on land the tunnel's end is a door, and past it the depths ({@link Depths}).
  */
 public final class PyramidShape implements Shape {
-	/** The base widths of the three sizes. */
-	public static final int[] BASES = {63, 95, 127};
+	/** The base widths of the four sizes (version 4 added the 191). */
+	public static final int[] BASES = {63, 95, 127, 191};
+	/** The 191's grounds reach this far past its base (B/2 + 32 stays within the kit's reach; the others' {@value #GROUNDS_HALF}). */
+	public static final int GROUNDS_HALF_191 = 32;
+	/** Version 4's sign: no light within this of the mouth's cells (Chebyshev), so the mouth stays black in the lit band. */
+	public static final int MOUTH_DARK = 3;
+	/** Version 4's trail down the pit: its first torch this many steps under the rim. */
+	public static final int TRAIL_FROM = 3;
+	/** Version 4's trail: a torch every this many steps. */
+	public static final int TRAIL_EVERY = 5;
 	/** The shell's thickness (each course of the core is this far in from the course's face). */
 	public static final int SHELL = 3;
 	/** The rim walkway between the core's walls and the pit's opening. */
@@ -77,8 +97,18 @@ public final class PyramidShape implements Shape {
 	/** How deep the dead-end cuts go into a face. */
 	public static final int CUT_DEPTH_MIN = 6;
 	public static final int CUT_DEPTH_MAX = 10;
-	/** The shape's current version (R12-2). */
-	public static final int VERSION = 3;
+	/**
+	 * The shape's current version (R12-2). 6 (FIX-R3-C): on land the depths' lit window ({@link Depths#WINDOW_FROM}); at
+	 * sea the trail down the flight to a light on the core's floor ({@link #trail}, 16e and 16c there as in the pit) and the
+	 * lighting fault over the top courses ({@link #capBand}).
+	 */
+	public static final int VERSION = 6;
+	/** Version 6 at sea: the trail down the flight, the floor's light, the lit cap. */
+	public static final int SEA_TRAIL_FROM = 6;
+	/** Version 6 at sea: the lit cap holds the apex and this many courses under it. */
+	public static final int CAP_COURSES = 8;
+	/** Version 6 at sea: the floor's light stands this far to the left of the flight's middle line. */
+	public static final int FLOOR_LIGHT_SIDE = -5;
 	/** Version 3: the dead-end tunnel's length from the pit's floor (R11-17). */
 	public static final int TUNNEL_LENGTH = 8;
 	/** Version 2: the plinth steps out at most this many courses under the base (where the land is that much lower). */
@@ -92,6 +122,8 @@ public final class PyramidShape implements Shape {
 	private static final int BIT_SEALED = 4;
 	private static final int BIT_LIGHT = 8;
 	private static final int BIT_SEA = 16;
+	/** Version 4: the strip's depth (0 to 3) in bits 5 and 6. */
+	private static final int STRIP_SHIFT = 5;
 
 	private static final BlockState AIR = Blocks.AIR.defaultBlockState();
 	private static final BlockState WATER = Blocks.WATER.defaultBlockState();
@@ -138,6 +170,29 @@ public final class PyramidShape implements Shape {
 	private final BoundingBox box;
 	private final BoundingBox footprint;
 	private final List<Cut> cuts;
+	/** How far its grounds reach past the base ({@value #GROUNDS_HALF}; the 191 {@value #GROUNDS_HALF_191}). */
+	private final int groundsHalf;
+	/** Version 4: how far the strip stands back (0: not at all; older versions have no strip). */
+	private final int stripDepth;
+	/** Version 4: the strip runs across x (the way in faces north or south), else across z. */
+	private final boolean stripAcrossX;
+	/** Version 4: the strip's chunk column across the face, in world coordinates. */
+	private final int stripLo;
+	private final int stripHi;
+	/** Version 4: the lit band runs from the apex down the face out to this far from the centre ({@code f}). */
+	private final int litTo;
+	/** The way in's lowest course: 0 on land; version 4 at sea, the course two over the water's top (its sill one over it). */
+	private final int wayLayer;
+	/** What lies under the pit's dead end (R3-D, from version {@value Depths#FROM}); {@link Depths#NONE} before. */
+	private final Depths depths;
+	/**
+	 * Version 2's slot (FIX-R3-C, the cost): how far out in front its cut runs ({@code r}: none), read once from the land
+	 * the shape is made over, so no chunk's fill reads the heights of the chunks in front of the mouth.
+	 */
+	private final int slotEnd;
+
+	/** Tests only: when set on this thread, the slot is filled as before FIX-R3-C (its land read in every chunk's fill). */
+	private static final ThreadLocal<Boolean> SLOT_AS_BEFORE = ThreadLocal.withInitial(() -> false);
 
 	public PyramidShape(Start start, Terrain terrain) {
 		this.start = start;
@@ -152,22 +207,66 @@ public final class PyramidShape implements Shape {
 		this.p0 = r - SHELL - RIM;
 		this.top = version >= 2 ? r - 1 : r;
 		this.sea = sea(start.variant());
-		this.sealed = sea || sealed(start.variant());
 		this.light = light(start.variant());
 		this.seed = start.seed();
 		this.waterTop = sea ? Math.max(terrain.surface(cx, cz), y0 - 1) : Integer.MIN_VALUE;
-		int reach = r + GROUNDS_HALF + 1;
+		this.wayLayer = version >= 4 && sea ? waterTop + 2 - y0 : 0;
+		// Version 4's sea form has its way in at the waterline, where the sea leaves room for one (else closed, as before).
+		this.sealed = version >= 4 ? sealed(start.variant()) || sea && (wayLayer < 2 || wayLayer > r - 11) : sea || sealed(start.variant());
+		this.groundsHalf = groundsHalf(size);
+		this.stripDepth = version >= 4 ? stripDepth(start.variant()) : 0;
+		this.stripAcrossX = facing.getAxis() == Direction.Axis.Z;
+		BlockPos mouth = local(0, 0, r);
+		this.stripLo = ((stripAcrossX ? mouth.getX() : mouth.getZ()) >> 4) << 4;
+		this.stripHi = stripLo + 15;
+		BlockPos foot = local(0, 0, (sea ? r - Math.max(0, waterTop - y0) : r) + 1);
+		int along = facing.getAxis() == Direction.Axis.X ? foot.getX() : foot.getZ();
+		int far = facing.getAxisDirection() == Direction.AxisDirection.POSITIVE ? ((along >> 4) << 4) + 15 : (along >> 4) << 4;
+		this.litTo = (far - (facing.getAxis() == Direction.Axis.X ? cx : cz)) * (facing.getAxisDirection() == Direction.AxisDirection.POSITIVE ? 1 : -1);
+		int reach = r + groundsHalf + 1;
 		int bottom = bottomY(y0, size, sea);
 		this.box = new BoundingBox(cx - reach, bottom, cz - reach, cx + reach, topY(y0, size), cz + reach);
 		this.footprint = new BoundingBox(cx - r, bottom, cz - r, cx + r, y0 + r, cz + r);
 		this.cuts = cuts();
+		this.slotEnd = version >= 2 && !sealed && wayLayer == 0 ? slotEnd(terrain::ground) : r;
+		// What lies under the pit (R3-D): asked last, once everything above is known.
+		this.depths = version >= Depths.FROM && hasPit() ? Depths.of(this, terrain) : Depths.NONE;
 	}
 
 	// --- the variant ---
 
-	/** The variant for a size index (0 to 2) and the three flags. */
+	/** The variant for a size index (0 to 3) and the three flags (no strip). */
 	public static int variant(int size, boolean sealed, boolean light, boolean sea) {
-		return Math.clamp(size, 0, BASES.length - 1) | (sealed ? BIT_SEALED : 0) | (light ? BIT_LIGHT : 0) | (sea ? BIT_SEA : 0);
+		return variant(size, sealed, light, sea, 0);
+	}
+
+	/** The variant for a size index (0 to 3), the three flags and version 4's strip depth (0 to 3). */
+	public static int variant(int size, boolean sealed, boolean light, boolean sea, int stripDepth) {
+		return Math.clamp(size, 0, BASES.length - 1) | (sealed ? BIT_SEALED : 0) | (light ? BIT_LIGHT : 0) | (sea ? BIT_SEA : 0)
+				| Math.clamp(stripDepth, 0, 3) << STRIP_SHIFT;
+	}
+
+	/** Version 4's strip depth in a variant. */
+	public static int stripDepth(int variant) {
+		return variant >> STRIP_SHIFT & 3;
+	}
+
+	/**
+	 * How deep its foundation and plinth reach under the lowest course: {@value #FOUNDATION_MAX} (version 4 on land: down
+	 * to its box's bottom, so neither is ever left in the air over land that falls away under it: R3-2's survey).
+	 */
+	int foundationDepth() {
+		return version >= 4 && !sea ? Math.max(FOUNDATION_MAX, y0 - 2 - box.minY()) : FOUNDATION_MAX;
+	}
+
+	/** How far a size's grounds reach past its base. */
+	public static int groundsHalf(int size) {
+		return size >= 3 ? GROUNDS_HALF_191 : GROUNDS_HALF;
+	}
+
+	/** How far a size's box reaches from its centre across the land (its grounds' edge). */
+	public static int reach(int size) {
+		return halfWidth(size) + groundsHalf(size) + 1;
 	}
 
 	public static int size(int variant) {
@@ -191,7 +290,7 @@ public final class PyramidShape implements Shape {
 		return (BASES[Math.clamp(size, 0, BASES.length - 1)] - 1) / 2;
 	}
 
-	/** The height (courses) for a size index: 32, 48, 64. */
+	/** The height (courses) for a size index: 32, 48, 64, 96. */
 	public static int height(int size) {
 		return halfWidth(size) + 1;
 	}
@@ -207,7 +306,7 @@ public final class PyramidShape implements Shape {
 		return y0 + Math.max(halfWidth(size), 16) + LEAVES_UP;
 	}
 
-	/** The steps from the rim down to the pit's 3 x 3 floor for a size index: 24, 40, 56. */
+	/** The steps from the rim down to the pit's 3 x 3 floor for a size index: 24, 40, 56, 88. */
 	public static int pitDepth(int size) {
 		return halfWidth(size) - SHELL - RIM - 1;
 	}
@@ -216,6 +315,43 @@ public final class PyramidShape implements Shape {
 
 	public int halfWidth() {
 		return r;
+	}
+
+	/** Its size index (0 to 3: base 63, 95, 127, 191). */
+	public int size() {
+		return size;
+	}
+
+	/** Its start's seed (everything of his pass is decided from it). */
+	public long seed() {
+		return seed;
+	}
+
+	/** The way in's clockwise turn ({@link #local}'s {@code side} runs this way). */
+	public Direction right() {
+		return right;
+	}
+
+	/** The base's footprint, from its box's bottom up to the apex course (a copy). */
+	public BoundingBox footprint() {
+		return new BoundingBox(footprint.minX(), footprint.minY(), footprint.minZ(), footprint.maxX(), footprint.maxY(), footprint.maxZ());
+	}
+
+	/** What lies under the pit's dead end (R3-D); {@link Depths#NONE} before version {@value Depths#FROM}. */
+	public Depths depths() {
+		return depths;
+	}
+
+	/**
+	 * The hook for the depths (R3-D): the dead end's last cell on the way in's side 0 at the pit floor's feet height
+	 * ({@code local(0, pitBottomY() - y0, TUNNEL_LENGTH + 1)}), running out along {@link #facing}; its sealed end face is
+	 * the cells at {@code f = TUNNEL_LENGTH + 2}, as version 3 built it. Empty where it has no tunnel (at sea, before 3).
+	 */
+	public Optional<BlockPos> tunnelEnd() {
+		if (version < 3 || !hasPit()) {
+			return Optional.empty();
+		}
+		return Optional.of(local(0, pitBottomY() - y0, TUNNEL_LENGTH + 1));
 	}
 
 	/** The version it is built as (R12-2). */
@@ -290,10 +426,45 @@ public final class PyramidShape implements Shape {
 		return Math.max(Math.abs(x - cx), Math.abs(z - cz));
 	}
 
-	/** True for a cell of the solid (the shell, the core and the faces, before any cut or wear). */
+	/** True for a cell of the solid (the shell, the core and the faces, before any cut or wear; version 4: the strip set back). */
 	public boolean inMass(int x, int y, int z) {
 		int layer = y - y0;
-		return layer >= 0 && layer <= Math.min(r - ring(x, z), top);
+		return layer >= 0 && layer <= surfaceLayer(x, z);
+	}
+
+	/** The column's top course over the base (negative where it has none): {@code r - ring}, the top level, the strip's set-back. */
+	public int surfaceLayer(int x, int z) {
+		if (stripDepth > 0 && inStrip(x, z)) {
+			int f = (x - cx) * facing.getStepX() + (z - cz) * facing.getStepZ();
+			int side = (x - cx) * right.getStepX() + (z - cz) * right.getStepZ();
+			return Math.min(r - Math.max(Math.abs(f + stripDepth), Math.abs(side)), top);
+		}
+		return Math.min(r - ring(x, z), top);
+	}
+
+	/**
+	 * True for a column of version 4's strip: the chunk column across the face of the way in that holds the mouth, from 2
+	 * out of the centre (the top level kept whole) outward.
+	 */
+	public boolean inStrip(int x, int z) {
+		if (version < 4) {
+			return false;
+		}
+		int across = stripAcrossX ? x : z;
+		return across >= stripLo && across <= stripHi && (x - cx) * facing.getStepX() + (z - cz) * facing.getStepZ() >= 2;
+	}
+
+	/** Version 4: the band the lighting fault covers (the strip's columns out to the far edge of the chunk at its foot), else null. */
+	public @Nullable BoundingBox litBand() {
+		if (version < 4) {
+			return null;
+		}
+		BlockPos a = local(0, 0, 2);
+		BlockPos b = local(0, 0, litTo);
+		int lo = Math.min(stripAcrossX ? a.getZ() : a.getX(), stripAcrossX ? b.getZ() : b.getX());
+		int hi = Math.max(stripAcrossX ? a.getZ() : a.getX(), stripAcrossX ? b.getZ() : b.getX());
+		int minY = Math.min(y0 - 1, sea ? waterTop : y0 - 1);
+		return stripAcrossX ? new BoundingBox(stripLo, minY, lo, stripHi, box.maxY(), hi) : new BoundingBox(lo, minY, stripLo, hi, box.maxY(), stripHi);
 	}
 
 	/** True for a cell of the core (air inside the shell), cuts' keep-outs excluded. */
@@ -342,7 +513,7 @@ public final class PyramidShape implements Shape {
 	/** Inside: the core, the pit or its tunnel (never the shell, the way in, the cuts or the grounds). */
 	@Override
 	public Interior interior() {
-		return (x, y, z) -> core(x, y, z) || pit(x, y, z) || tunnel(x, y, z);
+		return (x, y, z) -> core(x, y, z) || pit(x, y, z) || tunnel(x, y, z) || depths.inside(x, y, z);
 	}
 
 	/**
@@ -374,10 +545,83 @@ public final class PyramidShape implements Shape {
 		return out;
 	}
 
-	/** The way in's cells (empty when sealed): two rows of three, the lower one starting at the outer mouth. */
-	public List<BlockPos> wayIn() {
+	/**
+	 * Version 4 on land (R3-2, Mariano's "no purpose"): the trail someone lit going down, a torch on every
+	 * {@value #TRAIL_EVERY}th tread of the pit's far face on the way in's line (what you see across the pit as you come in: the
+	 * near face falls away under the rim), from {@value #TRAIL_FROM} steps under the rim to the last ring over the floor, and
+	 * last the floor's own torch on its cobblestone (where the dead end runs on under the steps: the depths' way). Empty at
+	 * sea and before 4.
+	 */
+	public List<BlockPos> trail() {
 		List<BlockPos> out = new ArrayList<>();
-		if (sealed) {
+		if (seaTrail()) {
+			// Version 6 at sea (R3A-6): a torch on the right kerb every 5th step down the flight, then the floor's own.
+			for (int j = TRAIL_FROM; j <= wayLayer - 1; j += TRAIL_EVERY) {
+				out.add(local(2, wayLayer - j + 1, r - wayLayer - 2 - j));
+			}
+			out.add(floorLight().above());
+			return out;
+		}
+		if (version < 4 || !hasPit()) {
+			return out;
+		}
+		for (int s = TRAIL_FROM; s <= p0 - 2; s += TRAIL_EVERY) {
+			out.add(local(0, -s, -(p0 - s + 1)));
+		}
+		out.add(new BlockPos(cx, pitBottomY() + 1, cz));
+		return out;
+	}
+
+	/** Version {@value #SEA_TRAIL_FROM} at sea with its way in and flight: the trail, the floor's light, 16c on the flight. */
+	public boolean seaTrail() {
+		return sea && version >= SEA_TRAIL_FROM && !sealed && wayLayer > 0;
+	}
+
+	/**
+	 * The cobblestone the floor's torch stands on: the pit floor's middle on land; at sea (version 6) on the core's sand
+	 * floor {@value #FLOOR_LIGHT_SIDE} to the left of the flight's line under the middle (clear of the flight's mass).
+	 */
+	public BlockPos floorLight() {
+		return seaTrail() ? local(FLOOR_LIGHT_SIDE, 0, 0) : new BlockPos(cx, pitBottomY(), cz);
+	}
+
+	/** True where a visit goes down a descent 16c counts steps on: the pit, or (version 6 at sea) the flight. */
+	public boolean hasDescent() {
+		return hasPit() || seaTrail();
+	}
+
+	/** The descent's steps: the pit's rim to its floor, or the flight's top to the core's floor. */
+	public int descentSteps() {
+		return seaTrail() ? wayLayer + 1 : pitDepth() + 1;
+	}
+
+	/**
+	 * How many steps down the descent feet at this cell stand: in the pit, from its rim; at sea (version 6), in the core,
+	 * from the flight's top; -1 elsewhere.
+	 */
+	public int stepsDown(int x, int y, int z) {
+		if (hasPit()) {
+			return pit(x, y, z) ? y0 - y : -1;
+		}
+		return seaTrail() && core(x, y, z) ? y0 + wayLayer - y : -1;
+	}
+
+	/**
+	 * Version 6 at sea (R3A-6): the lighting fault's band over the top {@value #CAP_COURSES} courses under the apex, the
+	 * only part of a sea pyramid standing clear over the water by night; else null.
+	 */
+	public @Nullable BoundingBox capBand() {
+		if (!sea || version < SEA_TRAIL_FROM) {
+			return null;
+		}
+		int half = r - top + CAP_COURSES;
+		return new BoundingBox(cx - half, y0 + top - CAP_COURSES - 1, cz - half, cx + half, Math.min(y0 + top + 1, box.maxY()), cz + half);
+	}
+
+	/** The cells the way in of a sealed one would take (the open one's), for 16g: empty on an open one or at sea. */
+	public List<BlockPos> sealedMouth() {
+		List<BlockPos> out = new ArrayList<>();
+		if (!sealed || sea) {
 			return out;
 		}
 		for (int side = 0; side <= 1; side++) {
@@ -391,21 +635,49 @@ public final class PyramidShape implements Shape {
 		return out;
 	}
 
+	/** The way in's lowest course (0 on land; version 4 at sea, two over the water's top). */
+	public int wayLayer() {
+		return wayLayer;
+	}
+
+	/**
+	 * The way in's cells (empty when sealed): two rows of three, the lower one starting at the outer mouth (at sea, version
+	 * 4: the same {@link #wayLayer} courses up the face, through its shell at that height).
+	 */
+	public List<BlockPos> wayIn() {
+		List<BlockPos> out = new ArrayList<>();
+		if (sealed) {
+			return out;
+		}
+		int m = wayLayer;
+		for (int side = 0; side <= 1; side++) {
+			for (int f = r - m; f >= r - m - 2; f--) {
+				out.add(local(side, m, f));
+			}
+			for (int f = r - m - 1; f >= r - m - 3; f--) {
+				out.add(local(side, m + 1, f));
+			}
+		}
+		return out;
+	}
+
 	/** The inner mouth's 2 x 2: the last cell of each of the way in's four rows, next to the core. */
 	public List<BlockPos> innerMouth() {
 		if (sealed) {
 			return List.of();
 		}
-		return List.of(local(0, 0, r - 2), local(1, 0, r - 2), local(0, 1, r - 3), local(1, 1, r - 3));
+		int m = wayLayer;
+		return List.of(local(0, m, r - m - 2), local(1, m, r - m - 2), local(0, m + 1, r - m - 3), local(1, m + 1, r - m - 3));
 	}
 
-	/** The cell just inside the way in (the core's first floor cell past it, feet height), between the two rows. */
+	/** The cell just inside the way in (the core's first cell past it, feet height), between the two rows. */
 	public BlockPos insideMouth() {
-		return local(0, 0, r - 3);
+		int m = wayLayer;
+		return m == 0 ? local(0, 0, r - 3) : local(0, m - 1, r - m - 3);
 	}
 
 	/**
-	 * The bricks of the core's inner face beside the mouth, {@code 2} to {@code 6} to either side of it in the lowest
+	 * The bricks of the core's inner face beside the mouth, {@code 2} to {@code 6} to either side of it in the way in's
 	 * three courses (what 16b moves into the mouth), nearest first.
 	 */
 	public List<BlockPos> besideMouth() {
@@ -414,10 +686,28 @@ public final class PyramidShape implements Shape {
 			return out;
 		}
 		for (int off = 2; off <= 6; off++) {
-			for (int layer = 0; layer <= 2; layer++) {
+			for (int layer = wayLayer; layer <= wayLayer + 2; layer++) {
 				int f = r - SHELL - layer + 1;
 				out.add(local(-off, layer, f));
 				out.add(local(1 + off, layer, f));
+			}
+		}
+		return out;
+	}
+
+	/**
+	 * Version 4 at sea: the flight from the inner mouth down to the core's floor, each step's feet cell (sides 0 and 1),
+	 * from the top; empty on land or closed. Step {@code j} stands {@code j} in from the inner mouth's lower cell and
+	 * {@code j} down.
+	 */
+	public List<BlockPos> flight() {
+		List<BlockPos> out = new ArrayList<>();
+		if (sealed || wayLayer == 0) {
+			return out;
+		}
+		for (int j = 0; j <= wayLayer; j++) {
+			for (int side = 0; side <= 1; side++) {
+				out.add(local(side, wayLayer - j, r - wayLayer - 2 - j));
 			}
 		}
 		return out;
@@ -448,8 +738,14 @@ public final class PyramidShape implements Shape {
 
 	// --- Shape ---
 
+	/** Everything it may write: the pyramid's own box, enclosing its depths' (R3-D) when it has any. */
 	@Override
 	public BoundingBox box() {
+		BoundingBox deep = depths.box().orElse(null);
+		if (deep != null) {
+			return new BoundingBox(Math.min(box.minX(), deep.minX()), Math.min(box.minY(), deep.minY()), Math.min(box.minZ(), deep.minZ()),
+					Math.max(box.maxX(), deep.maxX()), Math.max(box.maxY(), deep.maxY()), Math.max(box.maxZ(), deep.maxZ()));
+		}
 		return new BoundingBox(box.minX(), box.minY(), box.minZ(), box.maxX(), box.maxY(), box.maxZ());
 	}
 
@@ -459,9 +755,13 @@ public final class PyramidShape implements Shape {
 		return hasPit() ? new BlockPos(cx, pitBottomY(), cz) : new BlockPos(cx, y0, cz);
 	}
 
+	/**
+	 * The way in's outer mouth (version 4 at sea: at the waterline); a closed one's where it would be, on its face (version
+	 * 4: the strip's, set back: the base course's outer brick there).
+	 */
 	@Override
 	public BlockPos entrance() {
-		return local(0, 0, r);
+		return local(0, wayLayer, r - wayLayer - (sealed ? stripDepth : 0));
 	}
 
 	@Override
@@ -494,8 +794,13 @@ public final class PyramidShape implements Shape {
 		for (BlockPos cell : tunnelCells()) {
 			w.set(cell, AIR);
 		}
-		// 4. The openings: the way in and its approach, the cuts.
-		if (!sealed) {
+		// 4. The openings: the way in and its approach (version 4 at sea: the flight down from it), the cuts.
+		if (!sealed && wayLayer > 0) {
+			flightMass(w);
+			for (BlockPos cell : wayIn()) {
+				w.set(cell, AIR);
+			}
+		} else if (!sealed) {
 			for (BlockPos cell : wayIn()) {
 				w.set(cell, AIR);
 			}
@@ -513,10 +818,21 @@ public final class PyramidShape implements Shape {
 		for (Cut cut : cuts) {
 			Draw.fill(w, cut.cells(), sea && cut.cells().minY() <= waterTop ? WATER : AIR);
 		}
-		// 5. The pit's light, and the apex.
+		// 5. The pit's light (version 4: the trail of lights down to it), and the apex.
 		if (hasPit()) {
 			w.set(cx, pitBottomY(), cz, COBBLESTONE);
 			w.set(cx, pitBottomY() + 1, cz, TORCH);
+			for (BlockPos cell : trail()) {
+				if (cell.getY() > pitBottomY() + 1 || cell.getX() != cx || cell.getZ() != cz) {
+					w.set(cell, TORCH);
+				}
+			}
+		} else if (seaTrail()) {
+			// Version 6 at sea (R3A-6): the trail down the flight's kerb to the floor's cobblestone and its torch.
+			w.set(floorLight(), COBBLESTONE);
+			for (BlockPos cell : trail()) {
+				w.set(cell, TORCH);
+			}
 		}
 		if (version >= 2) {
 			// The point taken off: its top a 3 x 3 level, lit on a lit one (R11-1, R11-4).
@@ -529,6 +845,84 @@ public final class PyramidShape implements Shape {
 			}
 		} else {
 			w.set(cx, y0 + r, cz, light ? GLOWSTONE : BRICKS);
+		}
+		// 6. Version 4's sign: the lighting fault over the strip and its foot, the mouth left dark.
+		if (version >= 4) {
+			litCells(w, clip);
+		}
+		BoundingBox cap = capBand();
+		if (cap != null) {
+			// Version 6 at sea: the top courses lit as at noon round the apex's light (R3A-6: at 128 the apex alone was lost).
+			Fault.light(w, cap, cap.maxY());
+		}
+		// 7. What lies under the pit's dead end (R3-D, from version 5): last, after the pit, its torch, the tunnel and every seal.
+		depths.fill(w, clip);
+	}
+
+	/**
+	 * Version 4's lighting fault ({@link Fault#light}) over the {@link #litBand} inside the clip, looking down from over
+	 * the highest the band holds there; then the lights within {@value #MOUTH_DARK} of the mouth's cells taken out again,
+	 * so the mouth stays black in the lit band. Returns the lights left.
+	 */
+	public List<BlockPos> litCells(Writer w, BoundingBox clip) {
+		BoundingBox band = litBand();
+		List<BlockPos> out = new ArrayList<>();
+		if (band == null) {
+			return out;
+		}
+		int x0 = Math.max(band.minX(), clip.minX());
+		int x1 = Math.min(band.maxX(), clip.maxX());
+		int z0 = Math.max(band.minZ(), clip.minZ());
+		int z1 = Math.min(band.maxZ(), clip.maxZ());
+		if (x0 > x1 || z0 > z1) {
+			return out;
+		}
+		// The highest top in this part: the mass where it stands, the land (and a tree on it) out past it.
+		int fromY = Integer.MIN_VALUE;
+		for (int x = x0; x <= x1; x++) {
+			for (int z = z0; z <= z1; z++) {
+				int mass = surfaceLayer(x, z);
+				fromY = Math.max(fromY, Math.max(mass >= 0 ? y0 + mass : Integer.MIN_VALUE, Math.max(w.ground(x, z), w.surface(x, z)) + LEAVES_UP));
+			}
+		}
+		List<BlockPos> mouth = wayIn();
+		for (BlockPos cell : Fault.light(w, band, Math.min(fromY + 1, box.maxY()))) {
+			boolean near = false;
+			for (BlockPos m : mouth) {
+				near |= Math.max(Math.abs(m.getX() - cell.getX()), Math.max(Math.abs(m.getY() - cell.getY()), Math.abs(m.getZ() - cell.getZ()))) <= MOUTH_DARK;
+			}
+			if (near) {
+				boolean wet = w.get(cell).getValue(BlockStateProperties.WATERLOGGED);
+				w.set(cell, wet ? WATER : AIR);
+			} else {
+				out.add(cell);
+			}
+		}
+		return out;
+	}
+
+	/**
+	 * Version 4 at sea: under the way in, its floor; inside, the flight down to the core's floor (each step's brick from the
+	 * floor up under its feet), kerbed both sides one higher (D-097.7: no edge to walk off).
+	 */
+	private void flightMass(Writer w) {
+		int m = wayLayer;
+		for (int j = 0; j <= m; j++) {
+			int f = r - m - 2 - j;
+			int feet = m - j;
+			for (int side = -1; side <= 2; side++) {
+				boolean kerb = side == -1 || side == 2;
+				int highest = kerb && feet > 0 ? feet : feet - 1;
+				for (int layer = 0; layer <= highest; layer++) {
+					w.set(local(side, layer, f), BRICKS);
+				}
+			}
+		}
+		// The way in's floor through the shell, whatever the wear left there.
+		for (int side = 0; side <= 1; side++) {
+			for (int f = r - m; f >= r - m - 2; f--) {
+				w.set(local(side, m - 1, f), BRICKS);
+			}
 		}
 	}
 
@@ -548,12 +942,12 @@ public final class PyramidShape implements Shape {
 					w.set(x, y, z, sea && y <= waterTop ? WATER : AIR);
 				}
 			}
-			Draw.foundation(w, x, z, y0 - 1, BRICKS, FOUNDATION_MAX);
+			Draw.foundation(w, x, z, y0 - 1, BRICKS, foundationDepth());
 			return;
 		}
 		double dist = Math.sqrt((double) dx * dx + (double) dz * dz) - (r + 0.5);
 		if (version >= 2 && !sea) {
-			if (dist <= GROUNDS_HALF) {
+			if (dist <= groundsHalf) {
 				grounds(w, x, z, dx, dz, dist);
 			}
 			if (d - r <= PLINTH_MAX) {
@@ -561,7 +955,7 @@ public final class PyramidShape implements Shape {
 			}
 			return;
 		}
-		if (dist > GROUNDS_HALF) {
+		if (dist > groundsHalf) {
 			return;
 		}
 		if (sea) {
@@ -579,7 +973,7 @@ public final class PyramidShape implements Shape {
 		// Past the ring's sharp edge, a fringe of small dead patches thinning out to nothing (half of it on average);
 		// the trees there keep their leaves, so the ring's edge cuts the trees that stand on it.
 		if (!full) {
-			double t = (dist - GROUNDS_FULL) / (GROUNDS_HALF - GROUNDS_FULL);
+			double t = (dist - GROUNDS_FULL) / (groundsHalf - GROUNDS_FULL);
 			if (Draw.unit(seed ^ 0x6D2B79F5L, dx, 0, dz) > 0.85 - 0.7 * t) {
 				return;
 			}
@@ -618,7 +1012,7 @@ public final class PyramidShape implements Shape {
 	private void grounds(Writer w, int x, int z, int dx, int dz, double dist) {
 		boolean full = dist <= GROUNDS_FULL;
 		if (!full) {
-			double t = (dist - GROUNDS_FULL) / (GROUNDS_HALF - GROUNDS_FULL);
+			double t = (dist - GROUNDS_FULL) / (groundsHalf - GROUNDS_FULL);
 			if (Draw.unit(seed ^ 0x6D2B79F5L, dx, 0, dz) >= 0.85 * (1.0 - t)) {
 				return;
 			}
@@ -648,13 +1042,17 @@ public final class PyramidShape implements Shape {
 	 * nothing at its foot drops more than a block.
 	 */
 	private void plinth(Writer w, int x, int z, int dx, int dz, int d) {
-		int k = d - r;
+		// Version 4's strip: its steps go on down set back as its face.
+		int k = -surfaceLayer(x, z);
+		if (stripDepth == 0 || !inStrip(x, z)) {
+			k = d - r;
+		}
 		int course = y0 - k;
 		int ground = w.ground(x, z);
 		if (ground >= course) {
 			return;
 		}
-		int bottom = Math.max(ground + 1, y0 - 1 - FOUNDATION_MAX);
+		int bottom = Math.max(ground + 1, y0 - 1 - foundationDepth());
 		for (int y = course - 1; y >= bottom; y--) {
 			w.set(x, y, z, BRICKS);
 		}
@@ -670,7 +1068,7 @@ public final class PyramidShape implements Shape {
 	 */
 	private void canopies(Writer w, BoundingBox clip) {
 		List<int[]> logs = new ArrayList<>();
-		int reach = r + GROUNDS_HALF;
+		int reach = r + groundsHalf;
 		for (int x = Math.max(clip.minX(), cx - reach); x <= Math.min(clip.maxX(), cx + reach); x++) {
 			for (int z = Math.max(clip.minZ(), cz - reach); z <= Math.min(clip.maxZ(), cz + reach); z++) {
 				double dist = ringDistance(x, z);
@@ -754,7 +1152,7 @@ public final class PyramidShape implements Shape {
 		if (d > r) {
 			return;
 		}
-		int surface = Math.min(r - d, top);
+		int surface = surfaceLayer(x, z);
 		for (int layer = 0; layer <= surface; layer++) {
 			int y = y0 + layer;
 			if (!w.inside(x, y, z)) {
@@ -816,7 +1214,8 @@ public final class PyramidShape implements Shape {
 		int y = y0 + layer;
 		boolean wet = sea && y <= waterTop;
 		BlockState empty = wet ? WATER : AIR;
-		if (layer >= r - 3) {
+		if (layer >= r - 3 || inStrip(x, z)) {
+			// The top courses stay sharp; version 4's strip is laid fresh (no wear, no damp, nothing missing).
 			return BRICKS;
 		}
 		if (Draw.chance(seed ^ 0x3C6EF372L, dx, layer, dz, 1.0 / MISSING_ONE_IN)) {
@@ -890,6 +1289,44 @@ public final class PyramidShape implements Shape {
 		}
 	}
 
+	/** How far out the slot runs over this land: while the land on either side of its line stands over its floor. */
+	private int slotEnd(java.util.function.IntBinaryOperator ground) {
+		int floorY = y0 - 1;
+		int end = r;
+		for (int f = r + 1; f <= r + SLOT_MAX; f++) {
+			boolean higher = false;
+			for (int side = 0; side <= 1; side++) {
+				BlockPos floor = local(side, -1, f);
+				higher |= ground.applyAsInt(floor.getX(), floor.getZ()) > floorY;
+			}
+			if (!higher) {
+				break;
+			}
+			end = f;
+		}
+		return end;
+	}
+
+	/** How far past the mouth version 2's slot runs (0: none, or no slot). */
+	public int slotLength() {
+		return slotEnd - r;
+	}
+
+	/** True if the column of {@code pos} lies in the writer's clip. */
+	private static boolean inColumns(Writer w, BlockPos pos) {
+		return pos.getX() >= w.minX() && pos.getX() <= w.maxX() && pos.getZ() >= w.minZ() && pos.getZ() <= w.maxZ();
+	}
+
+	/** Tests only: runs {@code body} with the slot filled as before FIX-R3-C on this thread (an A/B of the fills). */
+	public static <T> T slotAsBefore(java.util.function.Supplier<T> body) {
+		SLOT_AS_BEFORE.set(true);
+		try {
+			return body.get();
+		} finally {
+			SLOT_AS_BEFORE.set(false);
+		}
+	}
+
 	/**
 	 * Version 2's way to the way in (R11-16): where the land in front stands higher than the base, a cut exactly 2 wide on
 	 * the way in's own line, everything over its floor taken, its sides the land itself (what would fall there made rock:
@@ -909,24 +1346,18 @@ public final class PyramidShape implements Shape {
 			}
 		}
 		int floorY = y0 - 1;
-		int end = r;
-		for (int f = r + 1; f <= r + SLOT_MAX; f++) {
-			boolean higher = false;
-			for (int side = 0; side <= 1; side++) {
-				BlockPos floor = local(side, -1, f);
-				higher |= w.ground(floor.getX(), floor.getZ()) > floorY;
-			}
-			if (!higher) {
-				break;
-			}
-			end = f;
-		}
+		boolean before = SLOT_AS_BEFORE.get();
+		int end = before ? slotEnd(w::ground) : slotEnd;
 		if (end == r) {
 			return;
 		}
 		for (int f = r; f <= end; f++) {
 			for (int side = 0; side <= 1; side++) {
 				BlockPos floor = local(side, -1, f);
+				if (!before && !inColumns(w, floor)) {
+					// Nothing of this column is written in this chunk: its land is not read either (FIX-R3-C).
+					continue;
+				}
 				if (f > r && w.inside(floor) && !Draw.solidGround(w.get(floor))) {
 					w.set(floor, DIRT);
 					Draw.foundation(w, floor.getX(), floor.getZ(), floor.getY() - 1, DIRT, FOUNDATION_MAX);
@@ -941,6 +1372,9 @@ public final class PyramidShape implements Shape {
 			}
 			for (int side : new int[] {-1, 2}) {
 				BlockPos wall = local(side, -1, f);
+				if (!before && !inColumns(w, wall)) {
+					continue;
+				}
 				int land = w.ground(wall.getX(), wall.getZ());
 				for (int y = wall.getY() + 1; y <= land; y++) {
 					BlockState state = w.get(wall.getX(), y, wall.getZ());

@@ -29,7 +29,8 @@ import net.minecraft.world.level.levelgen.structure.BoundingBox;
  * What the second wave's places remember, kept in {@code WorldData} under the optional key {@code sc2}: every known
  * place with how it was started (to rebuild its interior), who has been inside it and what it has answered; each
  * player's last time inside any of them and the answers each one had; what a feature fixed on its first build
- * ({@link Plans}: the line's segments). Every field is optional and read leniently, one
+ * ({@link Plans}: the line's segments, key {@code plans}; the crumbs' lines, key {@code c}); what worldgen decided for
+ * each candidate chunk ({@link Decided}, key {@code d}: 8 bytes a refused candidate, 72 a made one). Every field is optional and read leniently, one
  * entry at a time: a save from before loads with nothing, an older jar skips the key, and an entry that cannot be read
  * (a kind this jar does not know) is left out rather than failing the rest. Server thread only; every change marks the
  * data dirty. At most a few hundred bytes per place (D-104: 2 KB).
@@ -165,7 +166,10 @@ public final class Sc2Data {
 	public static final Codec<Sc2Data> CODEC = RecordCodecBuilder.create(i -> i.group(
 			lenientList(KNOWN_CODEC).lenientOptionalFieldOf("places", List.of()).forGetter(d -> List.copyOf(d.places.values())),
 			lenientList(PlayerMarks.CODEC).lenientOptionalFieldOf("players", List.of()).forGetter(Sc2Data::playerMarks),
-			Codec.unboundedMap(Codec.STRING, CompoundTag.CODEC).lenientOptionalFieldOf("plans", Map.of()).forGetter(Sc2Data::plans)
+			Codec.unboundedMap(Codec.STRING, CompoundTag.CODEC).lenientOptionalFieldOf("plans", Map.of()).forGetter(Sc2Data::plans),
+			Codec.unboundedMap(Codec.STRING, Codec.LONG_STREAM.xmap(java.util.stream.LongStream::toArray, java.util.Arrays::stream))
+					.lenientOptionalFieldOf("d", Map.of()).forGetter(Sc2Data::decidedArrays),
+			Codec.unboundedMap(Codec.STRING, CompoundTag.CODEC).lenientOptionalFieldOf("c", Map.of()).forGetter(Sc2Data::lines)
 	).apply(i, Sc2Data::new));
 
 	private final Map<String, Known> places = new LinkedHashMap<>();
@@ -174,6 +178,10 @@ public final class Sc2Data {
 	private final Map<UUID, Map<String, Spent>> playerSpent = new HashMap<>();
 	/** What features fixed on their first build in this world ({@link Plans}), by key. */
 	private final Map<String, CompoundTag> plans = new LinkedHashMap<>();
+	/** The crumbs' lines fixed on their first build ({@link Plans#fixLine}), by key (saved under {@code c}). */
+	private final Map<String, CompoundTag> lines = new LinkedHashMap<>();
+	/** {@link Decided}'s records by group (a kind's refused chunks, or its made records), each a run of longs. */
+	private final Map<String, it.unimi.dsi.fastutil.longs.LongArrayList> decided = new LinkedHashMap<>();
 	private int placesVersion;
 	private Runnable dirty = () -> {
 	};
@@ -182,9 +190,12 @@ public final class Sc2Data {
 	public Sc2Data() {
 	}
 
-	private Sc2Data(List<Known> places, List<PlayerMarks> players, Map<String, CompoundTag> plans) {
+	private Sc2Data(List<Known> places, List<PlayerMarks> players, Map<String, CompoundTag> plans, Map<String, long[]> decided,
+			Map<String, CompoundTag> lines) {
 		places.forEach(this::put);
 		plans.forEach((key, tag) -> this.plans.put(key, tag.copy()));
+		lines.forEach((key, tag) -> this.lines.put(key, tag.copy()));
+		decided.forEach((key, longs) -> this.decided.put(key, new it.unimi.dsi.fastutil.longs.LongArrayList(longs)));
 		for (PlayerMarks marks : players) {
 			if (marks.trespass() >= 0) {
 				trespass.put(marks.player(), marks.trespass());
@@ -221,7 +232,38 @@ public final class Sc2Data {
 
 	/** True if nothing is remembered (the key is then not written). */
 	public boolean isEmpty() {
-		return places.isEmpty() && trespass.isEmpty() && playerSpent.isEmpty() && plans.isEmpty();
+		return places.isEmpty() && trespass.isEmpty() && playerSpent.isEmpty() && plans.isEmpty() && decided.isEmpty() && lines.isEmpty();
+	}
+
+	/** {@link Decided}'s records by group, each a copy (its own format). */
+	public Map<String, long[]> decidedArrays() {
+		Map<String, long[]> out = new LinkedHashMap<>();
+		decided.forEach((key, longs) -> out.put(key, longs.toLongArray()));
+		return out;
+	}
+
+	/** Appends one {@link Decided} record (its longs) to a group. */
+	public void decide(String group, long[] record) {
+		decided.computeIfAbsent(group, k -> new it.unimi.dsi.fastutil.longs.LongArrayList()).addElements(
+				decided.get(group).size(), record);
+		dirty.run();
+	}
+
+	/** Every crumb line fixed by key (a copy). */
+	public Map<String, CompoundTag> lines() {
+		Map<String, CompoundTag> out = new LinkedHashMap<>();
+		lines.forEach((key, tag) -> out.put(key, tag.copy()));
+		return out;
+	}
+
+	/** Keeps a crumb line fixed under {@code key}; false (nothing changes) if one is kept there already: the first stays. */
+	public boolean fixLine(String key, CompoundTag line) {
+		if (lines.containsKey(key)) {
+			return false;
+		}
+		lines.put(key, line.copy());
+		dirty.run();
+		return true;
 	}
 
 	/** Every fixed plan by key (a copy). */

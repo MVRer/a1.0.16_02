@@ -32,7 +32,7 @@ import net.minecraft.world.level.levelgen.structure.placement.AbstractSpreadingS
  *                  "exclusion_zone": { "other_set": "minecraft:villages", "chunk_count": 8 } } }
  * }</pre>
  */
-public final class RaysPlacement extends AbstractSpreadingStructurePlacement {
+public final class RaysPlacement extends AbstractSpreadingStructurePlacement implements KitPlacement {
 	public static final MapCodec<RaysPlacement> CODEC = RecordCodecBuilder.mapCodec(i -> placementCodec(i).and(i.group(
 			Codec.intRange(1, 16).optionalFieldOf("rays", 3).forGetter(RaysPlacement::rays),
 			Codec.intRange(0, 29_000_000).fieldOf("first").forGetter(RaysPlacement::first),
@@ -153,6 +153,16 @@ public final class RaysPlacement extends AbstractSpreadingStructurePlacement {
 			}
 		}
 		return false;
+	}
+
+	/** Every slot's chunk (each ray's {@link #slots()} slots). */
+	@Override
+	public List<ChunkPos> chunks(long seed) {
+		List<ChunkPos> out = new ArrayList<>();
+		for (Slot slot : slots(seed, slots)) {
+			out.add(slot.chunk());
+		}
+		return out;
 	}
 
 	@Override

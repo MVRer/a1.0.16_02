@@ -1,0 +1,802 @@
+{
+ "v": 1,
+ "l": {
+  "a": [
+   {
+    "t": "{name}. a0."
+   },
+   {
+    "t": "{name}. a1."
+   },
+   {
+    "t": "{name}. a2."
+   },
+   {
+    "t": "{name}. a3."
+   },
+   {
+    "t": "{name}. a4."
+   },
+   {
+    "t": "{name}. a5."
+   },
+   {
+    "t": "{name}. a6."
+   },
+   {
+    "t": "{name}. a7."
+   },
+   {
+    "t": "{name}. a8."
+   },
+   {
+    "t": "{name}. a9."
+   }
+  ],
+  "b": [
+   {
+    "t": "day {day}. b0."
+   },
+   {
+    "t": "day {day}. b1."
+   },
+   {
+    "t": "day {day}. b2."
+   },
+   {
+    "t": "day {day}. b3."
+   },
+   {
+    "t": "day {day}. b4 {friend}.",
+    "if": [
+     "friend"
+    ]
+   },
+   {
+    "t": "day {day}. b5 wet.",
+    "if": [
+     "rain"
+    ]
+   }
+  ],
+  "c": [
+   {
+    "t": "day {day}. c0 {cause}."
+   },
+   {
+    "t": "day {day}. c1 {cause}."
+   },
+   {
+    "t": "day {day}. c2 {cause}."
+   },
+   {
+    "t": "day {day}. c3 {cause}."
+   },
+   {
+    "t": "day {day}. c4 {cause}."
+   },
+   {
+    "t": "day {day}. c5 {cause}."
+   },
+   {
+    "t": "day {day}. c6 {cause}."
+   },
+   {
+    "t": "day {day}. c7 {cause}."
+   },
+   {
+    "t": "day {day}. c8 fell far.",
+    "if": [
+     "cause:fall"
+    ]
+   },
+   {
+    "t": "day {day}. c9 {n} times.",
+    "if": [
+     "n>=2"
+    ]
+   }
+  ],
+  "d": [
+   {
+    "t": "day {day}. d0 {cause}."
+   },
+   {
+    "t": "day {day}. d1 {cause}."
+   },
+   {
+    "t": "day {day}. d2 {cause}."
+   },
+   {
+    "t": "day {day}. d3 {cause}."
+   }
+  ],
+  "e": [
+   {
+    "t": "day {day}. e0 {n} {block}."
+   },
+   {
+    "t": "day {day}. e1 {n} {block}."
+   },
+   {
+    "t": "day {day}. e2 {n} {block}."
+   },
+   {
+    "t": "day {day}. e3 {n} {block}."
+   },
+   {
+    "t": "day {day}. e4 {n} {block}."
+   },
+   {
+    "t": "day {day}. e5 {n} {block}."
+   },
+   {
+    "t": "day {day}. e6 {n} {block}."
+   },
+   {
+    "t": "day {day}. e7 {n} {block}."
+   },
+   {
+    "t": "day {day}. e8 {n} {block} at {x} {z}."
+   }
+  ],
+  "f": [
+   {
+    "t": "day {day}. f0 {block} {x} {z}.",
+    "if": [
+     "first"
+    ]
+   },
+   {
+    "t": "day {day}. f1 {block} {x} {z}.",
+    "if": [
+     "first"
+    ]
+   },
+   {
+    "t": "day {day}. f2 {block} {x} {z}.",
+    "if": [
+     "first"
+    ]
+   },
+   {
+    "t": "day {day}. f3 {block} {x} {z}.",
+    "if": [
+     "first"
+    ]
+   },
+   {
+    "t": "day {day}. f4 {block} {x} {z}.",
+    "if": [
+     "first"
+    ]
+   },
+   {
+    "t": "day {day}. f5 {block} {x} {z}.",
+    "if": [
+     "first"
+    ]
+   }
+  ],
+  "g": [
+   {
+    "t": "day {day}. g0 {x} {z}."
+   },
+   {
+    "t": "day {day}. g1 {x} {z}."
+   },
+   {
+    "t": "day {day}. g2 {x} {z}."
+   },
+   {
+    "t": "day {day}. g3 {x} {z}."
+   },
+   {
+    "t": "day {day}. g4 {x} {z}."
+   },
+   {
+    "t": "day {day}. g5 {x} {z}."
+   },
+   {
+    "t": "day {day}. g6 {biome}."
+   }
+  ],
+  "h": [
+   {
+    "t": "day {day}. h0.",
+    "if": [
+     "night"
+    ]
+   },
+   {
+    "t": "day {day}. h1.",
+    "if": [
+     "night"
+    ]
+   },
+   {
+    "t": "day {day}. h2.",
+    "if": [
+     "night"
+    ]
+   },
+   {
+    "t": "day {day}. h3.",
+    "if": [
+     "night"
+    ]
+   },
+   {
+    "t": "day {day}. h4.",
+    "if": [
+     "night"
+    ]
+   },
+   {
+    "t": "day {day}. h5.",
+    "if": [
+     "night"
+    ]
+   }
+  ],
+  "i": [
+   {
+    "t": "day {day}. i0 {block}."
+   },
+   {
+    "t": "day {day}. i1 {block}."
+   },
+   {
+    "t": "day {day}. i2 {block}."
+   },
+   {
+    "t": "day {day}. i3 {block}."
+   },
+   {
+    "t": "day {day}. i4 {block}."
+   },
+   {
+    "t": "day {day}. i5 {block}."
+   },
+   {
+    "t": "day {day}. i6 {friend} {block}.",
+    "if": [
+     "friend"
+    ]
+   },
+   {
+    "t": "day {day}. i7 {friend} {block}.",
+    "if": [
+     "friend"
+    ]
+   },
+   {
+    "t": "day {day}. i8 {friend} {block}.",
+    "if": [
+     "friend"
+    ]
+   },
+   {
+    "t": "day {day}. i9 {friend} {block}.",
+    "if": [
+     "friend"
+    ]
+   }
+  ],
+  "j": [
+   {
+    "t": "day {day}. j0 {friend}.",
+    "if": [
+     "friend"
+    ]
+   },
+   {
+    "t": "day {day}. j1 {friend}.",
+    "if": [
+     "friend"
+    ]
+   },
+   {
+    "t": "day {day}. j2 {friend}.",
+    "if": [
+     "friend"
+    ]
+   },
+   {
+    "t": "day {day}. j3 {friend}.",
+    "if": [
+     "friend"
+    ]
+   },
+   {
+    "t": "day {day}. j4 {friend}.",
+    "if": [
+     "friend"
+    ]
+   },
+   {
+    "t": "day {day}. j5 {friend}.",
+    "if": [
+     "friend"
+    ]
+   },
+   {
+    "t": "day {day}. j6 {friend}.",
+    "if": [
+     "friend"
+    ]
+   },
+   {
+    "t": "day {day}. j7 {friend}.",
+    "if": [
+     "friend"
+    ]
+   }
+  ],
+  "k": [
+   {
+    "t": "day {day}. k0 {n} {block}."
+   },
+   {
+    "t": "day {day}. k1 {n} {block}."
+   },
+   {
+    "t": "day {day}. k2 {n} {block}."
+   },
+   {
+    "t": "day {day}. k3 {n} {block}."
+   },
+   {
+    "t": "day {day}. k4 {n} {block}."
+   },
+   {
+    "t": "day {day}. k5 {n} {block}."
+   },
+   {
+    "t": "day {day}. k6 {n} {item}."
+   },
+   {
+    "t": "day {day}. k7 {n} {item}."
+   }
+  ],
+  "l": [
+   {
+    "t": "day {day}. l0 {place}."
+   },
+   {
+    "t": "day {day}. l1 {place}."
+   },
+   {
+    "t": "day {day}. l2 {place}."
+   },
+   {
+    "t": "day {day}. l3 {place}."
+   },
+   {
+    "t": "day {day}. l4 {place}."
+   },
+   {
+    "t": "day {day}. l5 {place}."
+   }
+  ],
+  "m": [
+   {
+    "t": "day {day}. m0 {n}."
+   },
+   {
+    "t": "day {day}. m1 {n}."
+   },
+   {
+    "t": "day {day}. m2 {n}."
+   },
+   {
+    "t": "day {day}. m3 {n}."
+   },
+   {
+    "t": "day {day}. m4 {n}."
+   },
+   {
+    "t": "day {day}. m5 {n}."
+   },
+   {
+    "t": "day {day}. m6 {n}."
+   },
+   {
+    "t": "day {day}. m7 {n}."
+   }
+  ],
+  "n": [
+   {
+    "t": "day {day}. n0 {n}.",
+    "if": [
+     "away>=1"
+    ]
+   },
+   {
+    "t": "day {day}. n1 {n}.",
+    "if": [
+     "away>=1"
+    ]
+   },
+   {
+    "t": "day {day}. n2 {n}.",
+    "if": [
+     "away>=1"
+    ]
+   },
+   {
+    "t": "day {day}. n3 {n}.",
+    "if": [
+     "away>=1"
+    ]
+   },
+   {
+    "t": "day {day}. n4 {n}.",
+    "if": [
+     "away>=1"
+    ]
+   },
+   {
+    "t": "day {day}. n5 {n}.",
+    "if": [
+     "away>=1"
+    ]
+   }
+  ],
+  "p": [
+   {
+    "t": "day {day}. p0."
+   },
+   {
+    "t": "day {day}. p1."
+   },
+   {
+    "t": "day {day}. p2."
+   },
+   {
+    "t": "day {day}. p3."
+   },
+   {
+    "t": "day {day}. p4."
+   },
+   {
+    "t": "day {day}. p5."
+   },
+   {
+    "t": "day {day}. p6 {friend}.",
+    "if": [
+     "friend"
+    ]
+   },
+   {
+    "t": "day {day}. p7 {friend}.",
+    "if": [
+     "friend"
+    ]
+   }
+  ],
+  "q": [
+   {
+    "t": "q0 {name}."
+   },
+   {
+    "t": "q1 {name}."
+   },
+   {
+    "t": "q2 {name}."
+   },
+   {
+    "t": "q3 {name}."
+   },
+   {
+    "t": "q4 {name}."
+   },
+   {
+    "t": "q5 {name}."
+   },
+   {
+    "t": "q6 {name}."
+   },
+   {
+    "t": "q7 {name}."
+   },
+   {
+    "t": "q8 {name}."
+   },
+   {
+    "t": "q9 i kept it."
+   }
+  ],
+  "r": [
+   {
+    "t": "day {day}. r0 {name}."
+   },
+   {
+    "t": "day {day}. r1 {name}."
+   },
+   {
+    "t": "day {day}. r2 {name}."
+   },
+   {
+    "t": "day {day}. r3 {name}."
+   },
+   {
+    "t": "day {day}. r4 {name}."
+   },
+   {
+    "t": "day {day}. r5 {name}."
+   },
+   {
+    "t": "day {day}. r6 {name}."
+   },
+   {
+    "t": "day {day}. r7 i saw."
+   }
+  ],
+  "s": [
+   {
+    "t": "s w0 {w}."
+   },
+   {
+    "t": "s w1 {w}."
+   },
+   {
+    "t": "s w2 {w}."
+   },
+   {
+    "t": "s w3 {w}."
+   },
+   {
+    "t": "s m0 {w} {moon}.",
+    "if": [
+     "night"
+    ]
+   },
+   {
+    "t": "s m1 {w} {moon}.",
+    "if": [
+     "night"
+    ]
+   },
+   {
+    "t": "s who0 {name}."
+   },
+   {
+    "t": "s who1 {name}."
+   },
+   {
+    "t": "s who2 {name}."
+   },
+   {
+    "t": "s who3 {name}."
+   },
+   {
+    "t": "s pair0 {name} {friend}.",
+    "if": [
+     "friend"
+    ]
+   },
+   {
+    "t": "s pair1 {name} {friend}.",
+    "if": [
+     "friend"
+    ]
+   },
+   {
+    "t": "s death0 {name} {cause}."
+   },
+   {
+    "t": "s death1 {name} {cause}."
+   },
+   {
+    "t": "s death2 {name} {cause}."
+   },
+   {
+    "t": "s death3 {name} {cause}."
+   },
+   {
+    "t": "s took0 {n} {block}."
+   },
+   {
+    "t": "s took1 {n} {block}."
+   },
+   {
+    "t": "s took2 {n} {block}."
+   },
+   {
+    "t": "s tookitem0 {n} {item}."
+   },
+   {
+    "t": "s tookitem1 {n} {item}."
+   },
+   {
+    "t": "s place0 {place}."
+   },
+   {
+    "t": "s place1 {place}."
+   },
+   {
+    "t": "s place2 {place}."
+   },
+   {
+    "t": "s nobody0."
+   },
+   {
+    "t": "s nobody1."
+   },
+   {
+    "t": "s nobody2 i waited."
+   }
+  ],
+  "t": [
+   {
+    "t": "t0 {name} was"
+   },
+   {
+    "t": "t1 {name} was"
+   },
+   {
+    "t": "t2 {name} was"
+   },
+   {
+    "t": "t3 {name} was"
+   }
+  ],
+  "x": [
+   {
+    "t": "x0 {day}."
+   },
+   {
+    "t": "x1 {day}."
+   },
+   {
+    "t": "x2 {day}."
+   },
+   {
+    "t": "x3 {day}."
+   }
+  ]
+ },
+ "u": {
+  "kirbyfan_92": [
+   [
+    "kirbyfan_92\nv0 p0",
+    "kirbyfan_92\nv0 p1"
+   ],
+   [
+    "kirbyfan_92\nv1 p0",
+    "kirbyfan_92\nv1 p1"
+   ],
+   [
+    "kirbyfan_92\nv2 p0",
+    "kirbyfan_92\nv2 p1"
+   ]
+  ],
+  "stoneslab": [
+   [
+    "stoneslab\nv0 p0",
+    "stoneslab\nv0 p1"
+   ],
+   [
+    "stoneslab\nv1 p0",
+    "stoneslab\nv1 p1"
+   ],
+   [
+    "stoneslab\nv2 p0",
+    "stoneslab\nv2 p1"
+   ]
+  ],
+  "dyl4n_m": [
+   [
+    "dyl4n_m\nv0 p0",
+    "dyl4n_m\nv0 p1"
+   ],
+   [
+    "dyl4n_m\nv1 p0",
+    "dyl4n_m\nv1 p1"
+   ],
+   [
+    "dyl4n_m\nv2 p0",
+    "dyl4n_m\nv2 p1"
+   ]
+  ],
+  "oreo_tm": [
+   [
+    "oreo_tm\nv0 p0",
+    "oreo_tm\nv0 p1"
+   ],
+   [
+    "oreo_tm\nv1 p0",
+    "oreo_tm\nv1 p1"
+   ],
+   [
+    "oreo_tm\nv2 p0",
+    "oreo_tm\nv2 p1"
+   ]
+  ],
+  "pk_alpha": [
+   [
+    "pk_alpha\nv0 p0",
+    "pk_alpha\nv0 p1"
+   ],
+   [
+    "pk_alpha\nv1 p0",
+    "pk_alpha\nv1 p1"
+   ],
+   [
+    "pk_alpha\nv2 p0",
+    "pk_alpha\nv2 p1"
+   ]
+  ],
+  "t0rch": [
+   [
+    "t0rch\nv0 p0",
+    "t0rch\nv0 p1"
+   ],
+   [
+    "t0rch\nv1 p0",
+    "t0rch\nv1 p1"
+   ],
+   [
+    "t0rch\nv2 p0",
+    "t0rch\nv2 p1"
+   ]
+  ]
+ },
+ "map": {
+  "cause": {
+   "fall": "fell",
+   "drown": "the water",
+   "generic": "died"
+  },
+  "place": {
+   "16": [
+    "place16 0",
+    "place16 1",
+    "place16 2",
+    "place16 3"
+   ],
+   "17": [
+    "place17 0",
+    "place17 1",
+    "place17 2",
+    "place17 3"
+   ],
+   "18": [
+    "place18 0",
+    "place18 1",
+    "place18 2",
+    "place18 3"
+   ],
+   "19": [
+    "place19 0",
+    "place19 1",
+    "place19 2",
+    "place19 3"
+   ],
+   "20": [
+    "place20 0",
+    "place20 1",
+    "place20 2",
+    "place20 3"
+   ]
+  },
+  "weather": {
+   "clear": "clear",
+   "rain": "rain",
+   "thunder": "thunder",
+   "snow": "snow",
+   "fog": "fog"
+  },
+  "moon": {
+   "0": "moon0",
+   "1": "moon1",
+   "2": "moon2",
+   "3": "moon3",
+   "4": "moon4",
+   "5": "moon5",
+   "6": "moon6",
+   "7": "moon7"
+  }
+ }
+}

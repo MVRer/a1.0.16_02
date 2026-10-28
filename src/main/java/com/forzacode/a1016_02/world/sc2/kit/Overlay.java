@@ -14,6 +14,8 @@ import net.minecraft.world.level.BlockGetter;
 import net.minecraft.world.level.levelgen.structure.BoundingBox;
 import net.minecraft.world.level.block.state.BlockState;
 
+import org.jspecify.annotations.Nullable;
+
 /**
  * Blocks written over a base without touching it, for tests and the dev survey only (never worldgen or game code): a
  * {@link Shape} filled through {@link #fill} lands here, cell by cell, while reads fall through to the base where nothing
@@ -36,7 +38,18 @@ public final class Overlay {
 
 	private final Base base;
 	private final boolean recordAll;
-	private final Long2ObjectOpenHashMap<BlockState> cells = new Long2ObjectOpenHashMap<>();
+	/**
+	 * What was written, a map a chunk column (FIX-R3-E): a chunk's fill grows only its own chunk's map, as worldgen writes
+	 * only its own chunk, so the cost tests time a chunk's fill without the rest of a large start's cells (one map for a
+	 * whole start of 20 held up to 3.5 million cells, and its growth fell inside one chunk's time: up to 38 ms of a 2 ms
+	 * fill).
+	 */
+	private final Long2ObjectOpenHashMap<Long2ObjectOpenHashMap<BlockState>> chunks = new Long2ObjectOpenHashMap<>();
+	/** The last chunk column's key and map (a fill reads and writes one column at a time). */
+	private long lastKey;
+	private @Nullable Long2ObjectOpenHashMap<BlockState> last;
+	/** {@link #cells}, made again after a write. */
+	private @Nullable Long2ObjectMap<BlockState> merged;
 
 	/** An overlay that keeps only what differs from what is there (to see what a fill would change). */
 	public Overlay(Base base) {
@@ -59,8 +72,27 @@ public final class Overlay {
 
 	/** The block here: what was written, else the base's. */
 	public BlockState get(int x, int y, int z) {
-		BlockState written = cells.get(BlockPos.asLong(x, y, z));
+		Long2ObjectOpenHashMap<BlockState> chunk = chunk(x, z, false);
+		BlockState written = chunk == null ? null : chunk.get(BlockPos.asLong(x, y, z));
 		return written != null ? written : base.at(x, y, z);
+	}
+
+	/** The map of the chunk column holding ({@code x}, {@code z}); made if {@code make}, else null where nothing was written. */
+	private @Nullable Long2ObjectOpenHashMap<BlockState> chunk(int x, int z, boolean make) {
+		long key = (long) (x >> 4) << 32 | (z >> 4) & 0xFFFFFFFFL;
+		if (last != null && key == lastKey) {
+			return last;
+		}
+		Long2ObjectOpenHashMap<BlockState> chunk = chunks.get(key);
+		if (chunk == null && make) {
+			chunk = new Long2ObjectOpenHashMap<>();
+			chunks.put(key, chunk);
+		}
+		if (chunk != null) {
+			lastKey = key;
+			last = chunk;
+		}
+		return chunk;
 	}
 
 	/** The base's block here, whatever was written. */
@@ -69,23 +101,41 @@ public final class Overlay {
 	}
 
 	public void set(int x, int y, int z, BlockState state) {
-		cells.put(BlockPos.asLong(x, y, z), state);
+		chunk(x, z, true).put(BlockPos.asLong(x, y, z), state);
+		merged = null;
 	}
 
 	/** True if something was written here (even the base's own block back; with {@link #recordsAll}, every cell set). */
 	public boolean written(int x, int y, int z) {
-		return cells.containsKey(BlockPos.asLong(x, y, z));
+		Long2ObjectOpenHashMap<BlockState> chunk = chunk(x, z, false);
+		return chunk != null && chunk.containsKey(BlockPos.asLong(x, y, z));
 	}
 
-	/** What was written, by {@link BlockPos#asLong} (read only). */
+	/**
+	 * What was written, by {@link BlockPos#asLong} (read only): every chunk's cells in one map, made on the first ask after a
+	 * write (a map asked for before a later write does not show it).
+	 */
 	public Long2ObjectMap<BlockState> cells() {
-		return Long2ObjectMaps.unmodifiable(cells);
+		Long2ObjectMap<BlockState> all = merged;
+		if (all == null) {
+			int size = 0;
+			for (Long2ObjectOpenHashMap<BlockState> chunk : chunks.values()) {
+				size += chunk.size();
+			}
+			Long2ObjectOpenHashMap<BlockState> into = new Long2ObjectOpenHashMap<>(size);
+			for (Long2ObjectOpenHashMap<BlockState> chunk : chunks.values()) {
+				into.putAll(chunk);
+			}
+			all = Long2ObjectMaps.unmodifiable(into);
+			merged = all;
+		}
+		return all;
 	}
 
 	/** How many written cells now differ from the base: over a built place, the cells later worldgen changed. */
 	public int changed() {
 		int changed = 0;
-		for (Long2ObjectMap.Entry<BlockState> e : cells.long2ObjectEntrySet()) {
+		for (Long2ObjectMap.Entry<BlockState> e : cells().long2ObjectEntrySet()) {
 			long pos = e.getLongKey();
 			if (base.at(BlockPos.getX(pos), BlockPos.getY(pos), BlockPos.getZ(pos)) != e.getValue()) {
 				changed++;

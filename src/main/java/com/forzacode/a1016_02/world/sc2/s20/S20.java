@@ -42,6 +42,8 @@ public final class S20 {
 	/** Called once from its workstream's second-wave init. */
 	public static void init() {
 		Sc2Kind.register(KIND);
+		// 20b v2 (R3-3): its torches and lights come back when the layer is switched off.
+		com.forzacode.a1016_02.world.sc2.kit.Answers.giveBackWhenOff("sc20d", CAUSE);
 		HerobrineEvents.REMAINS_ENTERED.register((level, place, player) -> FloorAnswers.LIVE.entered(place, player));
 		HerobrineEvents.REMAINS_LEFT.register((level, place, player) -> FloorAnswers.LIVE.left(place, player));
 		ServerTickEvents.END_SERVER_TICK.register(FloorAnswers.LIVE::tick);

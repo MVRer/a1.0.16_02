@@ -25,8 +25,9 @@ import org.jspecify.annotations.Nullable;
 /**
  * Feature 17's debug commands under {@code /a1016 sc 17} (op, as every {@code sc} command; plain words to the op only):
  * {@code sc 17} (the nearest known one: how far and which way, its size, visited, what its wall holds, its answers, which
- * way in is open, the lights' state), {@code sc 17 arm} (inside one: 17b starts now if you are deep enough, and 17a, 17d
- * and 17e look now; every rule kept), {@code sc 17 b} (17c's move now at the nearest, out of view and within its caps).
+ * way in is open, the lights' state), {@code sc 17 arm} (inside one: 17b and 17f start now if you are deep enough, and 17a,
+ * 17d, 17e and the day books look now; every rule kept), {@code sc 17 b} (17c's move now at the nearest, out of view and within its caps),
+ * {@code sc 17 r} (the nearest one's books and well in counts and lengths only, never a text: D-114's spoilers).
  */
 final class ArchiveCommands {
 	private ArchiveCommands() {
@@ -35,7 +36,8 @@ final class ArchiveCommands {
 	static void register() {
 		CommandHooks.register((root, context) -> root.then(Commands.literal("sc").then(Commands.literal("17").executes(ArchiveCommands::where)
 				.then(Commands.literal("arm").executes(ArchiveCommands::arm))
-				.then(Commands.literal("b").executes(ArchiveCommands::door)))));
+				.then(Commands.literal("b").executes(ArchiveCommands::door))
+				.then(Commands.literal("r").executes(ArchiveCommands::books)))));
 	}
 
 	private static @Nullable ServerPlayer target(CommandContext<CommandSourceStack> ctx) {
@@ -114,6 +116,77 @@ final class ArchiveCommands {
 			say(ctx, line);
 		}
 		return why == null ? 1 : 0;
+	}
+
+	private static int books(CommandContext<CommandSourceStack> ctx) {
+		ServerPlayer player = target(ctx);
+		if (player == null) {
+			return 0;
+		}
+		Optional<Remains.Place> found = nearest(player);
+		if (found.isEmpty()) {
+			say(ctx, "17 r: none known");
+			return 0;
+		}
+		MinecraftServer server = ctx.getSource().getServer();
+		ArchivePlan plan = ArchiveRules.LIVE.plan(RemainsImpl.LIVE.data(), found.get());
+		ServerLevel level = server.getLevel(found.get().dimension());
+		if (plan == null || level == null) {
+			say(ctx, "17 r: its plan is not known");
+			return 0;
+		}
+		for (String line : counts(level, plan, ArchiveRules.LIVE.visit(found.get()))) {
+			say(ctx, line);
+		}
+		return 1;
+	}
+
+	/**
+	 * {@code sc 17 r}'s lines: the books on the dais wall, the editions in the stacks and at the far end, the day books in
+	 * the well, the well's galleries dark, and this visit's 17f and 17g; numbers only (books and pages), never a title or a
+	 * text. Loaded shelves only.
+	 */
+	static List<String> counts(ServerLevel level, ArchivePlan plan, ArchiveRules.@Nullable Visit visit) {
+		List<String> lines = new ArrayList<>();
+		if (!level.isLoaded(plan.lectern())) {
+			lines.add("17 r: not loaded");
+			return lines;
+		}
+		List<Records.Slot> wall = Records.books(level, plan.recordWall());
+		lines.add("17 r: wall " + wall.size() + " books, " + pages(wall) + " pages; version " + plan.version);
+		if (plan.well == null) {
+			return lines;
+		}
+		List<Records.Slot> stacks = editions(Records.books(level, plan.editionShelves()));
+		List<Records.Slot> far = editions(Records.books(level, plan.farShelves()));
+		lines.add("17 r: editions " + stacks.size() + " (" + pages(stacks) + " pages), at the far end " + far.size());
+		Well well = plan.well;
+		lines.add("17 r: day books " + DayBooks.count(level, well) + " on galleries " + well.kMin + " to " + well.kGround + "; dark galleries "
+				+ WellDark.darkGalleries(level, well) + " of " + (well.kTop - well.kMin + 1));
+		if (visit != null) {
+			lines.add("17 r: this visit: f " + (visit.wellStarted ? visit.wellDark.size() + " galleries, " + visit.wellLightsGone + " lights" : "not started")
+					+ (visit.wellWhy != null ? " (" + visit.wellWhy + ")" : "") + "; g " + visit.rewritten.size() + "; day books left " + visit.daysLeft);
+		}
+		return lines;
+	}
+
+	private static List<Records.Slot> editions(List<Records.Slot> books) {
+		List<Records.Slot> out = new ArrayList<>();
+		for (Records.Slot s : books) {
+			if (Records.generation(s.stack()) == com.forzacode.a1016_02.world.sc2.s17.books.Pages.TATTERED) {
+				out.add(s);
+			}
+		}
+		return out;
+	}
+
+	private static int pages(List<Records.Slot> books) {
+		int n = 0;
+		for (Records.Slot s : books) {
+			var content = s.stack().get(net.minecraft.core.component.DataComponents.WRITTEN_BOOK_CONTENT);
+			n += content == null ? 0 : content.pages().size();
+		}
+		return n;
 	}
 
 	private static int door(CommandContext<CommandSourceStack> ctx) {

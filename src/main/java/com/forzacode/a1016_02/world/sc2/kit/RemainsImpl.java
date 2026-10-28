@@ -214,4 +214,31 @@ public final class RemainsImpl implements Remains {
 	public long trespassedAt(UUID player) {
 		return data().trespassedAt(player);
 	}
+
+	/** Its sign point as {@link Decided} kept it (its shape's {@link Shape#sign}), else its entrance (a place from before round 3). */
+	@Override
+	public BlockPos sign(Place place) {
+		Decided.Decision d = Decided.bySeed(place.seed());
+		return d != null && d.place().map(p -> p.kind() == place.kind()).orElse(false) ? d.sign() : place.entrance();
+	}
+
+	/** {@link Decided}'s made decisions in the overworld (every one asked about so far), nearest first by the box. */
+	@Override
+	public List<Place> predicted(ServerLevel level, BlockPos pos, int radius, Set<Kind> kinds) {
+		if (level.dimension() != Level.OVERWORLD) {
+			return List.of();
+		}
+		List<Place> out = new ArrayList<>();
+		for (Decided.Decision d : Decided.made()) {
+			d.place().filter(p -> kinds.contains(p.kind()) && p.distanceTo(pos) <= radius).ifPresent(out::add);
+		}
+		out.sort(java.util.Comparator.comparingDouble(p -> p.distanceTo(pos)));
+		return out;
+	}
+
+	/** {@link Answers#held} of the live answers: the switch, the story, then asleep under Traces (D-108). */
+	@Override
+	public @Nullable String asleep(MinecraftServer server) {
+		return Answers.LIVE.held(server);
+	}
 }

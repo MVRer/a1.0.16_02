@@ -38,13 +38,14 @@ final class LineCommands {
 			return 0;
 		}
 		String refused = LineFeature.refusal(snapshot);
-		List<LinePlan.Segment> segments = LineFeature.withFixed(snapshot.seed(), snapshot.salt(),
-				LinePlan.of(snapshot.seed(), snapshot.salt(), Sc19Config.get(), overworld.getMinY(), overworld.getMaxY()), overworld.getMinY(),
-				overworld.getMaxY());
-		if (segments.isEmpty()) {
+		List<LinePlan.Segment> planned = LinePlan.of(snapshot.seed(), snapshot.salt(), Sc19Config.get(), overworld.getMinY(), overworld.getMaxY());
+		if (planned.isEmpty()) {
 			say(ctx, "19: this level is too short for any");
 			return 0;
 		}
+		// Each kept clear of the places worldgen decides along it (FIX-R3-E): the first ask of a world sites them.
+		List<LinePlan.Segment> segments = LineFeature.laidOut(snapshot.seed(), snapshot.salt(), planned, overworld.getMinY(), overworld.getMaxY(),
+				Sc19Config.get(), LineFeature.places(snapshot));
 		Sc2Data data = RemainsImpl.LIVE.data();
 		for (LinePlan.Segment s : segments) {
 			BlockPos a = new BlockPos(s.x(s.t0()), s.bottom(), s.z(s.t0()));

@@ -14,12 +14,16 @@ import com.google.gson.annotations.SerializedName;
  * {@code o} and {@code p}, opaque from the start, with no key from before); 4 to 5 adds the second wave's pacing
  * ({@link ScPacing}; FIX-SC2-PACE: keys {@code q} to {@code z}, opaque from the start) and raises {@link #simRemainsShare}
  * from 0.03 to 0.06 where still 0.03 (the dry runs only: FIX-SC2-WORLD's denser places, R10-3, about twice the play at
- * them). A later default change adds a step to {@link #upgrade} with {@code ModConfig.Upgrades.keepOrNew} and raises
- * {@link #CURRENT}.
+ * them); 5 to 6 (R3-P) raises {@link #simRemainsShare} from 0.06 to 0.10 where still 0.06 (the dry runs only: round 3's
+ * places, D-108 and D-109, stand from the world's creation, about twice as dense near home and found from far, with
+ * longer visits) and lowers the minor share of {@link #laterShares} from 0.75 to 0.4 where still 0.75 (the crumbs' and
+ * the depths' moments now take the wave's place a fifth of an hour: the wave stays at about one moment every two hours
+ * from Proximity). A later default change adds a step to {@link #upgrade} with {@code ModConfig.Upgrades.keepOrNew} and
+ * raises {@link #CURRENT}.
  */
 public final class Sc01Config implements ModConfig.Versioned {
 	public static final String SECTION = "sc01";
-	public static final int CURRENT = 5;
+	public static final int CURRENT = 6;
 
 	public int version = 0;
 	/** Places kept per player, the oldest out. */
@@ -69,10 +73,12 @@ public final class Sc01Config implements ModConfig.Versioned {
 	public double remainsFactor = 1.5;
 	/**
 	 * Dry runs: the share of director ticks spent at one of his places, at {@link #remainsFactor} (and a visit inside one
-	 * per 8 minutes of it, {@code SimFits.visitsPerHour}). 0.06 since version 5: the denser places (R10-3).
+	 * per {@code SimFits.VISIT_MINUTES} of it, {@code SimFits.visitsPerHour}). 0.06 since version 5 (the denser places,
+	 * R10-3), 0.10 since version 6 (round 3's places from creation, R3-P). The brain gives it only while the places are
+	 * awake (from Traces).
 	 */
 	@SerializedName("p")
-	public double simRemainsShare = 0.06;
+	public double simRemainsShare = 0.10;
 	/**
 	 * The second wave's pacing ({@link ScPacing}, docs/SELF_CREATED_2.md "Pacing"): each of its cards' own weight in a
 	 * draw (1 if missing).
@@ -84,7 +90,7 @@ public final class Sc01Config implements ModConfig.Versioned {
 	public double[] tracesShares = {0, 0};
 	/** From Proximity on: the same shares. */
 	@SerializedName("s")
-	public double[] laterShares = {0.3, 0.75};
+	public double[] laterShares = {0.3, 0.4};
 	/** Minutes of a player's play between two of its moments, their own or felt. */
 	@SerializedName("t")
 	public double gapMinutes = 30;
@@ -139,6 +145,12 @@ public final class Sc01Config implements ModConfig.Versioned {
 			// 4 to 5 (FIX-SC2-PACE): the second wave's pacing, q to z, read at their defaults from a file without them; the dry
 			// runs' share of play at his places for the denser places, only where still version 4's.
 			simRemainsShare = ModConfig.Upgrades.keepOrNew(simRemainsShare, 0.03, 0.06);
+		}
+		if (version < 6) {
+			// 5 to 6 (R3-P): the dry runs' share of play at his places for round 3's places, and the wave's minor share from
+			// Proximity for its moments that are no card, each only where still version 5's.
+			simRemainsShare = ModConfig.Upgrades.keepOrNew(simRemainsShare, 0.06, 0.10);
+			laterShares = ModConfig.Upgrades.keepOrNew(laterShares, new double[] {0.3, 0.75}, new Sc01Config().laterShares);
 		}
 		version = CURRENT;
 		return true;

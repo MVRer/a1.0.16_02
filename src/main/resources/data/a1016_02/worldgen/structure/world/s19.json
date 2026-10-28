@@ -1,0 +1,8 @@
+{
+  "type": "a1016_02:world/sc2",
+  "kind": "s19",
+  "marker": true,
+  "biomes": "#minecraft:is_overworld",
+  "step": "top_layer_modification",
+  "spawn_overrides": {}
+}

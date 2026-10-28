@@ -14,6 +14,7 @@ import net.minecraft.core.component.DataComponentPatch;
 import net.minecraft.core.component.DataComponents;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.WorldGenRegion;
+import net.minecraft.world.entity.ai.village.poi.PoiTypes;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.component.ItemContainerContents;
 import net.minecraft.world.level.ChunkPos;
@@ -65,6 +66,12 @@ public final class Writer {
 	private int written;
 	/** Worldgen in a decoration region: every cell this call reads or sets in the clip is guarded ({@link Guard}). */
 	private final Guard.@Nullable Mask guard;
+	/**
+	 * Worldgen with the clip in one chunk of a decoration region: that chunk, read and written directly (FIX-R3-17: the
+	 * region's own path looks the chunk up and checks the write zone at every block; a block entity or a point of interest
+	 * still goes through the region, which keeps them).
+	 */
+	private final @Nullable ChunkAccess chunk;
 
 	private Writer(@Nullable WorldGenLevel level, @Nullable Overlay overlay, RegistryAccess registries, BoundingBox clip, Terrain terrain,
 			@Nullable List<BlockPos> liveMarks) {
@@ -75,8 +82,12 @@ public final class Writer {
 		this.terrain = terrain;
 		this.liveMarks = liveMarks;
 		// A clip within one chunk of a decoration region (every caller clips to a chunk column): guard what it touches.
-		this.guard = level instanceof WorldGenRegion region && clip.minX() >> 4 == clip.maxX() >> 4 && clip.minZ() >> 4 == clip.maxZ() >> 4
+		boolean oneChunk = level instanceof WorldGenRegion && clip.minX() >> 4 == clip.maxX() >> 4 && clip.minZ() >> 4 == clip.maxZ() >> 4;
+		this.guard = oneChunk && level instanceof WorldGenRegion region
 				? Guard.of(region.getLevel().dimension(), new ChunkPos(clip.minX() >> 4, clip.minZ() >> 4), region.getMinY(), region.getHeight())
+				: null;
+		this.chunk = oneChunk && level instanceof WorldGenRegion region && region.isWithinWriteZone(new BlockPos(clip.minX(), clip.minY(), clip.minZ()))
+				? region.getChunk(clip.minX() >> 4, clip.minZ() >> 4)
 				: null;
 	}
 
@@ -134,12 +145,20 @@ public final class Writer {
 
 	/** Top solid block of the column (under water, plants and trees), from {@link #terrain}. */
 	public int ground(int x, int z) {
-		return terrain.ground(x, z);
+		return Terrains.height(terrain, x, z, false, columnsIn(x, z));
 	}
 
 	/** Top block of the column counting water, from {@link #terrain}. */
 	public int surface(int x, int z) {
-		return terrain.surface(x, z);
+		return Terrains.height(terrain, x, z, true, columnsIn(x, z));
+	}
+
+	/** How many of this column's chunk's columns this call fills (0 for a column of another chunk). */
+	private int columnsIn(int x, int z) {
+		if (x < clip.minX() || x > clip.maxX() || z < clip.minZ() || z > clip.maxZ() || x >> 4 != clip.minX() >> 4 || z >> 4 != clip.minZ() >> 4) {
+			return 0;
+		}
+		return Math.min(16, clip.getXSpan()) * Math.min(16, clip.getZSpan());
 	}
 
 	/** True in the gallery and tests, false in worldgen. Shapes never need it to build the same thing. */
@@ -150,6 +169,14 @@ public final class Writer {
 	/** How many blocks this call changed. */
 	public int written() {
 		return written;
+	}
+
+	/**
+	 * The server of the level written (worldgen's or the gallery's), or null for an overlay: for what a shape's contents
+	 * need from it (R3-1: the archive's texts). Never for blocks.
+	 */
+	public net.minecraft.server.@org.jspecify.annotations.Nullable MinecraftServer server() {
+		return level != null ? level.getServer() : null;
 	}
 
 	/** The registries (books, enchantments, ...). */
@@ -176,7 +203,7 @@ public final class Writer {
 		if (guard != null) {
 			guard.add(x, y, z);
 		}
-		return level.getBlockState(cursor.set(x, y, z));
+		return chunk != null ? chunk.getBlockState(cursor.set(x, y, z)) : level.getBlockState(cursor.set(x, y, z));
 	}
 
 	public BlockState get(BlockPos pos) {
@@ -203,18 +230,19 @@ public final class Writer {
 		if (guard != null) {
 			guard.add(x, y, z);
 		}
-		if (level.getBlockState(pos) == state) {
+		BlockState old = chunk != null ? chunk.getBlockState(pos) : level.getBlockState(pos);
+		if (old == state) {
 			return false;
 		}
 		if (guard != null) {
 			Guard.enter();
 			try {
-				level.setBlock(pos, state, FLAGS);
+				write(pos, old, state);
 			} finally {
 				Guard.exit();
 			}
 		} else {
-			level.setBlock(pos, state, FLAGS);
+			write(pos, old, state);
 		}
 		written++;
 		FluidState fluid = state.getFluidState();
@@ -233,6 +261,19 @@ public final class Writer {
 
 	public boolean set(BlockPos pos, BlockState state) {
 		return set(pos.getX(), pos.getY(), pos.getZ(), state);
+	}
+
+	/**
+	 * One block into the level: straight into the chunk when the clip has one and neither block keeps a block entity or a
+	 * point of interest (what the region's own {@code setBlock} does besides: the same section write and heightmaps, no
+	 * neighbour update, no light at this stage), else through the level.
+	 */
+	private void write(BlockPos pos, BlockState old, BlockState state) {
+		if (chunk != null && !state.hasBlockEntity() && !old.hasBlockEntity() && !PoiTypes.hasPoi(state) && !PoiTypes.hasPoi(old)) {
+			chunk.setBlockState(pos, state, FLAGS);
+		} else {
+			level.setBlock(pos, state, FLAGS);
+		}
 	}
 
 	/** {@link #set} only if the block there now is one {@code replace} accepts. */

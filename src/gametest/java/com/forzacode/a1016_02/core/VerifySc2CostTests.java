@@ -69,7 +69,7 @@ import net.minecraft.world.phys.Vec3;
  * per chunk and kind is SC2-H's (its own test class).
  * <ul>
  *   <li>Idle: every server tick hook of the wave once a tick for a minute of ticks, two real players taking part and
- *   nothing running: under 20 microseconds a tick in all; and the visits' look (every 20 ticks a participant) over 200
+ *   nothing running: under 25 microseconds a tick in all (D-118); and the visits' look (every 20 ticks a participant) over 200
  *   known places, a lookup per player.</li>
  *   <li>Scenes: a ring of 14 steered, a held breath of 40, a pack of 5 stalking a stand-in, each scene's own work a
  *   tick (the mobs' walking is vanilla's own); 27's payload in bytes and microseconds.</li>
@@ -81,6 +81,8 @@ public class VerifySc2CostTests {
 	private static final int BASE_X = 7_700_000;
 	private static final int BASE_Z = -7_700_000;
 	private static final AtomicInteger SLOTS = new AtomicInteger();
+	/** The wave's idle budget a server tick, in microseconds (D-118, docs/SELF_CREATED_2_R3.md "Cost": "runtime idle"). */
+	static final double IDLE_BUDGET_US = 25.0;
 
 	/** One server tick hook of the wave, by name. */
 	private record Hook(String name, Consumer<MinecraftServer> tick) {
@@ -102,6 +104,17 @@ public class VerifySc2CostTests {
 		hooks.add(new Hook("27", Sc27.LIVE::tick));
 		hooks.add(new Hook("28", reflected("com.forzacode.a1016_02.world.sc2.s28.S28", null)));
 		hooks.add(new Hook("30", reflected("com.forzacode.a1016_02.lore.sc2.s30.S30", null)));
+		// Round 3's own (R3-V): 16e and 16g's opening, 17's day log (its own every 20 ticks), 19b, 32, 33.
+		hooks.add(new Hook("16g", com.forzacode.a1016_02.world.sc2.s16.PyramidOpening.LIVE::tick));
+		Consumer<MinecraftServer> dayLog = reflected("com.forzacode.a1016_02.world.sc2.s17.books.LogEvents", null);
+		hooks.add(new Hook("17 log", server -> {
+			if (server.getTickCount() % 20 == 0) {
+				dayLog.accept(server);
+			}
+		}));
+		hooks.add(new Hook("19b", com.forzacode.a1016_02.world.sc2.s19.LineAnswers.LIVE::tick));
+		hooks.add(new Hook("32", reflected("com.forzacode.a1016_02.world.sc2.s32.S32", null)));
+		hooks.add(new Hook("33", com.forzacode.a1016_02.world.sc2.s16.deep.DepthsAnswers.LIVE::tick));
 		return hooks;
 	}
 
@@ -133,11 +146,13 @@ public class VerifySc2CostTests {
 	/**
 	 * The wave idle: every hook above once each server tick for 1200 ticks with two real players taking part (in the
 	 * server's player list, so the live visits, the 28 visitors and every per-participant look see them) and no scene
-	 * running. The budget (D-104) is under 20 microseconds a tick for the whole wave: the mean over the ticks, the slowest
-	 * 0.5% left out (a busy machine preempts the thread now and then; every-20 and every-100-tick work stays in).
+	 * running. The budget is under {@value #IDLE_BUDGET_US} microseconds a tick for the whole wave (D-104's 20, raised to 25 by
+	 * round 3's D-118 for 32's sampler and the day log's rollover): the mean over the ticks, the slowest 0.5% left out (a busy
+	 * machine preempts the thread now and then; every-20 and every-100-tick work stays in). It is wall time: 3 to 5 a tick
+	 * on a quiet machine (R3-V), 21.9 once under a load of 12 (FIX-R3-C).
 	 */
 	@GameTest(environment = ENV, maxTicks = 1600)
-	public void theWaveIdleCostsUnderTwentyMicrosecondsATick(GameTestHelper helper) {
+	public void theWaveIdleCostsUnderItsBudgetATick(GameTestHelper helper) {
 		MinecraftServer server = helper.getLevel().getServer();
 		List<Hook> hooks = hooks();
 		List<ServerPlayer> joined = new ArrayList<>();
@@ -184,7 +199,8 @@ public class VerifySc2CostTests {
 			}
 			A1016_02.LOGGER.info(String.format(Locale.ROOT, "[verify] sc2 cost idle, 2 taking part: %.2f us a tick (median %.2f, p99 %.2f, max %.2f); each hook us"
 					+ " a tick: %s", mean, sorted[sorted.length / 2] / 1000.0, sorted[sorted.length * 99 / 100] / 1000.0, sorted[sorted.length - 1] / 1000.0, each));
-			helper.assertTrue(mean < 20.0, String.format(Locale.ROOT, "the second wave idle costs %.2f us a tick (budget 20): %s", mean, each));
+			helper.assertTrue(mean < IDLE_BUDGET_US, String.format(Locale.ROOT, "the second wave idle costs %.2f us a tick (budget %.0f): %s", mean,
+					IDLE_BUDGET_US, each));
 		}).thenSucceed();
 	}
 

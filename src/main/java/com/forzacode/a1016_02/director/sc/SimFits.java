@@ -42,15 +42,15 @@ public final class SimFits {
 	/** Each second-wave card's chance a look in a dry run (a dark one's: a night's, on a night its player is out). */
 	public static final Map<String, Double> CHANCES = Map.ofEntries(
 			Map.entry("sc_21", 0.15),
-			Map.entry("sc_22", 0.08),
+			Map.entry("sc_22", 0.14),
 			Map.entry("sc_23", 0.3),
 			Map.entry("sc_24", 0.1),
 			Map.entry("sc_27", 0.035),
 			Map.entry("sc_28", 0.15),
 			Map.entry("sc_29", 0.035),
 			Map.entry("sc_30", 0.002),
-			Map.entry("sc_31", 0.05),
-			Map.entry("sc_31c", 0.03),
+			Map.entry("sc_31", 0.08),
+			Map.entry("sc_31c", 0.04),
 			Map.entry("accident_sc25", 0.5),
 			Map.entry("accident_sc26", 0.9));
 	/** A dark card's chance a night while a trespass calls it (the call needs no fog then). */
@@ -65,8 +65,46 @@ public final class SimFits {
 	public static final double CALLED_NIGHT_OUT = 0.6;
 	/** Fires per world at most (sc25 {@code k}, sc26 {@code h}). */
 	public static final Map<String, Integer> CAPS = Map.of("accident_sc25", 3, "accident_sc26", 2);
-	/** Minutes of a visit inside one of his places, with the walk about its way in (sc01's share of play there). */
-	public static final double VISIT_MINUTES = 8;
+	/**
+	 * Minutes of a visit inside one of his places, with the walk about its way in (sc01's share of play there). 12 since
+	 * round 3 (R3-P): the stacks' well, the depths' four levels and the 191 pyramids take longer than round 2's 8.
+	 */
+	public static final double VISIT_MINUTES = 12;
+	/**
+	 * R3-P: the answers one visit brings above the pit, on average, of at most {@link #ANSWERS_PER_VISIT_MAX}: a place's
+	 * first-visit answer (16e, 17's record of the player), its dark (16c, 17f, 18c, 20b), its close for one carrying a
+	 * pickaxe (16b, 18b), 17g and the day books; most come once a place or once a player a day.
+	 */
+	public static final double ANSWERS_PER_VISIT = 1.0;
+	public static final int ANSWERS_PER_VISIT_MAX = 4;
+	/**
+	 * R3-P: a player's answers in one in-game day at most, every place together: each answer comes once a player a day
+	 * (16e twice), and the kinds one day's walk reaches hold about six that count.
+	 */
+	public static final int ANSWERS_PER_DAY = 6;
+	/** The tension one answer gives each player inside ({@code world.sc2.kit.Answers.TENSION}). */
+	public static final double ANSWER_TENSION = 4.0;
+	/**
+	 * R3-P: the share of visits that go below a pyramid's pit (33): pyramids are about two visits in five, 97 % of land
+	 * starts have their depths, and the tunnel's lit door draws most who reach it. Their answers ({@link #DEPTHS_ANSWERS}
+	 * more on average, of two: the lure, then the rooms; the light and the iron door follow as their parts) count as one of
+	 * the wave's moments.
+	 */
+	public static final double DEPTHS_SHARE = 0.25;
+	public static final double DEPTHS_ANSWERS = 1.0;
+	/**
+	 * R3-P: the crumbs' runtime moments a player goes through per hour of awake play: 32c (two crumbs of a line seen in a
+	 * day and the line left, then a night with a far crumb to move out of view: about one in seven hours) and, with
+	 * company, 32b (a crumb a friend saw taken before the other comes near: once a line, once a day a world).
+	 */
+	public static final double CRUMBS_PER_HOUR = 0.15;
+	public static final double CRUMBS_SHARED_PER_HOUR = 0.1;
+	/**
+	 * R3-P, "what a player meets": the chance a session of play shows a player one of his places' signs. R3-0's T4 (the
+	 * explorer model, 2 000 runs over 20 worlds) had a sign within 128 by the end of session 1 in every run; its model
+	 * walks 7 700 blocks a session, so the rows take nine sessions in ten for players who walk less.
+	 */
+	public static final double SIGN_PER_SESSION = 0.9;
 	/** Moments that need their player alone: never beside a sharer in a dry run. */
 	public static final Set<String> ALONE = Set.of("sc_27", "accident_sc25", "accident_sc26");
 	/** Moments that need another player taking part: never in a one-player dry run. */

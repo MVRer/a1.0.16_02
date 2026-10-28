@@ -1155,7 +1155,7 @@ The hunts are accident trap kinds on a clock of their own (below).
 **How the director paces the wave** (FIX-SC2-PACE, D-107; `director.sc.ScPacing`, `sc01` `q` to `z`; R10-1, R10-2,
 R10-4). Rarity is not the goal: the wave must be met, in the sessions Mariano will play, without a tier's rate moving.
 It takes a share of the draws its tiers already make:
-- **The group.** From Proximity, 30% of the ambient and 75% of the minor tier's due draws (`s`) look first at the
+- **The group.** From Proximity, 30% of the ambient and 75% of the minor tier's due draws (`s`; 40% of the minor since R3-P, `sc01` 6: the crumbs' and the depths' moments take their place, docs/SELF_CREATED_2_R3.md) look first at the
   wave's cards, by weight (`q`: 22, 31, 31c 3; 21, 23 2; the rest 1; habits never under 1, so 23, 27 and 31 no longer
   weigh 0.4 in two worlds of three), and take one only if its moment is there at that look: a moment that is not there
   is never held and never parked, and the draw goes to the rest of the deck. The wave cycles by itself (its cycle comes

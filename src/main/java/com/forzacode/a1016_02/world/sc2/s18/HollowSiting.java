@@ -32,6 +32,11 @@ import org.jspecify.annotations.Nullable;
  * (it needs the terrain all round) and must hold a square and a way in, and its box must keep clear of the world's
  * bottom and top ({@link #withinHeight}: refused, never clipped); the factory takes that same shape ({@link #create})
  * instead of making it again.
+ *
+ * <p>Round 3 (R3-3): the biome tag holds the land's hills of any kind (the rise decides what is a mountain: 9 hollows made
+ * in the find's 20 worlds' reach with the peaks' tag alone, 85 with the hills'); five samples (the middle and the edges'
+ * middles, {@link #flat}) refuse flat land before the 81; the way in may look out of the second side toward the origin
+ * where the first is not the mountain's low side ({@link #facings}).
  */
 public final class HollowSiting implements Siting {
 	public static final TagKey<Biome> BIOMES = TagKey.create(Registries.BIOME, A1016_02.id("world/s18"));
@@ -82,21 +87,41 @@ public final class HollowSiting implements Siting {
 		if (!biome.is(BIOMES)) {
 			return Optional.empty();
 		}
-		Direction facing = Siting.facingToOrigin(cx, cz);
+		// Version 3's early refusal (R3-3): the middle and the four edges' middles first; a land that flat holds no mountain.
+		if (flat(terrain, cx, cz, middle)) {
+			return Optional.empty();
+		}
 		int[] grid = grid(terrain, cx, cz, middle);
-		int floor = floor(grid, facing, terrain.seaLevel());
-		if (rise(grid, floor, config.minRise) < RISE_SHARE) {
-			return Optional.empty();
-		}
 		long seed = query.seed(S18.ID);
-		Start start = new Start(new BlockPos(cx, floor, cz), facing, variant(config, seed, spruce(biome)), seed);
-		HollowShape shape = new HollowShape(start, terrain);
-		if (!shape.valid() || !withinHeight(shape.box(), query.minY(), query.maxY())) {
-			return Optional.empty();
+		int variant = variant(config, seed, spruce(biome));
+		for (Direction facing : facings(cx, cz)) {
+			int floor = floor(grid, facing, terrain.seaLevel());
+			if (rise(grid, floor, config.minRise) < RISE_SHARE) {
+				continue;
+			}
+			Start start = new Start(new BlockPos(cx, floor, cz), facing, variant, seed);
+			HollowShape shape = new HollowShape(start, terrain);
+			if (!shape.valid() || !withinHeight(shape.box(), query.minY(), query.maxY())) {
+				continue;
+			}
+			MADE.set(shape);
+			keep(start, terrain, shape);
+			return Optional.of(start);
 		}
-		MADE.set(shape);
-		keep(start, terrain, shape);
-		return Optional.of(start);
+		return Optional.empty();
+	}
+
+	/**
+	 * The sides the way in may look out of, in the order tried (R3-3): toward the world's origin (D-095), then the other
+	 * side that also looks toward it (the origin lies between the two), where the mountain's low side is that one.
+	 */
+	public static java.util.List<Direction> facings(int cx, int cz) {
+		Direction first = Siting.facingToOrigin(cx, cz);
+		int dx = -cx;
+		int dz = -cz;
+		Direction second = first.getAxis() == Direction.Axis.X ? (dz > 0 ? Direction.SOUTH : dz < 0 ? Direction.NORTH : null)
+				: (dx > 0 ? Direction.EAST : dx < 0 ? Direction.WEST : null);
+		return second == null ? java.util.List.of(first) : java.util.List.of(first, second);
 	}
 
 	/**
@@ -170,13 +195,30 @@ public final class HollowSiting implements Siting {
 		int lo = Math.max(0, Math.min(config.trunksMin, config.trunksMax));
 		int hi = Math.max(lo, config.trunksMax);
 		int stems = Draw.between(seed, 0x18A7L, lo, hi);
-		return HollowShape.variant(window, spruce, config.shellTop, config.shellSide, config.pillarEvery, stems);
+		return HollowShape.variant(window, spruce, config.shellTop, config.shellSide, config.pillarEvery, stems, config.summitCutFor(seed));
 	}
 
-	/** Spruce stems where the land is cold or high (peaks, slopes, groves, the windswept hills), oak elsewhere. */
+	/** Spruce stems where the land is cold or high (peaks, slopes, groves, the windswept hills, the taigas), oak elsewhere. */
 	public static boolean spruce(Holder<Biome> biome) {
 		return biome.is(Biomes.JAGGED_PEAKS) || biome.is(Biomes.FROZEN_PEAKS) || biome.is(Biomes.SNOWY_SLOPES) || biome.is(Biomes.GROVE)
-				|| biome.is(Biomes.WINDSWEPT_HILLS) || biome.is(Biomes.WINDSWEPT_GRAVELLY_HILLS) || biome.is(Biomes.WINDSWEPT_FOREST);
+				|| biome.is(Biomes.WINDSWEPT_HILLS) || biome.is(Biomes.WINDSWEPT_GRAVELLY_HILLS) || biome.is(Biomes.WINDSWEPT_FOREST)
+				|| biome.is(Biomes.TAIGA) || biome.is(Biomes.SNOWY_TAIGA) || biome.is(Biomes.OLD_GROWTH_PINE_TAIGA) || biome.is(Biomes.OLD_GROWTH_SPRUCE_TAIGA)
+				|| biome.is(Biomes.SNOWY_PLAINS);
+	}
+
+	/** The land's spread over the middle and the four edges' middles under which no mountain stands (R3-3's early refusal). */
+	public static final int FLAT_SPREAD = 12;
+
+	/** True if the middle and the four edges' middles of the samples' square lie within {@value #FLAT_SPREAD} of each other. */
+	public static boolean flat(Terrain terrain, int cx, int cz, int middle) {
+		int lo = middle;
+		int hi = middle;
+		for (int[] d : new int[][] {{HALF, 0}, {-HALF, 0}, {0, HALF}, {0, -HALF}}) {
+			int g = terrain.ground(cx + d[0], cz + d[1]);
+			lo = Math.min(lo, g);
+			hi = Math.max(hi, g);
+		}
+		return hi - lo < FLAT_SPREAD;
 	}
 
 	/** The ground on the 9 x 9 grid, row by row ({@code i} along x), the middle given (80 more samples). */

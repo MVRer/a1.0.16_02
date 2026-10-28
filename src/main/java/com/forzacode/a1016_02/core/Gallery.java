@@ -325,6 +325,35 @@ public final class Gallery {
 		return views;
 	}
 
+	/** The distances of the sign views (blocks from the sign point, D-110). */
+	public static final int[] SIGN_DISTANCES = {64, 128, 200};
+
+	/**
+	 * The error sign's views (docs/SELF_CREATED_2_R3.md, D-110): from {@value #EYE} over the land at 64, 128 and 200 blocks
+	 * from the sign point along {@code facing} (the side toward the origin: the way in's facing), looking at the sign point
+	 * {@code lookUp} blocks up; {@code d64}, {@code d128}, {@code d200} at noon and {@code n64}, {@code n128}, {@code n200}
+	 * at midnight (clear sky). Loads the chunks it reads the ground from. Every place task shoots its sign with these.
+	 */
+	public static List<View> signViews(ServerLevel level, BlockPos sign, Direction facing, double lookUp) {
+		Vec3 at = Vec3.atBottomCenterOf(sign).add(0, lookUp, 0);
+		List<View> day = new ArrayList<>();
+		List<View> night = new ArrayList<>();
+		for (int d : SIGN_DISTANCES) {
+			Vec3 spot = out(Vec3.atBottomCenterOf(sign), facing, 0, d);
+			Vec3 eye = groundEye(level, spot.x, spot.z);
+			View v = View.looking("d" + d, eye, at, NOON, Sky.CLEAR, false).noted(d + " out from the sign point, noon");
+			day.add(v);
+			night.add(v.named("n" + d).at(NIGHT, Sky.CLEAR).noted(d + " out from the sign point, midnight"));
+		}
+		day.addAll(night);
+		return day;
+	}
+
+	/** {@link #signViews(ServerLevel, BlockPos, Direction, double)} looking 2 blocks over the sign point. */
+	public static List<View> signViews(ServerLevel level, BlockPos sign, Direction facing) {
+		return signViews(level, sign, facing, 2.0);
+	}
+
 	/**
 	 * A {@code section} camera for a box cut away through its middle on {@code side} ({@link GalleryProps#cutaway}):
 	 * {@code distance} out from the cut face, level with the box's middle, looking straight at it, with night vision

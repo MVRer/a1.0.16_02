@@ -21,7 +21,7 @@ import net.minecraft.world.phys.Vec3;
  * go through: a hill it cuts, a lake it crosses, a wood whose trees it splits, the flat between; the scale figure by an
  * opening. Judge its long views with {@code -Pgallery.rd=24}.
  */
-final class LineGallery {
+public final class LineGallery {
 	static final int LENGTH = 400;
 	static final long SEED = 0x19C0FFEEL;
 
@@ -96,7 +96,96 @@ final class LineGallery {
 				Gallery.Sky.CLEAR, false).noted("from the edge of the wood beside it, where it splits the trees"));
 		Vec3 aerial = new Vec3(ox + 170.5, g + 170, oz - 150.5);
 		views.add(Gallery.View.looking("aerial", aerial, new Vec3(ox + 0.5, g, oz + 0.5), Gallery.NOON, Gallery.Sky.CLEAR, false).noted("170 out, 170 up, noon"));
-		return new Gallery.Placed(built.box(), views, List.of());
+		// Version 3's sign (R3-2, D-110): along the line from past its near end (the sign point is the opening nearest the
+		// origin, the cameras out along the axis), and square on to an opening at 64 and 128 off its face.
+		views.addAll(Gallery.signViews(level, shape.sign(), shape.entranceFacing()));
+		// An opening with nothing standing between it and the cameras (the wood is north of the middle).
+		int clear = segment.holes().getFirst();
+		for (int h : segment.holes()) {
+			if (Math.abs(h - (oz + 12)) < Math.abs(clear - (oz + 12))) {
+				clear = h;
+			}
+		}
+		int clearY = shape.opening(terrain, clear)[0];
+		for (int d : new int[] {64, 128}) {
+			Gallery.View h = Gallery.View.looking("hole_" + d, Gallery.groundEye(level, ox + d + 0.5, clear + 1.0), new Vec3(ox + 0.5, clearY + 1.0, clear + 1.0),
+					Gallery.NOON, Gallery.Sky.CLEAR, false).noted(d + " out square on to an opening, noon");
+			views.add(h);
+			views.add(h.named("hole_n" + d).at(Gallery.NIGHT, Gallery.Sky.CLEAR).noted(d + " out square on to an opening, midnight"));
+		}
+		// FIX-R3-B (R3A-4): the lit holes at 45 degrees to the wall, from either side (each camera raised to the first
+		// height with nothing between it and the hole, leaves and logs included), and square on from 85 out at midnight.
+		Vec3 holeAt = new Vec3(ox + 0.5, clearY + 1.0, clear + 1.0);
+		for (int d : new int[] {64, 128}) {
+			double o = d / Math.sqrt(2.0);
+			for (int face : new int[] {1, -1}) {
+				Vec3 eye = clearEye(level, Gallery.groundEye(level, ox + 0.5 + face * o, clear + 1.0 + o), holeAt, 40);
+				String name = "hole45" + (face > 0 ? "e" : "w") + "_n" + d;
+				views.add(Gallery.View.looking(name, eye, holeAt, Gallery.NIGHT, Gallery.Sky.CLEAR, false)
+						.noted(d + " out at 45 degrees to the " + (face > 0 ? "east" : "west") + " face, midnight, " + Math.round(eye.y - Gallery.groundEye(level,
+								ox + 0.5 + face * o, clear + 1.0 + o).y) + " raised for a clear sight"));
+			}
+		}
+		// 19b (FIX-R3-B): one steps out of an opening and walks along the wall toward the next: open, then wall again.
+		List<Gallery.Frames> frames = new ArrayList<>();
+		int at = segment.holes().indexOf(clear);
+		if (at > 0 && at < segment.holes().size() - 1) {
+			int next = segment.holes().get(at + 1);
+			Vec3 nextAt = new Vec3(ox + 0.5, shape.opening(terrain, next)[0] + 1.0, next + 1.0);
+			Vec3 out = clearEye(level, Gallery.groundEye(level, ox + 16.5, next - 19.0), nextAt, 30);
+			Gallery.View cam = Gallery.View.looking("19b", out, nextAt, Gallery.NOON, Gallery.Sky.CLEAR, false);
+			frames.add(new Gallery.Frames("19b", 3, 60, cam, lvl -> LineAnswers.stageMend(lvl, segment, List.of(segment.holes().get(at - 1), next), 70))
+					.noted("16 off the east face, 20 short of the next opening, looking at it at noon: open, then wall again (staged"
+							+ " after the first frame; in the game it happens while one stands in the opening behind the camera, out of view)"));
+		}
+		Vec3 offAxis = Gallery.groundEye(level, ox + 24.5, segment.t0() - 120.5);
+		views.add(Gallery.View.looking("along_night", offAxis, new Vec3(ox + 0.5, g + 2, oz + 0.5), Gallery.NIGHT, Gallery.Sky.CLEAR, false)
+				.noted("24 off its line, 120 past its north end, midnight: the lit feet running away"));
+		views.add(Gallery.View.looking("air_night", new Vec3(ox + 40.5, g + 45, clear - 70.5), new Vec3(ox + 0.5, g, clear + 60.5), Gallery.NIGHT,
+				Gallery.Sky.CLEAR, false).noted("a flyer 45 up, 40 off its east face, looking along it, midnight: the lit feet in pairs"));
+		return new Gallery.Placed(built.box(), views, frames);
+	}
+
+	/**
+	 * A camera with a clear sight of its target (FIX-R3-B, R3A-2d): {@code eye} raised a block at a time, up to
+	 * {@code maxRaise}, to the first height where a ray from it to within 3 of {@code target} meets no block (leaves,
+	 * logs and plants included); if none does, slid toward the target 8 at a time (to 24 from it) and raised again; the eye
+	 * raised the most if nothing is clear (over the canopy at least). The real-terrain run's cameras use it too.
+	 */
+	public static Vec3 clearEye(ServerLevel level, Vec3 eye, Vec3 target, int maxRaise) {
+		for (int slide = 0; slide <= 32; slide++) {
+			Vec3 flat = new Vec3(target.x - eye.x, 0, target.z - eye.z);
+			double far = flat.length();
+			if (far - 8.0 * slide < 24) {
+				break;
+			}
+			Vec3 base = eye.add(flat.normalize().scale(8.0 * slide));
+			int ground = Gallery.ground(level, (int) Math.floor(base.x), (int) Math.floor(base.z));
+			Vec3 foot = new Vec3(base.x, Math.max(base.y, ground + 1.7), base.z);
+			for (int up = 0; up <= maxRaise; up++) {
+				Vec3 at = foot.add(0, up, 0);
+				if (clear(level, at, target)) {
+					return at;
+				}
+			}
+		}
+		return eye.add(0, maxRaise, 0);
+	}
+
+	/** True if a ray from {@code eye} to within 3 of {@code target} passes through nothing but air (or light blocks). */
+	public static boolean clear(ServerLevel level, Vec3 eye, Vec3 target) {
+		Vec3 d = target.subtract(eye);
+		double length = d.length();
+		BlockPos.MutableBlockPos at = new BlockPos.MutableBlockPos();
+		for (double s = 0.5; s < length - 3.0; s += 0.5) {
+			Vec3 p = eye.add(d.scale(s / length));
+			at.set(Math.floor(p.x), Math.floor(p.y), Math.floor(p.z));
+			net.minecraft.world.level.block.state.BlockState state = level.getBlockState(at);
+			if (!state.isAir() && !com.forzacode.a1016_02.world.sc2.kit.Fault.isLight(state)) {
+				return false;
+			}
+		}
+		return true;
 	}
 
 	/** The opening nearest the middle of the segment. */

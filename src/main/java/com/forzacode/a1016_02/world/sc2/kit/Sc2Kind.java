@@ -75,9 +75,11 @@ public record Sc2Kind(String id, Remains.Kind remains, Supplier<? extends Gates>
 	/**
 	 * The two numbers every kind's config section has (its keys {@code a} and {@code b}): the kit refuses a start below
 	 * the stage or nearer than the distance to the origin or to the world spawn, before the kind's siting is asked.
+	 * Round 3 (D-108): the places generate from the world's creation ({@code a} 0) and sleep until Traces
+	 * ({@code core.Remains.awake}); {@code b} is R0 (384 to 448 by kind, D-109).
 	 */
 	public interface Gates {
-		/** The lowest {@code Stage} level whose newly generated land may hold this kind (1, Traces, by default). */
+		/** The lowest {@code Stage} level whose newly generated land may hold this kind (0 by default since round 3). */
 		int fromStage();
 
 		/** No start nearer than this to (0, 0) or to the world spawn (blocks, from the candidate chunk's middle). */

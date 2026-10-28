@@ -71,7 +71,8 @@ final class FloorCommands {
 			say(ctx, "20 arm: you are not on one");
 			return 0;
 		}
-		Answers.Result result = FloorAnswers.LIVE.ask(player.level(), place.get(), true);
+		// The live answer (R3-3): 20b v2, night or day.
+		Answers.Result result = FloorAnswers.LIVE.askDark(player.level(), place.get(), true);
 		say(ctx, "20 arm: " + result.status().name().toLowerCase(Locale.ROOT) + " (" + result.reason() + ")");
 		return result.status() == Answers.Status.REFUSED ? 0 : 1;
 	}

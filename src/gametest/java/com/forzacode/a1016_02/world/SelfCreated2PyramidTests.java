@@ -93,7 +93,12 @@ public class SelfCreated2PyramidTests {
 
 	/** A terrain of the test's own: the ground and the water's top by column. */
 	private static Terrain terrain(ServerLevel level, IntBinaryOperator ground, IntBinaryOperator surface) {
-		Holder<Biome> plains = level.registryAccess().lookupOrThrow(Registries.BIOME).getOrThrow(Biomes.PLAINS);
+		return terrain(level, ground, surface, Biomes.PLAINS);
+	}
+
+	/** R3-2: the siting asks the biome at each spot it tries (the sea form's tests stand in an ocean). */
+	private static Terrain terrain(ServerLevel level, IntBinaryOperator ground, IntBinaryOperator surface, ResourceKey<Biome> biome) {
+		Holder<Biome> plains = level.registryAccess().lookupOrThrow(Registries.BIOME).getOrThrow(biome);
 		return new Terrain() {
 			@Override
 			public int seaLevel() {
@@ -144,10 +149,27 @@ public class SelfCreated2PyramidTests {
 		}
 	}
 
-	/** A start of this size and form whose lowest course is 40 over the flat ground at (x, z). */
+	/**
+	 * Round 2's numbers for 16b and 16c, which these tests were written for (R3-2 lowered the defaults: 40 s, 12 from the
+	 * mouth, 6 steps, 5 to 8 s, the glimpse after 3; its own tests use those).
+	 */
+	static Sc16Config roundTwo(Sc16Config config) {
+		config.closeAfterSeconds = 90;
+		config.closeMinDistance = 20;
+		config.darkStepsMin = 12;
+		config.darkEveryMin = 8;
+		config.darkEveryMax = 12;
+		config.glimpseAfter = 4;
+		return config;
+	}
+
+	/**
+	 * A start of this size and form whose lowest course is 40 over the flat ground at (x, z), tied to version 3 (R3-2: the
+	 * answers here are round 2's; version 4's trail and 16e are SelfCreated3PyramidTests').
+	 */
 	private static Start start(ServerLevel level, int x, int z, Direction facing, int variant, long seed) {
 		int ground = Terrains.noise(level).ground(x, z);
-		return new Start(new BlockPos(x, ground + 40, z), facing, variant, seed);
+		return new Start(new BlockPos(x, ground + 40, z), facing, variant, seed).withVersion(3);
 	}
 
 	/**
@@ -234,7 +256,7 @@ public class SelfCreated2PyramidTests {
 		Answers.Env env = new Answers.Env(s -> data, Services.traces().forced(), (l, cells) -> !seen.get(), (s, p) -> List.copyOf(inside), uuid -> false,
 				uuid -> 200_000L, s -> null, day::get, now::get, (l, p, answer, player) -> answered.add(answer + ":" + player.getName().getString()));
 		Answers answers = Answers.over(env);
-		Sc16Config config = new Sc16Config();
+		Sc16Config config = roundTwo(new Sc16Config());
 		Watcher figure = new Watcher();
 		figure.allow = false;
 		PyramidAnswers pyramid = new PyramidAnswers(new PyramidAnswers.Env(answers, server -> List.copyOf(people), lights, () -> figure, () -> config,
@@ -266,7 +288,11 @@ public class SelfCreated2PyramidTests {
 		ChunkPos near = new ChunkPos(10, 0);
 		helper.assertTrue("no snapshot".equals(Snapshot.refusal(null, S16.KIND, far)), "no snapshot");
 		helper.assertTrue("switched off".equals(Snapshot.refusal(snapshot(false, Stage.TRACES, config), S16.KIND, far)), "off");
-		helper.assertTrue(String.valueOf(Snapshot.refusal(snapshot(true, Stage.ALONE, config), S16.KIND, far)).contains("stage"), "under Traces");
+		// Round 3 (D-108): no stage gate by default; a stage raised by hand is still honoured.
+		helper.assertTrue(Snapshot.refusal(snapshot(true, Stage.ALONE, config), S16.KIND, far) == null, "refused in Alone");
+		config.fromStage = 1;
+		helper.assertTrue(String.valueOf(Snapshot.refusal(snapshot(true, Stage.ALONE, config), S16.KIND, far)).contains("stage"), "under a raised stage");
+		config.fromStage = 0;
 		helper.assertTrue(String.valueOf(Snapshot.refusal(snapshot(true, Stage.TRACES, config), S16.KIND, near)).contains("origin"), "near the origin");
 		helper.assertTrue(Snapshot.refusal(snapshot(true, Stage.TRACES, config), S16.KIND, far) == null
 				&& Snapshot.refusal(snapshot(true, Stage.TRACES, config), S16.SEA_KIND, far) == null, "far, at Traces");
@@ -285,7 +311,13 @@ public class SelfCreated2PyramidTests {
 
 		Terrain shelf = terrain(level, (x, z) -> x > cx + 40 ? 90 : 70, (x, z) -> 0);
 		helper.assertTrue(PyramidSiting.fits(shelf, cx, cz, 1, 12, false) == Integer.MIN_VALUE, "a 95 over the shelf");
-		Optional<Start> fallback = find(PyramidSiting.LAND, far, shelf, config);
+		// R3-2: the 95 moves off the shelf (its centre 16 or 32 off the chunk's middle) before any smaller one is tried.
+		Optional<Start> moved = find(PyramidSiting.LAND, far, shelf, config);
+		helper.assertTrue(moved.isPresent() && PyramidShape.size(moved.get().variant()) == 1 && moved.get().origin().getX() + 47 <= cx + 40,
+				"no 95 off the shelf: " + moved);
+		// A plateau no 95 fits on wherever it stands in the slot's reach: the 63.
+		Terrain plateau = terrain(level, (x, z) -> Math.abs(x - cx) <= 40 && Math.abs(z - cz) <= 40 ? 70 : 90, (x, z) -> 0);
+		Optional<Start> fallback = find(PyramidSiting.LAND, far, plateau, config);
 		helper.assertTrue(fallback.isPresent() && PyramidShape.size(fallback.get().variant()) == 0, "no fall back to a 63: " + fallback);
 
 		// R10-3: a shore takes up to three of the nine samples under water; two thirds is too wet.
@@ -294,13 +326,13 @@ public class SelfCreated2PyramidTests {
 		Terrain lake = terrain(level, (x, z) -> 70, (x, z) -> z < cz + 20 ? 75 : 0);
 		helper.assertTrue(find(PyramidSiting.LAND, far, lake, config).isEmpty(), "two thirds of it under water");
 
-		Terrain deep = terrain(level, (x, z) -> 40, (x, z) -> 62);
+		Terrain deep = terrain(level, (x, z) -> 40, (x, z) -> 62, Biomes.OCEAN);
 		helper.assertTrue(PyramidSiting.fits(deep, cx, cz, 0, 12, true) == Integer.MIN_VALUE, "a 63's apex 12 over the water from a floor at 40");
 		helper.assertTrue(PyramidSiting.fits(deep, cx, cz, 1, 12, true) == 41, "a 95 on that floor");
 		config.sizeWeights = new double[] {1, 0, 0};
 		Optional<Start> sea = find(PyramidSiting.SEA, far, deep, config);
 		helper.assertTrue(sea.isPresent() && PyramidShape.size(sea.get().variant()) == 1 && PyramidShape.sea(sea.get().variant())
-				&& PyramidShape.sealed(sea.get().variant()), "the sea form: " + sea);
+				&& !PyramidShape.sealed(sea.get().variant()), "the sea form (R3-2: a way in at the waterline): " + sea);
 		helper.assertTrue(find(PyramidSiting.SEA, far, terrain(level, (x, z) -> 40, (x, z) -> 0), config).isEmpty(), "the sea form on dry land");
 		config.sealedChance = 1;
 		config.apexLightChance = 1;
@@ -336,7 +368,7 @@ public class SelfCreated2PyramidTests {
 		StructureSet set = level.registryAccess().lookupOrThrow(Registries.STRUCTURE_SET).getOrThrow(SET_KEY).value();
 		helper.assertTrue(set.placement() instanceof RaysPlacement, "the set is not on rays: " + set.placement());
 		RaysPlacement rays = (RaysPlacement) set.placement();
-		helper.assertTrue(rays.rays() == 4 && rays.first() == 640 && rays.step() == 640 && rays.jitterDegrees() == 8.0F && rays.jitterBlocks() == 48,
+		helper.assertTrue(rays.rays() == 6 && rays.first() == 416 && rays.step() == 448 && rays.jitterDegrees() == 8.0F && rays.jitterBlocks() == 48,
 				"the rays' numbers");
 		helper.assertTrue(set.structures().size() == 2 && set.structures().stream().anyMatch(e -> e.structure().is(S16_KEY))
 				&& set.structures().stream().anyMatch(e -> e.structure().is(S16D_KEY)), "both forms in the set");
@@ -357,7 +389,7 @@ public class SelfCreated2PyramidTests {
 			}
 			checked++;
 		}
-		helper.assertTrue(checked == 16, "slots checked: " + checked);
+		helper.assertTrue(checked == 4 * rays.rays(), "slots checked: " + checked);
 		for (Direction facing : Direction.Plane.HORIZONTAL) {
 			PyramidShape shape = shape(level, new Start(new BlockPos(500, 70, 500), facing, PyramidShape.variant(0, false, false, false), 3L));
 			BlockPos expected = new BlockPos(500 + facing.getStepX() * shape.halfWidth(), 70, 500 + facing.getStepZ() * shape.halfWidth());
@@ -502,7 +534,7 @@ public class SelfCreated2PyramidTests {
 		Start start = new Start(new BlockPos(ox, g0 + 1, oz), Direction.SOUTH, PyramidShape.variant(0, false, false, false), 0x7E11L);
 		PyramidShape now = (PyramidShape) Live.place(level, S16.KIND, start).shape();
 		PyramidShape before = (PyramidShape) Live.place(level, S16.KIND, start.moved(400, 0, 0).withVersion(2)).shape();
-		helper.assertTrue(now.version() == 3 && before.version() == 2 && before.tunnelCells().isEmpty(), "the versions");
+		helper.assertTrue(now.version() >= 3 && before.version() == 2 && before.tunnelCells().isEmpty(), "the versions");
 		List<BlockPos> cells = now.tunnelCells();
 		helper.assertTrue(cells.size() == 4 * PyramidShape.TUNNEL_LENGTH, "the tunnel's cells: " + cells.size());
 		List<String> wrong = new ArrayList<>();

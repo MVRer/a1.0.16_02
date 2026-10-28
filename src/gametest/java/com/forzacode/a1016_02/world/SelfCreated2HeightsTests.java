@@ -353,10 +353,28 @@ public class SelfCreated2HeightsTests {
 		long wholeNanos = 0;
 		long columnNanos = 0;
 		java.util.Random random = new java.util.Random(4);
+		long[] readCpu = new long[4];
 		for (Sc2RealNoise.World world : worlds) {
 			for (int k = 0; k < 24; k++) {
 				int x0 = (random.nextInt(12000) - 6000) & ~15;
 				int z0 = (random.nextInt(12000) - 6000) & ~15;
+				if (k < 6) {
+					// FIX-R3-17: what each read costs in this thread's CPU time (a chunk's blocks whole, its heights whole, a
+					// quarter of a quarter's heights), away from the shared heights.
+					com.forzacode.a1016_02.world.sc2.kit.Terrains.NoiseLand land = com.forzacode.a1016_02.world.sc2.kit.Terrains.noiseLand(
+							com.forzacode.a1016_02.world.sc2.kit.Terrains.noise(world.generator(), world.random(), world.height()));
+					long c0 = CPU.getCurrentThreadCpuTime();
+					NoiseVolume.blocks(world.generator(), world.random(), x0 - 4096, land.minY(), z0, 16, land.height(), 16);
+					long c1 = CPU.getCurrentThreadCpuTime();
+					NoiseVolume.heights(world.generator(), world.random(), x0 - 4080, z0, 16, 16, land.minY(), land.height());
+					long c2 = CPU.getCurrentThreadCpuTime();
+					NoiseVolume.heights(world.generator(), world.random(), x0 - 4064, z0, 4, 4, land.minY(), land.height());
+					long c3 = CPU.getCurrentThreadCpuTime();
+					readCpu[0] += c1 - c0;
+					readCpu[1] += c2 - c1;
+					readCpu[2] += c3 - c2;
+					readCpu[3]++;
+				}
 				Terrain whole = com.forzacode.a1016_02.world.sc2.kit.Terrains.noise(world.generator(), world.random(), world.height());
 				Terrain columns = com.forzacode.a1016_02.world.sc2.kit.Terrains.noise(world.generator(), world.random(), world.height());
 				int[] g = new int[256];
@@ -367,12 +385,29 @@ public class SelfCreated2HeightsTests {
 					s[i] = whole.surface(x0 + (i & 15), z0 + (i >> 4));
 				}
 				wholeNanos += System.nanoTime() - t0;
+				// FIX-R3-17: the terrains of one land share their heights, so the columns are the generator's own reads; a
+				// chunk beside it is asked one column in five (single reads, then quarters of quarters) and checked too.
+				int bx = x0 + 16;
+				for (int i = 0; i < 256; i += 5) {
+					int x = bx + (i & 15);
+					int z = z0 + (i >> 4);
+					int qg = columns.ground(x, z);
+					int qs = columns.surface(x, z);
+					int eg = world.generator().getBaseHeight(x, z, net.minecraft.world.level.levelgen.Heightmap.Types.OCEAN_FLOOR_WG, world.height(), world.random()) - 1;
+					int es = world.generator().getBaseHeight(x, z, net.minecraft.world.level.levelgen.Heightmap.Types.WORLD_SURFACE_WG, world.height(), world.random()) - 1;
+					checked++;
+					if ((qg != Math.max(world.minY() - 1, eg) || qs != Math.max(world.minY() - 1, es)) && wrong.size() < 10) {
+						wrong.add(world.name() + " " + x + " " + z + ": by parts " + qg + "/" + qs + ", columns " + eg + "/" + es);
+					}
+				}
 				for (int i = 0; i < 256; i += 37) {
 					int x = x0 + (i & 15);
 					int z = z0 + (i >> 4);
 					long c0 = System.nanoTime();
-					int cg = columns.ground(x, z);
-					int cs = columns.surface(x, z);
+					int cg = Math.max(world.minY() - 1,
+							world.generator().getBaseHeight(x, z, net.minecraft.world.level.levelgen.Heightmap.Types.OCEAN_FLOOR_WG, world.height(), world.random()) - 1);
+					int cs = Math.max(world.minY() - 1,
+							world.generator().getBaseHeight(x, z, net.minecraft.world.level.levelgen.Heightmap.Types.WORLD_SURFACE_WG, world.height(), world.random()) - 1);
 					columnNanos += System.nanoTime() - c0;
 					checked++;
 					if ((cg != g[i] || cs != s[i]) && wrong.size() < 10) {
@@ -388,6 +423,8 @@ public class SelfCreated2HeightsTests {
 		}
 		Sc2RealNoise.log(String.format(Locale.ROOT, "noise terrain: a chunk's 256 grounds and surfaces whole %.2f ms; a column's ground and surface %.1f us; %d "
 				+ "columns checked", wholeNanos / 1e6 / (worlds.size() * 24), columnNanos / 1e3 / checked, checked));
+		Sc2RealNoise.log(String.format(Locale.ROOT, "noise reads in CPU time (%d each): a chunk's blocks whole %.2f ms, its heights %.2f ms, a 4 x 4's heights %.2f ms",
+				readCpu[3], readCpu[0] / 1e6 / readCpu[3], readCpu[1] / 1e6 / readCpu[3], readCpu[2] / 1e6 / readCpu[3]));
 		helper.assertTrue(wrong.isEmpty(), "read whole differs: " + wrong);
 		helper.succeed();
 	}
@@ -572,6 +609,14 @@ public class SelfCreated2HeightsTests {
 		final List<Integer> refusedSamples = new ArrayList<>();
 		final List<Integer> madeSamples = new ArrayList<>();
 		final List<Double> chunkMillis = new ArrayList<>();
+		/** FIX-R3-17: the chunks' fills no garbage collection paused, and the slowest few in CPU time (ms, where). */
+		final List<Double> chunkMillisNoGc = new ArrayList<>();
+		/** FIX-R3-17: each chunk's fill in this thread's CPU time, and the share of it spent reading the noise. */
+		final List<Double> chunkCpuMillis = new ArrayList<>();
+		/** The same after each kind's first made start (the code warm, as in a game that has run a while). */
+		final List<Double> chunkCpuMillisWarm = new ArrayList<>();
+		final List<Double> chunkNoiseMillis = new ArrayList<>();
+		final TreeMap<Double, String> slowest = new TreeMap<>();
 		int clean;
 		String kinds = "";
 		final Map<String, Integer> ways = new TreeMap<>();
@@ -581,6 +626,33 @@ public class SelfCreated2HeightsTests {
 			String key = why.contains(":") ? why.substring(0, why.indexOf(':')) : why;
 			refused.merge(key, 1, Integer::sum);
 		}
+	}
+
+	/** FIX-R3-17: the noise's reads since {@code r0} (columns, 4 x 4s, chunks). */
+	private static String readsSince(long[] r0) {
+		long[] r = com.forzacode.a1016_02.world.sc2.kit.Terrains.reads();
+		return (r[0] - r0[0]) + " columns, " + (r[1] - r0[1]) + " 4x4, " + (r[2] - r0[2]) + " chunks";
+	}
+
+	/** FIX-R3-17: the survey's thread's CPU time (a fill's own, whatever else the machine runs). */
+	private static final java.lang.management.ThreadMXBean CPU = java.lang.management.ManagementFactory.getThreadMXBean();
+
+	/** FIX-R3-17: the garbage collectors' time so far (ms), to tell a fill a collection paused. */
+	private static long gcMillis() {
+		long ms = 0;
+		for (java.lang.management.GarbageCollectorMXBean gc : java.lang.management.ManagementFactory.getGarbageCollectorMXBeans()) {
+			ms += Math.max(0, gc.getCollectionTime());
+		}
+		return ms;
+	}
+
+	private static String percentile(List<Double> values, double q) {
+		if (values.isEmpty()) {
+			return "-";
+		}
+		List<Double> sorted = new ArrayList<>(values);
+		sorted.sort(null);
+		return String.format(Locale.ROOT, "%.2f", sorted.get(Math.min(sorted.size() - 1, (int) Math.floor(q * sorted.size()))));
 	}
 
 	private static String stats(List<? extends Number> values) {
@@ -722,6 +794,7 @@ public class SelfCreated2HeightsTests {
 		worlds.add(Sc2RealNoise.of(level, "large", Sc2RealNoise.PRESETS.get("large"), REAL_SEED, -64, 384));
 		worlds.add(Sc2RealNoise.normal(level, REAL_SEED).withHeight(level, 0, 256));
 		int perCentre = Integer.getInteger("a1016_02.sc2survey.per", 8);
+		com.forzacode.a1016_02.world.sc2.kit.Terrains.timing(true);
 		Map<String, Holder<Structure>> structures = Sc2RealNoise.structures(level);
 		Map<String, Tally> tallies = new TreeMap<>();
 		List<Runnable> jobs = new ArrayList<>();
@@ -792,9 +865,29 @@ public class SelfCreated2HeightsTests {
 									}
 									// The chunk's noise first, so the time is the shape's own.
 									overlay.get(cx << 4, box.minY(), cz << 4);
+									long gc0 = gcMillis();
+									long n0 = com.forzacode.a1016_02.world.sc2.kit.Terrains.spent();
+									long[] r0 = com.forzacode.a1016_02.world.sc2.kit.Terrains.reads();
+									long cpu0 = CPU.getCurrentThreadCpuTime();
 									long c0 = System.nanoTime();
 									shape.fill(overlay.writer(clip.get(), world.terrain(), level.registryAccess()), clip.get());
-									tally.chunkMillis.add((System.nanoTime() - c0) / 1e6);
+									double chunkMs = (System.nanoTime() - c0) / 1e6;
+									double cpuMs = (CPU.getCurrentThreadCpuTime() - cpu0) / 1e6;
+									double noiseMs = (com.forzacode.a1016_02.world.sc2.kit.Terrains.spent() - n0) / 1e6;
+									tally.chunkCpuMillis.add(cpuMs);
+									if (tally.made > 1) {
+										tally.chunkCpuMillisWarm.add(cpuMs);
+									}
+									tally.chunkNoiseMillis.add(noiseMs);
+									tally.chunkMillis.add(chunkMs);
+									if (gcMillis() == gc0) {
+										tally.chunkMillisNoGc.add(chunkMs);
+									}
+									tally.slowest.put(cpuMs, world.name() + " " + world.seed() + " start " + chunk + " chunk " + cx + " " + cz
+											+ String.format(Locale.ROOT, " (%.1f ms, noise %.1f: %s)", chunkMs, noiseMs, readsSince(r0)) + (gcMillis() == gc0 ? "" : " (a collection)"));
+									if (tally.slowest.size() > 3) {
+										tally.slowest.pollFirstEntry();
+									}
 								}
 							}
 							Sc2Audit.Report report = Sc2Audit.of(shape, overlay, baseTop, List.of());
@@ -821,6 +914,7 @@ public class SelfCreated2HeightsTests {
 				}
 				done[0] = true;
 				Snapshot.install(null);
+				com.forzacode.a1016_02.world.sc2.kit.Terrains.timing(false);
 				for (Map.Entry<String, Tally> e : tallies.entrySet()) {
 					Tally t = e.getValue();
 					Sc2RealNoise.log(String.format(Locale.ROOT, "survey %s: %d candidates, %d made, %d clean, refused %s", e.getKey(), t.candidates, t.made, t.clean,
@@ -828,6 +922,12 @@ public class SelfCreated2HeightsTests {
 					Sc2RealNoise.log("  start ms made " + stats(t.madeMillis) + "; refused " + stats(t.refusedMillis));
 					Sc2RealNoise.log("  samples made " + stats(t.madeSamples) + "; refused " + stats(t.refusedSamples) + "; the last made: " + t.kinds);
 					Sc2RealNoise.log("  fill ms a chunk " + stats(t.chunkMillis) + (t.ways.isEmpty() ? "" : "; ways of the refused " + t.ways));
+					Sc2RealNoise.log("  fill ms a chunk, no collection during it: " + stats(t.chunkMillisNoGc) + ", 99.9 % " + percentile(t.chunkMillisNoGc, 0.999)
+							+ "; the slowest " + t.slowest.descendingMap());
+					Sc2RealNoise.log("  fill ms a chunk in the thread's CPU time: " + stats(t.chunkCpuMillis) + ", 99.9 % " + percentile(t.chunkCpuMillis, 0.999)
+							+ "; reading the noise: " + stats(t.chunkNoiseMillis) + ", 99.9 % " + percentile(t.chunkNoiseMillis, 0.999));
+					Sc2RealNoise.log("  fill ms a chunk in CPU time after the kind's first start: " + stats(t.chunkCpuMillisWarm) + ", 99.9 % "
+							+ percentile(t.chunkCpuMillisWarm, 0.999));
 					t.problems.forEach(p -> Sc2RealNoise.log("  problem " + p));
 				}
 				wrong.forEach(w -> Sc2RealNoise.log("  past the height " + w));

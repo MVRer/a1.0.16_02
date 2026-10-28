@@ -4,6 +4,7 @@ import com.forzacode.a1016_02.core.Remains;
 import com.forzacode.a1016_02.world.gen.Terrain;
 import com.forzacode.a1016_02.world.gen.Vegetation;
 import com.forzacode.a1016_02.world.sc2.kit.Draw;
+import com.forzacode.a1016_02.world.sc2.kit.Fault;
 import com.forzacode.a1016_02.world.sc2.kit.Frame;
 import com.forzacode.a1016_02.world.sc2.kit.Interior;
 import com.forzacode.a1016_02.world.sc2.kit.Seal;
@@ -33,7 +34,9 @@ import net.minecraft.world.level.levelgen.structure.BoundingBox;
  * over the land coming down to it, so nobody walks over either by accident; the building of the first house's
  * proportions (two plank courses over the cobblestone, the roof on them, so the doorway reaches near the eaves), a window
  * of two glass blocks at eye height in each wall, and its two torches on the side walls a block in from the doorway, so
- * the light spills out of it onto the grass at night (R11-5).
+ * the light spills out of it onto the grass at night (R11-5); 3 (R3-3, D-110, D-115), up to 192 (12 chunks, its box read
+ * from 7 x 7 samples), and fullbright: the lighting fault over the whole floor and on its faces (the cut cliffs over it,
+ * the built sides in front of them), the flat test world lit for nobody.
  *
  * <p>The start's origin is the square's middle (a chunk corner) at the floor's height; its variant the side in chunks.
  * The place's anchor is the middle of the building's inside at its floor, its mouth the cell outside the doorway, its
@@ -50,10 +53,14 @@ public final class FloorShape implements Shape {
 	public static final int INSIDE_UP = 16;
 	/** The building's side. */
 	public static final int HOUSE = 7;
-	/** Ground samples a side when the shape is made (25 in all). */
+	/** Ground samples a side when the shape is made (25 in all; version 3's squares over 128: {@value #GRID_WIDE}). */
 	static final int GRID = 5;
+	/** Ground samples a side of version 3's squares over 128 (49 in all: 32 apart on the 192). */
+	static final int GRID_WIDE = 7;
+	/** The widest square (blocks; version 3). */
+	public static final int SIDE_MAX = 192;
 	/** The shape's current version (R12-2). */
-	public static final int VERSION = 2;
+	public static final int VERSION = 3;
 
 	private static final BlockState AIR = Blocks.AIR.defaultBlockState();
 	private static final BlockState GRASS = Blocks.GRASS_BLOCK.defaultBlockState();
@@ -92,9 +99,10 @@ public final class FloorShape implements Shape {
 		this.floor = o.getY();
 		int lo = floor;
 		int hi = floor;
-		for (int i = 0; i < GRID; i++) {
-			for (int j = 0; j < GRID; j++) {
-				int g = terrain.ground(minX + Math.round((side - 1) * i / (GRID - 1.0F)), minZ + Math.round((side - 1) * j / (GRID - 1.0F)));
+		int grid = gridOf(version, side);
+		for (int i = 0; i < grid; i++) {
+			for (int j = 0; j < grid; j++) {
+				int g = terrain.ground(minX + Math.round((side - 1) * i / (grid - 1.0F)), minZ + Math.round((side - 1) * j / (grid - 1.0F)));
 				lo = Math.min(lo, g);
 				hi = Math.max(hi, g);
 			}
@@ -104,14 +112,19 @@ public final class FloorShape implements Shape {
 		this.house = Frame.square(new BlockPos(o.getX() - HOUSE / 2, floor, o.getZ() - HOUSE / 2), HOUSE, start.facing());
 	}
 
-	/** The side in blocks of a variant (whole chunks, 2 to 8). */
+	/** The side in blocks of a variant (whole chunks, 2 to 12; versions 1 and 2 never made one over 8). */
 	public static int sideOf(int variant) {
-		return Math.clamp(variant & 0xF, 2, 8) * 16;
+		return Math.clamp(variant & 0xF, 2, SIDE_MAX / 16) * 16;
 	}
 
 	/** The variant of a side in blocks. */
 	public static int variant(int sideBlocks) {
-		return Math.clamp(sideBlocks / 16, 2, 8);
+		return Math.clamp(sideBlocks / 16, 2, SIDE_MAX / 16);
+	}
+
+	/** Ground samples a side for a square of this version and side (the shape's box and siting read the same points). */
+	public static int gridOf(int version, int side) {
+		return version >= 3 && side > 128 ? GRID_WIDE : GRID;
 	}
 
 	/** The floor's own cells of a recorded place: the square, at the floor's height. */
@@ -200,6 +213,57 @@ public final class FloorShape implements Shape {
 			});
 		}
 		building(w);
+		if (version >= 3) {
+			// Version 3 (D-110, D-115): the whole square lit as at noon for nobody, the fullbright test world, its cut
+			// cliffs and built sides with it (the faces a viewer far off sees: a lit square on level land is edge-on).
+			Fault.light(w, square(), floor + INSIDE_UP);
+			lightFaces(w);
+		}
+	}
+
+	/** Version 3: the first face light this far over the floor (the floor's own lights reach under it). */
+	static final int FACE_FROM = 4;
+
+	/**
+	 * Version 3: the square's faces lit as its floor, on the fault's grid along each side and up it: a cut side's cliff
+	 * from {@value #FACE_FROM} over the floor to under the land's top outside (lights in the square's edge column, against
+	 * the cliff), a built side's earth from over the land's foot to under the floor (lights in the column outside it, in
+	 * front of the earth). Decided from the noise's land outside (as the kerb), so every chunk lights its own part alike.
+	 */
+	private void lightFaces(Writer w) {
+		BoundingBox clip = w.clip();
+		for (int x = Math.max(minX - 1, clip.minX()); x <= Math.min(maxX + 1, clip.maxX()); x++) {
+			for (int z = Math.max(minZ - 1, clip.minZ()); z <= Math.min(maxZ + 1, clip.maxZ()); z++) {
+				boolean westEast = (x == minX || x == maxX || x == minX - 1 || x == maxX + 1) && z >= minZ && z <= maxZ;
+				boolean northSouth = (z == minZ || z == maxZ || z == minZ - 1 || z == maxZ + 1) && x >= minX && x <= maxX;
+				if (westEast == northSouth) {
+					continue;
+				}
+				int along = westEast ? z - minZ : x - minX;
+				if (Math.floorMod(along - Fault.INSET, Fault.GRID) != 0 || along > side - 1 - Fault.INSET) {
+					continue;
+				}
+				// The column outside this side (its land's top from the noise, as the kerb reads it).
+				int ox = westEast ? (x <= minX ? minX - 1 : maxX + 1) : x;
+				int oz = northSouth ? (z <= minZ ? minZ - 1 : maxZ + 1) : z;
+				int land = w.ground(ox, oz);
+				boolean inEdge = inSquare(x, z);
+				int from;
+				int to;
+				if (inEdge) {
+					from = floor + FACE_FROM;
+					to = Math.min(land - 1, box.maxY() - 1);
+				} else {
+					from = land + 2;
+					to = floor - 2;
+				}
+				for (int y = from; y <= to; y += Fault.GRID) {
+					if (w.inside(x, y, z) && w.get(x, y, z).isAir()) {
+						w.set(x, y, z, Fault.lightOf(Fault.LEVEL, false));
+					}
+				}
+			}
+		}
 	}
 
 	/** How far a column outside the square is from it (Chebyshev; 0 inside). */

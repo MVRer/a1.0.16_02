@@ -8,6 +8,7 @@ import com.forzacode.a1016_02.world.gen.Hash;
 import com.forzacode.a1016_02.world.gen.Terrain;
 import com.forzacode.a1016_02.world.gen.Vegetation;
 import com.forzacode.a1016_02.world.sc2.kit.Draw;
+import com.forzacode.a1016_02.world.sc2.kit.Fault;
 import com.forzacode.a1016_02.world.sc2.kit.Interior;
 import com.forzacode.a1016_02.world.sc2.kit.Seal;
 import com.forzacode.a1016_02.world.sc2.kit.Shape;
@@ -55,7 +56,13 @@ import org.jspecify.annotations.Nullable;
  * steepest side preferred; 2 (R12-1, R11-8), the cold landing above, the opening 5 x 5 over a landing 7 x 7 (the floor
  * whole there), the one nearest the nave's line from the square to the way in preferred (from the inner mouth the first
  * thing seen is one column of daylight in front of the grove), and the walking floor's top two layers plain stone
- * (deepslate under 0: one worked material, no blots of the land's strata).
+ * (deepslate under 0: one worked material, no blots of the land's strata); 3 (R3-3, D-110, D-115), the land read a volume
+ * of the noise at a time ({@link HollowLand}), and the error sign: the summit cut (a chunk-aligned square on the way in's
+ * side, the one with the most land rising behind it, every block over its top less the variant's depth (or the section
+ * line under that) taken, the land round it lipped where it stands over the cut, the inside's shell kept under the cut),
+ * the piece (what was cut, upside down, hanging 16 to 24 under the inside's ceiling over it, lit from under on the
+ * fault's grid; only over a chunk wholly over the inside, else the cut alone) and the foot (two chunks by two round the
+ * way in's mouth, dead slope under the lighting fault).
  */
 public final class HollowShape implements Shape {
 	/**
@@ -98,8 +105,41 @@ public final class HollowShape implements Shape {
 	public static final int WINDOW_STEEP = 2;
 	/** The pool under the high opening: this wide each way from its middle (5 x 5; version 2: 7 x 7), two deep. */
 	public static final int POOL_HALF = 2;
-	/** The shape's current version (R12-2): 2, a cold landing is powder snow (R12-1), the opening 5 x 5 by the nave, the floor plain (R11-8). */
-	public static final int VERSION = 2;
+	/**
+	 * The shape's current version (R12-2): 2, a cold landing is powder snow (R12-1), the opening 5 x 5 by the nave, the floor
+	 * plain (R11-8); 3 (R3-3, D-110, D-115), the summit cut, the piece hanging and the foot; 4 (FIX-R3-B, R3A-2), the sign
+	 * read from the ground: the bite two chunks wide where the neighbour across the way in's line stands high enough, lit
+	 * on its floor and up its faces, and the foot grey (gravel and the land's stone, no coarse dirt) with lights up the
+	 * slope's faces beside the mouth.
+	 */
+	public static final int VERSION = 4;
+	/** Version 4: the bite takes the neighbouring chunk too where its land stands at least this far over the cut. */
+	static final int WIDE_OVER = 6;
+	/** Version 4: the first light up a face of the bite stands this far over its floor (the floor's own lights reach under it). */
+	static final int FACE_FROM = 3;
+	/** Version 4: no light up the foot's faces within this of the mouth (it stays black). */
+	static final int MOUTH_DARK = 3;
+	/** Version 4: the foot's lights up its faces stand this far over the land, and this far apart (two at most). */
+	static final int FOOT_UP = 3;
+	static final int FOOT_STEP = 2;
+	/** Version 3: the land under this much under the floor is read as this low (the inside never stands on it). */
+	static final int LAND_UNDER = 8;
+	/** Version 3: the chunks tried for the summit cut, highest first. */
+	static final int SUMMIT_TRIES = 48;
+	/** Version 3: the cut's depth when a variant names none. */
+	static final int SUMMIT_CUT = 11;
+	/** Version 3: the box reaches this far over the summit's highest grid point (the trees on it go with the cut). */
+	static final int SUMMIT_ABOVE = 40;
+	/** Version 3: the summit's true top may stand this far over its grid points; the piece is never taller than its cut and this. */
+	static final int SUMMIT_SLACK = 4;
+	/** Version 3: the piece hangs this far under the inside's ceiling over it, at least and at most. */
+	static final int PIECE_GAP_MIN = 16;
+	static final int PIECE_GAP_MAX = 24;
+	/** Version 3: the piece's lowest block hangs at least this far over the floor where it can, and never under the second number. */
+	static final int PIECE_UP = 36;
+	static final int PIECE_UP_MIN = 10;
+	/** Version 3: the columns and the opening keep this far from the summit's square. */
+	static final int SUMMIT_CLEAR = 3;
 
 	/** A grid point not read. */
 	private static final int UNKNOWN = Integer.MIN_VALUE / 4;
@@ -131,6 +171,46 @@ public final class HollowShape implements Shape {
 	 * The high opening: its middle column, and for each of its 3 x 3 columns (row by row) the first cell over the inside
 	 * and the last cell it takes (two over the land's top there); the way the land falls from it.
 	 */
+	/**
+	 * Version 3's summit (R3-3): the chunk-aligned square from ({@code minX}, {@code minZ}), its highest grid point's top,
+	 * the cut's floor ({@code cut}: every block over it goes), the inside's lowest top under the square ({@code ceil}), and
+	 * the piece: its top face ({@code pieceTop}) and the most it hangs ({@code pieceHeight}).
+	 */
+	public record Summit(int minX, int minZ, int top, int cut, int ceil, int pieceTop, int pieceHeight, int pieceSkip, int cutMinX, int cutMinZ, int cutMaxX,
+			int cutMaxZ) {
+		/** One chunk cut (versions 3, and 4 where no neighbour qualifies). */
+		public Summit(int minX, int minZ, int top, int cut, int ceil, int pieceTop, int pieceHeight, int pieceSkip) {
+			this(minX, minZ, top, cut, ceil, pieceTop, pieceHeight, pieceSkip, minX, minZ, minX + 15, minZ + 15);
+		}
+
+		/** The square (from the piece's lowest block to the summit's top). */
+		public BoundingBox square() {
+			return new BoundingBox(minX, pieceTop - pieceHeight, minZ, minX + 15, top + SUMMIT_ABOVE, minZ + 15);
+		}
+
+		/**
+		 * What is cut (x and z; y from the cut's floor to the summit's top): the square, or (version 4, FIX-R3-B, R3A-2) the
+		 * square and its neighbour beside it across the way in's line, a bite two chunks wide.
+		 */
+		public BoundingBox bite() {
+			return new BoundingBox(cutMinX, cut, cutMinZ, cutMaxX, top + SUMMIT_ABOVE, cutMaxZ);
+		}
+
+		/** True for a bite two chunks wide (version 4). */
+		public boolean wide() {
+			return cutMaxX - cutMinX > 15 || cutMaxZ - cutMinZ > 15;
+		}
+
+		/** False for a cut alone (no chunk wholly over the inside could hold the piece). */
+		public boolean hasPiece() {
+			return pieceHeight > 0;
+		}
+
+		boolean contains(int x, int z, int margin) {
+			return x >= minX - margin && x <= minX + 15 + margin && z >= minZ - margin && z <= minZ + 15 + margin;
+		}
+	}
+
 	record Window(int x, int z, int[] bottoms, int[] tops, Direction downhill) {
 	}
 
@@ -164,12 +244,20 @@ public final class HollowShape implements Shape {
 	private final int gx;
 	private final int gz;
 	private final boolean valid;
+	/** True if a square was found (a shape without one has no way in either). */
+	private final boolean squareFound;
+	/** Version 3: a square was found but no summit over the inside could hold the piece. */
+	private boolean noSummit;
 	private final int pillarHalf;
 	private final int pillarK;
 	/** Each column's width by its grid index (0: none there). */
 	private final byte[] pillars;
 	private final @Nullable WayIn way;
 	private final @Nullable Window window;
+	/** Version 3: the summit cut and the piece (null before, or where none fits). */
+	private final @Nullable Summit summit;
+	/** Version 3: the foot's square, the chunk the way in opens in (null before). */
+	private final @Nullable BoundingBox foot;
 	private final List<BlockPos> pool;
 	/** The landing under the high opening is a drift of powder snow (version 2, where the land there is cold), not water. */
 	private final boolean snowLanding;
@@ -214,20 +302,73 @@ public final class HollowShape implements Shape {
 		this.n = 2 * EXTENT / GRID + 1;
 		this.gx0 = cx - EXTENT;
 		this.gz0 = cz - EXTENT;
-		this.surface = surface(terrain, everyPoint);
+		this.surface = version >= 3 ? land(terrain) : surface(terrain, everyPoint);
 		this.ceiling = ceilings();
 		this.height = new int[n * n];
-		for (int i = 0; i < n; i++) {
-			for (int j = 0; j < n; j++) {
-				int x = gx0 + i * GRID;
-				int z = gz0 + j * GRID;
-				height[i * n + j] = terrace(Math.min(ceiling[i * n + j], domeTop(x, z)) - yf);
+		heights();
+		int grovePoint = grovePoint();
+		boolean[] flooded = grovePoint < 0 ? new boolean[n * n] : flood(grovePoint);
+		// Version 3: the summit cut and the piece (R3-3): the land under the cut is the land the inside keeps its shell to.
+		Summit found = null;
+		if (version >= 3 && grovePoint >= 0) {
+			List<int[]> chunks = summitChunks(flooded, gx0 + (grovePoint / n) * GRID, gz0 + (grovePoint % n) * GRID);
+			int tries = 0;
+			// The highest chunk wholly over the inside whose piece can hang under it; else the highest, cut alone.
+			for (int pass = 0; pass < 2 && found == null; pass++) {
+				for (int[] chunk : chunks) {
+					if (pass == 0 && (chunk[3] < 16 || tries++ >= SUMMIT_TRIES)) {
+						continue;
+					}
+					int[] kept = surface.clone();
+					int cut = cutHeight(chunk[2]);
+					// Version 4 (R3A-2): first the bite two chunks wide, its neighbour across the way in's line cut too; else
+					// the one chunk as version 3.
+					int[] wide = version >= 4 ? neighbour(chunk[0], chunk[1], cut) : null;
+					Summit s = null;
+					for (int attempt = wide == null ? 1 : 0; attempt < 2 && s == null; attempt++) {
+						if (attempt == 1 && wide != null) {
+							System.arraycopy(kept, 0, surface, 0, n * n);
+						}
+						lower(chunk[0], chunk[1], cut);
+						if (attempt == 0) {
+							lower(wide[0], wide[1], cut);
+						}
+						System.arraycopy(ceilings(), 0, ceiling, 0, n * n);
+						heights();
+						int g = grovePoint();
+						boolean[] f = g < 0 ? new boolean[n * n] : flood(g);
+						s = g < 0 ? null : pass == 0 ? summitOver(chunk[0], chunk[1], chunk[2], cut, f) : new Summit(chunk[0], chunk[1], chunk[2], cut, 0, 0, 0, 0);
+						if (s != null) {
+							if (attempt == 0) {
+								s = new Summit(s.minX(), s.minZ(), s.top(), s.cut(), s.ceil(), s.pieceTop(), s.pieceHeight(), s.pieceSkip(), Math.min(s.minX(), wide[0]),
+										Math.min(s.minZ(), wide[1]), Math.max(s.minX(), wide[0]) + 15, Math.max(s.minZ(), wide[1]) + 15);
+							}
+							grovePoint = g;
+							flooded = f;
+						}
+					}
+					if (s != null) {
+						found = s;
+						break;
+					}
+					System.arraycopy(kept, 0, surface, 0, n * n);
+					System.arraycopy(ceilings(), 0, ceiling, 0, n * n);
+					heights();
+					if (pass == 1) {
+						break;
+					}
+				}
+			}
+			if (found == null) {
+				grovePoint = -1;
+				flooded = new boolean[n * n];
+				noSummit = true;
 			}
 		}
-		int grovePoint = grovePoint();
+		this.summit = found;
 		this.gx = grovePoint < 0 ? cx : gx0 + (grovePoint / n) * GRID;
 		this.gz = grovePoint < 0 ? cz : gz0 + (grovePoint % n) * GRID;
-		this.taken = grovePoint < 0 ? new boolean[n * n] : flood(grovePoint);
+		this.taken = flooded;
 		this.pillarHalf = pillarEvery / 2;
 		this.pillarK = pillarEvery <= 0 ? 0 : 2 * (EXTENT + 8) / pillarEvery + 2;
 		this.pillars = new byte[(2 * pillarK + 1) * (2 * pillarK + 1)];
@@ -235,7 +376,9 @@ public final class HollowShape implements Shape {
 			placePillars();
 		}
 		this.way = grovePoint < 0 ? null : findWayIn(terrain);
+		this.foot = version >= 3 && way != null ? footSquare(way) : null;
 		this.valid = grovePoint >= 0 && way != null;
+		this.squareFound = grovePoint >= 0;
 		this.window = valid && windowWanted ? findWindow(terrain) : null;
 		this.pool = window == null ? List.of() : pool(window);
 		this.snowLanding = version >= 2 && !pool.isEmpty() && coldLanding(terrain, pool, yf);
@@ -251,6 +394,9 @@ public final class HollowShape implements Shape {
 		int high = top;
 		for (BlockPos cell : windowCells()) {
 			high = Math.max(high, cell.getY());
+		}
+		if (summit != null) {
+			high = Math.max(high, summit.top() + SUMMIT_ABOVE - Seal.REACH - 2);
 		}
 		this.box = new BoundingBox(cx - EXTENT - 8, yf - 20, cz - EXTENT - 8, cx + EXTENT + 7, Math.max(high, yf + 24) + Seal.REACH + 2, cz + EXTENT + 7);
 		this.coarse = coarse();
@@ -335,6 +481,240 @@ public final class HollowShape implements Shape {
 		return samples;
 	}
 
+	// --- version 3: the land read whole, the summit, the foot (R3-3) ---
+
+	/**
+	 * Version 3's land: every point within the dome's reach read at once ({@link HollowLand}: a volume of the noise a tile,
+	 * about half a column's cost a point), anything under {@value #LAND_UNDER} below the floor (or the sea) read as that
+	 * low. Nothing the inside, its ceilings, its columns, the way in or the opening read differs for it: a point that low
+	 * keeps every point round it from being taken, as the land itself would.
+	 */
+	private int[] land(Terrain terrain) {
+		boolean[] want = new boolean[n * n];
+		for (int i = 0; i < n; i++) {
+			for (int j = 0; j < n; j++) {
+				want[i * n + j] = sampled(i, j);
+				samples += want[i * n + j] ? 1 : 0;
+			}
+		}
+		int[] out = HollowLand.tops(terrain, gx0, gz0, GRID, n, n, yf - LAND_UNDER, want);
+		for (int k = 0; k < n * n; k++) {
+			if (!want[k]) {
+				out[k] = UNKNOWN;
+			}
+		}
+		return out;
+	}
+
+	/** The inside's terraced height at every grid point from the ceilings and the dome. */
+	private void heights() {
+		for (int i = 0; i < n; i++) {
+			for (int j = 0; j < n; j++) {
+				int x = gx0 + i * GRID;
+				int z = gz0 + j * GRID;
+				height[i * n + j] = terrace(Math.min(ceiling[i * n + j], domeTop(x, z)) - yf);
+			}
+		}
+	}
+
+	/**
+	 * The chunks the summit cut may take, highest first (the chunk-aligned square holding the highest land over the
+	 * inside, then the next): each {@code {minX, minZ, top}}, at most {@value #SUMMIT_TRIES}.
+	 */
+	private List<int[]> summitChunks(boolean[] flooded, int groveX, int groveZ) {
+		java.util.Map<Long, int[]> chunks = new java.util.HashMap<>();
+		for (int i = 0; i < n; i++) {
+			for (int j = 0; j < n; j++) {
+				int k = i * n + j;
+				if (!flooded[k] || height[k] <= 0) {
+					continue;
+				}
+				int x = gx0 + i * GRID;
+				int z = gz0 + j * GRID;
+				int[] c = chunks.computeIfAbsent(net.minecraft.world.level.ChunkPos.pack(x >> 4, z >> 4), key -> new int[] {x & ~15, z & ~15, Integer.MIN_VALUE, 0});
+				c[2] = Math.max(c[2], surface[k]);
+				c[3]++;
+			}
+		}
+		// The land's top of every chunk read (the chunk behind a candidate stands over its cut: the wall a viewer sees).
+		java.util.Map<Long, Integer> tops = new java.util.HashMap<>();
+		for (int i = 0; i < n; i++) {
+			for (int j = 0; j < n; j++) {
+				int s = surface[i * n + j];
+				if (s != UNKNOWN) {
+					tops.merge(net.minecraft.world.level.ChunkPos.pack((gx0 + i * GRID) >> 4, (gz0 + j * GRID) >> 4), s, Math::max);
+				}
+			}
+		}
+		// {minX, minZ, top, grid points over the inside, the rise behind}: only a chunk wholly over it (16) can hold the piece.
+		List<int[]> out = new ArrayList<>();
+		for (int[] c : chunks.values()) {
+			int behind = tops.getOrDefault(net.minecraft.world.level.ChunkPos.pack((c[0] >> 4) - facing.getStepX(), (c[1] >> 4) - facing.getStepZ()), c[2]);
+			out.add(new int[] {c[0], c[1], c[2], c[3], Math.clamp(behind - c[2], 0, SUMMIT_RISE)});
+		}
+		// The side the way in looks out of first (the side a viewer from the origin sees); there, the chunk with the most
+		// land rising behind it (its cut a square bite out of the slope facing the viewer, the missing chunk), then the
+		// highest.
+		java.util.function.ToIntFunction<int[]> back = c -> ((c[0] + 8 - groveX) * facing.getStepX() + (c[1] + 8 - groveZ) * facing.getStepZ()) >= 0 ? 0 : 1;
+		out.sort((a, b) -> back.applyAsInt(a) != back.applyAsInt(b) ? Integer.compare(back.applyAsInt(a), back.applyAsInt(b))
+				: a[4] != b[4] ? Integer.compare(b[4], a[4]) : a[2] != b[2] ? Integer.compare(b[2], a[2]) : a[0] != b[0] ? Integer.compare(a[0], b[0]) : Integer.compare(a[1], b[1]));
+		return out;
+	}
+
+	/**
+	 * Version 4 (R3A-2): the chunk beside the summit's square across the way in's line (a viewer sees the two side by side)
+	 * whose land stands at least {@value #WIDE_OVER} over the cut, the higher of the two; its {@code {minX, minZ}}, or
+	 * null. It and the ring round both stay inside the box.
+	 */
+	private int @Nullable [] neighbour(int minX, int minZ, int cut) {
+		int[] best = null;
+		int bestTop = cut + WIDE_OVER - 1;
+		for (int k : new int[] {1, -1}) {
+			int x = minX + 16 * k * right.getStepX();
+			int z = minZ + 16 * k * right.getStepZ();
+			if (x - 1 < cx - EXTENT - 8 || x + 16 > cx + EXTENT + 7 || z - 1 < cz - EXTENT - 8 || z + 16 > cz + EXTENT + 7) {
+				continue;
+			}
+			int top = Integer.MIN_VALUE;
+			for (int i = Math.max(0, Math.ceilDiv(x - gx0, GRID)); i < n && gx0 + i * GRID <= x + 15; i++) {
+				for (int j = Math.max(0, Math.ceilDiv(z - gz0, GRID)); j < n && gz0 + j * GRID <= z + 15; j++) {
+					int s = surface[i * n + j];
+					if (s != UNKNOWN) {
+						top = Math.max(top, s);
+					}
+				}
+			}
+			if (top > bestTop) {
+				bestTop = top;
+				best = new int[] {x, z};
+			}
+		}
+		return best;
+	}
+
+	/** Version 3: the land rising behind a summit square counts up to this much (blocks) in choosing it. */
+	static final int SUMMIT_RISE = 16;
+
+	/**
+	 * The cut's floor under a summit whose highest grid point is {@code top}: the variant's depth under it, or the section
+	 * line under that where it lies within {@value #SUMMIT_CUT_DEEPEST} of the top (the error's grammar: a flat top on a
+	 * multiple of 16, D-110; and a bite a viewer reads from far).
+	 */
+	private int cutHeight(int top) {
+		int cut = top - cut(start.variant());
+		int section = Fault.sectionFloor(cut);
+		return section >= top - SUMMIT_CUT_DEEPEST ? section : cut;
+	}
+
+	/** Version 3: the cut goes down to a section line at most this far under the summit's top. */
+	static final int SUMMIT_CUT_DEEPEST = 20;
+	/** Version 3: the piece is at most this tall (the cut's lowest blocks; deeper ones stay out). */
+	static final int PIECE_MAX = 16;
+
+	/** The land under the cut is the land: every grid point of the square and its far edges no higher than the cut. */
+	private void lower(int minX, int minZ, int cut) {
+		for (int i = 0; i < n; i++) {
+			int x = gx0 + i * GRID;
+			if (x < minX || x > minX + 16) {
+				continue;
+			}
+			for (int j = 0; j < n; j++) {
+				int z = gz0 + j * GRID;
+				if (z >= minZ && z <= minZ + 16) {
+					surface[i * n + j] = Math.min(surface[i * n + j], cut);
+				}
+			}
+		}
+	}
+
+	/**
+	 * The summit over this square if the piece can hang under it: every column of the square inside, the piece
+	 * {@value #PIECE_GAP_MIN} to {@value #PIECE_GAP_MAX} under the inside's lowest top over the square, or across its
+	 * middle height where that is lower, its lowest block at least {@value #PIECE_UP_MIN} over the floor; else null.
+	 */
+	private @Nullable Summit summitOver(int minX, int minZ, int top, int cut, boolean[] flooded) {
+		int ceil = Integer.MAX_VALUE;
+		for (int x = minX; x < minX + 16; x++) {
+			for (int z = minZ; z < minZ + 16; z++) {
+				int fx = x - gx0;
+				int fz = z - gz0;
+				int i = fx / GRID;
+				int j = fz / GRID;
+				if (fx < 0 || fz < 0 || i >= n - 1 || j >= n - 1) {
+					return null;
+				}
+				int k = i * n + j;
+				if (!(flooded[k] || flooded[k + n] || flooded[k + 1] || flooded[k + n + 1])) {
+					return null;
+				}
+				int h = rawHeightOver(x, z, flooded);
+				if (h <= 0) {
+					return null;
+				}
+				ceil = Math.min(ceil, yf + h);
+			}
+		}
+		int whole = Math.max(1, top + SUMMIT_SLACK - cut);
+		// Where the inside is low over it, a shorter piece: the cut's top layers (its surface still face down), its base
+		// left out.
+		int room = (ceil - 3) - (yf + PIECE_UP_MIN) + 1;
+		int pieceHeight = Math.min(Math.min(whole, PIECE_MAX), room);
+		if (pieceHeight < PIECE_MIN) {
+			return null;
+		}
+		int skip = Math.max(0, whole - pieceHeight);
+		int gap = Draw.between(seed, 0x18D1L, PIECE_GAP_MIN, PIECE_GAP_MAX);
+		int pieceTop = ceil - gap;
+		if (pieceTop - pieceHeight < yf + PIECE_UP) {
+			pieceTop = Math.min(ceil - 3, yf + (ceil - yf) / 2 + pieceHeight / 2);
+		}
+		pieceTop = Math.max(pieceTop, yf + PIECE_UP_MIN + pieceHeight - 1);
+		if (pieceTop - pieceHeight + 1 < yf + PIECE_UP_MIN || pieceTop > ceil - 3) {
+			return null;
+		}
+		return new Summit(minX, minZ, top, cut, ceil, pieceTop, pieceHeight, skip);
+	}
+
+	/** Version 3: a piece shorter than this is no piece (the cut stands alone). */
+	static final int PIECE_MIN = 6;
+
+	/** {@link #rawHeight} over a flood not kept yet. */
+	private int rawHeightOver(int x, int z, boolean[] flooded) {
+		int fx = x - gx0;
+		int fz = z - gz0;
+		int i = fx / GRID;
+		int j = fz / GRID;
+		int k = i * n + j;
+		if (!(flooded[k] || flooded[k + n] || flooded[k + 1] || flooded[k + n + 1])) {
+			return 0;
+		}
+		double tx = (fx - i * GRID) / (double) GRID;
+		double tz = (fz - j * GRID) / (double) GRID;
+		double t = (ceiling[k] * (1 - tx) + ceiling[k + n] * tx) * (1 - tz) + (ceiling[k + 1] * (1 - tx) + ceiling[k + n + 1] * tx) * tz;
+		return terrace((int) Math.floor(Math.min(t, domeTop(x, z))) - yf);
+	}
+
+	/** The foot's side: two chunks (a 16-wide lit square read as a dim spark at 128 by night in the gallery: R3-3 round 1). */
+	static final int FOOT = 32;
+
+	/** The foot: the two chunks by two round the chunk corner nearest the way in's mouth (its outer cell), so the mouth is in its middle part. */
+	private BoundingBox footSquare(WayIn w) {
+		BlockPos mouth = at(w.lane(), yf + 1, w.mouth());
+		int x0 = Math.round(mouth.getX() / 16.0F) * 16 - FOOT / 2;
+		int z0 = Math.round(mouth.getZ() / 16.0F) * 16 - FOOT / 2;
+		return new BoundingBox(x0, yf - 16, z0, x0 + FOOT - 1, yf + 64, z0 + FOOT - 1);
+	}
+
+	/** Version 3's summit, or null (before, or where none fits). */
+	public @Nullable Summit summit() {
+		return summit;
+	}
+
+	/** Version 3's foot square (x and z; y from 16 under the floor to 64 over it), or null. */
+	public @Nullable BoundingBox foot() {
+		return foot;
+	}
+
 	// --- the variant ---
 
 	/** The variant for these choices (siting reads the config; a start keeps them, so a later config change never moves a cell). */
@@ -369,6 +749,17 @@ public final class HollowShape implements Shape {
 
 	public static int stems(int variant) {
 		return variant >> 15 & 31;
+	}
+
+	/** Version 3: these choices and the summit cut's depth (4 bits over the others; 0 reads {@value #SUMMIT_CUT}). */
+	public static int variant(boolean window, boolean spruce, int shellTop, int shellSide, int pillarEvery, int stems, int cut) {
+		return variant(window, spruce, shellTop, shellSide, pillarEvery, stems) | Math.clamp(cut, 0, 15) << 20;
+	}
+
+	/** Version 3: the summit cut's depth of a variant. */
+	public static int cut(int variant) {
+		int cut = variant >> 20 & 15;
+		return cut == 0 ? SUMMIT_CUT : cut;
 	}
 
 	// --- the inside's height ---
@@ -511,6 +902,10 @@ public final class HollowShape implements Shape {
 				if (h <= 0) {
 					continue;
 				}
+				// Version 3: none through the piece (it floats, unsupported).
+				if (summit != null && summit.hasPiece() && summit.contains(c.getX(), c.getZ(), 3 + SUMMIT_CLEAR)) {
+					continue;
+				}
 				int width = h < 32 ? 3 : h < 64 ? 5 : 7;
 				pillars[(ka + pillarK) * (2 * pillarK + 1) + kb + pillarK] = (byte) width;
 			}
@@ -625,6 +1020,31 @@ public final class HollowShape implements Shape {
 	 */
 	private @Nullable WayIn findWayIn(Terrain terrain) {
 		int step = pillarEvery > 0 ? pillarEvery : 7;
+		if (version >= 3) {
+			// Version 3 (R3-3: the lanes cost a third of a start): the square's own line first, then the others in the order
+			// the grid's land says is cheapest, the first that holds against the terrain taken.
+			List<int[]> guesses = new ArrayList<>();
+			for (int k = 1; k * step <= 42; k++) {
+				for (int sign : new int[] {-1, 1}) {
+					int lane = sign * k * step;
+					int guess = laneGuess(lane);
+					// A lane the grid says fails is still tried, last (the grid cannot see between its points).
+					guesses.add(new int[] {guess, lane});
+				}
+			}
+			guesses.sort((a, b) -> a[0] != b[0] ? Integer.compare(a[0], b[0]) : Integer.compare(a[1], b[1]));
+			WayIn first = lane(terrain, 0);
+			if (first != null) {
+				return first;
+			}
+			for (int[] g : guesses) {
+				WayIn found = lane(terrain, g[1]);
+				if (found != null) {
+					return found;
+				}
+			}
+			return null;
+		}
 		WayIn best = null;
 		int bestCost = Integer.MAX_VALUE;
 		for (int k = 0; k * step <= 42; k++) {
@@ -702,6 +1122,56 @@ public final class HollowShape implements Shape {
 		return new WayIn(lane, inner, mouth, approach, steps);
 	}
 
+	/**
+	 * Version 3: what a lane would cost as the grid's land reads it (bilinear between its points; the terrain decides),
+	 * as {@link #findWayIn}'s cost, or {@code Integer.MAX_VALUE} if it would not reach the open land.
+	 */
+	private int laneGuess(int lane) {
+		int exit = -1;
+		for (int b = 0; b <= EXTENT + 8; b++) {
+			if (open(lane, b)) {
+				exit = b;
+			}
+		}
+		if (exit < 0) {
+			return Integer.MAX_VALUE;
+		}
+		int inner = exit + 1;
+		int b = inner;
+		while (guessLand(lane, b, true) >= yf + 2 + LINTEL) {
+			b++;
+			if (b - inner > TUNNEL_MAX) {
+				return Integer.MAX_VALUE;
+			}
+		}
+		int mouth = b - 1;
+		while (guessLand(lane, b, false) > yf) {
+			b++;
+			if (b - mouth > APPROACH_MAX) {
+				return Integer.MAX_VALUE;
+			}
+		}
+		int approach = b - 1;
+		int floor = yf;
+		while (guessLand(lane, b, true) < floor - 1) {
+			floor--;
+			b++;
+			if (b - approach > STEPS_MAX) {
+				return Integer.MAX_VALUE;
+			}
+		}
+		return (mouth - inner) + (approach - mouth) + 2 * (b - 1 - approach);
+	}
+
+	/** The grid's land across the lane's two columns at {@code b} along: the lower or the higher. */
+	private double guessLand(int lane, int b, boolean low) {
+		BlockPos c0 = at(lane, 0, b);
+		BlockPos c1 = at(lane + 1, 0, b);
+		double t0 = top(c0.getX(), c0.getZ());
+		double t1 = top(c1.getX(), c1.getZ());
+		return low ? Math.min(t0, t1) : Math.max(t0, t1);
+	}
+
 	private int lowest(Terrain terrain, int a0, int a1, int b) {
 		int out = Integer.MAX_VALUE;
 		for (int a = a0; a <= a1; a++) {
@@ -762,6 +1232,9 @@ public final class HollowShape implements Shape {
 				int x = gx0 + i * GRID;
 				int z = gz0 + j * GRID;
 				if (Math.max(Math.abs(lateral(x, z)), Math.abs(along(x, z))) <= GROVE + 8) {
+					continue;
+				}
+				if (summit != null && summit.hasPiece() && summit.contains(x, z, 2 * (poolHalf + SUMMIT_CLEAR))) {
 					continue;
 				}
 				int steep = 0;
@@ -941,6 +1414,11 @@ public final class HollowShape implements Shape {
 	// --- what it is (pure: tests and the answers ask these) ---
 
 	/** False if no square or no way in fits: siting makes no start then. */
+	/** Why there is no place here (tests and the find's report), or null if there is one. */
+	public @Nullable String refusal() {
+		return valid ? null : noSummit ? "no summit" : squareFound ? "no way in" : "no square";
+	}
+
 	public boolean valid() {
 		return valid;
 	}
@@ -1159,7 +1637,18 @@ public final class HollowShape implements Shape {
 		if (!mouth.isEmpty()) {
 			tag.putLong("m", mouth.getFirst().asLong());
 		}
+		Summit s = summit;
+		if (s != null && s.hasPiece()) {
+			// Version 3: where the piece hangs (18c finds its lights there): the square's corner, from under it to the ceiling.
+			tag.putIntArray("p", new int[] {s.minX(), s.minZ(), s.pieceTop() - s.pieceHeight() - 2, s.ceil()});
+		}
 		return tag;
+	}
+
+	/** The box the piece's lights are in, from a recorded place's extra (version 3), if it has a piece. */
+	public static Optional<BoundingBox> pieceOf(CompoundTag extra) {
+		int[] p = extra.getIntArray("p").orElse(new int[0]);
+		return p.length < 4 ? Optional.empty() : Optional.of(new BoundingBox(p[0], p[2], p[1], p[0] + 15, p[3], p[1] + 15));
 	}
 
 	/** The cells of the coarse grid per side ({@link #extra}). */
@@ -1236,6 +1725,8 @@ public final class HollowShape implements Shape {
 		if (!valid) {
 			return;
 		}
+		// Version 3: the summit as it stands, before anything is written (the piece is made of it).
+		BlockState[][] caps = caps(w);
 		// The columns round the clip, once (the seal asks each 25 times).
 		int x0 = clip.minX() - Seal.REACH;
 		int z0 = clip.minZ() - Seal.REACH;
@@ -1293,7 +1784,312 @@ public final class HollowShape implements Shape {
 		openWay(w);
 		// 5. The high opening and the pool under it.
 		openWindow(w);
+		// 6. Version 3: the summit cut, the piece hanging under it and its light; the foot.
+		if (summit != null) {
+			summitCut(w, caps);
+		}
+		if (foot != null) {
+			deadSlope(w);
+		}
 	}
+
+	/** The summit's blocks over the cut in the clip's part of its square, column by column from the cut up (version 3). */
+	private BlockState @Nullable [][] caps(Writer w) {
+		Summit s = summit;
+		if (s == null || !s.hasPiece()) {
+			return null;
+		}
+		BoundingBox clip = w.clip();
+		BlockState[][] out = new BlockState[256][];
+		int hi = Math.min(clip.maxY(), s.top() + SUMMIT_ABOVE);
+		for (int x = Math.max(s.minX(), clip.minX()); x <= Math.min(s.minX() + 15, clip.maxX()); x++) {
+			for (int z = Math.max(s.minZ(), clip.minZ()); z <= Math.min(s.minZ() + 15, clip.maxZ()); z++) {
+				int last = -1;
+				BlockState[] column = new BlockState[Math.max(0, hi - s.cut())];
+				for (int i = 0; i < column.length; i++) {
+					column[i] = w.get(x, s.cut() + 1 + i, z);
+					if (!column[i].isAir()) {
+						last = i;
+					}
+				}
+				out[(x - s.minX()) * 16 + z - s.minZ()] = java.util.Arrays.copyOf(column, last + 1);
+			}
+		}
+		return out;
+	}
+
+	/**
+	 * Version 3's summit (R3-3): every block of the square over the cut goes (a flat square in the peak); where the land
+	 * round it stands more than {@value Fault#MAX_FACE} over the cut, a lip on its top (D-097.7); and what was cut hangs
+	 * in the inside under it upside down, its top face down, each column as it stood (the loose things it held left
+	 * out), never more than {@link Summit#pieceHeight} deep; under it the lighting fault on its own 3-block grid: from the
+	 * floor a lit square overhead in the black.
+	 */
+	private void summitCut(Writer w, BlockState @Nullable [][] caps) {
+		Summit s = summit;
+		if (s == null) {
+			return;
+		}
+		BoundingBox clip = w.clip();
+		// The bite: the square (version 3), or the square and its neighbour (version 4 where one qualifies).
+		BoundingBox b = s.bite();
+		Fault.cut(w, new BoundingBox(b.minX(), s.cut() + 1, b.minZ(), b.maxX(), s.top() + SUMMIT_ABOVE, b.maxZ()), s.cut());
+		// The ring round the bite: a lip where the land stands over the cut by more than a step.
+		for (int x = b.minX() - 1; x <= b.maxX() + 1; x++) {
+			for (int z = b.minZ() - 1; z <= b.maxZ() + 1; z++) {
+				boolean ring = x == b.minX() - 1 || x == b.maxX() + 1 || z == b.minZ() - 1 || z == b.maxZ() + 1;
+				if (!ring || !w.inside(x, s.cut(), z)) {
+					continue;
+				}
+				int from = Math.min(clip.maxY(), s.top() + SUMMIT_ABOVE);
+				int top = landTop(w, x, z, from, s.cut());
+				if (top - s.cut() <= Fault.MAX_FACE || !w.inside(x, top + 1, z)) {
+					continue;
+				}
+				// A block over the land coming down to it from outside (a slope rising away needs more than one).
+				int out = top;
+				for (int dx = -1; dx <= 1; dx++) {
+					for (int dz = -1; dz <= 1; dz++) {
+						int ox = x + dx;
+						int oz = z + dz;
+						boolean ring2 = Math.max(Math.max(b.minX() - ox, ox - b.maxX()), Math.max(b.minZ() - oz, oz - b.maxZ())) == 2;
+						if (ring2) {
+							out = Math.max(out, landTop(w, ox, oz, from, s.cut()));
+						}
+					}
+				}
+				lip(w, x, z, top, Math.min(out + 1, top + 3));
+			}
+		}
+		if (version >= 4) {
+			biteLights(w, s, b);
+		}
+		if (caps == null) {
+			return;
+		}
+		// The piece, upside down, and its light under it.
+		for (int x = Math.max(s.minX(), clip.minX()); x <= Math.min(s.minX() + 15, clip.maxX()); x++) {
+			for (int z = Math.max(s.minZ(), clip.minZ()); z <= Math.min(s.minZ() + 15, clip.maxZ()); z++) {
+				BlockState[] column = caps[(x - s.minX()) * 16 + z - s.minZ()];
+				if (column == null) {
+					continue;
+				}
+				int lowest = Integer.MAX_VALUE;
+				for (int i = s.pieceSkip(); i < Math.min(column.length, s.pieceSkip() + s.pieceHeight()); i++) {
+					BlockState state = pieceState(column[i]);
+					int y = s.pieceTop() - (i - s.pieceSkip());
+					if (!state.isAir() && w.get(x, y, z).isAir()) {
+						w.set(x, y, z, state);
+						lowest = Math.min(lowest, y);
+					}
+				}
+				boolean onGrid = Math.floorMod(x - s.minX() - Fault.INSET, Fault.GRID) == 0 && Math.floorMod(z - s.minZ() - Fault.INSET, Fault.GRID) == 0;
+				if (onGrid && lowest != Integer.MAX_VALUE && w.get(x, lowest - 1, z).isAir()) {
+					w.set(x, lowest - 1, z, Fault.lightOf(PIECE_LIGHT, false));
+				}
+			}
+		}
+	}
+
+	/**
+	 * Version 4 (FIX-R3-B, R3A-2): the bite lit as at noon for nobody, its floor and its faces: a lit chunk-shaped notch high
+	 * on the mountain, over the trees and the near hills (a square at the mountain's foot never rises over them), the
+	 * hollow's sign at night from the ground and from the air. The faces' lights stand in the bite's edge columns against
+	 * the land outside, on the fault's grid along each side and up it, from {@value #FACE_FROM} over the floor to under the
+	 * land's top outside (the noise's, so every chunk lights its own part alike).
+	 */
+	private void biteLights(Writer w, Summit s, BoundingBox b) {
+		Fault.light(w, new BoundingBox(b.minX(), s.cut(), b.minZ(), b.maxX(), s.cut() + 1, b.maxZ()), s.cut() + 1);
+		BoundingBox clip = w.clip();
+		for (int x = Math.max(b.minX(), clip.minX()); x <= Math.min(b.maxX(), clip.maxX()); x++) {
+			for (int z = Math.max(b.minZ(), clip.minZ()); z <= Math.min(b.maxZ(), clip.maxZ()); z++) {
+				for (int side = 0; side < 2; side++) {
+					boolean westEast = side == 0;
+					if (westEast ? x != b.minX() && x != b.maxX() : z != b.minZ() && z != b.maxZ()) {
+						continue;
+					}
+					int along = westEast ? z - b.minZ() : x - b.minX();
+					int span = westEast ? b.getZSpan() : b.getXSpan();
+					if (Math.floorMod(along - Fault.INSET, Fault.GRID) != 0 || along > span - 1 - Fault.INSET) {
+						continue;
+					}
+					int ox = westEast ? (x == b.minX() ? x - 1 : x + 1) : x;
+					int oz = westEast ? z : (z == b.minZ() ? z - 1 : z + 1);
+					int land = w.ground(ox, oz);
+					for (int y = s.cut() + 1 + FACE_FROM; y <= land - 1; y += Fault.GRID) {
+						if (w.inside(x, y, z) && w.get(x, y, z).isAir()) {
+							w.set(x, y, z, Fault.lightOf(Fault.LEVEL, false));
+						}
+					}
+				}
+			}
+		}
+	}
+
+	/**
+	 * A lip on a column's top at {@code top} up to {@code lipTop} (at least a block): its own top's material (grass over
+	 * dirt, sandstone for sand, stone for anything loose), into air, plants, snow or leaves only.
+	 */
+	private static void lip(Writer w, int x, int z, int top, int lipTop) {
+		BlockState under = w.get(x, top, z);
+		BlockState fill;
+		BlockState cap;
+		if (under.is(Blocks.GRASS_BLOCK) || under.is(Blocks.PODZOL) || under.is(Blocks.MYCELIUM)) {
+			fill = DIRT;
+			cap = under.getBlock().defaultBlockState();
+			w.set(x, top, z, DIRT);
+		} else if (under.is(Blocks.SAND) || under.is(Blocks.SANDSTONE)) {
+			fill = cap = Blocks.SANDSTONE.defaultBlockState();
+		} else if (under.is(Blocks.RED_SAND) || under.is(Blocks.RED_SANDSTONE)) {
+			fill = cap = Blocks.RED_SANDSTONE.defaultBlockState();
+		} else {
+			fill = cap = Draw.solidGround(under) ? under : STONE;
+		}
+		for (int y = top + 1; y <= Math.max(top + 1, lipTop); y++) {
+			BlockState here = w.get(x, y, z);
+			if (here.isAir() || Vegetation.isPlant(here) || Vegetation.isSnowLayer(here) || here.is(net.minecraft.tags.BlockTags.LEAVES)) {
+				w.set(x, y, z, y == Math.max(top + 1, lipTop) ? cap : fill);
+			}
+		}
+	}
+
+	/** The land's top block of a column as the writer sees it (never a tree, a plant or snow on it), from {@code from} down to {@code to}; {@code to - 1} if none. */
+	private static int landTop(Writer w, int x, int z, int from, int to) {
+		for (int y = from; y >= to; y--) {
+			BlockState state = w.get(x, y, z);
+			if (state.isSolid() && state.getFluidState().isEmpty() && !state.is(net.minecraft.tags.BlockTags.LOGS) && !state.is(net.minecraft.tags.BlockTags.LEAVES)) {
+				return y;
+			}
+		}
+		return to - 1;
+	}
+
+	/** The piece's light (level). */
+	static final int PIECE_LIGHT = 15;
+
+	/**
+	 * What a block of the summit is in the piece: plants, snow on the ground and anything that would fall left out
+	 * (sand as sandstone, the rest as stone), leaves kept for good.
+	 */
+	public static BlockState pieceState(BlockState state) {
+		if (state.isAir() || Vegetation.isPlant(state) || Vegetation.isSnowLayer(state) || !state.getFluidState().isEmpty()) {
+			return AIR;
+		}
+		if (state.getBlock() instanceof FallingBlock) {
+			return state.is(Blocks.SAND) ? Blocks.SANDSTONE.defaultBlockState() : state.is(Blocks.RED_SAND) ? Blocks.RED_SANDSTONE.defaultBlockState() : STONE;
+		}
+		if (state.hasProperty(net.minecraft.world.level.block.LeavesBlock.PERSISTENT)) {
+			return state.setValue(net.minecraft.world.level.block.LeavesBlock.PERSISTENT, true);
+		}
+		return state;
+	}
+
+	/**
+	 * Version 3's foot (R3-3): the chunk the way in opens in, dead slope (its top a mix of coarse dirt and gravel, gravel
+	 * only on something solid; plants, snow and trees gone) under the lighting fault, so at night a lit square stands at
+	 * the mountain's foot with the way in black in it.
+	 */
+	private void deadSlope(Writer w) {
+		BoundingBox f = foot;
+		if (f == null) {
+			return;
+		}
+		BoundingBox clip = w.clip();
+		int hi = Math.min(clip.maxY(), f.maxY() + 24);
+		for (int x = Math.max(f.minX(), clip.minX()); x <= Math.min(f.maxX(), clip.maxX()); x++) {
+			for (int z = Math.max(f.minZ(), clip.minZ()); z <= Math.min(f.maxZ(), clip.maxZ()); z++) {
+				int top = Integer.MIN_VALUE;
+				for (int y = hi; y >= Math.max(clip.minY(), f.minY()); y--) {
+					BlockState state = w.get(x, y, z);
+					if (state.isAir()) {
+						continue;
+					}
+					if (Vegetation.isPlant(state) || Vegetation.isSnowLayer(state) || state.is(net.minecraft.tags.BlockTags.LEAVES)
+							|| state.is(net.minecraft.tags.BlockTags.LOGS)) {
+						w.set(x, y, z, AIR);
+						continue;
+					}
+					top = y;
+					break;
+				}
+				if (top == Integer.MIN_VALUE || !w.get(x, top, z).getFluidState().isEmpty()) {
+					continue;
+				}
+				BlockState state = w.get(x, top, z);
+				if (DEAD_SLOPE_TURNS.test(state)) {
+					boolean solidUnder = w.get(x, top - 1, z).isSolidRender();
+					boolean gravel = solidUnder && Draw.unit(seed ^ 0xF007L, x, top, z) < 0.6;
+					w.set(x, top, z, gravel ? GRAVEL : version >= 4 ? landStone(state) : COARSE_DIRT);
+				}
+			}
+		}
+		Fault.light(w, new BoundingBox(f.minX(), f.minY(), f.minZ(), f.maxX(), hi, f.maxZ()), hi);
+		if (version >= 4) {
+			footFaces(w, f);
+		}
+	}
+
+	/**
+	 * Version 4's foot in grey (R3A-2): under block light coarse dirt reads brown and dim, gravel and stone pale; so the
+	 * dead slope's top is gravel or the land's own stone (sandstone under sand, terracotta kept), never coarse dirt.
+	 */
+	private static BlockState landStone(BlockState state) {
+		if (state.is(Blocks.STONE) || state.is(Blocks.GRANITE) || state.is(Blocks.DIORITE) || state.is(Blocks.ANDESITE) || state.is(Blocks.CALCITE)
+				|| state.is(Blocks.TUFF) || state.is(Blocks.SANDSTONE) || state.is(Blocks.RED_SANDSTONE) || state.is(net.minecraft.tags.BlockTags.TERRACOTTA)
+				|| state.is(Blocks.TERRACOTTA)) {
+			return state;
+		}
+		if (state.is(Blocks.SAND)) {
+			return Blocks.SANDSTONE.defaultBlockState();
+		}
+		if (state.is(Blocks.RED_SAND)) {
+			return Blocks.RED_SANDSTONE.defaultBlockState();
+		}
+		return STONE;
+	}
+
+	/**
+	 * Version 4 (R3A-2): the lights carried up the slope's faces toward the viewer (a lit square on a slope's foot is
+	 * edge-on from the plain): on the foot's fault grid, where the land up to three blocks back toward the mountain stands
+	 * over the column, a light {@value #FOOT_UP} over its land and another {@value #FOOT_STEP} over that, in front of that land; none within
+	 * {@value #MOUTH_DARK} of the mouth (it stays black). Heights from the noise's land, so every chunk lights its own part
+	 * alike.
+	 */
+	private void footFaces(Writer w, BoundingBox f) {
+		BoundingBox clip = w.clip();
+		BlockPos mouth = way == null ? null : at(way.lane(), yf + 1, way.mouth());
+		int bx = -facing.getStepX();
+		int bz = -facing.getStepZ();
+		for (int x = Math.max(f.minX(), clip.minX()); x <= Math.min(f.maxX(), clip.maxX()); x++) {
+			if (Math.floorMod(x - f.minX() - Fault.INSET, Fault.GRID) != 0 || x > f.maxX() - Fault.INSET) {
+				continue;
+			}
+			for (int z = Math.max(f.minZ(), clip.minZ()); z <= Math.min(f.maxZ(), clip.maxZ()); z++) {
+				if (Math.floorMod(z - f.minZ() - Fault.INSET, Fault.GRID) != 0 || z > f.maxZ() - Fault.INSET) {
+					continue;
+				}
+				if (mouth != null && Math.max(Math.abs(x - mouth.getX()), Math.abs(z - mouth.getZ())) <= MOUTH_DARK + 1) {
+					continue;
+				}
+				int ground = w.ground(x, z);
+				int back = Math.max(Math.max(w.ground(x + bx, z + bz), w.ground(x + 2 * bx, z + 2 * bz)), w.ground(x + 3 * bx, z + 3 * bz));
+				for (int y = ground + FOOT_UP; y <= Math.min(back, ground + FOOT_UP + FOOT_STEP); y += FOOT_STEP) {
+					if (w.inside(x, y, z) && w.get(x, y, z).isAir()) {
+						w.set(x, y, z, Fault.lightOf(Fault.LEVEL, false));
+					}
+				}
+			}
+		}
+	}
+
+	private static final BlockState GRAVEL = Blocks.GRAVEL.defaultBlockState();
+	/** What the foot's top turns from: the land's own surface (never what was built). */
+	private static final java.util.function.Predicate<BlockState> DEAD_SLOPE_TURNS = s -> s.is(Blocks.GRASS_BLOCK) || s.is(Blocks.DIRT)
+			|| s.is(Blocks.PODZOL) || s.is(Blocks.MYCELIUM) || s.is(Blocks.ROOTED_DIRT) || s.is(Blocks.SNOW_BLOCK) || s.is(Blocks.POWDER_SNOW)
+			|| s.is(Blocks.MOSS_BLOCK) || s.is(Blocks.STONE) || s.is(Blocks.GRANITE) || s.is(Blocks.DIORITE) || s.is(Blocks.ANDESITE)
+			|| s.is(Blocks.CALCITE) || s.is(Blocks.TUFF) || s.is(Blocks.SAND) || s.is(Blocks.GRAVEL) || s.is(Blocks.COARSE_DIRT) || s.is(Blocks.PACKED_ICE)
+			|| s.is(Blocks.ICE) || s.is(Blocks.MUD) || s.is(Blocks.SANDSTONE) || s.is(Blocks.RED_SAND) || s.is(Blocks.RED_SANDSTONE) || s.is(Blocks.TERRACOTTA)
+			|| s.is(net.minecraft.tags.BlockTags.TERRACOTTA);
 
 	/** What the seal keeps out of in a column: the inside, and the tunnel but its last three cells (the seal would fill the air in front). */
 	private long sealRange(int x, int z, long column) {

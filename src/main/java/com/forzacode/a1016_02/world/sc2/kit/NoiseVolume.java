@@ -61,6 +61,77 @@ public final class NoiseVolume {
 	}
 
 	/**
+	 * FIX-R3-17: the grounds and surfaces (the top block the generator's {@code getBaseHeight} counts, as it gives them,
+	 * less 1; {@code minY - 1} for none) of the {@code sx} by {@code sz} columns from ({@code x0}, {@code z0}), indexed
+	 * {@code x + z * sx}: the noise read from its top down, first to 16 under the sea, then the rest only if a column has
+	 * no ground yet. The same numbers as a whole read for a fraction of it (nothing under the land is read).
+	 *
+	 * @param minY   the noise's lowest block in this level
+	 * @param height the noise's height in this level (as the generator clamps it)
+	 */
+	public static int[][] heights(NoiseBasedChunkGenerator generator, RandomState random, int x0, int z0, int sx, int sz, int minY, int height) {
+		NoiseGeneratorSettings settings = generator.generatorSettings().value();
+		int cell = 16; // the volume split on a section line from the noise's bottom (a whole number of the noise's cells)
+		int n = sx * sz;
+		int[] ground = new int[n];
+		int[] surface = new int[n];
+		java.util.Arrays.fill(ground, minY - 1);
+		java.util.Arrays.fill(surface, minY - 1);
+		boolean[] done = new boolean[n];
+		boolean[] wet = new boolean[n];
+		java.util.function.Predicate<BlockState> solid = net.minecraft.world.level.levelgen.Heightmap.Types.OCEAN_FLOOR_WG.isOpaque();
+		java.util.function.Predicate<BlockState> filled = net.minecraft.world.level.levelgen.Heightmap.Types.WORLD_SURFACE_WG.isOpaque();
+		// The few states the noise gives (stone, air, water, lava), each tested once: bit 1 solid, bit 2 filled.
+		java.util.IdentityHashMap<BlockState, Integer> kinds = new java.util.IdentityHashMap<>();
+		BlockState stone = settings.defaultBlock();
+		int top = minY + height - 1;
+		int split = Math.clamp(settings.seaLevel() - 16, minY, top);
+		split = minY + Math.floorDiv(split - minY, cell) * cell;
+		int left = n;
+		int hi = top;
+		int lo = split;
+		while (left > 0 && hi >= minY) {
+			int sy = hi - lo + 1;
+			DensityVolume volume = new DensityVolume(sx, sy, sz, x0, lo, z0);
+			try (NoiseChunk chunk = new NoiseChunk(random, null, settings, fluids(settings), Blender.empty(), volume)) {
+				Aquifer aquifer = chunk.aquifer();
+				DensitySampler.Bound density = chunk.cachingSamplers().get(settings.noiseRouter().finalDensity());
+				try (ScopedDensityBuffer buffer = density.sampleVolume(volume)) {
+					for (int z = 0; z < sz; z++) {
+						for (int x = 0; x < sx; x++) {
+							int i = x + z * sx;
+							if (done[i]) {
+								continue;
+							}
+							// From the top down, as the generator reads a column, only until its ground.
+							for (int y = sy - 1; y >= 0; y--) {
+								BlockState state = aquifer.computeSubstance(x0 + x, lo + y, z0 + z, buffer.get(volume.indexUnchecked(x, y, z)));
+								if (state == null) {
+									state = stone;
+								}
+								int kind = kinds.computeIfAbsent(state, b -> (solid.test(b) ? 1 : 0) | (filled.test(b) ? 2 : 0));
+								if (!wet[i] && (kind & 2) != 0) {
+									surface[i] = lo + y;
+									wet[i] = true;
+								}
+								if ((kind & 1) != 0) {
+									ground[i] = lo + y;
+									done[i] = true;
+									left--;
+									break;
+								}
+							}
+						}
+					}
+				}
+			}
+			hi = lo - 1;
+			lo = minY;
+		}
+		return new int[][] {ground, surface};
+	}
+
+	/**
 	 * The noise's blocks from {@code minY} to {@code maxY} as an overlay's base, one chunk's volume made the first time a
 	 * cell of it is read (air above, the generator's default block below the range). One thread.
 	 */

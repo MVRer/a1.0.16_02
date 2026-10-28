@@ -25,6 +25,7 @@ import com.forzacode.a1016_02.world.sc2.s18.S18;
 import com.forzacode.a1016_02.world.sc2.s19.S19;
 import com.forzacode.a1016_02.world.sc2.s20.S20;
 import com.forzacode.a1016_02.world.sc2.s28.S28;
+import com.forzacode.a1016_02.world.sc2.s32.S32;
 
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerChunkEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
@@ -40,7 +41,8 @@ import net.minecraft.server.MinecraftServer;
  * registry types ({@code world/sc2} structure, {@code world/sc2p} piece, {@code world/sc2r} placement), the remains
  * service, the snapshot, the guard against later worldgen ({@link Guard}), the recorder's drain, the visits, the
  * answers and their switch, the dev-only demo kind, and
- * each feature's own init ({@code S16} to {@code S20}, {@code S28}: one line each, so no two tasks touch one file).
+ * each feature's own init ({@code S16} to {@code S20}, {@code S28}, round 3's {@code S32}: one line each, so no two tasks
+ * touch one file).
  */
 public final class WorldSc2 {
 	private WorldSc2() {
@@ -86,6 +88,7 @@ public final class WorldSc2 {
 		S19.init();
 		S20.init();
 		S28.init();
+		S32.init();
 	}
 
 	/** The demo kinds to register: {@code k0} in a development environment, none otherwise. */

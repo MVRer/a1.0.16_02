@@ -199,6 +199,54 @@ public final class DirectorImpl implements Director {
 		return DirectorData.get(server).memory().find(player).map(m -> GameClock.dayTicks(server) < m.quietUntilDayTicks()).orElse(false);
 	}
 
+	/**
+	 * R3-P (D-119): never in the player's own first hour of play (principle 6, as the kit's answers), then outside their
+	 * wave gap ({@link #inWaveGap}; none while the layer's pacing is off); always for a player the director keeps no
+	 * pacing for (it paces nothing of theirs).
+	 */
+	@Override
+	public boolean waveMomentMay(MinecraftServer server, UUID player) {
+		DirectorRules rules = rules(server);
+		long play = GameClock.playTicks(server, player);
+		return waveMomentMay(DirectorData.get(server).memory().find(player).orElse(null), play, rules.hourTicks, rules.groupGap);
+	}
+
+	/** {@link #waveMomentMay(MinecraftServer, UUID)} over this pacing (null: none kept) at {@code playTicks} of their play. */
+	static boolean waveMomentMay(@Nullable PacingMemory pacing, long playTicks, long hourTicks, long groupGap) {
+		return pacing == null || playTicks >= hourTicks && !inWaveGap(pacing, playTicks, groupGap);
+	}
+
+	/** R3-P (D-119): {@link #waveMoment(DirectorMemory, UUID, long, long)} into the live memory, saved. */
+	@Override
+	public void waveMoment(MinecraftServer server, UUID player) {
+		DirectorData data = DirectorData.get(server);
+		if (waveMoment(data.memory(), player, GameClock.playTicks(server, player), rules(server).groupGap)) {
+			data.setDirty();
+		}
+	}
+
+	/**
+	 * One of the second wave's moments that is no card (32b, 32c, a visit's answers below a pyramid's pit) came to this
+	 * player at {@code playTicks} of their play: it starts their wave gap, as a group card's fire or felt moment does
+	 * ({@code PacingMemory.lastGroup}). Nothing while the layer's pacing keeps no gap or the director keeps no pacing for
+	 * them.
+	 *
+	 * @return true if their gap started
+	 */
+	static boolean waveMoment(DirectorMemory memory, UUID player, long playTicks, long groupGap) {
+		Optional<PacingMemory> pacing = memory.find(player);
+		if (groupGap <= 0 || pacing.isEmpty()) {
+			return false;
+		}
+		pacing.get().lastGroup = playTicks;
+		return true;
+	}
+
+	/** True inside the player's wave gap: one of the wave's moments reached them less than {@code groupGap} of play ago. */
+	static boolean inWaveGap(PacingMemory pacing, long playTicks, long groupGap) {
+		return groupGap > 0 && playTicks - pacing.lastGroup < groupGap;
+	}
+
 	@Override
 	public List<String> debugLines(MinecraftServer server) {
 		return DirectorDebug.stateLines(this, server);
@@ -280,15 +328,17 @@ public final class DirectorImpl implements Director {
 	/**
 	 * The places' factor where this player stands now, on their own pacing (1 while the layer is off or the story is
 	 * quiet): their places, the trusted chunk, and 01+ (docs/SELF_CREATED_2.md) at least {@code remainsFactor} at one of
-	 * his places ({@link #atRemains}).
+	 * his places ({@link #remainsFactorHere}: only while they are awake).
 	 */
 	static double placeFactor(MinecraftServer server, ServerPlayer player, PacingMemory pacing) {
 		if (!SelfCreated.enabled() || Places.storyQuiet(HerobrineState.get(server))) {
 			return 1.0;
 		}
 		Sc01Config cfg = Sc01Config.get();
+		Remains remains = Services.remains();
+		boolean atRemains = remainsFactorHere(remains.asleep(server), remains, player.level(), player.blockPosition(), cfg.radius);
 		return Places.factor(pacing.places(), player.level().dimension(), player.blockPosition(), GameClock.playTicks(server, player.getUUID()),
-				GameClock.dayTicks(server), Math.max(1, ModConfig.realTicks(3600)), atRemains(player.level(), player.blockPosition(), cfg.radius), cfg);
+				GameClock.dayTicks(server), Math.max(1, ModConfig.realTicks(3600)), atRemains, cfg);
 	}
 
 	/**
@@ -298,6 +348,14 @@ public final class DirectorImpl implements Director {
 	 */
 	public static boolean atRemains(ServerLevel level, BlockPos pos, int reach) {
 		return atRemains(Services.remains(), level, pos, reach);
+	}
+
+	/**
+	 * 01+ applies here: his places are awake ({@code asleep} null: D-108, R3-P; they stand from the world's creation and
+	 * sleep until Traces, giving no factor while they sleep) and {@code pos} is at one of them ({@link #atRemains}).
+	 */
+	public static boolean remainsFactorHere(@Nullable String asleep, Remains remains, ServerLevel level, BlockPos pos, int reach) {
+		return asleep == null && atRemains(remains, level, pos, reach);
 	}
 
 	/** {@link #atRemains(ServerLevel, BlockPos, int)} over these places (tests). */
@@ -322,13 +380,24 @@ public final class DirectorImpl implements Director {
 	 *
 	 * @return true if a place was remembered
 	 */
-	boolean onAnswered(ServerLevel level, Remains.Place place, UUID player) {
-		DirectorData data = DirectorData.get(level.getServer());
+	boolean onAnswered(ServerLevel level, Remains.Place place, String answer, UUID player) {
+		MinecraftServer server = level.getServer();
+		DirectorData data = DirectorData.get(server);
 		boolean remembered = rememberAnswer(level, data.memory(), place, player);
-		if (remembered) {
+		boolean moment = SelfCreated.enabled() && !Places.storyQuiet(HerobrineState.get(server)) && belowThePit(answer)
+				&& waveMoment(data.memory(), player, GameClock.playTicks(server, player), rules(server).groupGap);
+		if (remembered || moment) {
 			data.setDirty();
 		}
 		return remembered;
+	}
+
+	/**
+	 * R3-P (D-119): an answer below a pyramid's pit (33's: {@code "33b"} to {@code "33f"}). One visit's answers there count
+	 * as one of the wave's moments: each starts the player's wave gap again, so the gap runs from the visit's last.
+	 */
+	static boolean belowThePit(@Nullable String answer) {
+		return answer != null && answer.startsWith("33");
 	}
 
 	/** {@link #onAnswered} into this memory (tests: a memory of their own). */

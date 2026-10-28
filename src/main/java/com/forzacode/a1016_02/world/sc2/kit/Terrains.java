@@ -37,6 +37,38 @@ public final class Terrains {
 	private Terrains() {
 	}
 
+	/** Tests and the dev survey only: this thread's time in the noise's reads (ns), while {@link #timing} is on. */
+	private static final ThreadLocal<long[]> SPENT = ThreadLocal.withInitial(() -> new long[4]);
+	private static volatile boolean timing;
+
+	/** Tests and the dev survey only: counts the time this thread spends reading the noise (off by default). */
+	public static void timing(boolean on) {
+		timing = on;
+	}
+
+	/** Tests and the dev survey only: this thread's time in the noise's reads so far (ns), while {@link #timing} was on. */
+	public static long spent() {
+		return SPENT.get()[0];
+	}
+
+	/** Tests and the dev survey only: this thread's reads so far while {@link #timing} was on (columns, 4 x 4s, chunks). */
+	public static long[] reads() {
+		long[] s = SPENT.get();
+		return new long[] {s[1], s[2], s[3]};
+	}
+
+	/**
+	 * A column's ground ({@code surface} false) or surface for a {@link Writer} filling {@code clipColumns} columns of this
+	 * column's chunk: over the noise, a chunk the writer fills half of or more is read whole at its first unknown column
+	 * (the fill will ask most of them); any other terrain answers as it does.
+	 */
+	static int height(Terrain terrain, int x, int z, boolean surface, int clipColumns) {
+		if (terrain instanceof Noise noise) {
+			return noise.height(x, z, surface ? 256 : 0, surface ? Heightmap.Types.WORLD_SURFACE_WG : Heightmap.Types.OCEAN_FLOOR_WG, clipColumns >= 128);
+		}
+		return surface ? terrain.surface(x, z) : terrain.ground(x, z);
+	}
+
 	/** The noise of this generator (thread-safe; nothing is loaded or generated). */
 	public static Terrain noise(ChunkGenerator generator, RandomState randomState, LevelHeightAccessor height) {
 		return new Noise(generator, randomState, height.getMinY(), height.getMaxY(), height);
@@ -53,6 +85,21 @@ public final class Terrains {
 	 */
 	public static @Nullable Object identity(Terrain terrain) {
 		return terrain instanceof Noise noise ? noise.owner : null;
+	}
+
+	/**
+	 * The noise a terrain reads, for a kind that reads the noise's density itself (R3-3: the hollow's land top a volume at
+	 * a time), or null for a terrain that is not the noise (the gallery's and tests' own, the live level).
+	 *
+	 * @param minY   the noise's lowest block in this level
+	 * @param height the noise's height in this level (as the generator clamps it)
+	 */
+	public record NoiseLand(NoiseBasedChunkGenerator generator, RandomState random, int minY, int height) {
+	}
+
+	/** {@link NoiseLand} of this terrain, or null. */
+	public static @Nullable NoiseLand noiseLand(Terrain terrain) {
+		return terrain instanceof Noise noise && noise.noise != null ? new NoiseLand(noise.noise, noise.randomState, noise.noiseMinY, noise.noiseHeight) : null;
 	}
 
 	/** The level's blocks, each column remembered the first time it is asked (gallery and tests only, server thread). */
@@ -94,6 +141,52 @@ public final class Terrains {
 			@Nullable Column last;
 			final Long2ObjectLinkedOpenHashMap<Dense> dense = new Long2ObjectLinkedOpenHashMap<>();
 			final Long2IntOpenHashMap asks = new Long2IntOpenHashMap();
+			/** The shared heights last asked on this thread, and its chunk. */
+			@Nullable Columns columns;
+			long columnsKey;
+		}
+
+		/** A column not computed yet. */
+		static final int UNKNOWN = Integer.MIN_VALUE;
+		/**
+		 * A quarter of a quarter's (4 x 4 columns) first columns computed one at a time (in CPU time a column's height costs
+		 * about 0.06 ms, the 4 x 4's heights 0.6, the chunk's 5; FIX-R3-17's measure).
+		 */
+		static final int SINGLE = 6;
+		/** A chunk with this many of its 16 quarters of quarters read is read whole. */
+		static final int QUADS_WHOLE = 3;
+		/** Chunks' heights kept per land (about 2 KB each), all threads together; past it the land starts again. */
+		static final int LAND_KEPT = 4096;
+		/** Lands kept (a level's noise, a test's); the oldest goes first. */
+		static final int LANDS_KEPT = 6;
+
+		/** One chunk's grounds (0 to 255) and surfaces (256 to 511) as far as computed, for every thread (FIX-R3-17). */
+		static final class Columns {
+			final java.util.concurrent.atomic.AtomicIntegerArray values = new java.util.concurrent.atomic.AtomicIntegerArray(512);
+			/** The columns computed one at a time in each 4 x 4. */
+			final java.util.concurrent.atomic.AtomicIntegerArray asked = new java.util.concurrent.atomic.AtomicIntegerArray(16);
+			/** The 4 x 4 quarters read (a bit each). */
+			final java.util.concurrent.atomic.AtomicInteger quads = new java.util.concurrent.atomic.AtomicInteger();
+
+			Columns() {
+				for (int i = 0; i < 512; i++) {
+					values.set(i, UNKNOWN);
+				}
+			}
+		}
+
+		/** Every land's shared heights, by its owner (the last {@value #LANDS_KEPT}). */
+		private static final java.util.Map<Owner, java.util.concurrent.ConcurrentHashMap<Long, Columns>> LANDS = new java.util.LinkedHashMap<>(16, 0.75f, true) {
+			@Override
+			protected boolean removeEldestEntry(java.util.Map.Entry<Owner, java.util.concurrent.ConcurrentHashMap<Long, Columns>> eldest) {
+				return size() > LANDS_KEPT;
+			}
+		};
+
+		private static java.util.concurrent.ConcurrentHashMap<Long, Columns> land(Owner owner) {
+			synchronized (LANDS) {
+				return LANDS.computeIfAbsent(owner, o -> new java.util.concurrent.ConcurrentHashMap<>());
+			}
 		}
 
 		private static final ThreadLocal<Cache> CACHE = ThreadLocal.withInitial(Cache::new);
@@ -104,6 +197,8 @@ public final class Terrains {
 		private final int maxY;
 		private final LevelHeightAccessor height;
 		private final Owner owner;
+		/** This land's shared heights. */
+		private final java.util.concurrent.ConcurrentHashMap<Long, Columns> lands;
 		private final @Nullable NoiseBasedChunkGenerator noise;
 		/** The noise's own height in this level (as the generator clamps it to the level). */
 		private final int noiseMinY;
@@ -116,6 +211,7 @@ public final class Terrains {
 			this.maxY = maxY;
 			this.height = LevelHeightAccessor.create(minY, height.getHeight());
 			this.owner = new Owner(generator, randomState, minY, maxY);
+			this.lands = land(owner);
 			if (generator instanceof NoiseBasedChunkGenerator noiseBased) {
 				NoiseSettings settings = noiseBased.generatorSettings().value().noiseSettings().clampToHeightAccessor(this.height);
 				this.noise = settings.height() > 0 ? noiseBased : null;
@@ -137,6 +233,7 @@ public final class Terrains {
 				c.last = null;
 				c.dense.clear();
 				c.asks.clear();
+				c.columns = null;
 			}
 			return c;
 		}
@@ -207,21 +304,103 @@ public final class Terrains {
 
 		@Override
 		public int ground(int x, int z) {
-			Dense d = dense(x, z);
-			if (d != null) {
-				return d.ground()[(x & 15) + (z & 15) * 16];
-			}
-			return generator.getBaseHeight(x, z, Heightmap.Types.OCEAN_FLOOR_WG, height, randomState) - 1;
+			return height(x, z, 0, Heightmap.Types.OCEAN_FLOOR_WG, false);
 		}
 
 		@Override
 		public int surface(int x, int z) {
-			Dense d = dense(x, z);
-			if (d != null) {
-				return d.surface()[(x & 15) + (z & 15) * 16];
-			}
-			return generator.getBaseHeight(x, z, Heightmap.Types.WORLD_SURFACE_WG, height, randomState) - 1;
+			return height(x, z, 256, Heightmap.Types.WORLD_SURFACE_WG, false);
 		}
+
+		/**
+		 * A column's ground ({@code at} 0) or surface (256) from the land's shared heights (FIX-R3-17): computed once for
+		 * every thread and every start. In each quarter of a quarter (4 x 4 columns) the first {@value #SINGLE} as the
+		 * generator reads them ({@code getBaseHeight}: a strip along a chunk's edge, as a neighbour's fill asks, stays a
+		 * column at a time), then the quarter of a quarter at once; the whole chunk once {@value #QUADS_WHOLE} of those
+		 * were read or when a writer fills half of it or more ({@code whole}); each read over the land only
+		 * ({@link NoiseVolume#heights}). The same numbers every way (the test
+		 * {@code theNoiseTerrainReadWholeAnswersAsColumnByColumn}).
+		 */
+		int height(int x, int z, int at, Heightmap.Types type, boolean whole) {
+			if (!timing) {
+				return heightNow(x, z, at, type, whole);
+			}
+			long t0 = System.nanoTime();
+			try {
+				return heightNow(x, z, at, type, whole);
+			} finally {
+				SPENT.get()[0] += System.nanoTime() - t0;
+			}
+		}
+
+		private int heightNow(int x, int z, int at, Heightmap.Types type, boolean whole) {
+			if (noise == null) {
+				return generator.getBaseHeight(x, z, type, height, randomState) - 1;
+			}
+			Columns c = columns(x, z);
+			int k = at + (x & 15) + (z & 15) * 16;
+			int v = c.values.get(k);
+			if (v != UNKNOWN) {
+				return v;
+			}
+			if (whole || Integer.bitCount(c.quads.get()) >= QUADS_WHOLE) {
+				count(3);
+				read(c, x & ~15, z & ~15, 16);
+				return c.values.get(k);
+			}
+			int quad = ((x & 15) >> 2) + ((z & 15) >> 2) * 4;
+			if (c.asked.incrementAndGet(quad) > SINGLE) {
+				count(2);
+				read(c, x & ~3, z & ~3, 4);
+				c.quads.getAndUpdate(q -> q | 1 << quad);
+				return c.values.get(k);
+			}
+			count(1);
+			v = generator.getBaseHeight(x, z, type, height, randomState) - 1;
+			c.values.set(k, v);
+			return v;
+		}
+
+		private static void count(int what) {
+			if (timing) {
+				SPENT.get()[what]++;
+			}
+		}
+
+		/** Reads {@code side} by {@code side} columns from ({@code x0}, {@code z0}) into a chunk's heights. */
+		private void read(Columns c, int x0, int z0, int side) {
+			int[][] h = NoiseVolume.heights(noise, randomState, x0, z0, side, side, noiseMinY, noiseHeight);
+			for (int dz = 0; dz < side; dz++) {
+				for (int dx = 0; dx < side; dx++) {
+					int k = ((x0 + dx) & 15) + ((z0 + dz) & 15) * 16;
+					int g = h[0][dx + dz * side];
+					int t = h[1][dx + dz * side];
+					// None in the noise: the level's lowest less one, as getBaseHeight answers.
+					c.values.set(k, g < noiseMinY ? minY - 1 : g);
+					c.values.set(256 + k, t < noiseMinY ? minY - 1 : t);
+				}
+			}
+		}
+
+		/** The shared heights of this column's chunk (this thread's last one first). */
+		private Columns columns(int x, int z) {
+			Cache cache = cache();
+			long key = ChunkPos.pack(x >> 4, z >> 4);
+			if (cache.columns != null && cache.columnsKey == key) {
+				return cache.columns;
+			}
+			Columns c = lands.get(key);
+			if (c == null) {
+				if (lands.size() > LAND_KEPT) {
+					lands.clear();
+				}
+				c = lands.computeIfAbsent(key, k -> new Columns());
+			}
+			cache.columns = c;
+			cache.columnsKey = key;
+			return c;
+		}
+
 
 		@Override
 		public Holder<Biome> biome(int x, int y, int z) {
@@ -234,6 +413,18 @@ public final class Terrains {
 
 		@Override
 		public BlockState block(int x, int y, int z) {
+			if (!timing) {
+				return blockNow(x, y, z);
+			}
+			long t0 = System.nanoTime();
+			try {
+				return blockNow(x, y, z);
+			} finally {
+				SPENT.get()[0] += System.nanoTime() - t0;
+			}
+		}
+
+		private BlockState blockNow(int x, int y, int z) {
 			if (y < minY || y > maxY) {
 				return Blocks.AIR.defaultBlockState();
 			}

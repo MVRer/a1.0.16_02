@@ -18,6 +18,7 @@ import com.forzacode.a1016_02.world.live.NewScarPlacer;
 import com.forzacode.a1016_02.world.sc2.kit.Answers;
 import com.forzacode.a1016_02.world.sc2.kit.Draw;
 import com.forzacode.a1016_02.world.sc2.kit.Sc2Data;
+import com.forzacode.a1016_02.world.sc2.kit.Visits;
 
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.MinecraftServer;
@@ -33,12 +34,15 @@ import net.minecraft.world.phys.Vec3;
 import org.jspecify.annotations.Nullable;
 
 /**
- * The archive's rules and answers at runtime (docs/SELF_CREATED_2.md, feature 17): once a second, for every archive with
- * someone inside, 17a (records), 17b (the lights, and 31b's glimpse after its fourth unit), and every
- * {@value #SCAN_EVERY} ticks 17d (a marker moved) and 17e (a book of one's own); for every known archive whose way in is
- * loaded, 17c (the other door). Each answer goes through the kit's {@link Answers} (caps, the fair-danger checks, out of
- * view, ledgered) but 17c, which happens to someone outside and keeps the same rules by itself. Session state only; what
- * must last is in the kit's data (visits, counts) and in the blocks. Server thread.
+ * The archive's rules and answers at runtime (docs/SELF_CREATED_2.md, feature 17; docs/SELF_CREATED_2_R3.md, "Answers
+ * (17)" and "The books"): once a second, for every archive with someone inside, 17a (records, R3-B's books), 17g (your
+ * record rewritten, version 3), 17b (the lights, and 31b's glimpse after its fourth unit), 17f (the well goes dark from
+ * above, version 3), and every {@value #SCAN_EVERY} ticks 17d (a marker moved), 17e (a book of one's own) and the day
+ * books in the well (version 3); for every known archive whose way in is loaded, 17c (the other door). Each answer goes
+ * through the kit's {@link Answers} (caps, the fair-danger checks, out of view, ledgered) but 17c, which happens to
+ * someone outside and keeps the same rules by itself; 17a, 17g and the day books are left by others (out of view, never
+ * undone). A creative or spectator player is never inside (D-116). Session state only; what must last is in the kit's
+ * data (visits, counts) and in the blocks (the books carry their own numbers). Server thread. Nothing here logs.
  */
 final class ArchiveRules {
 	static final String DARK = "17b";
@@ -47,6 +51,8 @@ final class ArchiveRules {
 	static final String DARK_CAUSE = S17.CAUSE + "/dark";
 	static final String MARKER_CAUSE = S17.CAUSE + "/marker";
 	static final String BOOK_CAUSE = S17.CAUSE + "/book";
+	static final String WELL = "17f";
+	static final String WELL_CAUSE = S17.CAUSE + "/well";
 	/** How often the rules look (ticks). */
 	static final int EVERY = 20;
 	/** How often markers and books are looked for (ticks). */
@@ -57,6 +63,16 @@ final class ArchiveRules {
 	static final int LIGHTS_MAX = 80;
 	/** 17e: nobody within this of the container. */
 	static final double BOOK_CLEAR = 16.0;
+	/**
+	 * 17f: at most this much glowstone goes in one visit (the fault's light blocks go with their gallery, uncounted). The
+	 * plan's 64 counted the ring's ceiling lights, 16 a gallery: four galleries, past the glimpse's three. As built a lit
+	 * gallery over the land carries 34 (its ceiling, its wall, the open face's points) and the top one 12, so 64 would stop
+	 * at two and the glimpse never come: 128 keeps the plan's four (12 + 3 x 34 = 114), as 17b's {@link #LIGHTS_MAX} kept
+	 * its eight rows.
+	 */
+	static final int WELL_LIGHTS_MAX = 128;
+	/** 17f: the health floor (D-097.3: a closing never happens to a player under 10). */
+	static final float WELL_HEALTH = 10.0F;
 
 	/** The live rules. */
 	static final ArchiveRules LIVE = new ArchiveRules(null);
@@ -101,6 +117,22 @@ final class ArchiveRules {
 		// 17d
 		int markersMoved;
 		final Set<Integer> markedCells = new HashSet<>();
+		// 17g
+		final Set<UUID> nearWall = new HashSet<>();
+		final Set<UUID> rewritten = new HashSet<>();
+		// 17f
+		final Map<UUID, Long> wellSince = new HashMap<>();
+		boolean wellStarted;
+		boolean wellOver;
+		@Nullable UUID wellFor;
+		final Set<Integer> wellDark = new HashSet<>();
+		int wellLightsGone;
+		long wellNextDue;
+		boolean wellGlimpsed;
+		@Nullable String wellWhy;
+		// the day books
+		final Map<Integer, Integer> dayChecked = new HashMap<>();
+		int daysLeft;
 
 		Visit(Remains.Place place, ArchivePlan plan) {
 			this.place = place;
@@ -176,7 +208,7 @@ final class ArchiveRules {
 			if (level == null || plan == null) {
 				continue;
 			}
-			List<ServerPlayer> inside = env.inside().apply(place);
+			List<ServerPlayer> inside = present(env.inside().apply(place));
 			if (!inside.isEmpty()) {
 				String key = key(place);
 				active.add(key);
@@ -186,6 +218,17 @@ final class ArchiveRules {
 			door(env, level, place, plan, data, false);
 		}
 		visits.keySet().retainAll(active);
+	}
+
+	/** Who is inside for the rules: never a creative or spectator player (D-116), nor a dead one. */
+	static List<ServerPlayer> present(List<ServerPlayer> inside) {
+		List<ServerPlayer> out = new ArrayList<>(inside.size());
+		for (ServerPlayer p : inside) {
+			if (!Visits.neverInside(p) && p.isAlive()) {
+				out.add(p);
+			}
+		}
+		return out;
 	}
 
 	private static List<ServerPlayer> alive(List<ServerPlayer> people) {
@@ -247,20 +290,29 @@ final class ArchiveRules {
 			}
 		}
 		records(env, level, visit, inside);
+		rewrite(env, level, visit, inside);
 		dark(env, level, visit, inside, now, false);
+		well(env, level, visit, inside, now, false);
 		if (scan) {
 			markers(env, level, visit, inside);
 			book(env, level, visit, inside);
+			dayBooks(env, level, visit, inside);
 		}
 	}
 
 	// --- 17a ---
 
-	private void records(ArchiveEnv env, ServerLevel level, Visit visit, List<ServerPlayer> inside) {
+	private static Set<UUID> known(ArchiveEnv env) {
 		Set<UUID> known = new HashSet<>();
 		for (HerobrineState.Subject subject : env.known().get()) {
 			known.add(subject.uuid());
 		}
+		return known;
+	}
+
+	private void records(ArchiveEnv env, ServerLevel level, Visit visit, List<ServerPlayer> inside) {
+		Set<UUID> known = known(env);
+		double wrong = env.config().get().wrongLineChance;
 		for (ServerPlayer p : inside) {
 			if (!known.contains(p.getUUID()) || visit.recorded.contains(p.getUUID()) || visit.reachedDais.contains(p.getUUID())) {
 				continue;
@@ -269,8 +321,48 @@ final class ArchiveRules {
 			if (env.playTicks().applyAsLong(p.getUUID()) < Answers.FIRST_HOUR_TICKS) {
 				continue;
 			}
-			if (Records.leave(level, visit.plan, p.getName().getString(), env.traces())) {
+			if (Records.leave(level, visit.plan, p.getUUID(), p.getName().getString(), env.traces(), env.view(), wrong)) {
 				visit.recorded.add(p.getUUID());
+			}
+		}
+	}
+
+	// --- 17g ---
+
+	/**
+	 * Your record, rewritten ({@link Editions}): a known player who stood within {@value Editions#NEAR} of the records wall
+	 * this visit and is now {@value Editions#AWAY} or more from it, past their first hour, has their record rewritten once
+	 * this visit, while every shelf it touches is out of everyone's view (else it is asked again at the next look).
+	 */
+	private void rewrite(ArchiveEnv env, ServerLevel level, Visit visit, List<ServerPlayer> inside) {
+		ArchivePlan plan = visit.plan;
+		if (plan.version < 3) {
+			return;
+		}
+		Set<UUID> known = null;
+		Sc17Config config = env.config().get();
+		for (ServerPlayer p : inside) {
+			UUID uuid = p.getUUID();
+			double from = Editions.fromWall(plan, p.position());
+			if (from <= Editions.NEAR) {
+				visit.nearWall.add(uuid);
+				continue;
+			}
+			if (from < Editions.AWAY || !visit.nearWall.contains(uuid) || visit.rewritten.contains(uuid)) {
+				continue;
+			}
+			if (known == null) {
+				known = known(env);
+			}
+			if (!known.contains(uuid) || env.playTicks().applyAsLong(uuid) < Answers.FIRST_HOUR_TICKS) {
+				continue;
+			}
+			Editions.Plan edit = Editions.plan(level, plan, p.getName().getString(), config.editionsMax);
+			if (edit == null || !env.view().outOfView(level, edit.cells())) {
+				continue;
+			}
+			if (Editions.commit(level, edit, uuid, p.getName().getString(), config.wrongLineChance, env.traces())) {
+				visit.rewritten.add(uuid);
 			}
 		}
 	}
@@ -411,6 +503,144 @@ final class ArchiveRules {
 		float yaw = (float) Math.toDegrees(Math.atan2(-dx, dz));
 		var fired = env.figure().glimpse(player, spot.get(), yaw);
 		A1016_02.LOGGER.debug("[a1016] s2: sc_31b at {} for {}: {}", spot.get(), player.getName().getString(), fired);
+	}
+
+	// --- 17f ---
+
+	/**
+	 * The well goes dark from above: each player's time {@code wellDarkDepth} or more galleries under the ground gallery
+	 * counted; once one has been there {@code wellDarkAfterSeconds}, a gallery's lights go every {@code wellDarkTicks}
+	 * (out of view, through the kit, {@code world:s17/well}: given back by the switch) from the top down
+	 * ({@link WellDark#next}) until nothing more may go or {@value #WELL_LIGHTS_MAX} glowstone went; the glimpse after
+	 * {@code wellGlimpseAfter} galleries. Once per in-game day per archive (the kit's place cap), the health floor
+	 * {@value #WELL_HEALTH} and every other answer rule. {@code force}: start now (the debug's {@code arm}), every other rule
+	 * kept.
+	 */
+	void well(ArchiveEnv env, ServerLevel level, Visit visit, List<ServerPlayer> inside, long now, boolean force) {
+		Well well = visit.plan.well;
+		if (well == null) {
+			return;
+		}
+		Sc17Config config = env.config().get();
+		for (ServerPlayer p : inside) {
+			int g = well.galleryOf(p.blockPosition());
+			if (g != Integer.MIN_VALUE && g <= well.kGround - config.wellDarkDepth) {
+				visit.wellSince.putIfAbsent(p.getUUID(), now);
+			} else {
+				visit.wellSince.remove(p.getUUID());
+			}
+		}
+		if (!visit.wellStarted && !visit.wellOver) {
+			for (ServerPlayer p : inside) {
+				Long since = visit.wellSince.get(p.getUUID());
+				if (since != null && (force || now - since >= config.wellDarkAfterSeconds * 20L)) {
+					visit.wellStarted = true;
+					visit.wellFor = p.getUUID();
+					visit.wellNextDue = now;
+					break;
+				}
+			}
+		}
+		if (!visit.wellStarted || visit.wellOver || now < visit.wellNextDue || env.answers().waiting(visit.place, WELL)) {
+			return;
+		}
+		int k = WellDark.next(level, well, visit.wellDark, feet(inside));
+		if (k == WellDark.NONE || visit.wellLightsGone >= WELL_LIGHTS_MAX) {
+			visit.wellOver = true;
+			visit.wellWhy = k == WellDark.NONE ? "the dark is done" : "at its lights' cap";
+			return;
+		}
+		Answers.Rules rules = Answers.Rules.of(WELL, WELL_CAUSE).perPlaceDay(1).health(WELL_HEALTH);
+		if (!visit.wellDark.isEmpty()) {
+			rules = rules.part();
+		}
+		Answers.Result result = env.answers().submit(level, visit.place, rules, (lvl, place, in) -> {
+			// Asked again now: never a gallery under two over anyone in the well where they stand now.
+			if (!WellDark.clear(well, k, feet(in))) {
+				return null;
+			}
+			List<BlockPos> lights = WellDark.present(lvl, well, k);
+			if (lights.isEmpty()) {
+				return null; // gone already (dug, taken): the next look plans the next one
+			}
+			int glow = WellDark.glowstone(lvl, lights);
+			if (visit.wellLightsGone + glow > WELL_LIGHTS_MAX) {
+				visit.wellOver = true;
+				visit.wellWhy = "at its lights' cap";
+				return null;
+			}
+			return Answers.Edit.of(lights, traces -> {
+				var batch = traces.batch(lvl, WELL_CAUSE);
+				lights.forEach(batch::remove);
+				boolean ok = batch.commit();
+				if (ok) {
+					visit.wellDark.add(k);
+					visit.wellLightsGone += glow;
+					visit.wellNextDue = env.now().getAsLong() + config.wellDarkTicks;
+					afterGallery(env, lvl, visit, config);
+				}
+				return ok;
+			});
+		});
+		if (result.status() == Answers.Status.REFUSED && visit.wellDark.isEmpty()) {
+			visit.wellOver = true;
+			visit.wellWhy = result.reason();
+		}
+	}
+
+	private static List<BlockPos> feet(List<ServerPlayer> people) {
+		List<BlockPos> out = new ArrayList<>(people.size());
+		for (ServerPlayer p : people) {
+			out.add(p.blockPosition());
+		}
+		return out;
+	}
+
+	/** After a gallery went: the glimpse across the void once {@code wellGlimpseAfter} are dark (D-105). */
+	private void afterGallery(ArchiveEnv env, ServerLevel level, Visit visit, Sc17Config config) {
+		Well well = visit.plan.well;
+		if (well == null || visit.wellGlimpsed || visit.wellDark.size() < config.wellGlimpseAfter || visit.wellFor == null) {
+			return;
+		}
+		ServerPlayer player = null;
+		for (ServerPlayer p : present(env.inside().apply(visit.place))) {
+			if (p.getUUID().equals(visit.wellFor)) {
+				player = p;
+			}
+		}
+		if (player == null) {
+			return;
+		}
+		Optional<Vec3> spot = WellDark.glimpseSpot(level, well, player.blockPosition(), visit.wellDark);
+		if (spot.isEmpty()) {
+			return;
+		}
+		visit.wellGlimpsed = true;
+		double dx = player.getX() - spot.get().x;
+		double dz = player.getZ() - spot.get().z;
+		env.figure().glimpse(player, spot.get(), (float) Math.toDegrees(Math.atan2(-dx, dz)));
+	}
+
+	// --- the day books ---
+
+	/** The day books ({@link DayBooks}): for everyone in the well, the galleries near theirs and the ground gallery. */
+	private void dayBooks(ArchiveEnv env, ServerLevel level, Visit visit, List<ServerPlayer> inside) {
+		Well well = visit.plan.well;
+		if (well == null) {
+			return;
+		}
+		List<Integer> at = new ArrayList<>();
+		for (ServerPlayer p : inside) {
+			int g = well.galleryOf(p.blockPosition());
+			if (g != Integer.MIN_VALUE) {
+				at.add(g);
+			}
+		}
+		if (at.isEmpty()) {
+			return;
+		}
+		visit.daysLeft += DayBooks.place(level, well, DayBooks.galleries(well, at), env.days(), env.config().get().dayBooksAhead, env.view(),
+				env.traces(), visit.dayChecked);
 	}
 
 	// --- 17d ---
@@ -697,7 +927,10 @@ final class ArchiveRules {
 
 	// --- debug ---
 
-	/** {@code sc 17 arm}: for this player inside an archive, 17b starts now and the markers and the book are looked for now; rules kept. */
+	/**
+	 * {@code sc 17 arm}: for this player inside an archive, 17b (deep enough in the hall) and 17f (deep enough in the well)
+	 * start now, and the markers, the book and the day books are looked for now; rules kept.
+	 */
 	@Nullable String arm(MinecraftServer server, ServerPlayer player) {
 		ArchiveEnv env = env(server);
 		// R12-27: the debug's arm keeps the switch and the story (no record left while off).
@@ -713,12 +946,14 @@ final class ArchiveRules {
 			if (plan == null || level == null || !env.inside().apply(place).contains(player)) {
 				continue;
 			}
-			List<ServerPlayer> inside = env.inside().apply(place);
+			List<ServerPlayer> inside = present(env.inside().apply(place));
 			Visit visit = visits.computeIfAbsent(key(place), k -> new Visit(place, plan));
 			visit.darkOver = false;
+			visit.wellOver = false;
 			visit.deepSince.put(player.getUUID(), env.now().getAsLong());
 			step(env, level, visit, inside, true);
 			dark(env, level, visit, inside, env.now().getAsLong(), true);
+			well(env, level, visit, inside, env.now().getAsLong(), true);
 			return null;
 		}
 		return "you are not inside one";

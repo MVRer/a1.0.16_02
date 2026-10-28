@@ -15,6 +15,17 @@
     "minecraft:snowy_taiga",
     "minecraft:old_growth_pine_taiga",
     "minecraft:old_growth_spruce_taiga",
-    "minecraft:windswept_savanna"
+    "minecraft:windswept_savanna",
+    "minecraft:dark_forest",
+    "minecraft:old_growth_birch_forest",
+    "minecraft:cherry_grove",
+    "minecraft:windswept_forest",
+    "minecraft:windswept_hills",
+    "minecraft:windswept_gravelly_hills",
+    "minecraft:wooded_badlands",
+    "minecraft:eroded_badlands",
+    "minecraft:ice_spikes",
+    "minecraft:grove",
+    "minecraft:snowy_slopes"
   ]
 }

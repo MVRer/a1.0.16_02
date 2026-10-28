@@ -141,7 +141,8 @@ public final class ArchiveTestKit {
 
 	/** {@link #build}, with {@code before} run on the plan measured over the land just before it is placed. */
 	static Live.Result build(ServerLevel level, int x, int z, int floorY, boolean longHall, Integer rockTop, java.util.function.Consumer<ArchivePlan> before) {
-		Start start = new Start(new BlockPos(x, floorY, z), Direction.NORTH, ArchivePlan.variant(longHall, 0.08), SEED);
+		// Round 2's tests build version 2 (R12-2: a place begun as v2 is finished as v2); round 3's build v3 (SelfCreated3ArchiveTests).
+		Start start = new Start(new BlockPos(x, floorY, z), Direction.NORTH, ArchivePlan.variant(longHall, 0.08), SEED).withVersion(2);
 		ArchivePlan probe = ArchivePlan.of(start, new int[0]);
 		BoundingBox reach = probe.box().inflatedBy(4);
 		load(level, reach);
@@ -323,8 +324,9 @@ public final class ArchiveTestKit {
 			Direction toward = Siting.facingToOrigin(chunk.getMiddleBlockX(), chunk.getMiddleBlockZ());
 			helper.assertTrue(facing == toward, "the way in faces " + facing + ", not the origin (" + toward + ")");
 			int floor = start.get().origin().getY();
-			helper.assertTrue(floor <= 70 - 36 && floor >= 70 - 36 - 6, "the floor at " + floor + " under ground 70");
-			helper.assertTrue(floor + ArchivePlan.CEILING + 1 + 16 <= 70, "the ceiling is under 16 below the ground");
+			// Siting makes version 3 (round 3): the ceiling's top (u 43) at least 8 under the ground.
+			helper.assertTrue(floor <= 70 - ArchiveSiting.UNDER_GROUND3 && floor >= 70 - ArchiveSiting.UNDER_GROUND3 - 6, "the floor at " + floor + " under ground 70");
+			helper.assertTrue(floor + ArchivePlan.CEILING3 + 1 + 8 <= 70, "the ceiling is under 8 below the ground");
 			ArchivePlan plan = ArchivePlan.of(start.get(), new Flat(70, null));
 			helper.assertTrue(plan.fits, "a way in found no surface");
 			helper.assertTrue(com.forzacode.a1016_02.world.sc2.kit.Sc2Structure.withinReach(plan.box(), chunk), "the box leaves the reach: " + plan.box());
@@ -365,7 +367,7 @@ public final class ArchiveTestKit {
 				return counting.block(x, y, z);
 			}
 		};
-		ArchivePlan measured = ArchivePlan.of(new Start(new BlockPos(chunk.getMiddleBlockX(), 30, 0), Direction.WEST, 0, 9L), counted);
+		ArchivePlan measured = ArchivePlan.of(new Start(new BlockPos(chunk.getMiddleBlockX(), 30, 0), Direction.WEST, 0, 9L).withVersion(2), counted);
 		helper.assertTrue(measured.fits && samples[0] <= 81, samples[0] + " ground samples for one plan");
 		Optional<Start> high = siting.find(query(helper, chunk, 110, Biomes.PLAINS));
 		helper.assertTrue(high.isPresent() && high.get().origin().getY() <= 40, "a high land's floor over 40: " + high);
@@ -584,7 +586,7 @@ public final class ArchiveTestKit {
 
 	/** The interior is the hall's inside and the cells, never the shell, the bookshelf face or a way in. */
 	public static void interior(GameTestHelper helper) {
-		Start start = new Start(new BlockPos(X + 600, 10, Z), Direction.WEST, ArchivePlan.variant(false, 0.08), SEED);
+		Start start = new Start(new BlockPos(X + 600, 10, Z), Direction.WEST, ArchivePlan.variant(false, 0.08), SEED).withVersion(2);
 		ArchivePlan plan = ArchivePlan.of(start, new int[] {40, 42, 40, 42, 40, 42});
 		var inside = plan.interior();
 		helper.assertTrue(inside.contains(plan.at(0, 1, -30)) && inside.contains(plan.at(-12, 17, -1)) && inside.contains(plan.lectern()),
@@ -1113,7 +1115,7 @@ public final class ArchiveTestKit {
 		int z0 = Z;
 		int shift = 640;
 		int ground = Terrains.noise(level).ground(x0, z0);
-		Start start = new Start(new BlockPos(x0, ground + 4, z0), Direction.NORTH, ArchivePlan.variant(false, 0.08), SEED);
+		Start start = new Start(new BlockPos(x0, ground + 4, z0), Direction.NORTH, ArchivePlan.variant(false, 0.08), SEED).withVersion(2);
 		ArchivePlan probe = ArchivePlan.of(start, Terrains.noise(level));
 		load(level, probe.box().inflatedBy(2));
 		load(level, probe.box().inflatedBy(2).moved(shift, 0, 0));

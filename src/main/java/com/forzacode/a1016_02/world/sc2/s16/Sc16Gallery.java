@@ -24,7 +24,10 @@ import net.minecraft.world.phys.Vec3;
  * it for scale (bare inside the dead ring), the scale figure beside the way in. {@code 16} and {@code 16x} add the
  * inside (true light from the way in with one torch a player might have set down, and the same with night vision: the
  * rim, across the pit to its floor, up from the floor, up into the vault) and a {@code section}: a second one built
- * 480 to the north and cut open through its middle.
+ * 480 to the north and cut open through its middle. Version 4 (R3-2): {@code 16h} (the 191, lit), every one built as
+ * version 4 with its strip (its centre on a chunk's middle, as siting puts it) and shot from the sign views ({@code d64}
+ * ... {@code n200}); {@code 16d} has its way in at the waterline: {@code mouth} in front of it from the water,
+ * {@code in_1} on the flight's top step looking down it, {@code survey_2} the same with night vision.
  */
 final class Sc16Gallery {
 	/** How far north the copy for the section stands. */
@@ -36,9 +39,10 @@ final class Sc16Gallery {
 	private static final List<Spec> SPECS = List.of(
 			new Spec("16", 1, false, false, false, 0x16A1L, true),
 			new Spec("16x", 2, false, false, false, 0x16B2L, true),
+			new Spec("16h", 3, false, true, false, 0x16F6L, true),
 			new Spec("16s", 1, true, false, false, 0x16C3L, false),
 			new Spec("16l", 1, false, true, false, 0x16D4L, false),
-			new Spec("16d", 1, true, false, true, 0x16E5L, false));
+			new Spec("16d", 1, false, true, true, 0x16E5L, false));
 
 	private Sc16Gallery() {
 	}
@@ -51,16 +55,16 @@ final class Sc16Gallery {
 
 	private static Gallery.Placed place(ServerLevel level, BlockPos origin, Spec spec) {
 		Direction facing = Direction.EAST;
-		int variant = PyramidShape.variant(spec.size(), spec.sealed(), spec.light(), spec.sea());
+		int variant = PyramidShape.variant(spec.size(), spec.sealed(), spec.light(), spec.sea(), Sc16Config.get().stripDepth);
 		int r = PyramidShape.halfWidth(spec.size());
-		BlockPos base = origin;
+		// On a chunk's middle column, as siting puts it (the strip is the chunk column holding the mouth).
+		BlockPos base = new BlockPos(((origin.getX() >> 4) << 4) + 8, origin.getY(), ((origin.getZ() >> 4) << 4) + 8);
 		if (spec.sea()) {
-			int basin = r + 70;
+			int basin = r + 230;
 			int depth = 24;
-			int top = origin.getY() - 1;
-			GalleryProps.sea(level, new BoundingBox(origin.getX() - basin, top - depth, origin.getZ() - basin, origin.getX() + basin, top, origin.getZ() + basin),
-					depth);
-			base = origin.below(depth);
+			int top = base.getY() - 1;
+			GalleryProps.sea(level, new BoundingBox(base.getX() - basin, top - depth, base.getZ() - basin, base.getX() + basin, top, base.getZ() + basin), depth);
+			base = base.below(depth);
 		}
 		trees(level, base, r, facing, spec.sea());
 		Sc2Kind kind = spec.sea() ? S16.SEA_KIND : S16.KIND;
@@ -80,10 +84,43 @@ final class Sc16Gallery {
 			views.stream().filter(v -> v.name().equals("near")).findFirst().ifPresent(near -> views.add(near.named("near_night")
 					.at(Gallery.NIGHT, Gallery.Sky.CLEAR).noted("40 out from the entrance, midnight: the light on top")));
 		}
+		// Version 4's sign (D-110): 64, 128 and 200 out from the sign point, noon and midnight.
+		views.addAll(Gallery.signViews(level, shape.sign(), facing));
+		// From the air at night, a flyer's: 100 out in front and 60 over its top, the lit band down the face.
+		Vec3 flyer = at(shape, 0.5, r + 60, r + 100);
+		views.add(Gallery.View.looking("air_night", flyer, at(shape, 0.5, r / 3.0, r / 2.0), Gallery.NIGHT, Gallery.Sky.CLEAR, false)
+				.noted("100 out in front, 60 over its top, midnight: a flyer's look"));
 		if (spec.inside()) {
 			views.addAll(inside(shape));
 			views.add(section(level, base, spec, kind, variant, facing));
 		} else if (spec.sea()) {
+			int m = shape.wayLayer();
+			// From the water 8 out from the way in, a swimmer's eye; then from the flight's top step down it.
+			Vec3 water = at(shape, 0.5, m - 0.4, r - m + 8);
+			views.add(Gallery.View.looking("water", water, at(shape, 0.5, m + 1.0, r - m), Gallery.NOON, Gallery.Sky.CLEAR, false)
+					.noted("8 out on the water, a swimmer's eye, noon: the way in at the waterline"));
+			views.add(Gallery.View.looking("water_night", water, at(shape, 0.5, m + 1.0, r - m), Gallery.NIGHT, Gallery.Sky.CLEAR, false)
+					.noted("8 out on the water, midnight: the lit water, the black mouth"));
+			Vec3 top = at(shape, 0.5, m + 1.6, r - m - 2);
+			Vec3 down = at(shape, 0.5, 0.5, r - 2 * m - 2);
+			Gallery.View in1 = Gallery.View.looking("in_1", top, down, Gallery.NOON, Gallery.Sky.CLEAR, false)
+					.noted("on the flight's top step inside the way in, looking down it, true light");
+			views.add(in1);
+			if (shape.seaTrail()) {
+				// Version 6 (R3A-6): the trail down the flight's kerb to the floor's light, at midnight (no daylight behind).
+				views.add(in1.named("in_1_night").at(Gallery.NIGHT, Gallery.Sky.CLEAR).noted("as in_1 at midnight: the trail down the flight to the floor's light"));
+				BlockPos light = shape.floorLight();
+				Vec3 back = Vec3.atBottomCenterOf(shape.local(PyramidShape.FLOOR_LIGHT_SIDE, 0, -8)).add(0, 1.7, 0);
+				views.add(Gallery.View.looking("in_floor", back, Vec3.atCenterOf(light), Gallery.NIGHT, Gallery.Sky.CLEAR, false)
+						.noted("on the core's floor 8 behind its light, midnight: the cobblestone and its torch, the flight beyond"));
+				// The lit top from a side (the front's strip lights its middle already): a boat's eye 64 and 128 out.
+				Vec3 apex = at(shape, 0.5, r - 1, 0.5);
+				views.add(Gallery.View.looking("side_n64", at(shape, r + 64, m - 0.4, 0.5), apex, Gallery.NIGHT, Gallery.Sky.CLEAR, false)
+						.noted("64 out from its right side's foot on the water, midnight: the lit top"));
+				views.add(Gallery.View.looking("side_n128", at(shape, r + 128, m - 0.4, 0.5), apex, Gallery.NIGHT, Gallery.Sky.CLEAR, false)
+						.noted("128 out from its right side's foot on the water, midnight: the lit top"));
+			}
+			views.add(in1.named("survey_2").withSurvey(true).noted("as in_1, night vision: the flight, the dry core, the sand floor"));
 			Vec3 eye = at(shape, 0.5, 1.7, r - 5);
 			views.add(Gallery.View.looking("survey_1", eye, at(shape, 0.5, r / 3.0, -r / 2.0), Gallery.NOON, Gallery.Sky.CLEAR, true)
 					.noted("inside the dry core, toward the far wall, night vision"));
@@ -119,6 +156,14 @@ final class Sc16Gallery {
 		views.add(in3);
 		views.add(in3.named("survey_3").withSurvey(true).noted("as in_3, night vision"));
 		views.add(in4.named("survey_4").withSurvey(true).noted("from the rim's edge by the way in, up into the vault, night vision"));
+		if (!shape.trail().isEmpty()) {
+			// Version 4: what meets you as you come in, the trail of lights going down to the floor's.
+			Vec3 door = at(shape, 0.5, 1.7, r - 3.5);
+			Gallery.View in0 = Gallery.View.looking("in_0", door, at(shape, 0.5, bottom * 0.55, -shape.pitOpening() * 0.45), Gallery.NOON, Gallery.Sky.CLEAR, false)
+					.noted("just in past the inner mouth, looking across the pit down its far face, true light: the trail someone lit going down");
+			views.add(in0);
+			views.add(in0.named("in_0_night").at(Gallery.NIGHT, Gallery.Sky.CLEAR).noted("as in_0 at midnight (no daylight from the mouth)"));
+		}
 		if (!shape.tunnelCells().isEmpty()) {
 			// R11-17: from the floor's back row into the dead end under the steps.
 			Vec3 back = at(shape, 0.5, bottom + 1.6, -1.0);

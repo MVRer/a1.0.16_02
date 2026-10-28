@@ -53,6 +53,8 @@ import org.jspecify.annotations.Nullable;
  *   first light of a visit is counted, the rest are its parts). After {@code n}, while they are in the pit's lower
  *   half, the figure's glimpse on a dark step {@value #GLIMPSE_MIN} to {@value #GLIMPSE_MAX} above them, once a
  *   visit, if every glimpse rule holds ({@link Figure#canGlimpse}).</li>
+ *   <li><b>16e, the trail goes out</b> (version 4, R3-2): on a place's first visit, the trail someone lit down the pit
+ *   ({@link PyramidShape#trail}) goes out light by light, the farthest first, out of view ({@link #trail}).</li>
  * </ul>
  * Visits come from the kit's events ({@code REMAINS_ENTERED}, {@code REMAINS_LEFT}); a look once a second while anyone is
  * inside a pyramid, nothing otherwise. Session only; server thread.
@@ -60,6 +62,9 @@ import org.jspecify.annotations.Nullable;
 public final class PyramidAnswers {
 	public static final String CLOSE = S16.CAUSE + "/close";
 	public static final String DARK = S16.CAUSE + "/dark";
+	public static final String TRAIL = S16.CAUSE + "/trail";
+	/** 16e: the trail's light at least this far from the player it is taken for. */
+	public static final double TRAIL_FAR = 8.0;
 	/** How often the visits are looked at (ticks). */
 	public static final int EVERY_TICKS = 20;
 	/** 16b: nobody within this of the mouth. */
@@ -102,6 +107,10 @@ public final class PyramidAnswers {
 		long closeAskAt;
 		int darkened;
 		boolean glimpsed;
+		long nextTrail = -1;
+		int trailed;
+		/** 16e's counted first was refused for good this visit (the place's spent): no parts. */
+		boolean trailDone;
 
 		Visit(Remains.Place place, UUID player, long entered) {
 			this.place = place;
@@ -163,6 +172,7 @@ public final class PyramidAnswers {
 		visit.entered = now - Math.round(env.config().get().closeAfterSeconds * 20);
 		visit.closeAskAt = now;
 		visit.nextDark = now;
+		visit.nextTrail = now;
 		return true;
 	}
 
@@ -204,9 +214,87 @@ public final class PyramidAnswers {
 			if (shape == null) {
 				continue;
 			}
+			trail(level, visit, shape, player, now);
 			close(level, visit, shape, now);
 			dark(level, visit, shape, player, now);
 		}
+	}
+
+	// --- 16e ---
+
+	/** The rules of 16e: its first light counted (the place's once, its first visit), the rest of the visit its parts. */
+	public static Answers.Rules trailRules(boolean first) {
+		Answers.Rules rules = Answers.Rules.of("16e", TRAIL).perPlaceEver(1).perPlayerDay(2).limitSeconds(30);
+		return first ? rules : rules.part();
+	}
+
+	/**
+	 * 16e, the trail goes out (version 4; R3-2, Mariano's playtest: a first visit must meet an answer, and soon): once a
+	 * participant has been inside {@code r} seconds or stands a step down the pit, the trail's lights (the shape's own,
+	 * {@link PyramidShape#trail}) are taken one every {@code s} seconds or more, the farthest from them first (the floor's
+	 * light, then up the trail toward them), each out of everyone's view, never within {@value #TRAIL_FAR} of the player
+	 * nor {@value #DARK_NEAR} of anyone ({@code world:s16/trail}, ledgered, nothing dropped). The place's first visit only
+	 * (counted once a place ever); its later lights are parts of that visit. What is left lit stays for a later visit.
+	 */
+	private void trail(ServerLevel level, Visit visit, PyramidShape shape, ServerPlayer player, long now) {
+		List<BlockPos> trail = shape.trail();
+		if (trail.isEmpty() || visit.trailDone) {
+			return;
+		}
+		Sc16Config config = env.config().get();
+		BlockPos feet = player.blockPosition();
+		boolean down = shape.stepsDown(feet.getX(), feet.getY(), feet.getZ()) >= 1;
+		if (!down && now - visit.entered < Math.round(config.trailAfterSeconds * 20)) {
+			return;
+		}
+		if (visit.nextTrail >= 0 && now < visit.nextTrail) {
+			return;
+		}
+		visit.nextTrail = now + Math.round(Math.max(1.0, config.trailEverySeconds) * 20);
+		Vec3 at = player.position();
+		BlockPos light = null;
+		double best = -1;
+		for (BlockPos cell : trail) {
+			double d = Vec3.atCenterOf(cell).distanceToSqr(at);
+			if (d > best && level.isLoaded(cell) && isLight(level.getBlockState(cell)) && trailTakeable(level, cell, player)) {
+				best = d;
+				light = cell;
+			}
+		}
+		if (light == null) {
+			return;
+		}
+		BlockPos taken = light;
+		boolean first = visit.trailed == 0;
+		Answers.Result result = env.answers().submit(level, visit.place, trailRules(first), (lvl, place, inside) -> {
+			if (!lvl.isLoaded(taken) || !isLight(lvl.getBlockState(taken)) || !trailTakeable(lvl, taken, player)) {
+				return null;
+			}
+			return Answers.Edit.of(List.of(taken), traces -> {
+				boolean done = traces.batch(lvl, TRAIL).remove(taken).commit();
+				if (done) {
+					visit.trailed++;
+				}
+				return done;
+			});
+		});
+		if (first && result.status() == Answers.Status.REFUSED && result.reason() != null && result.reason().endsWith(" times")) {
+			visit.trailDone = true;
+		}
+	}
+
+	/** 16e's light: far enough from the player it is taken for, never within {@value #DARK_NEAR} of anyone. */
+	boolean trailTakeable(ServerLevel level, BlockPos light, ServerPlayer target) {
+		Vec3 center = Vec3.atCenterOf(light);
+		if (center.distanceTo(target.position()) < TRAIL_FAR) {
+			return false;
+		}
+		for (ServerPlayer player : env.people().online(level.getServer())) {
+			if (!player.isSpectator() && player.level() == level && center.distanceTo(player.position().add(0, 1, 0)) < DARK_NEAR + 1) {
+				return false;
+			}
+		}
+		return true;
 	}
 
 	// --- 16b ---
@@ -301,13 +389,14 @@ public final class PyramidAnswers {
 	}
 
 	private void dark(ServerLevel level, Visit visit, PyramidShape shape, ServerPlayer player, long now) {
-		if (!shape.hasPit()) {
+		if (!shape.hasDescent()) {
 			return;
 		}
 		Sc16Config config = env.config().get();
 		BlockPos feet = player.blockPosition();
-		int steps = shape.baseY() - feet.getY();
-		if (!shape.pit(feet.getX(), feet.getY(), feet.getZ()) || steps < config.darkStepsMin) {
+		// Down the pit, or (version 6 at sea, R3A-6) down the flight into the core.
+		int steps = shape.stepsDown(feet.getX(), feet.getY(), feet.getZ());
+		if (steps < 0 || steps < config.darkStepsMin) {
 			return;
 		}
 		glimpse(level, visit, shape, player, steps, config);
@@ -401,12 +490,15 @@ public final class PyramidAnswers {
 	// --- the glimpse ---
 
 	private void glimpse(ServerLevel level, Visit visit, PyramidShape shape, ServerPlayer player, int steps, Sc16Config config) {
-		if (visit.glimpsed || visit.darkened < config.glimpseAfter || steps <= (shape.pitDepth() + 1) / 2) {
+		if (visit.glimpsed || visit.darkened < config.glimpseAfter || steps <= shape.descentSteps() / 2) {
 			return;
 		}
 		Figure figure = env.figure().get();
 		for (int up = GLIMPSE_MIN; up <= GLIMPSE_MAX; up++) {
-			for (Vec3 feet : spots(shape, steps - up, player)) {
+			if (shape.sea() && up > GLIMPSE_MIN) {
+				return;
+			}
+			for (Vec3 feet : shape.sea() ? floorSpots(shape, player) : spots(shape, steps - up, player)) {
 				if (!figure.canGlimpse(player, feet)) {
 					continue;
 				}
@@ -432,6 +524,23 @@ public final class PyramidAnswers {
 		int[][] offsets = {{ring, 0}, {-ring, 0}, {0, ring}, {0, -ring}, {ring, ring}, {ring, -ring}, {-ring, ring}, {-ring, -ring}};
 		for (int[] o : offsets) {
 			out.add(new Vec3(shape.centerX() + o[0] + 0.5, y, shape.centerZ() + o[1] + 0.5));
+		}
+		Vec3 at = player.position();
+		Vec3 look = player.getLookAngle();
+		out.sort(Comparator.comparingDouble((Vec3 spot) -> -spot.subtract(at).normalize().dot(look)));
+		return out;
+	}
+
+	/**
+	 * At sea (version 6, R3A-6): the feet spots on the core's floor two from the floor light's cobblestone (its sides' and
+	 * corners' middles), those facing the player first: he stands by the light that went out.
+	 */
+	public static List<Vec3> floorSpots(PyramidShape shape, ServerPlayer player) {
+		BlockPos light = shape.floorLight();
+		List<Vec3> out = new ArrayList<>();
+		int[][] offsets = {{2, 0}, {-2, 0}, {0, 2}, {0, -2}, {2, 2}, {2, -2}, {-2, 2}, {-2, -2}};
+		for (int[] o : offsets) {
+			out.add(new Vec3(light.getX() + o[0] + 0.5, light.getY(), light.getZ() + o[1] + 0.5));
 		}
 		Vec3 at = player.position();
 		Vec3 look = player.getLookAngle();

@@ -116,7 +116,7 @@ final class Sc2RealNoise {
 	static Map<String, Holder<Structure>> structures(ServerLevel level) {
 		Map<String, Holder<Structure>> out = new LinkedHashMap<>();
 		for (Reference<Structure> holder : level.registryAccess().lookupOrThrow(Registries.STRUCTURE).listElements().toList()) {
-			if (holder.value() instanceof Sc2Structure sc2 && Sc2Kind.get(sc2.kind()) != null) {
+			if (holder.value() instanceof Sc2Structure sc2 && !sc2.marker() && Sc2Kind.get(sc2.kind()) != null) {
 				out.put(sc2.kind(), holder);
 			}
 		}

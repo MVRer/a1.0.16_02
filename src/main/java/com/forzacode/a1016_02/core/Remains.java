@@ -9,9 +9,12 @@ import java.util.UUID;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.resources.ResourceKey;
+import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.levelgen.structure.BoundingBox;
+
+import org.jspecify.annotations.Nullable;
 
 /**
  * His places (docs/SELF_CREATED_2.md, SC2-0b): every place of the second wave's worldgen that the world has generated
@@ -113,6 +116,38 @@ public interface Remains {
 	/** The overworld's game time (ticks) when this player was last inside any interior, or -1 if never. */
 	long trespassedAt(UUID player);
 
+	/**
+	 * Why his places sleep now, or null if they are awake (docs/SELF_CREATED_2_R3.md, D-108): the layer's switch off, the
+	 * story's world gates (quiet for good, path C, the endings), or the world's stage under Traces. The places generate
+	 * from the world's creation; while they sleep nothing of theirs happens: no answer, no record of a player, no visit
+	 * event, no trespass time, no crumb rule. An implementation that does not care is always awake.
+	 */
+	default @Nullable String asleep(MinecraftServer server) {
+		return null;
+	}
+
+	/** True if his places are awake now ({@link #asleep} of the installed remains is null). Server thread. */
+	static boolean awake(MinecraftServer server) {
+		return Services.remains().asleep(server) == null;
+	}
+
+	/**
+	 * Where this place shows itself from far (its error sign's point, D-110: where the gallery's sign views aim and the
+	 * crumbs' lines begin): its kind's own point, else its entrance. Works for a {@link #predicted} place too.
+	 */
+	default BlockPos sign(Place place) {
+		return place.entrance();
+	}
+
+	/**
+	 * The places worldgen has decided within {@code radius} of {@code pos} (by their box) in this level, of these kinds,
+	 * generated or not yet (D-112's {@code Decided}: only candidates someone asked about, its own start, a crumb or
+	 * {@code /locate}), nearest first. Their box, anchor, entrance, facing, seed and variant are what the start will be.
+	 */
+	default List<Place> predicted(ServerLevel level, BlockPos pos, int radius, Set<Kind> kinds) {
+		return List.of();
+	}
+
 	/** Nothing known: the default until world installs the real one. */
 	final class Stub implements Remains {
 		@Override
@@ -138,6 +173,11 @@ public interface Remains {
 		@Override
 		public long trespassedAt(UUID player) {
 			return -1;
+		}
+
+		@Override
+		public @Nullable String asleep(MinecraftServer server) {
+			return "no places";
 		}
 	}
 }

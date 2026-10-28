@@ -26,6 +26,7 @@ import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.tags.BlockTags;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.levelgen.structure.BoundingBox;
 import net.minecraft.world.phys.Vec3;
 
 import org.jspecify.annotations.Nullable;
@@ -73,7 +74,12 @@ public final class HollowAnswers {
 	 *
 	 * @param people everyone online (spectators included; they are skipped where it matters)
 	 */
-	public record Env(Answers answers, Visits.People people, Supplier<Sc18Config> config, Function<Remains.Place, @Nullable Mouth> mouths) {
+	public record Env(Answers answers, Visits.People people, Supplier<Sc18Config> config, Function<Remains.Place, @Nullable Mouth> mouths,
+			Function<Remains.Place, @Nullable BoundingBox> pieces, java.util.function.ToLongFunction<MinecraftServer> day) {
+		/** Without 18c's piece (round 2's tests). */
+		public Env(Answers answers, Visits.People people, Supplier<Sc18Config> config, Function<Remains.Place, @Nullable Mouth> mouths) {
+			this(answers, people, config, mouths, place -> null, com.forzacode.a1016_02.core.GameClock::day);
+		}
 	}
 
 	/** One player's visit to one place. */
@@ -82,6 +88,9 @@ public final class HollowAnswers {
 		final UUID player;
 		long entered;
 		long askAt;
+		/** 18c: since when this player stands within {@value HollowAnswers#PIECE_NEAR} of the square (-1: not). */
+		long nearSince = -1;
+		long darkAskAt;
 
 		Visit(Remains.Place place, UUID player, long entered) {
 			this.place = place;
@@ -92,7 +101,7 @@ public final class HollowAnswers {
 	}
 
 	public static final HollowAnswers LIVE = new HollowAnswers(new Env(Answers.LIVE, server -> List.copyOf(server.getPlayerList().getPlayers()),
-			Sc18Config::get, HollowAnswers::liveMouth));
+			Sc18Config::get, HollowAnswers::liveMouth, HollowAnswers::livePiece, com.forzacode.a1016_02.core.GameClock::day));
 
 	private final Env env;
 	private final Map<UUID, Visit> visits = new LinkedHashMap<>();
@@ -123,6 +132,8 @@ public final class HollowAnswers {
 	/** Forgets every visit (switch off, server stop). */
 	public void clear() {
 		visits.clear();
+		darkening.clear();
+		dark.clear();
 	}
 
 	public boolean inside(UUID player) {
@@ -152,7 +163,15 @@ public final class HollowAnswers {
 
 	/** The live tick: a look every {@value #EVERY_TICKS} ticks while anyone is inside one. */
 	public void tick(MinecraftServer server) {
-		if (visits.isEmpty() || server.getTickCount() % EVERY_TICKS != 13 || !SelfCreated.enabled()) {
+		if (!STAGED.isEmpty()) {
+			for (StagedQuarter q : List.copyOf(STAGED)) {
+				if (server.getTickCount() >= q.at()) {
+					stageQuarter(q.level(), q.piece(), q.quarter());
+					STAGED.remove(q);
+				}
+			}
+		}
+		if (visits.isEmpty() && darkening.isEmpty() && dark.isEmpty() || server.getTickCount() % EVERY_TICKS != 13 || !SelfCreated.enabled()) {
 			return;
 		}
 		look(server, server.getTickCount());
@@ -178,7 +197,209 @@ public final class HollowAnswers {
 			if (mouth != null) {
 				close(level, visit, mouth, now);
 			}
+			darken(level, visit, player, now);
 		}
+		darkenNext(server, now);
+		relight(server);
+	}
+
+	// --- 18c ---
+
+	/** 18c's ledger cause. */
+	public static final String DARK = S18.CAUSE + "/dark";
+	/** 18c: a participant this near the square (blocks, across) counts. */
+	public static final int PIECE_NEAR = 48;
+	/** 18c: the piece's quarters go this far apart (ticks: 5 s). */
+	public static final int QUARTER_TICKS = 100;
+
+	/** A piece going dark: its quarters still to go (the first gone), the next at {@code at}. */
+	static final class Darkening {
+		final BoundingBox piece;
+		int next = 1;
+		long at;
+		boolean pending;
+
+		Darkening(BoundingBox piece, long at) {
+			this.piece = piece;
+			this.at = at;
+		}
+	}
+
+	private final Map<Remains.Place, Darkening> darkening = new LinkedHashMap<>();
+	/** The pieces gone dark and the in-game day they went (their lights come back on a later day, nobody inside). */
+	private final Map<Remains.Place, Long> dark = new LinkedHashMap<>();
+
+	/** The rules of 18c's first quarter (the rest are its parts). */
+	public static Answers.Rules darkRules() {
+		return Answers.Rules.of("18c", DARK).perPlaceDay(1).limitSeconds(60);
+	}
+
+	/**
+	 * 18c (R3-3, D-116): a participant inside within {@value #PIECE_NEAR} of the square for {@code n} seconds: out of
+	 * everyone's view, the piece's lights go in four quarters {@value #QUARTER_TICKS} ticks apart ({@code world:s18/dark},
+	 * ledgered), once an in-game day a hollow; every answer's rule.
+	 */
+	private void darken(ServerLevel level, Visit visit, ServerPlayer player, long now) {
+		BoundingBox piece = env.pieces().apply(visit.place);
+		if (piece == null) {
+			return;
+		}
+		BlockPos square = visit.place.anchor();
+		double dx = player.getX() - (square.getX() + 0.5);
+		double dz = player.getZ() - (square.getZ() + 0.5);
+		if (dx * dx + dz * dz > PIECE_NEAR * PIECE_NEAR) {
+			visit.nearSince = -1;
+			return;
+		}
+		if (visit.nearSince < 0) {
+			visit.nearSince = now;
+		}
+		Sc18Config config = env.config().get();
+		if (now - visit.nearSince < Math.round(config.pieceDarkAfterSeconds * 20) || now < visit.darkAskAt || darkening.containsKey(visit.place)
+				|| dark.containsKey(visit.place)) {
+			return;
+		}
+		Answers.Result result = submitQuarter(level, visit.place, piece, 0, darkRules());
+		if (result.status() != Answers.Status.WAITING && result.status() != Answers.Status.DONE) {
+			visit.darkAskAt = now + CLOSE_RETRY_TICKS;
+		}
+	}
+
+	/** Asks for one quarter of this piece's lights to go (the planner finds them again at each try). */
+	private Answers.Result submitQuarter(ServerLevel level, Remains.Place place, BoundingBox piece, int quarter, Answers.Rules rules) {
+		return env.answers().submit(level, place, rules, (lvl, p, inside) -> {
+			List<BlockPos> cells = quarter(lvl, piece, quarter);
+			if (cells.isEmpty() || !Answers.loaded(lvl, List.of(new BlockPos(piece.minX(), piece.minY(), piece.minZ()),
+					new BlockPos(piece.maxX(), piece.maxY(), piece.maxZ())))) {
+				return null;
+			}
+			return Answers.Edit.of(cells, traces -> {
+				TraceBatch batch = traces.batch(lvl, DARK);
+				for (BlockPos cell : cells) {
+					batch.remove(cell);
+				}
+				boolean done = batch.commit();
+				if (done) {
+					Darkening d = darkening.computeIfAbsent(p, k -> new Darkening(piece, lastLook));
+					d.next = quarter + 1;
+					d.at = lastLook + QUARTER_TICKS;
+					d.pending = false;
+					dark.put(p, env.day().applyAsLong(lvl.getServer()));
+					if (d.next >= 4) {
+						darkening.remove(p);
+					}
+				}
+				return done;
+			});
+		});
+	}
+
+	/** The next quarter of every piece going dark, once its time comes. */
+	private void darkenNext(MinecraftServer server, long now) {
+		for (Map.Entry<Remains.Place, Darkening> e : List.copyOf(darkening.entrySet())) {
+			Darkening d = e.getValue();
+			if (d.pending || now < d.at) {
+				continue;
+			}
+			ServerLevel level = server.getLevel(e.getKey().dimension());
+			if (level == null) {
+				darkening.remove(e.getKey());
+				continue;
+			}
+			Answers.Result result = submitQuarter(level, e.getKey(), d.piece, d.next, darkRules().part());
+			if (result.status() == Answers.Status.WAITING) {
+				d.pending = true;
+			} else if (result.status() != Answers.Status.DONE) {
+				darkening.remove(e.getKey());
+			}
+		}
+		// A part dropped by the kit (its time ran out) leaves the rest dark as it is.
+		for (Map.Entry<Remains.Place, Darkening> e : List.copyOf(darkening.entrySet())) {
+			if (e.getValue().pending && !env.answers().waiting(e.getKey(), "18c")) {
+				darkening.remove(e.getKey());
+			}
+		}
+	}
+
+	/**
+	 * A piece gone dark is lit again on a later in-game day while nobody is inside its hollow: its ledgered lights
+	 * taken back out of view (the next visit finds it as it was).
+	 */
+	private void relight(MinecraftServer server) {
+		for (Map.Entry<Remains.Place, Long> e : List.copyOf(dark.entrySet())) {
+			Remains.Place place = e.getKey();
+			ServerLevel level = server.getLevel(place.dimension());
+			if (level == null || darkening.containsKey(place) || env.day().applyAsLong(server) <= e.getValue()) {
+				continue;
+			}
+			boolean someone = false;
+			for (Visit visit : visits.values()) {
+				someone |= visit.place.equals(place);
+			}
+			BoundingBox piece = env.pieces().apply(place);
+			if (someone || piece == null) {
+				continue;
+			}
+			int left = 0;
+			com.forzacode.a1016_02.core.TraceLedger ledger = com.forzacode.a1016_02.core.TraceLedger.get(server);
+			for (com.forzacode.a1016_02.core.TraceLedger.Entry entry : List.copyOf(ledger.entries())) {
+				if (entry.cause().equals(DARK) && entry.pos().dimension().equals(place.dimension()) && piece.isInside(entry.pos().pos())) {
+					com.forzacode.a1016_02.core.TraceService.UndoResult r = com.forzacode.a1016_02.core.Services.traces().undo(level, entry, DARK + "/back");
+					left += r == com.forzacode.a1016_02.core.TraceService.UndoResult.IN_VIEW || r == com.forzacode.a1016_02.core.TraceService.UndoResult.UNLOADED ? 1 : 0;
+				}
+			}
+			if (left == 0) {
+				dark.remove(place);
+			}
+		}
+	}
+
+	/**
+	 * One quarter of the piece's lights (0 to 3: the square's quarters round its middle), found in the box under and
+	 * round the piece.
+	 */
+	public static List<BlockPos> quarter(ServerLevel level, BoundingBox piece, int quarter) {
+		// The lights still there, round the square's middle by angle, cut in four even runs: the last of them all goes
+		// with the fourth (a piece standing on one side of its square has its lights there).
+		List<BlockPos> all = new ArrayList<>();
+		double midX = piece.minX() + 8.0;
+		double midZ = piece.minZ() + 8.0;
+		for (BlockPos pos : BlockPos.betweenClosed(piece.minX(), piece.minY(), piece.minZ(), piece.maxX(), piece.maxY(), piece.maxZ())) {
+			if (com.forzacode.a1016_02.world.sc2.kit.Fault.isLight(level.getBlockState(pos))) {
+				all.add(pos.immutable());
+			}
+		}
+		all.sort(java.util.Comparator.comparingDouble((BlockPos p) -> Math.atan2(p.getZ() + 0.5 - midZ, p.getX() + 0.5 - midX)).thenComparingLong(BlockPos::asLong));
+		int left = 4 - Math.clamp(quarter, 0, 3);
+		int take = quarter >= 3 ? all.size() : Math.ceilDiv(all.size(), left);
+		return List.copyOf(all.subList(0, Math.min(take, all.size())));
+	}
+
+	private record StagedQuarter(ServerLevel level, BoundingBox piece, int quarter, long at) {
+	}
+
+	private static final List<StagedQuarter> STAGED = new ArrayList<>();
+
+	/** The gallery's staging of 18c (dev only, unledgered): the piece's quarters going {@code every} ticks apart from now. */
+	public static void stageDark(ServerLevel level, BoundingBox piece, int every) {
+		long now = level.getServer().getTickCount();
+		for (int q = 0; q < 4; q++) {
+			STAGED.add(new StagedQuarter(level, piece, q, now + (long) q * every));
+		}
+	}
+
+	/** The gallery's staging (dev only): this quarter of the piece's lights gone now, unledgered. */
+	public static int stageQuarter(ServerLevel level, BoundingBox piece, int quarter) {
+		List<BlockPos> cells = quarter(level, piece, quarter);
+		for (BlockPos cell : cells) {
+			level.setBlock(cell, net.minecraft.world.level.block.Blocks.AIR.defaultBlockState(), 3);
+		}
+		return cells.size();
+	}
+
+	/** True while a piece of this place is going dark or dark (tests). */
+	public boolean darkened(Remains.Place place) {
+		return dark.containsKey(place);
 	}
 
 	// --- 18b ---
@@ -302,6 +523,12 @@ public final class HollowAnswers {
 	}
 
 	// --- live ---
+
+	/** A recorded one's piece (version 3): the box its lights hang in, from its record's extra; null without one. */
+	private static @Nullable BoundingBox livePiece(Remains.Place place) {
+		Sc2Data.Known known = RemainsImpl.LIVE.record(place).orElse(null);
+		return known == null ? null : HollowShape.pieceOf(known.extra()).orElse(null);
+	}
 
 	/** A recorded one's mouth, from its record's extra (never the terrain). */
 	private static @Nullable Mouth liveMouth(Remains.Place place) {

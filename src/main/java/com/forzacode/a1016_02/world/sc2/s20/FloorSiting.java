@@ -20,6 +20,10 @@ import org.jspecify.annotations.Nullable;
  * building's doorway toward the origin (D-095). Refused, never clipped, if its box (the shape's own rule over the same
  * samples) would come within {@value #MARGIN} of the level's lowest or highest block (the bedrock layers, the build
  * limit; read from the level). 25 ground samples, and 25 surface samples only where the relief fits (D-104: at most 81).
+ *
+ * <p>Round 3 (R3-3): the sizes 192 (49 samples, relief 24 to 64), 128 (the 192's own samples), the config's side and 64 tried
+ * in turn, the dry middle first, each column read once a siting (at most about 95 ground samples where every size is
+ * tried); the biome tag widened to the grassy hills.
  */
 public final class FloorSiting implements Siting {
 	/** The ground under the square varies at least its side over this (it is cut into hills, not laid on a plain) ... */
@@ -66,10 +70,15 @@ public final class FloorSiting implements Siting {
 		// wider first where the land allows (R11-5: 96 read small from 200 in hilly country), else the config's side.
 		int cx = query.chunk().getMinBlockX();
 		int cz = query.chunk().getMinBlockZ();
+		// Every size shares the middle, which must be dry: at sea nothing more is read.
+		Terrain terrain = new Memo(query.terrain());
+		if (terrain.surface(cx, cz) > terrain.ground(cx, cz)) {
+			return Optional.empty();
+		}
 		int side = 0;
 		Fit fit = null;
-		for (int tried : new int[] {Math.min(FloorShape.sideOf(Integer.MAX_VALUE), config.sideBlocks() + WIDER), config.sideBlocks()}) {
-			Fit f = fit(query.terrain(), cx, cz, tried);
+		for (int tried : sides(config)) {
+			Fit f = fit(terrain, cx, cz, tried, FloorShape.gridOf(FloorShape.VERSION, tried));
 			if (f != null && f.fits(query.minY(), query.maxY())) {
 				side = tried;
 				fit = f;
@@ -88,29 +97,91 @@ public final class FloorSiting implements Siting {
 	 * fit: the relief out of range, too wet, the middle wet. The samples are the shape's own grid.
 	 */
 	public static @Nullable Fit fit(Terrain terrain, int cx, int cz, int side) {
-		int[] ground = new int[FloorShape.GRID * FloorShape.GRID];
+		return fit(terrain, cx, cz, side, FloorShape.GRID);
+	}
+
+	/** One siting's reads of the land, each column once (the sizes share some of their samples: the 128's are the 192's). */
+	private static final class Memo implements Terrain {
+		private final Terrain terrain;
+		private final it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap grounds = new it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap();
+		private final it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap surfaces = new it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap();
+
+		Memo(Terrain terrain) {
+			this.terrain = terrain;
+		}
+
+		@Override
+		public int seaLevel() {
+			return terrain.seaLevel();
+		}
+
+		@Override
+		public int minY() {
+			return terrain.minY();
+		}
+
+		@Override
+		public int ground(int x, int z) {
+			return grounds.computeIfAbsent(net.minecraft.world.level.ChunkPos.pack(x, z), k -> terrain.ground(x, z));
+		}
+
+		@Override
+		public int surface(int x, int z) {
+			return surfaces.computeIfAbsent(net.minecraft.world.level.ChunkPos.pack(x, z), k -> terrain.surface(x, z));
+		}
+
+		@Override
+		public net.minecraft.core.Holder<net.minecraft.world.level.biome.Biome> biome(int x, int y, int z) {
+			return terrain.biome(x, y, z);
+		}
+
+		@Override
+		public net.minecraft.world.level.block.state.BlockState block(int x, int y, int z) {
+			return terrain.block(x, y, z);
+		}
+	}
+
+	/**
+	 * Version 3's sizes in the order tried (R3-3, D-115): the widest the config allows ({@code f}, 192), then 128, the
+	 * config's side ({@code c}, 96), then 64; each once.
+	 */
+	public static int[] sides(Sc20Config config) {
+		return java.util.stream.IntStream.of(config.sideMaxBlocks(), 128, config.sideBlocks(), 64).filter(s -> s <= config.sideMaxBlocks()).distinct().toArray();
+	}
+
+	/** The most the ground under a square of this side may vary: half its side, and 64 at most (a 64-high cut, R3-3). */
+	public static int reliefMax(int side) {
+		return Math.min(side / RELIEF_MAX_PER, RELIEF_CAP);
+	}
+
+	/** The ground under the widest squares varies at most this much (the cliffs stay a few storeys). */
+	public static final int RELIEF_CAP = 64;
+
+	/** {@link #fit(Terrain, int, int, int)} over {@code grid} samples a side (the shape's own, {@link FloorShape#gridOf}). */
+	public static @Nullable Fit fit(Terrain terrain, int cx, int cz, int side, int grid) {
+		int[] ground = new int[grid * grid];
 		int i = 0;
 		int minX = cx - side / 2;
 		int minZ = cz - side / 2;
-		for (int a = 0; a < FloorShape.GRID; a++) {
-			for (int b = 0; b < FloorShape.GRID; b++) {
-				ground[i++] = terrain.ground(minX + Math.round((side - 1) * a / (FloorShape.GRID - 1.0F)),
-						minZ + Math.round((side - 1) * b / (FloorShape.GRID - 1.0F)));
+		for (int a = 0; a < grid; a++) {
+			for (int b = 0; b < grid; b++) {
+				ground[i++] = terrain.ground(minX + Math.round((side - 1) * a / (grid - 1.0F)),
+						minZ + Math.round((side - 1) * b / (grid - 1.0F)));
 			}
 		}
 		// The relief first (SC2-H: most candidates fail it, so they need no surface samples).
 		int relief = Siting.spread(ground);
-		if (relief < side / RELIEF_MIN_PER || relief > side / RELIEF_MAX_PER) {
+		if (relief < side / RELIEF_MIN_PER || relief > reliefMax(side)) {
 			return null;
 		}
 		int wet = 0;
 		i = 0;
-		for (int a = 0; a < FloorShape.GRID; a++) {
-			for (int b = 0; b < FloorShape.GRID; b++) {
-				int x = minX + Math.round((side - 1) * a / (FloorShape.GRID - 1.0F));
-				int z = minZ + Math.round((side - 1) * b / (FloorShape.GRID - 1.0F));
+		for (int a = 0; a < grid; a++) {
+			for (int b = 0; b < grid; b++) {
+				int x = minX + Math.round((side - 1) * a / (grid - 1.0F));
+				int z = minZ + Math.round((side - 1) * b / (grid - 1.0F));
 				if (terrain.surface(x, z) > ground[i]) {
-					if (a == FloorShape.GRID / 2 && b == FloorShape.GRID / 2 || ++wet > WET_MAX) {
+					if (a == grid / 2 && b == grid / 2 || ++wet > WET_MAX * (grid * grid) / 25) {
 						return null;
 					}
 				}

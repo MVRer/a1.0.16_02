@@ -3,5 +3,11 @@
   "kind": "s17",
   "biomes": "#a1016_02:world/s17",
   "step": "top_layer_modification",
-  "spawn_overrides": {}
+  "spawn_overrides": {},
+  "avoid": [
+    {
+      "other_set": "minecraft:ancient_cities",
+      "chunk_count": 4
+    }
+  ]
 }

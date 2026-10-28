@@ -78,8 +78,12 @@ public final class DirectorSim {
 	/**
 	 * {@code TELLING}: someone named him (a dry run's {@link Params#tellingAtHour}). {@code FELT}: someone else's card,
 	 * felt. {@code MOOD}: meeting someone whose session started earlier, the session took its mood (empty or not).
+	 * His places (docs/SELF_CREATED_2_R3.md, D-119; R3-P), none of them a card: {@code VISIT} a visit inside one of them
+	 * while they are awake; {@code ANSWER} one of their answers (its tension in {@code value}); {@code MOMENT} one of the
+	 * second wave's moments that is no card ({@code "32b"}, {@code "32c"}, {@code "33"}: a visit's answers below a
+	 * pyramid's pit), which starts the player's wave gap as the wave's cards do.
 	 */
-	public enum Kind { STAGE, SESSION_START, SESSION_END, DRAW, GIVE_UP, REFILL, FIRE, FELT, QUIET, TELLING, MOOD }
+	public enum Kind { STAGE, SESSION_START, SESSION_END, DRAW, GIVE_UP, REFILL, FIRE, FELT, QUIET, TELLING, MOOD, VISIT, ANSWER, MOMENT }
 
 	/**
 	 * One recorded decision, on that player's clock.
@@ -180,6 +184,29 @@ public final class DirectorSim {
 		 * ({@link DirectorRules#ownClockCards}) for that player for one in-game day. 0: none.
 		 */
 		public double visitsPerHour;
+		/**
+		 * R3-P: the answers a visit inside one of his places brings (each {@link #answerTension} tension), on average, out
+		 * of at most {@link #answersPerVisitMax}; never in the player's first hour, never in their quiet but for their very
+		 * first, at most {@link #answersPerDay} an in-game day (each answer's own per-player cap a day). 0: none.
+		 */
+		public double answersPerVisit;
+		public int answersPerVisitMax = 1;
+		public int answersPerDay = Integer.MAX_VALUE;
+		public double answerTension;
+		/**
+		 * R3-P: the share of visits that go below a pyramid's pit (33): their answers ({@link #depthsAnswers} more, on
+		 * average, of at most two) count as one of the wave's moments ({@link Kind#MOMENT} {@code "33"}), which no gap
+		 * holds back.
+		 */
+		public double depthsShare;
+		public double depthsAnswers;
+		/**
+		 * R3-P: the crumbs' runtime moments a player goes through per hour of play from Traces on (32c, a crumb moved
+		 * toward their base; and with company 32b, a crumb gone), each one of the wave's moments ({@link Kind#MOMENT}): at
+		 * most one an in-game day for a player, only outside their wave gap (live, they wait for its end). 0: none.
+		 */
+		public double crumbsPerHour;
+		public double crumbsSharedPerHour;
 		/** At most this many fires of a card in a run, whoever got it (a world cap); null or negative: none. */
 		public @Nullable ToIntFunction<CardInfo> worldCap;
 		/**
@@ -249,6 +276,14 @@ public final class DirectorSim {
 			p.needsFog = card -> SimFits.FOG.contains(card.id());
 			p.calledChanceOf = SimFits.called(config.simFitChance);
 			p.visitsPerHour = SimFits.visitsPerHour(new Sc01Config());
+			p.answersPerVisit = SimFits.ANSWERS_PER_VISIT;
+			p.answersPerVisitMax = SimFits.ANSWERS_PER_VISIT_MAX;
+			p.answersPerDay = SimFits.ANSWERS_PER_DAY;
+			p.answerTension = SimFits.ANSWER_TENSION;
+			p.depthsShare = SimFits.DEPTHS_SHARE;
+			p.depthsAnswers = SimFits.DEPTHS_ANSWERS;
+			p.crumbsPerHour = SimFits.CRUMBS_PER_HOUR;
+			p.crumbsSharedPerHour = SimFits.CRUMBS_SHARED_PER_HOUR;
 			p.worldCap = card -> SimFits.CAPS.getOrDefault(card.id(), -1);
 			p.noSpotChance = config.simNoSpotChance;
 			p.sessionMin = Math.max(rules.tickInterval, Math.round(config.simSessionMinMinutes * 60 / 3600.0 * rules.hourTicks));
@@ -330,6 +365,11 @@ public final class DirectorSim {
 		/** What this player went through: their own fires and the moments they felt from others, in order. */
 		public List<Event> felt() {
 			return events.stream().filter(Event::felt).toList();
+		}
+
+		/** What the player went through ({@link #felt}) and the second wave's moments that are no card ({@link Kind#MOMENT}). */
+		public List<Event> met() {
+			return events.stream().filter(e -> e.felt() || e.kind() == Kind.MOMENT).toList();
 		}
 
 		public long count(Kind kind) {
@@ -758,6 +798,14 @@ public final class DirectorSim {
 					emptyUntil = -1;
 				}
 				case MOOD -> emptyUntil = e.flag() ? e.until() : -1;
+				case MOMENT -> {
+					// R3-P: a moment of the wave that is no card starts the gap; the crumbs' wait for it (33's come when the player
+					// goes down, held by no gap).
+					if (e.cardId().startsWith("32") && rules.groupGap > 0 && e.play() - lastGroup < rules.groupGap) {
+						broken.add(at + "the crumbs' moment " + e.cardId() + " " + minutes(e.play() - lastGroup, rules) + " min after the wave's last");
+					}
+					lastGroup = e.play();
+				}
 				case REFILL -> cycle.get(e.tier()).clear();
 				case QUIET -> {
 					if (e.value() < rules.tensionThreshold) {
@@ -940,6 +988,9 @@ public final class DirectorSim {
 			case QUIET -> String.format(Locale.ROOT, "%d days, until day %d (tension was %.1f)",
 					(e.until() - e.dayTicks()) / DirectorBrain.DAY_TICKS, Math.floorDiv(e.until(), DirectorBrain.DAY_TICKS), e.value());
 			case TELLING -> "someone named him (in " + e.stage() + ")";
+			case VISIT -> "a visit inside one of his places";
+			case ANSWER -> String.format(Locale.ROOT, "an answer of his places  tension %.1f", e.value());
+			case MOMENT -> "the second wave's moment " + e.cardId() + " (no card)";
 		};
 	}
 
@@ -967,6 +1018,8 @@ public final class DirectorSim {
 		final RandomSource darkDice;
 		/** Visits to his places: dice of their own. */
 		final RandomSource visitDice;
+		/** What a visit brings and the crumbs' moments (R3-P): dice of their own, so the visits fall as before. */
+		final RandomSource answerDice;
 		/** Fires per card in the run, whoever got them (the world caps). */
 		final Map<String, Integer> capFires = new HashMap<>();
 		Optional<FogSpell> fogSpell;
@@ -984,6 +1037,7 @@ public final class DirectorSim {
 			this.placeDice = RandomSource.create(mix(params.seed ^ 0x5C01_0084L));
 			this.darkDice = RandomSource.create(mix(params.seed ^ 0x5C25_0026L));
 			this.visitDice = RandomSource.create(mix(params.seed ^ 0x5C16_0020L));
+			this.answerDice = RandomSource.create(mix(params.seed ^ 0x5C32_0033L));
 			this.world = world;
 			this.stage = stage;
 			this.worldStart = worldTicks;
@@ -1110,10 +1164,39 @@ public final class DirectorSim {
 					}
 				}
 				double visitChance = params.visitsPerHour <= 0 ? 0 : 1 - Math.exp(-params.visitsPerHour * interval / rules.hourTicks);
+				double crumbChance = params.crumbsPerHour <= 0 ? 0 : 1 - Math.exp(-params.crumbsPerHour * interval / rules.hourTicks);
+				double sharedChance = params.crumbsSharedPerHour <= 0 || online.size() < 2 ? 0
+						: 1 - Math.exp(-params.crumbsSharedPerHour * interval / rules.hourTicks);
+				Set<SeatRun> visited = new HashSet<>();
 				for (SeatRun seat : deciding) {
-					// A visit inside one of his places (from Traces on, as they generate): it calls the own-clock cards for a day.
-					if (visitChance > 0 && stage.atLeast(Stage.TRACES) && visitDice.nextDouble() < visitChance) {
-						seat.trespassDay = dayTicks;
+					// A visit inside one of his places (awake: from Traces on): it calls the own-clock cards for a day, and its
+					// answers come (R3-P). Players together go in together: each one's own roll, shared out, so every player
+					// visits as often as alone.
+					if (visitChance > 0 && stage.atLeast(Stage.TRACES) && !visited.contains(seat)) {
+						List<SeatRun> inside = new ArrayList<>(List.of(seat));
+						for (SeatRun other : deciding) {
+							if (other != seat && !visited.contains(other) && sharing.together(worldTicks, seat.player, other.player)) {
+								inside.add(other);
+							}
+						}
+						if (visitDice.nextDouble() < visitChance / inside.size()) {
+							boolean below = params.depthsShare > 0 && answerDice.nextDouble() < params.depthsShare;
+							int answers = rollAnswers(below);
+							for (SeatRun in : inside) {
+								in.visit(below, answers);
+								visited.add(in);
+							}
+						}
+					}
+					// The crumbs' runtime moments (32b, 32c; R3-P), awake only; 32b with a friend apart who saw the crumb.
+					if (stage.atLeast(Stage.TRACES) && (crumbChance > 0 || sharedChance > 0)) {
+						double roll = answerDice.nextDouble();
+						if (roll < crumbChance) {
+							seat.crumb("32c", List.of());
+						} else if (roll < crumbChance + sharedChance) {
+							online.stream().filter(other -> other != seat && !sharing.together(worldTicks, seat.player, other.player)).findFirst()
+									.ifPresent(seer -> seat.crumb("32b", List.of(seer)));
+						}
 					}
 				}
 				for (int k = 0; k < deciding.size(); k++) {
@@ -1170,6 +1253,19 @@ public final class DirectorSim {
 			}
 		}
 
+		/** A visit's answers before the kit's gates (R3-P): {@link Params#answersPerVisit} of at most its max, and below the pit more. */
+		int rollAnswers(boolean below) {
+			int max = Math.max(1, params.answersPerVisitMax);
+			int n = 0;
+			for (int i = 0; i < max && params.answersPerVisit > 0; i++) {
+				n += answerDice.nextDouble() < Math.min(1, params.answersPerVisit / max) ? 1 : 0;
+			}
+			for (int i = 0; below && i < 2 && params.depthsAnswers > 0; i++) {
+				n += answerDice.nextDouble() < Math.min(1, params.depthsAnswers / 2) ? 1 : 0;
+			}
+			return n;
+		}
+
 		List<DirectorBrain.Sharer> sharers(SeatRun of) {
 			List<DirectorBrain.Sharer> out = new ArrayList<>();
 			for (SeatRun other : online()) {
@@ -1197,6 +1293,71 @@ public final class DirectorSim {
 		double place = 1;
 		/** The day ticks of this player's last visit inside one of his places, or -1 (it calls the own-clock cards for a day). */
 		long trespassDay = -1;
+		/** R3-P: the in-game day of {@link #answersToday}, the answers that day and ever; the day of the last crumb moment. */
+		long answerDay = Long.MIN_VALUE;
+		int answersToday;
+		int answersEver;
+		long crumbDay = Long.MIN_VALUE;
+
+		/**
+		 * A visit inside one of his places, awake (R3-P): recorded, then its answers ({@code n}: {@link Table#rollVisit},
+		 * and {@code below} a pyramid's pit one of the wave's moments) as the kit's checks have them: never in the player's
+		 * first hour, never in their quiet but for their first answer ever, at most {@link Params#answersPerDay} an
+		 * in-game day; each raises their tension, which may buy a quiet at the next look. Everyone inside has it.
+		 */
+		void visit(boolean below, int answers) {
+			Params p = table.params;
+			DirectorBrain.Clock c = clock();
+			trespassDay = table.dayTicks;
+			add(Kind.VISIT, c, table.stage, null, "visit", false, env.tension, -1, false, "");
+			int n = answers;
+			boolean quiet = table.brain.inQuiet(pacing, c);
+			if (n == 0 || play < table.rules.hourTicks || quiet && answersEver > 0) {
+				return;
+			}
+			long day = Math.floorDiv(table.dayTicks, DirectorBrain.DAY_TICKS);
+			if (day != answerDay) {
+				answerDay = day;
+				answersToday = 0;
+			}
+			n = Math.min(n, Math.max(0, p.answersPerDay - answersToday));
+			for (int i = 0; i < n; i++) {
+				env.addTension(p.answerTension, "an answer");
+				add(Kind.ANSWER, c, table.stage, null, "answer", false, env.tension, -1, quiet, "");
+			}
+			answersToday += n;
+			answersEver += n;
+			if (below && n > 0) {
+				moment("33");
+			}
+		}
+
+		/**
+		 * A crumb moment (32b, 32c; R3-P) that is there for this player now, and for {@code others} (32b: one who saw the
+		 * crumb, apart from them): it comes only while none of them is in their wave gap (live, it waits for the gap's
+		 * end) and at most once an in-game day for this player.
+		 */
+		void crumb(String id, List<SeatRun> others) {
+			long day = Math.floorDiv(table.dayTicks, DirectorBrain.DAY_TICKS);
+			if (day == crumbDay || inWaveGap() || others.stream().anyMatch(SeatRun::inWaveGap)) {
+				return;
+			}
+			crumbDay = day;
+			moment(id);
+			others.forEach(other -> other.moment(id));
+		}
+
+		/** Inside this player's wave gap now, or their first hour of play (the live hook's {@code waveMomentMay}). */
+		boolean inWaveGap() {
+			long gap = table.rules.groupGap;
+			return play < table.rules.hourTicks || gap > 0 && play - pacing.lastGroup < gap;
+		}
+
+		/** One of the second wave's moments that is no card (R3-P): recorded, and it starts this player's wave gap. */
+		void moment(String id) {
+			pacing.lastGroup = play;
+			add(Kind.MOMENT, clock(), table.stage, null, id, false, env.tension, -1, false, "");
+		}
 		/** The in-game day whose night {@link #outRoll} was rolled for, and that roll (0 to 1). */
 		long outNight = Long.MIN_VALUE;
 		double outRoll;

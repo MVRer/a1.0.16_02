@@ -62,6 +62,8 @@ final class ArchivePlan {
 	static final int CELLS_BACK = 3;
 	/** A tunnel's longest run (cells) before the shape gives up (siting refuses such a start). */
 	static final int MAX_TUNNEL = 150;
+	/** Version 3: the hall is 15 deeper, its ways rise that much further. */
+	static final int MAX_TUNNEL3 = 190;
 	/** At most this many cells of air under the way out's exit cell (a step down onto the land, never a fall). */
 	static final int EXIT_DROP = 2;
 	/** Cells past the mouth looked at for the way out. */
@@ -72,6 +74,26 @@ final class ArchivePlan {
 	static final int BAY_LENGTH = 30;
 	/** Coarse ground samples along a tunnel, every this many cells. */
 	private static final int SAMPLE_STEP = 4;
+
+	// --- version 3 (the stacks, D-113) ---
+	/** v3: the hall's inside height ({@code u} 1..41), its ceiling layer, the stacks' top shelf, the decks. */
+	static final int HEIGHT3 = 41;
+	static final int CEILING3 = 42;
+	static final int STACK3 = 26;
+	static final int TOP_DECK3 = 27;
+	/** v3: the floating grid's {@code u} (where the old ceiling was). */
+	static final int FLOAT3 = 17;
+	/** v3: the theft reaches this high (a hand from the floor and from the first deck); full above. */
+	static final int REACH3 = 13;
+	/** v3: the doorway to the well in the long wall: {@code f} -4..-6, {@code u} 1..4. */
+	static final int WELL_DOOR_F = Well.DOOR_F;
+	/** v3 variant bits: the small annex; the galleries lit from the top (4 bits); the world's lowest block + 4096. */
+	static final int SMALL_ANNEX = 1 << 8;
+	static final int LIT_SHIFT = 9;
+	static final int LOWEST_SHIFT = 13;
+	static final int LOWEST_BIAS = 4096;
+	/** v3 variant bit: mirrored (the bay and the well change sides; the siting's second try). */
+	static final int MIRROR = 1 << 26;
 
 	/** The six names of the list (lore F06), word for word, in its order. */
 	static final List<String> LIST_NAMES = List.of("kirbyfan_92", "stoneslab", "dyl4n_m", "oreo_tm", "pk_alpha", "t0rch");
@@ -92,7 +114,13 @@ final class ArchivePlan {
 	final Start start;
 	final Frame frame;
 	final long seed;
+	/** The shape version it is built as ({@link ArchiveShape#VERSION} when not tied). */
+	final int version;
 	final boolean longHall;
+	/** v3: the long hall with the short hall's cells (when the whole would not stay in reach). */
+	final boolean smallAnnex;
+	/** v3: the well; null before. */
+	final @org.jspecify.annotations.Nullable Well well;
 	/** The hall's length. */
 	final int length;
 	/** The cells' columns and rows. */
@@ -110,6 +138,12 @@ final class ArchivePlan {
 	private final Detail[] details;
 	/** The open tunnel first, then the two closed ones. */
 	final Tunnel[] tunnels;
+	/** Version 3: the ways' columns turned this many places (which one is open); 0 before. */
+	final int rotation;
+	/** Version 3: no way of the three opens on the land (no dry exit a step from it): the well's crack is the way in. */
+	final boolean sealed;
+	/** {@link #lengths}' last number when the ways are sealed. */
+	static final int SEALED = 3;
 	/** The way-in tunnels' first cell's {@code f} (the outer wall line). */
 	final int tunnelF0;
 	/** False if a tunnel found no surface within {@link #MAX_TUNNEL} (siting refuses it). */
@@ -120,18 +154,24 @@ final class ArchivePlan {
 		this.start = start;
 		this.frame = new Frame(start.origin(), start.facing());
 		this.seed = start.seed();
+		this.version = start.versionOr(ArchiveShape.VERSION);
 		this.longHall = (start.variant() & 1) != 0;
+		this.smallAnnex = version >= 3 && (start.variant() & SMALL_ANNEX) != 0;
 		this.length = longHall ? LONG : SHORT;
-		this.cols = longHall ? 7 : 5;
-		this.rows = longHall ? 5 : 3;
-		this.infested = Math.min(100, Math.max(0, start.variant() >> 1)) / 100.0;
+		this.cols = longHall && !smallAnnex ? 7 : 5;
+		this.rows = longHall && !smallAnnex ? 5 : 3;
+		this.infested = Math.min(100, Math.max(0, (start.variant() >> 1) & 127)) / 100.0;
 		this.stackRows = stackRows(length);
 		this.bayAisle = Draw.between(seed, 13, 1, Math.max(1, stackRows - 3));
-		this.baySide = Draw.between(seed, 14, 0, 1) == 0 ? -1 : 1;
+		this.baySide = (Draw.between(seed, 14, 0, 1) == 0 ? -1 : 1) * (version >= 3 && (start.variant() & MIRROR) != 0 ? -1 : 1);
 		this.edges = maze(seed, cols, rows);
 		this.details = details(seed, cols, rows);
 		this.tunnelF0 = CELLS_BACK + CELL * rows;
-		int[] columns = tunnelColumns(seed, cols);
+		// Version 3: which of the three ways is the open one, as the siting chose it (kept with the place, lengths[9]).
+		this.sealed = version >= 3 && lengths.length >= 10 && lengths[9] == SEALED;
+		this.rotation = version >= 3 && lengths.length >= 10 && !sealed ? Math.floorMod(lengths[9], 3) : 0;
+		int[] base = tunnelColumns(seed, cols);
+		int[] columns = {base[rotation], base[(rotation + 1) % 3], base[(rotation + 2) % 3]};
 		this.tunnels = new Tunnel[3];
 		boolean ok = true;
 		for (int t = 0; t < 3; t++) {
@@ -142,41 +182,268 @@ final class ArchivePlan {
 				mouth = Math.max(PLUG + 2, mouth);
 				exit = Math.max(mouth, exit);
 			}
-			tunnels[t] = new Tunnel(columns[t], cellLeft(columns[t]) + 3, mouth, exit, t == 0);
+			tunnels[t] = new Tunnel(columns[t], cellLeft(columns[t]) + 3, mouth, exit, t == 0 && !sealed);
 		}
 		this.fits = ok && measured;
+		if (version >= 3) {
+			int lit = (start.variant() >> LIT_SHIFT) & 15;
+			if (lengths.length >= 12 && version >= 4) {
+				this.well = Well.of(this, lengths[8], lengths[6], lengths[7], lit, lengths[10], lengths[11]);
+			} else if (lengths.length >= 9 && version < 4) {
+				this.well = Well.of(this, lengths[8], lengths[6], lengths[7], lit);
+			} else {
+				int lowest = lengths.length >= 9 ? lengths[8] : lowestOf(start.variant(), floorY() - 70);
+				int top = lengths.length >= 9 ? lengths[6] : com.forzacode.a1016_02.world.sc2.kit.Fault.sectionCeil(floorY() + 80);
+				int land = lengths.length >= 9 ? lengths[7] : floorY() + 54;
+				this.well = version >= 4 ? Well.of(this, lowest, top, land, lit, Well.LIFT, top - 1) : Well.of(this, lowest, top, land, lit);
+			}
+		} else {
+			this.well = null;
+		}
 		this.box = computeBox();
 	}
 
 	/** The plan over the terrain: the tunnels measured where they rise. */
 	static ArchivePlan of(Start start, Terrain terrain) {
 		ArchivePlan probe = new ArchivePlan(start, new int[] {PLUG + 2, PLUG + 2, PLUG + 2, PLUG + 2, PLUG + 2, PLUG + 2}, false);
-		int[] lengths = new int[6];
-		boolean ok = true;
-		for (int t = 0; t < 3; t++) {
-			int[] measured = probe.measure(probe.tunnels[t].left, terrain, t == 0);
-			lengths[2 * t] = measured[0];
-			lengths[2 * t + 1] = measured[1];
-			ok &= measured[0] > 0;
+		int[] lengths = new int[probe.version >= 4 ? 12 : probe.version >= 3 ? 9 : 6];
+		if (probe.version >= 3) {
+			int[] well = Well.measure(probe, terrain);
+			lengths[6] = well[0];
+			lengths[7] = well[1];
+			lengths[8] = lowestOf(start.variant(), terrain.minY());
+			if (probe.version >= 4) {
+				// Version 4 (R3A-1): the piece's lift over its land and its crest.
+				lengths[10] = well[3];
+				lengths[11] = well[4];
+			}
+			if (well[2] == 0) {
+				// The land before the well's way in falls away too far for its apron: the siting refuses it.
+				ArchivePlan plan = new ArchivePlan(start, lengths, false);
+				return plan;
+			}
 		}
-		ArchivePlan plan = new ArchivePlan(start, lengths, true);
-		return ok ? plan : new ArchivePlan(start, lengths, false);
+		if (probe.version < 3) {
+			boolean ok = true;
+			for (int t = 0; t < 3; t++) {
+				int[] measured = probe.measure(probe.tunnels[t].left, terrain, t == 0);
+				lengths[2 * t] = measured[0];
+				lengths[2 * t + 1] = measured[1];
+				ok &= measured[0] > 0;
+			}
+			ArchivePlan plan = new ArchivePlan(start, lengths, true);
+			return ok ? plan : new ArchivePlan(start, lengths, false);
+		}
+		// Version 3: the open way is the first of the three, in the columns' order turned 0, 1 or 2, whose exit is dry and a
+		// step from the land while the other two reach it (the hall is deeper: the first way's exit failed most, R3-1).
+		int[] base = tunnelColumns(probe.seed, probe.cols);
+		int[][][] seen = new int[2][3][];
+		int[] kept = java.util.Arrays.copyOf(lengths, Math.max(10, lengths.length));
+		int[] first = null;
+		for (int rot = 0; rot < 3; rot++) {
+			boolean ok = true;
+			int[] tried = java.util.Arrays.copyOf(kept, kept.length);
+			for (int t = 0; t < 3 && ok; t++) {
+				int c = (t + rot) % 3;
+				int open = t == 0 ? 1 : 0;
+				if (seen[open][c] == null) {
+					seen[open][c] = probe.measure(probe.cellLeft(base[c]) + 3, terrain, open == 1);
+				}
+				tried[2 * t] = seen[open][c][0];
+				tried[2 * t + 1] = seen[open][c][1];
+				ok = seen[open][c][0] > 0 && (open == 0 || probe.notchDry(probe.cellLeft(base[c]) + 3, seen[open][c][0], seen[open][c][1], terrain));
+				if (ok && open == 0) {
+					tried[2 * t + 1] = probe.closedExit(probe.cellLeft(base[c]) + 3, seen[open][c], terrain);
+				}
+			}
+			tried[9] = rot;
+			if (ok) {
+				return new ArchivePlan(start, tried, true);
+			}
+			if (first == null) {
+				first = tried;
+			}
+		}
+		// None of them: all three sealed (each needs only its mouth), the well's crack the only way in.
+		boolean ok = true;
+		int[] tried = java.util.Arrays.copyOf(kept, kept.length);
+		for (int t = 0; t < 3 && ok; t++) {
+			if (seen[0][t] == null) {
+				seen[0][t] = probe.measure(probe.cellLeft(base[t]) + 3, terrain, false);
+			}
+			tried[2 * t] = seen[0][t][0];
+			tried[2 * t + 1] = seen[0][t][1];
+			ok = seen[0][t][0] > 0;
+			if (ok) {
+				tried[2 * t + 1] = probe.closedExit(probe.cellLeft(base[t]) + 3, seen[0][t], terrain);
+			}
+		}
+		tried[9] = SEALED;
+		return ok ? new ArchivePlan(start, tried, true) : new ArchivePlan(start, first, false);
 	}
 
 	/** The plan with its tunnels' lengths as kept ({@link #lengths}). */
 	static ArchivePlan of(Start start, int[] lengths) {
-		int[] six = lengths != null && lengths.length == 6 ? lengths : new int[] {PLUG + 2, PLUG + 2, PLUG + 2, PLUG + 2, PLUG + 2, PLUG + 2};
+		int[] six = lengths != null && (lengths.length == 6 || lengths.length == 9 || lengths.length == 10 || lengths.length == 12) ? lengths
+				: new int[] {PLUG + 2, PLUG + 2, PLUG + 2, PLUG + 2, PLUG + 2, PLUG + 2};
 		return new ArchivePlan(start, six, true);
 	}
 
-	/** The tunnels' lengths, to keep with the place: mouth and exit of each. */
+	/** The tunnels' lengths, to keep with the place: mouth and exit of each; v3 then the well's cut, front land, lowest. */
 	int[] lengths() {
-		int[] out = new int[6];
+		int[] out = new int[well == null ? 6 : well.lifted() ? 12 : 10];
 		for (int t = 0; t < 3; t++) {
 			out[2 * t] = tunnels[t].mouth;
 			out[2 * t + 1] = tunnels[t].exit;
 		}
+		if (well != null) {
+			out[6] = well.top;
+			out[7] = well.land;
+			out[8] = well.lowest;
+			out[9] = sealed ? SEALED : rotation;
+			if (well.lifted()) {
+				out[10] = well.lift;
+				out[11] = well.crest;
+			}
+		}
 		return out;
+	}
+
+	/** The world's lowest block kept in a v3 variant, or {@code otherwise}. */
+	static int lowestOf(int variant, int otherwise) {
+		int code = (variant >>> LOWEST_SHIFT) & 0x1FFF;
+		return code == 0 ? otherwise : code - LOWEST_BIAS;
+	}
+
+	/** A v3 variant: {@link #variant} with the small annex, the lit galleries (0: default) and the world's lowest block. */
+	static int variant3(boolean longHall, double infestedShare, boolean smallAnnex, int lit, int lowest) {
+		return variant(longHall, infestedShare) | (smallAnnex ? SMALL_ANNEX : 0) | (Math.clamp(lit, 0, 15) << LIT_SHIFT)
+				| ((lowest + LOWEST_BIAS) << LOWEST_SHIFT);
+	}
+
+	/** The hall's inside height, its ceiling layer. */
+	int height() {
+		return version >= 3 ? HEIGHT3 : HEIGHT;
+	}
+
+	int ceiling() {
+		return version >= 3 ? CEILING3 : CEILING;
+	}
+
+	// --- v3: the stacks ---
+
+	static boolean deckLevel3(int u) {
+		return u == 9 || u == 18 || u == TOP_DECK3;
+	}
+
+	/** v3: a stack's shelf ({@code u} 1..26 of a row, but the decks' planks). */
+	boolean isStack3(int r, int u, int f) {
+		return isStack(r, f) && u >= 1 && u <= STACK3 && !deckLevel3(u);
+	}
+
+	/** v3: a ladder in each aisle's wall end, from the floor to the top deck (none in the bay's aisle on its side). */
+	boolean ladder3(int r, int u, int f) {
+		if (Math.abs(r) != HALF || u < 1 || u > TOP_DECK3) {
+			return false;
+		}
+		int k = aisleOf(f);
+		return k >= 0 && f == -10 - ROW_PITCH * k && !inBay(r, f);
+	}
+
+	/** v3: a deck's plank: each side over its stacks and aisles at 9, 18 and 27, open over the bay and at the ladders. */
+	boolean isDeck3(int r, int u, int f) {
+		int ar = Math.abs(r);
+		if (!deckLevel3(u) || ar < STACK_IN || ar > HALF || f > deckFront() || f < deckBack()) {
+			return false;
+		}
+		return !ladder3(r, u, f) && !inBay(r, f) && !(isPier(r, f) && u < TOP_DECK3);
+	}
+
+	/** v3: walkable on deck {@code d} here (a deck plank with room over it). */
+	private boolean walk3(int r, int d, int f) {
+		return isDeck3(r, d, f) && (d == TOP_DECK3 || !isStack(r, f));
+	}
+
+	/** v3: open to a fall at deck level {@code d} (in the hall, nothing to stand on there). */
+	private boolean void3(int r, int d, int f) {
+		if (!inHall(r, f)) {
+			return false;
+		}
+		if (isDeck3(r, d, f) || ladder3(r, d, f) || isPier(r, f) && d < TOP_DECK3) {
+			return false;
+		}
+		return !(isStack(r, f) && d + 1 <= STACK3);
+	}
+
+	/** v3: a rail (oak fence) over a walkable deck cell next to a fall. */
+	boolean isRail3(int r, int u, int f) {
+		int d = u - 1;
+		if (!deckLevel3(d) || !walk3(r, d, f)) {
+			return false;
+		}
+		return void3(r + 1, d, f) || void3(r - 1, d, f) || void3(r, d, f + 1) || void3(r, d, f - 1);
+	}
+
+	/** v3: a light of the floating grid (single glowstone at {@value #FLOAT3}, held by nothing). */
+	boolean isFloat3(int r, int f) {
+		if (!inHall(r, f) || f > -2 || Math.floorMod(-f - 2, 4) != 0) {
+			return false;
+		}
+		boolean onGrid = false;
+		for (int gr : GRID_R) {
+			onGrid |= r == gr;
+		}
+		if (!onGrid) {
+			return false;
+		}
+		return Math.abs(r) < STACK_IN || f > deckFront() || f < deckBack();
+	}
+
+	/** v3: the editions' shelves' height, and their {@code |r|} in a row; the far end's highest. */
+	static final int EDITION_U = 12;
+	static final int EDITION_R = 8;
+	static final int FAR_U = 26;
+
+	/**
+	 * v3: an editions' shelf (chiseled, empty at generation): in the second tier of each row's front face from the second
+	 * row on, a hand over the first deck of the aisle before it (none in the bay's aisle on its side); and the far end's
+	 * highest shelves (the first row's front, the top of the stacks) for the oldest.
+	 */
+	boolean isEditionShelf3(int r, int u, int f) {
+		if (version < 3 || Math.abs(r) != EDITION_R) {
+			return false;
+		}
+		int k = rowOf(f);
+		if (k < 0 || f != rowFront(k)) {
+			return false;
+		}
+		if (u == FAR_U) {
+			return k == 0;
+		}
+		return u == EDITION_U && k >= 1 && !(aisleOf(f + 1) == bayAisle && r * baySide > 0);
+	}
+
+	/** v3: the editions' shelves, nearest the dais first (both sides of a row, left first). */
+	List<BlockPos> editionShelves() {
+		List<BlockPos> out = new ArrayList<>();
+		for (int k = stackRows - 1; k >= 1; k--) {
+			for (int r : new int[] {-EDITION_R, EDITION_R}) {
+				if (isEditionShelf3(r, EDITION_U, rowFront(k))) {
+					out.add(at(r, EDITION_U, rowFront(k)));
+				}
+			}
+		}
+		return out;
+	}
+
+	/** v3: the far end's highest shelves (where the oldest editions go). */
+	List<BlockPos> farShelves() {
+		return version < 3 ? List.of() : List.of(at(-EDITION_R, FAR_U, rowFront(0)), at(EDITION_R, FAR_U, rowFront(0)));
+	}
+
+	/** v3: the doorway to the well through the long wall on the well's side. */
+	boolean wellDoor(int r, int u, int f) {
+		return well != null && r * well.side >= FACE && Math.abs(r) <= SHELL && Math.abs(f - WELL_DOOR_F) <= 1 && u >= 1 && u <= Well.DOOR_HIGH;
 	}
 
 	static int stackRows(int length) {
@@ -429,7 +696,11 @@ final class ArchivePlan {
 		List<int[]> out = new ArrayList<>();
 		for (int f = -2; f >= -length; f -= 4) {
 			for (int r : GRID_R) {
-				out.add(new int[] {r, CEILING, f});
+				if (version < 3) {
+					out.add(new int[] {r, CEILING, f});
+				} else if (isFloat3(r, f)) {
+					out.add(new int[] {r, FLOAT3, f});
+				}
 			}
 		}
 		for (int k = 0; k < stackRows; k++) {
@@ -461,7 +732,10 @@ final class ArchivePlan {
 	/** True if a hall light is here (as generated). */
 	boolean isHallLight(int r, int u, int f) {
 		int ar = Math.abs(r);
-		if (u == CEILING) {
+		if (version >= 3 && u == FLOAT3) {
+			return isFloat3(r, f);
+		}
+		if (version < 3 && u == CEILING) {
 			return isGrid(r, f);
 		}
 		if (u == SCONCE) {
@@ -596,6 +870,9 @@ final class ArchivePlan {
 
 	/** The open way's outer mouth cell (lower left, outside: {@code Place.entrance}). */
 	BlockPos entrance() {
+		if (well != null && sealed) {
+			return well.sill();
+		}
 		Tunnel t = tunnels[0];
 		return at(t.left, foot(t.exit), tunnelF0 + t.exit);
 	}
@@ -668,13 +945,18 @@ final class ArchivePlan {
 
 	/** The hall's inside and the cells' block (their walls too): where a player counts as in it. */
 	Interior interior() {
-		BoundingBox hall = frame.box(-HALF, 1, -1, HALF, HEIGHT, -length);
+		BoundingBox hall = frame.box(-HALF, 1, -1, HALF, height(), -length);
 		BoundingBox cells = frame.box(-4 * cols + 1, 1, CELLS_BACK + 1, 4 * cols - 1, CELL_HEIGHT, tunnelF0 - 1);
+		if (well != null) {
+			BoundingBox corridor = BoundingBox.fromCorners(at(well.side * FACE, 1, WELL_DOOR_F - 1),
+					well.at(0, floorY() + Well.DOOR_HIGH, well.doorJ() + 1));
+			return Interior.union(List.of(Interior.box(hall), Interior.box(cells), Interior.box(well.insideBox()), Interior.box(corridor)));
+		}
 		return Interior.union(List.of(Interior.box(hall), Interior.box(cells)));
 	}
 
 	BoundingBox hallInside() {
-		return frame.box(-HALF, 1, -1, HALF, HEIGHT, -length);
+		return frame.box(-HALF, 1, -1, HALF, height(), -length);
 	}
 
 	BoundingBox cellsInside() {
@@ -687,8 +969,16 @@ final class ArchivePlan {
 
 	private BoundingBox computeBox() {
 		int reach = 2;
-		BoundingBox all = frame.box(-SHELL, -2, CELLS_BACK - 1, SHELL, CEILING + 1, -length - 3);
+		BoundingBox all = frame.box(-SHELL, -2, CELLS_BACK - 1, SHELL, ceiling() + 1, -length - 3);
 		all = all.encapsulate(frame.box(-4 * cols - 1, -1, 2, 4 * cols + 1, CELL_HEIGHT + 2, tunnelF0 + 1));
+		if (well != null) {
+			// Version 3: the body's jacket ({@code ArchiveShape.JACKET}) round the hall and the cells, then the well.
+			int jacket = ArchiveShape.JACKET;
+			all = all.encapsulate(frame.box(-HALF - jacket, 1 - jacket, -1 + jacket, HALF + jacket, height() + jacket, -length - jacket));
+			all = all.encapsulate(frame.box(-4 * cols + 1 - jacket, 1 - jacket, CELLS_BACK + 1 - jacket, 4 * cols - 1 + jacket,
+					CELL_HEIGHT + jacket, tunnelF0 - 1 + jacket));
+			all = all.encapsulate(well.box());
+		}
 		for (Tunnel t : tunnels) {
 			int last = t.open ? t.exit : t.exit;
 			all = all.encapsulate(frame.box(t.left - 1 - reach, -reach, tunnelF0, t.left + 2 + reach, top(last) + 1 + reach, tunnelF0 + last + reach));
@@ -700,6 +990,35 @@ final class ArchivePlan {
 	}
 
 	// --- the terrain ---
+
+	/**
+	 * Version 3: an open way's notch (its first cells past the mouth, opened to the sky) has no water in it or beside it,
+	 * and its two columns' land within 4 of each other (SC2-H's audit: a notch cleared beside a lake leaks).
+	 */
+	/**
+	 * Version 3: a closed way's exit: as measured where its notch is dry, else its mouth (no outer part: nothing carved
+	 * past its plug, no notch; SC2-H's audit: a closed way's notch cleared beside a lake leaks).
+	 */
+	int closedExit(int left, int[] measured, Terrain terrain) {
+		return notchDry(left, measured[0], measured[1], terrain) ? measured[1] : measured[0];
+	}
+
+	boolean notchDry(int left, int mouth, int exit, Terrain terrain) {
+		for (int i = mouth; i <= Math.min(mouth + ArchiveShape.NOTCH, exit); i++) {
+			BlockPos a = at(left, 0, tunnelF0 + i);
+			BlockPos b = at(left + 1, 0, tunnelF0 + i);
+			if (Math.abs(terrain.ground(a.getX(), a.getZ()) - terrain.ground(b.getX(), b.getZ())) > 4) {
+				return false;
+			}
+			for (int side = -1; side <= 2; side++) {
+				BlockPos c = at(left + side, 0, tunnelF0 + i);
+				if (terrain.wet(c.getX(), c.getZ())) {
+					return false;
+				}
+			}
+		}
+		return true;
+	}
 
 	/**
 	 * A tunnel's mouth and exit over the terrain (its left column's ground), or {-1, -1} if it finds no surface in
@@ -715,7 +1034,8 @@ final class ArchivePlan {
 	 */
 	int[] measure(int left, Terrain terrain, boolean open) {
 		int y0 = floorY();
-		int[] grounds = new int[MAX_TUNNEL + MAX_NOTCH + 1];
+		int maxTunnel = version >= 3 ? MAX_TUNNEL3 : MAX_TUNNEL;
+		int[] grounds = new int[maxTunnel + MAX_NOTCH + 1];
 		java.util.Arrays.fill(grounds, Integer.MIN_VALUE);
 		java.util.function.IntUnaryOperator land = i -> {
 			if (grounds[i] == Integer.MIN_VALUE) {
@@ -728,7 +1048,7 @@ final class ArchivePlan {
 		int mouth = -1;
 		int last = -1;
 		int i = 0;
-		while (i <= MAX_TUNNEL) {
+		while (i <= maxTunnel) {
 			int head = y0 + foot(i) + 1;
 			int g = land.applyAsInt(i);
 			if (head >= g) {
@@ -867,7 +1187,7 @@ final class ArchivePlan {
 	/** True if a world position stands in the hall (its feet over the floor, under the ceiling). */
 	boolean inHallAt(BlockPos feet) {
 		int u = feet.getY() - floorY();
-		return u >= 0 && u <= HEIGHT && inHall(localR(feet.getX(), feet.getZ()), localF(feet.getX(), feet.getZ()));
+		return u >= 0 && u <= height() && inHall(localR(feet.getX(), feet.getZ()), localF(feet.getX(), feet.getZ()));
 	}
 
 	/** Steps between cells through open doorways, from one cell to every other ({@code -1} unreachable). */

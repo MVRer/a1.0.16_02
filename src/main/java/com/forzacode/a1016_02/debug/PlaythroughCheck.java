@@ -35,14 +35,19 @@ final class PlaythroughCheck {
 	 * @param majorEveryMin the Proximity major gap, already scaled by the tempo (2 to 4 h times its pace factor)
 	 * @param ownClockCards the cards on a clock of their own (the self-created layer's hunts, FIX-SC2-PACE), held to
 	 *                      {@code ownClockFrom} instead of {@code firstAccident}
+	 * @param groupCards    the second wave's cards (FIX-SC2-PACE's group): with its moments that are no card (the dry runs'
+	 *                      {@code MOMENT}s, R3-P) at least {@code groupGap} apart, the depths' ({@code 33}, which come when
+	 *                      the player goes down) only starting the gap; none or 0: no check
 	 */
 	record Limits(long hourTicks, long tickInterval, long joinGrace, long minorGap, int noMajorBeforeDay, int aloneMaxAmbient,
 			long firstAccident, double firstAccidentHours, double paceFactor, double tracesAmbientPerHour, double minorsPerHourMin,
-			double minorsPerHourMax, long majorEveryMin, long majorEveryMax, double emptyChance, Set<String> ownClockCards, long ownClockFrom) {
+			double minorsPerHourMax, long majorEveryMin, long majorEveryMax, double emptyChance, Set<String> ownClockCards, long ownClockFrom,
+			Set<String> groupCards, long groupGap) {
 		static Limits of(DirectorRules rules, double firstAccidentHours, double paceFactor) {
 			return new Limits(rules.hourTicks, rules.tickInterval, rules.joinGrace, rules.minorGap, rules.noMajorBeforeDay, rules.aloneMaxAmbient,
 					rules.firstAccident, firstAccidentHours, paceFactor, rules.tracesAmbientPerHour, rules.minorsPerHourMin, rules.minorsPerHourMax,
-					rules.majorEvery.min(), rules.majorEvery.max(), rules.emptySessionChance, Set.copyOf(rules.ownClockCards), rules.ownClockFrom);
+					rules.majorEvery.min(), rules.majorEvery.max(), rules.emptySessionChance, Set.copyOf(rules.ownClockCards), rules.ownClockFrom,
+					Set.copyOf(rules.groupCards), rules.groupGap);
 		}
 
 		double hours(long ticks) {
@@ -247,6 +252,29 @@ final class PlaythroughCheck {
 		checks.add(hard(Fmt.f("no accident before %s (%.0f h x %.2f)", Fmt.hm(limits.firstAccident(), h), limits.firstAccidentHours(),
 				limits.paceFactor()), breaches,
 				accidents + " accident fires" + (firstAccident == null ? "" : ", first at " + Fmt.hm(firstAccident.play(), h))));
+
+		// The second wave's moments apart (FIX-SC2-PACE's gap; R3-P: its moments that are no card too, the depths' only
+		// starting it): never closer than the gap, so never more than two in an hour.
+		if (limits.groupGap() > 0 && !limits.groupCards().isEmpty()) {
+			breaches = new ArrayList<>();
+			long lastWave = Long.MIN_VALUE;
+			int waveCount = 0;
+			for (Event e : events) {
+				boolean card = e.felt() && limits.groupCards().contains(e.cardId()) && !"forced".equals(e.note());
+				boolean moment = e.kind() == Kind.MOMENT;
+				if (!card && !moment) {
+					continue;
+				}
+				waveCount++;
+				boolean paced = card || !"33".equals(e.cardId());
+				if (paced && lastWave != Long.MIN_VALUE && e.play() - lastWave < limits.groupGap()) {
+					breaches.add(at(e, h) + e.cardId() + " only " + Fmt.dur(e.play() - lastWave, h) + " after the wave's last");
+				}
+				lastWave = e.play();
+			}
+			checks.add(hard(Fmt.f("at least %d min between the second wave's moments", Fmt.minutes(limits.groupGap(), h)), breaches,
+					waveCount + " of its moments"));
+		}
 
 		// The director's own replay of its rules (decks, quiets, signatures, fakes, empty sessions only from Proximity, the
 		// first hour's cap).

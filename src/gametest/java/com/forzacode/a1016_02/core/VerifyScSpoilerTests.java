@@ -61,7 +61,8 @@ import net.minecraft.server.MinecraftServer;
  * {@code sc} id), read from the sources: the format and every string in the call. All held to the layer's own list of
  * words that name a feature ({@code SelfCreatedDebugTests.NAMES}, which the index and the overlay already pass) and a
  * few more ({@link #MORE}). SC2-0a (D-103) adds the second wave's words ({@link #SC2}, {@link #SC2_GENERIC}), its
- * {@code sc2} packages to the log check, and its sections, found by themselves ({@link #secondWave}).
+ * {@code sc2} packages to the log check, and its sections, found by themselves ({@link #secondWave}). R3-S (D-103
+ * extended; docs/SELF_CREATED_2_R3.md, "Spoilers for round 3") adds round 3's words ({@link #SC3}, {@link #SC3_GENERIC}).
  */
 public class VerifyScSpoilerTests {
 	/** {@code SelfCreatedDebugTests.NAMES} (D-080), word for word. */
@@ -89,10 +90,24 @@ public class VerifyScSpoilerTests {
 	 * them by hand): {@code file} (03's "could not read the file from before").
 	 */
 	static final List<String> SC2_DROPPED = List.of("file");
+	/**
+	 * Round 3's words (D-103 extended, R3-S; docs/SELF_CREATED_2_R3.md, "Spoilers for round 3"): the crumbs and their
+	 * error signs, the archive's books and stacks, the hollow's cut, and the places' sleep; {@code bookshelf},
+	 * {@code glowstone}, {@code brick} and {@code pyramid} are in {@link #SC2}.
+	 */
+	public static final List<String> SC3 = List.of("crumb", "breadcrumb", "fault", "glitch", "edition", "tattered", "summit", "tabletop", "hanging",
+			"stacks", "dormant", "asleep", "awake", "depths", "warren", "barricade");
+	/** Round 3's generic words, kept because no line of the layer trips them. Left out, watched by hand: {@link #SC3_WATCHED}. */
+	public static final List<String> SC3_GENERIC = List.of("well", "day", "light", "lit", "rooms", "iron", "camp");
+	/**
+	 * The generic words of round 3 that an existing line of the layer already uses, so they are not held here (R3-A and
+	 * R3-V watch them by hand): {@code piece} (the kit's "a {} piece failed in chunk {}", {@code Sc2Piece}).
+	 */
+	static final List<String> SC3_WATCHED = List.of("piece");
 	/** Phrases that name no feature, taken out of a text before it is held to the lists: vanilla's and Iris's own words. */
 	static final List<String> PLAIN_PHRASES = List.of("shader pack");
 	/** Every list a word of the layer is held to. */
-	static final List<List<String>> LISTS = List.of(NAMES, MORE, SC2, SC2_GENERIC);
+	static final List<List<String>> LISTS = List.of(NAMES, MORE, SC2, SC2_GENERIC, SC3, SC3_GENERIC);
 	/** The keys every section may keep in plain words: its schema version, and the layer's switch. */
 	private static final Set<String> PLAIN_KEYS = Set.of("version", "enabled");
 	/** An opaque key: a letter, at most one more letter or digit. */
@@ -352,6 +367,27 @@ public class VerifyScSpoilerTests {
 		}
 		for (Map.Entry<String, Section> entry : secondWave().entrySet()) {
 			helper.assertTrue(entry.getKey().matches("sc\\d\\d") && entry.getValue().opaqueFrom() == 0, "an sc2 section: " + entry.getKey());
+		}
+		helper.succeed();
+	}
+
+	/**
+	 * R3-S: round 3's words are held in every form the checks read, as the second wave's are; a word watched by hand is
+	 * not held. The config, commands and log checks above read them through {@link #LISTS}.
+	 */
+	@GameTest
+	public void theThirdRoundsWordsAreHeld(GameTestHelper helper) {
+		helper.assertTrue("crumb".equals(namedIn("[a1016] {}: 3 crumbs at {}", false)), "a plural");
+		helper.assertTrue("glitch".equals(namedIn("[a1016] glitched", false)) && "awake".equals(namedIn("[a1016] awaked", false)), "a word with -ed");
+		helper.assertTrue(namedIn("lostbreadcrumb", true) != null && "summit".equals(namedIn("nosummit", true)), "a word inside a literal");
+		helper.assertTrue("fault".equals(namedWord("faultEdge")) && "edition".equals(namedWord("editionsMax")), "a key's part");
+		for (List<String> list : List.of(SC3, SC3_GENERIC)) {
+			for (String word : list) {
+				helper.assertTrue(word.equals(namedIn("[a1016] " + word, false)), "'" + word + "' is not held");
+			}
+		}
+		for (String word : SC3_WATCHED) {
+			helper.assertTrue(namedIn("[a1016] " + word, false) == null, "a watched word is held: " + word);
 		}
 		helper.succeed();
 	}

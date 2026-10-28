@@ -220,7 +220,7 @@ public class SelfCreated2LineTests {
 	}
 
 	private static boolean solid(BlockState state) {
-		return !state.isAir() && state.getFluidState().isEmpty();
+		return !state.isAir() && state.getFluidState().isEmpty() && !com.forzacode.a1016_02.world.sc2.kit.Fault.isLight(state);
 	}
 
 	// --- 19 ---
@@ -322,7 +322,7 @@ public class SelfCreated2LineTests {
 		fill(level, new BoundingBox(px - 3, -50, z0 + 60, px + 3, -48, z0 + 63), Blocks.LAVA.defaultBlockState());
 		fill(level, new BoundingBox(px - 5, -41, z0 + 120, px + 5, -40, z0 + 140), Blocks.WATER.defaultBlockState());
 		Terrains.Frozen terrain = Live.terrain(level);
-		LineShape shape = new LineShape(s, terrain);
+		LineShape shape = new LineShape(s, terrain, 3);
 		Live.place(level, S19.KIND, shape, terrain, s.start());
 
 		List<String> wrong = new ArrayList<>();
@@ -465,8 +465,8 @@ public class SelfCreated2LineTests {
 			helper.assertTrue(mouth.getX() == s.holes().getFirst() && mouth.getZ() == 0, "its mouth " + mouth + " is not the opening nearest the origin");
 			helper.assertTrue(remains.containing(level, mouth).isPresent(), "an opening is not inside it");
 			helper.assertTrue(remains.containing(level, mouth.south()).isEmpty(), "beside it is inside it");
-			helper.assertTrue(level.getBlockState(mouth).isAir() && level.getBlockState(mouth.above().east()).isAir() && level.getBlockState(mouth.above(2))
-					.is(Blocks.OBSIDIAN), "the opening is not open two by two");
+			helper.assertTrue(com.forzacode.a1016_02.world.sc2.s19.LineAnswers.open(level.getBlockState(mouth)) && com.forzacode.a1016_02.world.sc2.s19.LineAnswers.open(level.getBlockState(mouth.above().east())) && level.getBlockState(mouth.above(2))
+					.isSolidRender(), "the opening is not open two by two");
 		} finally {
 			Recorder.drain(new Sc2Data());
 		}
@@ -494,7 +494,8 @@ public class SelfCreated2LineTests {
 		try {
 			helper.assertTrue(LineFeature.decorate(level, generator, chunk, null) == 0, "built with no snapshot");
 			helper.assertTrue(LineFeature.decorate(level, generator, chunk, snapshot(false, Stage.TRACES, config, c20)) == 0, "built switched off");
-			helper.assertTrue(LineFeature.decorate(level, generator, chunk, snapshot(true, Stage.ALONE, config, c20)) == 0, "built before Traces");
+			// Round 3 (D-108): the line is there from the world's creation.
+			helper.assertTrue(LineFeature.refusal(snapshot(true, Stage.ALONE, config, c20)) == null, "refused in Alone");
 			Sc19Config later = far(slotX(3), 192);
 			later.fromStage = 2;
 			helper.assertTrue(LineFeature.decorate(level, generator, chunk, snapshot(true, Stage.TRACES, later, c20)) == 0, "built under its stage");
@@ -601,6 +602,309 @@ public class SelfCreated2LineTests {
 		helper.succeed();
 	}
 
+	// --- FIX-R3-E: clear of the places ---
+
+	/**
+	 * A place's box beside a segment: {@code along} long centred {@code t} cells out along its axis, across it from
+	 * {@code from} to {@code to} off its plane.
+	 */
+	private static BoundingBox placeBox(LinePlan.Segment s, int t, int along, int from, int to) {
+		int t0 = t - along / 2;
+		int t1 = t0 + along - 1;
+		int a0 = s.plane() + from;
+		int a1 = s.plane() + to;
+		return s.arm().alongX() ? new BoundingBox(t0, 60, a0, t1, 120, a1) : new BoundingBox(a0, 60, t0, a1, 120, t1);
+	}
+
+	/** True if {@code box}, with the clearance round it, meets {@code footprint} across x and z. */
+	private static boolean meets(BoundingBox footprint, BoundingBox box) {
+		int c = LinePlan.CLEARANCE;
+		return box.minX() - c <= footprint.maxX() && box.maxX() + c >= footprint.minX() && box.minZ() - c <= footprint.maxZ() && box.maxZ() + c >= footprint.minZ();
+	}
+
+	/**
+	 * What is wrong with {@code clear}, the planned {@code s} kept clear of {@code boxes}, or null: within the plan's own
+	 * stretch, on the grid, at least eight bays, its openings and cut on its panels, the same plane, height and seed, and no
+	 * box (with the clearance) meeting its footprint.
+	 */
+	private static @org.jspecify.annotations.Nullable String unclear(LinePlan.Segment s, LinePlan.Segment clear, List<BoundingBox> boxes) {
+		if (clear.arm() != s.arm() || clear.plane() != s.plane() || clear.bottom() != s.bottom() || clear.top() != s.top() || clear.seed() != s.seed()) {
+			return "not the same line: " + clear;
+		}
+		if (clear.t0() < s.t0() || clear.t1() > s.t1() || Math.floorMod(clear.t0(), LinePlan.BAY) != 0 || Math.floorMod(clear.t1(), LinePlan.BAY) != 0
+				|| clear.t1() - clear.t0() < LinePlan.MIN_LENGTH - LinePlan.BAY) {
+			return "its stretch " + clear.t0() + ".." + clear.t1() + " in " + s.t0() + ".." + s.t1();
+		}
+		for (int hole : clear.holes()) {
+			if (!clear.panel(hole) || !clear.panel(hole + 1)) {
+				return "an opening off its panels at " + hole;
+			}
+		}
+		if (clear.gapWidth() > 0 && (clear.gapStart() < clear.p0() || clear.gapStart() + clear.gapWidth() - 1 > clear.p1())) {
+			return "its cut off its panels";
+		}
+		BoundingBox foot = LinePlan.footprint(clear);
+		for (BoundingBox b : boxes) {
+			if (meets(foot, b)) {
+				return "within " + LinePlan.CLEARANCE + " of a place at " + b;
+			}
+		}
+		return null;
+	}
+
+	/**
+	 * FIX-R3-E (the line ran through the real seed's archive): a planned segment no place comes near is the plan itself (a
+	 * place beside it farther than the clearance changes nothing); one with a place on its axis (or beside it within the
+	 * clearance) keeps its near end and ends on a rib short of the place, its openings and cut laid out again on what is
+	 * left; one with a place at its near end begins past it; one with places all along has none; a stretch shorter than
+	 * {@code LinePlan.preferred} before a place gives way to a longer one past it, and a stretch too short for a segment
+	 * between two places to the one past both. Both ways out on both axes; a segment fixed in a world stays as fixed whatever
+	 * stands round it ({@code LineFeature.laidOut}, R12-2), an unfixed one with no stretch left is gone from the layout.
+	 */
+	@GameTest
+	public void theLineEndsShortOfAPlaceInItsWayAndKeepsClearOfIt(GameTestHelper helper) {
+		Sc19Config c = new Sc19Config();
+		int keep = LinePlan.CLEARANCE + LineShape.LIT_REACH;
+		List<String> wrong = new ArrayList<>();
+		int cases = 0;
+		for (long seed : new long[] {3L, 19L, 0x19E5L, -42L}) {
+			for (LinePlan.Segment s : LinePlan.of(seed, 7L, c, -64, 319)) {
+				int out = s.arm().sign();
+				int near = s.near();
+				String at = s.arm() + " of " + seed + ": ";
+				// Beside it, just past the clearance on either side: the plan itself.
+				List<BoundingBox> beside = List.of(placeBox(s, near + out * 300, 96, keep + 1, keep + 96), placeBox(s, near + out * 500, 96, -keep - 96, -keep - 1));
+				if (LinePlan.clear(s, beside, c) != s) {
+					wrong.add(at + "moved by places beside it");
+				}
+				// On its axis 400 out (and one beside it within the clearance, 600 out): ends short of the first, its near end kept.
+				for (BoundingBox b : List.of(placeBox(s, near + out * 400, 80, -40, 40), placeBox(s, near + out * 400, 80, keep - 2, keep + 60))) {
+					LinePlan.Segment clear = LinePlan.clear(s, List.of(b, placeBox(s, near + out * 600, 64, -20, 20)), c);
+					String why = clear == null ? "none" : unclear(s, clear, List.of(b));
+					if (why == null && clear.near() != near) {
+						why = "its near end moved to " + clear.near();
+					}
+					if (why == null && Math.abs(near - (out > 0 ? clear.t1() : clear.t0())) > 400 - 40 - LinePlan.CLEARANCE) {
+						why = "it runs into the place";
+					}
+					if (why == null && Math.abs(near - (out > 0 ? clear.t1() : clear.t0())) < 400 - 40 - LinePlan.CLEARANCE - LinePlan.BAY) {
+						why = "it stops a bay or more short of where it may";
+					}
+					if (why != null) {
+						wrong.add(at + "a place 400 out: " + why);
+					}
+					cases++;
+				}
+				// At its near end: it begins past the place.
+				BoundingBox first = placeBox(s, near + out * 40, 120, -60, 60);
+				LinePlan.Segment past = LinePlan.clear(s, List.of(first), c);
+				String why = past == null ? "none" : unclear(s, past, List.of(first));
+				if (why == null && (out > 0 ? past.t0() <= near : past.t1() >= near)) {
+					why = "it did not begin past the place";
+				}
+				if (why != null) {
+					wrong.add(at + "a place at its near end: " + why);
+				}
+				// Two places with a short stretch between them near the start and a long one past them: the long one.
+				int gap0 = near + out * 220;
+				List<BoundingBox> two = List.of(placeBox(s, near + out * 40, 120, -60, 60), placeBox(s, gap0 + out * 30, 60, -30, 30));
+				LinePlan.Segment between = LinePlan.clear(s, two, c);
+				why = between == null ? "none" : unclear(s, between, two);
+				if (why == null && Math.abs(between.near() - near) < 220) {
+					why = "it took the stretch too short between the two";
+				}
+				if (why != null) {
+					wrong.add(at + "two places: " + why);
+				}
+				// A place 200 out leaves eight bays before it, under the preferred length: the longer stretch past it.
+				BoundingBox short0 = placeBox(s, near + out * 200, 60, -30, 30);
+				LinePlan.Segment longer = LinePlan.clear(s, List.of(short0), c);
+				why = longer == null ? "none" : unclear(s, longer, List.of(short0));
+				boolean x = s.arm().alongX();
+				int beyond = out > 0 ? (x ? short0.maxX() : short0.maxZ()) : (x ? short0.minX() : short0.minZ());
+				if (why == null && (out > 0 ? longer.t0() <= beyond : longer.t1() >= beyond)) {
+					why = "it kept the short stretch before the place";
+				}
+				if (why != null) {
+					wrong.add(at + "a place 200 out: " + why);
+				}
+				// Places all along it: none.
+				List<BoundingBox> all = new ArrayList<>();
+				for (int t = s.t0(); t <= s.t1(); t += 100) {
+					all.add(placeBox(s, t, 40, -10, 10));
+				}
+				if (LinePlan.clear(s, all, c) != null) {
+					wrong.add(at + "a line with places all along it");
+				}
+				cases += 5;
+			}
+		}
+		// A segment fixed in a world stays as fixed; an unfixed one with no stretch left is gone from the layout.
+		long seed = 0x19E5L;
+		long salt = 0x2207L;
+		List<LinePlan.Segment> planned = LinePlan.of(seed, salt, c, -64, 319);
+		LinePlan.Places everywhere = (c0x, c0z, c1x, c1z) -> {
+			List<BoundingBox> boxes = new ArrayList<>();
+			for (int cx = c0x; cx <= c1x; cx += 4) {
+				for (int cz = c0z; cz <= c1z; cz += 4) {
+					boxes.add(new BoundingBox(cx << 4, 60, cz << 4, (cx << 4) + 15, 120, (cz << 4) + 15));
+				}
+			}
+			return boxes;
+		};
+		com.forzacode.a1016_02.world.sc2.kit.Plans.forget(LineFeature.planPrefix(seed, salt));
+		try {
+			LinePlan.Segment east = arm(planned, LinePlan.Arm.EAST);
+			com.forzacode.a1016_02.world.sc2.kit.Plans.fix(LineFeature.planKey(seed, salt, LinePlan.Arm.EAST), LinePlan.toTag(east, LineShape.VERSION));
+			List<LinePlan.Segment> laid = LineFeature.laidOut(seed, salt, planned, -64, 319, c, everywhere);
+			helper.assertTrue(laid.size() == 1 && laid.getFirst().equals(east), "the fixed segment moved or another stayed: " + laid);
+			helper.assertTrue(LineFeature.laidOut(seed, salt, planned, -64, 319, c, LinePlan.Places.NONE).equals(planned), "no places changed the layout");
+		} finally {
+			com.forzacode.a1016_02.world.sc2.kit.Plans.forget(LineFeature.planPrefix(seed, salt));
+		}
+		helper.assertTrue(wrong.isEmpty(), wrong.size() + " of " + cases + ": " + wrong.subList(0, Math.min(6, wrong.size())));
+		helper.succeed();
+	}
+
+	/**
+	 * FIX-R3-E: a world's planned segments kept clear of these places (the find run's: worldgen's decisions over the noise),
+	 * as the live world keeps them clear of {@code Decided}'s ({@link LineFeature#laidOut}): an arm with no stretch left
+	 * has none.
+	 */
+	static List<LinePlan.Segment> clearOf(List<LinePlan.Segment> planned, List<SelfCreated3FindTests.Place> places, Sc19Config config) {
+		LinePlan.Places of = placesOf(places);
+		List<LinePlan.Segment> out = new ArrayList<>(planned.size());
+		for (LinePlan.Segment s : planned) {
+			LinePlan.Segment clear = LinePlan.clear(s, of, config);
+			if (clear != null) {
+				out.add(clear);
+			}
+		}
+		return out;
+	}
+
+	/** The boxes of these places by their start chunk, as {@code Decided.within} answers the line. */
+	static LinePlan.Places placesOf(List<SelfCreated3FindTests.Place> places) {
+		return (c0x, c0z, c1x, c1z) -> {
+			List<BoundingBox> out = new ArrayList<>();
+			for (SelfCreated3FindTests.Place p : places) {
+				if (p.chunk().x() >= c0x && p.chunk().x() <= c1x && p.chunk().z() >= c0z && p.chunk().z() <= c1z) {
+					out.add(p.box());
+				}
+			}
+			return out;
+		};
+	}
+
+	/**
+	 * FIX-R3-E over the real noise ({@code -Da1016_02.sc3line=N} worlds, 3 by default: SC2-H's seed, seed 1 and one more):
+	 * every place worldgen decides (round 3's numbers, the spacing rule) whose start lies in a band {@code PLACE_REACH} +
+	 * the clearance + 256 round each half-axis's planned segment (wide, so the spacing rule sees the places' neighbours);
+	 * the segment as the live world lays it out (asked as {@code Decided.within} asks: by start chunk within
+	 * {@code PLACE_REACH} and the clearance of its
+	 * footprint) comes within the clearance of none of them, is the plan's own where none comes near the plan, and no
+	 * place's box reaches farther than {@code PLACE_REACH} from its start's chunk. Prints how many segments each way.
+	 */
+	@GameTest(maxTicks = 4000)
+	public void theLineKeepsClearOfEveryPlaceOverTheRealNoise(GameTestHelper helper) {
+		ServerLevel level = helper.getLevel();
+		int worlds = Integer.getInteger("a1016_02.sc3line", 3);
+		Map<String, Holder<Structure>> structures = Sc2RealNoise.structures(level);
+		SelfCreated3FindTests.Era era = SelfCreated3FindTests.after(level, structures);
+		Sc19Config c = new Sc19Config();
+		java.util.Random seeds = new java.util.Random(0x19C1EAL);
+		List<Long> worldSeeds = new ArrayList<>();
+		for (int w = 0; w < worlds; w++) {
+			worldSeeds.add(w == 0 ? SelfCreated2HeightsTests.REAL_SEED : w == 1 ? 1L : seeds.nextLong());
+		}
+		int band = LinePlan.CLEARANCE + LinePlan.PLACE_REACH + LineShape.LIT_REACH + 256;
+		List<String> wrong = Collections.synchronizedList(new ArrayList<>());
+		// segments, met a place as planned, kept their near end, begun past a place, none left; places; the farthest reach;
+		// candidates the live line asks about; the band's sitings' nanoseconds and count.
+		long[] tally = new long[10];
+		int[] next = {0};
+		helper.succeedWhen(() -> {
+			if (next[0] < worldSeeds.size()) {
+				long seed = worldSeeds.get(next[0]++);
+				Sc2RealNoise.World world = Sc2RealNoise.normal(level, seed);
+				Snapshot snapshot = Sc2RealNoise.snapshot(seed);
+				List<LinePlan.Segment> planned = LinePlan.of(seed, 7L, c, world.minY(), world.maxY());
+				Map<String, List<Long>> nanos = new java.util.concurrent.ConcurrentHashMap<>();
+				List<SelfCreated3FindTests.Place> places = SelfCreated3FindTests.placesIn(level, world, structures, era, BlockPos.ZERO, snapshot,
+						new java.util.concurrent.ConcurrentHashMap<>(), nanos, placement -> {
+							Set<ChunkPos> chunks = new java.util.LinkedHashSet<>();
+							for (LinePlan.Segment s : planned) {
+								BoundingBox b = LinePlan.footprint(s).inflatedBy(band, 0, band);
+								BoundingBox look = LinePlan.footprint(s).inflatedBy(LinePlan.CLEARANCE + LinePlan.PLACE_REACH, 0,
+										LinePlan.CLEARANCE + LinePlan.PLACE_REACH);
+								for (ChunkPos chunk : com.forzacode.a1016_02.world.sc2.kit.Decided.candidates(placement, seed, b.minX() >> 4, b.minZ() >> 4,
+										b.maxX() >> 4, b.maxZ() >> 4)) {
+									if (placement.isStructureChunk(world.structures(), chunk.x(), chunk.z())) {
+										chunks.add(chunk);
+										if (chunk.x() >= look.minX() >> 4 && chunk.x() <= look.maxX() >> 4 && chunk.z() >= look.minZ() >> 4
+												&& chunk.z() <= look.maxZ() >> 4) {
+											tally[7]++;
+										}
+									}
+								}
+							}
+							return new ArrayList<>(chunks);
+						});
+				for (List<Long> list : nanos.values()) {
+					for (long n : list) {
+						tally[8] += n;
+						tally[9]++;
+					}
+				}
+				tally[5] += places.size();
+				List<BoundingBox> boxes = new ArrayList<>();
+				for (SelfCreated3FindTests.Place p : places) {
+					boxes.add(p.box());
+					ChunkPos k = p.chunk();
+					int reach = Math.max(Math.max(k.getMinBlockX() - p.box().minX(), p.box().maxX() - k.getMaxBlockX()),
+							Math.max(k.getMinBlockZ() - p.box().minZ(), p.box().maxZ() - k.getMaxBlockZ()));
+					tally[6] = Math.max(tally[6], reach);
+					if (reach > LinePlan.PLACE_REACH) {
+						wrong.add(seed + ": " + p.kind() + " at " + k + " reaches " + reach + " from its chunk");
+					}
+				}
+				LinePlan.Places of = placesOf(places);
+				for (LinePlan.Segment s : planned) {
+					tally[0]++;
+					LinePlan.Segment clear = LinePlan.clear(s, of, c);
+					boolean met = boxes.stream().anyMatch(b -> meets(LinePlan.footprint(s), b));
+					if (met) {
+						tally[1]++;
+						String near = boxes.stream().filter(b -> meets(LinePlan.footprint(s), b)).map(BoundingBox::toString).findFirst().orElse("");
+						Sc2RealNoise.log("sc3line " + seed + " " + s.arm() + " " + s.t0() + ".." + s.t1() + " met a place (" + near + "): now "
+								+ (clear == null ? "none" : clear.t0() + ".." + clear.t1()));
+					} else if (clear != s) {
+						wrong.add(seed + " " + s.arm() + ": moved with no place near it");
+					}
+					if (clear == null) {
+						tally[4]++;
+						continue;
+					}
+					if (met && clear.near() == s.near()) {
+						tally[2]++;
+					} else if (met) {
+						tally[3]++;
+					}
+					String why = unclear(s, clear, boxes);
+					if (why != null) {
+						wrong.add(seed + " " + s.arm() + ": " + why);
+					}
+				}
+				throw helper.assertionException("worlds: " + next[0] + " of " + worldSeeds.size());
+			}
+			Sc2RealNoise.log(String.format(Locale.ROOT, "sc3line: %d worlds, %d segments, %d met a place as planned: %d end short of it, %d begin past it, %d none; "
+					+ "%d places in the bands, the farthest box %d from its start's chunk; the live line sites %.1f candidates a world, %.1f ms a siting on average",
+					worldSeeds.size(), tally[0], tally[1], tally[2], tally[3], tally[4], tally[5], tally[6], tally[7] / (double) worldSeeds.size(),
+					tally[8] / 1e6 / Math.max(1, tally[9])));
+			helper.assertTrue(wrong.isEmpty(), wrong.size() + " wrong: " + wrong.subList(0, Math.min(6, wrong.size())));
+		});
+	}
+
 	/** True if the segment leaves {@code t} open at an opening's height (its cut, an opening, or a bare end between ribs). */
 	private static boolean openAt(LinePlan.Segment s, int t) {
 		if (s.inGap(t) || holeAt(s, t) != Integer.MIN_VALUE) {
@@ -687,6 +991,8 @@ public class SelfCreated2LineTests {
 		ServerLevel level = helper.getLevel();
 		Sc20Config config = new Sc20Config();
 		config.side = 64;
+		// Round 2's sizes (two chunks wider, then the side); version 3's 192 to 64 are SelfCreated3HollowFloorTests'.
+		config.sideMax = 96;
 		Snapshot snapshot = snapshot(true, Stage.TRACES, new Sc19Config(), config);
 		ChunkPos chunk = new ChunkPos(2_000, 3_000);
 		int cx = chunk.getMinBlockX();
@@ -733,7 +1039,7 @@ public class SelfCreated2LineTests {
 				.isEmpty(), "near a custom height's bottom");
 		// The kit's gates come first.
 		helper.assertTrue(Snapshot.refusal(snapshot, S20.KIND, new ChunkPos(10, 10)) != null, "near the origin");
-		helper.assertTrue(Snapshot.refusal(snapshot(true, Stage.ALONE, new Sc19Config(), config), S20.KIND, chunk) != null, "before Traces");
+		helper.assertTrue(Snapshot.refusal(snapshot(true, Stage.ALONE, new Sc19Config(), config), S20.KIND, chunk) == null, "refused in Alone (D-108)");
 		helper.assertTrue(Snapshot.refusal(snapshot(false, Stage.TRACES, new Sc19Config(), config), S20.KIND, chunk) != null, "switched off");
 		helper.assertTrue(Snapshot.refusal(snapshot, S20.KIND, chunk) == null, "refused far out at Traces");
 		helper.succeed();
@@ -775,7 +1081,7 @@ public class SelfCreated2LineTests {
 		// The crown of a tree on its edge, reaching out over the cliff: it would float once the trunk is taken.
 		int crown = slope(cx + 33, west) + 3;
 		fill(level, new BoundingBox(cx + 30, crown, cz + 18, cx + 33, crown + 1, cz + 21), Blocks.OAK_LEAVES.defaultBlockState());
-		Live.Result built = Live.place(level, S20.KIND, new Start(new BlockPos(cx, f, cz), Direction.WEST, FloorShape.variant(64), 0x20AL));
+		Live.Result built = Live.place(level, S20.KIND, new Start(new BlockPos(cx, f, cz), Direction.WEST, FloorShape.variant(64), 0x20AL).withVersion(2));
 		FloorShape shape = (FloorShape) built.shape();
 		BoundingBox house = shape.house().box(0, 0, 0, FloorShape.HOUSE - 1, 5, -(FloorShape.HOUSE - 1));
 		List<String> wrong = new ArrayList<>();
@@ -862,7 +1168,7 @@ public class SelfCreated2LineTests {
 			FloorSiting.Fit fit = FloorSiting.fit(Live.terrain(level), cx, cz, 64);
 			helper.assertTrue(fit != null, "the slope does not fit");
 			Start start = new Start(new BlockPos(cx, fit.floor(), cz), Direction.WEST, FloorShape.variant(64), 0x20FL);
-			shapes.add((FloorShape) Live.place(level, S20.KIND, k == 0 ? start : start.withVersion(1)).shape());
+			shapes.add((FloorShape) Live.place(level, S20.KIND, k == 0 ? start.withVersion(2) : start.withVersion(1)).shape());
 		}
 		List<List<String>> drops = new ArrayList<>();
 		for (FloorShape shape : shapes) {
@@ -900,7 +1206,7 @@ public class SelfCreated2LineTests {
 		int cz = BASE_Z;
 		int f = GRASS + 5;
 		flat(level, new BoundingBox(cx - 36, GRASS - 2, cz - 36, cx + 36, f + 50, cz + 36));
-		Live.Result built = Live.place(level, S20.KIND, new Start(new BlockPos(cx, f, cz), Direction.SOUTH, FloorShape.variant(64), 0x20BL));
+		Live.Result built = Live.place(level, S20.KIND, new Start(new BlockPos(cx, f, cz), Direction.SOUTH, FloorShape.variant(64), 0x20BL).withVersion(2));
 		FloorShape shape = (FloorShape) built.shape();
 		Frame h = shape.house();
 		int n = FloorShape.HOUSE;
@@ -1117,7 +1423,7 @@ public class SelfCreated2LineTests {
 			this.cz = BASE_Z;
 			this.f = GRASS + 5;
 			flat(level, new BoundingBox(cx - 48, GRASS - 2, cz - 48, cx + 48, f + 50, cz + 48));
-			this.built = Live.place(level, S20.KIND, new Start(new BlockPos(cx, f, cz), Direction.WEST, FloorShape.variant(64), 0x20EL + slot));
+			this.built = Live.place(level, S20.KIND, new Start(new BlockPos(cx, f, cz), Direction.WEST, FloorShape.variant(64), 0x20EL + slot).withVersion(2));
 			this.place = built.place();
 			data.add(built.known());
 			config.faceSeconds = 3;
@@ -1226,7 +1532,7 @@ public class SelfCreated2LineTests {
 		Floor rig = new Floor(helper, 9);
 		long[] until = new long[1];
 		Vec3 middle = Vec3.atCenterOf(rig.place.anchor()).add(0.0, 0.7, 0.0);
-		helper.startSequence().thenWaitUntil(() -> helper.assertTrue(rig.ready(), "the patch is not ticking yet: " + rig.why())).thenExecute(() -> {
+		helper.startSequence().thenWaitUntil(com.forzacode.a1016_02.core.FarPatches.until(helper, rig::ready, () -> "the patch is not ticking yet: " + rig.why())).thenExecute(() -> {
 			rig.herd();
 			rig.inside.add(rig.player("ana", rig.cx - 6.5, rig.cz + 3.5));
 		}).thenIdle(5).thenExecute(() -> {
@@ -1310,5 +1616,226 @@ public class SelfCreated2LineTests {
 			rig.answers.switchedOff();
 			rig.done();
 		}).thenSucceed();
+	}
+
+	// --- 19 v4 and 19b (FIX-R3-B) ---
+
+	/**
+	 * 19 v4 (FIX-R3-B, R3A-4): every opening is the light: a light block in each of its four cells (waterlogged in its
+	 * water) and on its sill cells either side of the wall; the lit foot's land pale (gravel or stone, never grass or
+	 * coarse dirt). The same segment built as version 3 has no light in its openings.
+	 */
+	@GameTest(maxTicks = 600)
+	public void version4LightsEveryOpeningAndPalesItsFoot(GameTestHelper helper) {
+		ServerLevel level = helper.getLevel();
+		int px = slotX(14) + 8;
+		LinePlan.Segment s = LinePlan.cut(LinePlan.Arm.SOUTH, px, BASE_Z, 256, 0x5EEDL, 48, 9, level.getMinY() + 6, level.getMaxY() - 6);
+		int pond = s.holes().get(1);
+		flat(level, new BoundingBox(px - 6, GRASS, s.t0() - 4, px + 6, s.top(), s.t1() + 4));
+		fill(level, new BoundingBox(px - 6, GRASS, pond - 6, px + 6, GRASS, pond + 7), Blocks.WATER.defaultBlockState());
+		Terrains.Frozen terrain = Live.terrain(level);
+		LineShape shape = new LineShape(s, terrain);
+		helper.assertTrue(shape.version() == 4, "version " + shape.version());
+		Live.place(level, S19.KIND, shape, terrain, s.start());
+		Live.settleLight(level, shape.box());
+		List<String> wrong = new ArrayList<>();
+		for (int hole : s.holes()) {
+			boolean wet = hole == pond;
+			int low = wet ? GRASS : GRASS + 1;
+			for (int t = hole; t <= hole + 1; t++) {
+				for (int y = low; y <= low + 1; y++) {
+					BlockState at = level.getBlockState(new BlockPos(px, y, t));
+					if (!com.forzacode.a1016_02.world.sc2.kit.Fault.isLight(at)
+							|| at.getValue(net.minecraft.world.level.block.state.properties.BlockStateProperties.WATERLOGGED) != (wet && y == low)) {
+						wrong.add("opening " + t + " y " + y + ": " + at);
+					}
+				}
+				for (int dx : new int[] {-1, 1}) {
+					if (!com.forzacode.a1016_02.world.sc2.kit.Fault.isLight(level.getBlockState(new BlockPos(px + dx, low, t)))) {
+						wrong.add("sill " + dx + " at " + t);
+					}
+				}
+			}
+			// The ring of stone round it in the wall, lit on both faces (12 or more in front of it over the sill row).
+			for (BlockPos cell : shape.ring(hole, low)) {
+				// Where the wall stood: on the flat test world it stands on the grass, so the sill row is the land's.
+				if (cell.getY() >= low && !level.getBlockState(cell).is(Blocks.STONE)) {
+					wrong.add("ring " + cell.toShortString() + ": " + level.getBlockState(cell));
+				}
+				for (int dx : new int[] {-1, 1}) {
+					BlockPos front = cell.offset(dx, 0, 0);
+					if (cell.getY() >= low && level.getBlockState(front).isAir() && level.getBrightness(LightLayer.BLOCK, front) < 12) {
+						wrong.add("ring unlit " + front.toShortString() + " " + level.getBrightness(LightLayer.BLOCK, front));
+					}
+				}
+			}
+			for (BoundingBox square : wet ? List.<BoundingBox>of() : shape.litSquares(hole)) {
+				for (int x = square.minX(); x <= square.maxX(); x++) {
+					for (int z = square.minZ(); z <= square.maxZ(); z++) {
+						BlockState top = level.getBlockState(new BlockPos(x, GRASS, z));
+						if (!level.getBlockState(new BlockPos(x, GRASS + 1, z)).is(Blocks.OBSIDIAN) && !top.is(Blocks.GRAVEL) && !top.is(Blocks.STONE)
+								&& wrong.size() < 12) {
+							wrong.add("the foot " + x + " " + z + ": " + top);
+						}
+					}
+				}
+			}
+		}
+		helper.assertTrue(wrong.isEmpty(), "version 4: " + wrong);
+		// Version 3 of the same segment, 64 east: nothing lit in its openings.
+		LinePlan.Segment s3 = LinePlan.cut(LinePlan.Arm.SOUTH, px + 64, BASE_Z, 256, 0x5EEDL, 48, 9, level.getMinY() + 6, level.getMaxY() - 6);
+		flat(level, new BoundingBox(px + 58, GRASS, s3.t0() - 4, px + 70, s3.top(), s3.t1() + 4));
+		Terrains.Frozen terrain3 = Live.terrain(level);
+		Live.place(level, S19.KIND, new LineShape(s3, terrain3, 3), terrain3, s3.start());
+		for (int hole : s3.holes()) {
+			for (int t = hole; t <= hole + 1; t++) {
+				for (int y = GRASS; y <= GRASS + 3; y++) {
+					if (com.forzacode.a1016_02.world.sc2.kit.Fault.isLight(level.getBlockState(new BlockPos(px + 64, y, t)))) {
+						wrong.add("version 3 lit its opening at " + t);
+					}
+				}
+			}
+		}
+		helper.assertTrue(wrong.isEmpty(), "version 3: " + wrong);
+		helper.succeed();
+	}
+
+	/** The lights round an opening of a line on the flat test world (its squares, sills and wall foot). */
+	private static int lightsRound(ServerLevel level, int px, int hole) {
+		int n = 0;
+		for (BlockPos pos : BlockPos.betweenClosed(px - LineShape.LIT_REACH, GRASS - 1, hole - 5, px + LineShape.LIT_REACH, GRASS + 12, hole + 6)) {
+			n += com.forzacode.a1016_02.world.sc2.kit.Fault.isLight(level.getBlockState(pos)) ? 1 : 0;
+		}
+		return n;
+	}
+
+	/** True if every cell of the opening at {@code hole} on the flat test world is open (no wall in it). */
+	private static boolean openAt(ServerLevel level, int px, int hole) {
+		for (int t = hole; t <= hole + 1; t++) {
+			for (int y = GRASS + 1; y <= GRASS + 2; y++) {
+				if (!com.forzacode.a1016_02.world.sc2.s19.LineAnswers.open(level.getBlockState(new BlockPos(px, y, t)))) {
+					return false;
+				}
+			}
+		}
+		return true;
+	}
+
+	/**
+	 * 19b (FIX-R3-B): one standing in an opening: out of view, the openings next to theirs along the wall, one each way,
+	 * are wall again (obsidian in their four cells, the lights round them gone, ledgered); theirs stays open; nothing
+	 * while asleep or while seen; never an opening with anyone within 16 of it; never under 10 health; once a line a day;
+	 * open again on a later day (the ledger undone), and given back.
+	 */
+	@GameTest(maxTicks = 600)
+	public void theOpeningsBesideTheOneYouStandInMendOutOfView(GameTestHelper helper) {
+		ServerLevel level = helper.getLevel();
+		net.minecraft.server.MinecraftServer server = level.getServer();
+		int px = slotX(15) + 8;
+		LinePlan.Segment s = LinePlan.cut(LinePlan.Arm.SOUTH, px, BASE_Z, 512, 0x19B0L, 48, 9, level.getMinY() + 6, level.getMaxY() - 6);
+		flat(level, new BoundingBox(px - 6, GRASS, s.t0() - 4, px + 6, s.top(), s.t1() + 4));
+		Terrains.Frozen terrain = Live.terrain(level);
+		LineShape shape = new LineShape(s, terrain);
+		Live.Result built = Live.place(level, S19.KIND, shape, terrain, s.start());
+		Remains.Place place = built.place();
+		List<Integer> holes = s.holes();
+		helper.assertTrue(holes.size() >= 5, "openings " + holes);
+		Sc2Data data = new Sc2Data();
+		data.add(built.known());
+		java.util.concurrent.atomic.AtomicBoolean seen = new java.util.concurrent.atomic.AtomicBoolean(false);
+		java.util.concurrent.atomic.AtomicReference<String> story = new java.util.concurrent.atomic.AtomicReference<>("asleep");
+		long today = com.forzacode.a1016_02.core.GameClock.day(server);
+		AtomicLong day = new AtomicLong(today);
+		AtomicLong now = new AtomicLong(0);
+		List<String> answered = Collections.synchronizedList(new ArrayList<>());
+		ServerPlayer ana = new SelfCreated2KitTests.TestPlayer(level, "ana", GameType.SURVIVAL);
+		ana.setHealth(20.0F);
+		ana.snapTo(new Vec3(px + 0.5, GRASS + 1, holes.get(2) + 1.0), 0.0F, 0.0F);
+		List<ServerPlayer> inside = new ArrayList<>(List.of(ana));
+		List<ServerPlayer> people = new ArrayList<>(List.of(ana));
+		Answers.Env env = new Answers.Env(k -> data, Services.traces().forced(), (l, cells) -> !seen.get(), (k, p) -> List.copyOf(inside), uuid -> false,
+				uuid -> 200_000L, k -> story.get(), day::get, now::get, (l, p, answer, player) -> answered.add(answer + ":" + player.getName().getString()));
+		Answers answers = Answers.over(env);
+		com.forzacode.a1016_02.world.sc2.s19.LineAnswers line = new com.forzacode.a1016_02.world.sc2.s19.LineAnswers(
+				new com.forzacode.a1016_02.world.sc2.s19.LineAnswers.Env(answers, k -> List.copyOf(people), p -> s, k -> day.get(), () -> Services.traces().forced()));
+		line.entered(place, ana);
+		int lit = lightsRound(level, px, holes.get(1));
+		helper.assertTrue(lit > 4, "lights round the opening " + lit);
+		// Asleep: nothing.
+		long t = 1000;
+		now.set(t);
+		line.look(server, t);
+		answers.tryAll(server);
+		for (int hole : holes) {
+			helper.assertTrue(openAt(level, px, hole), "asleep, the opening at " + hole + " mended");
+		}
+		// Awake but seen: it waits; out of view, done.
+		story.set(null);
+		seen.set(true);
+		t += 400;
+		now.set(t);
+		line.look(server, t);
+		helper.assertTrue(openAt(level, px, holes.get(1)) && answers.waiting(place, "19b"), "seen: " + answers.whyWaiting(place, "19b"));
+		seen.set(false);
+		answers.tryAll(server);
+		helper.assertTrue(!openAt(level, px, holes.get(1)) && !openAt(level, px, holes.get(3)), "the openings beside not mended");
+		helper.assertTrue(level.getBlockState(new BlockPos(px, GRASS + 1, holes.get(1))).is(Blocks.OBSIDIAN), "not wall again");
+		for (BlockPos cell : shape.ring(holes.get(1), GRASS + 1)) {
+			helper.assertTrue(cell.getY() <= GRASS || level.getBlockState(cell).is(Blocks.OBSIDIAN), "its ring of stone left at " + cell.toShortString());
+		}
+		helper.assertTrue(level.getBlockState(shape.ring(holes.get(2), GRASS + 1).get(1)).is(Blocks.STONE), "the ring of the one stood in mended");
+		helper.assertTrue(openAt(level, px, holes.get(2)) && openAt(level, px, holes.get(0)) && openAt(level, px, holes.get(4)), "another opening mended");
+		helper.assertTrue(lightsRound(level, px, holes.get(1)) == 0 && lightsRound(level, px, holes.get(3)) == 0 && lightsRound(level, px, holes.get(2)) > 4,
+				"the lights round the mended openings");
+		helper.assertTrue(answered.equals(List.of("19b:ana")), "answered " + answered);
+		// Once a line a day: another in the fourth opening the same day mends nothing more.
+		ServerPlayer bo = new SelfCreated2KitTests.TestPlayer(level, "bo", GameType.SURVIVAL);
+		bo.setHealth(20.0F);
+		bo.snapTo(new Vec3(px + 0.5, GRASS + 1, holes.get(4) + 1.0), 0.0F, 0.0F);
+		inside.clear();
+		inside.add(bo);
+		people.add(bo);
+		line.left(place, ana);
+		line.entered(place, bo);
+		t += 400;
+		now.set(t);
+		line.look(server, t);
+		answers.tryAll(server);
+		helper.assertTrue(holes.size() < 6 || openAt(level, px, holes.get(5)), "a second the same day");
+		// The same day nothing opens again; a later day the mended ones open (the ledger undone).
+		line.reopen(server);
+		helper.assertTrue(!openAt(level, px, holes.get(1)), "opened the same day");
+		day.set(today + 1);
+		line.reopen(server);
+		helper.assertTrue(openAt(level, px, holes.get(1)) && openAt(level, px, holes.get(3)) && lightsRound(level, px, holes.get(1)) == lit,
+				"not open again: " + lightsRound(level, px, holes.get(1)) + " of " + lit + " lights");
+		for (BlockPos cell : shape.ring(holes.get(1), GRASS + 1)) {
+			helper.assertTrue(cell.getY() <= GRASS || level.getBlockState(cell).is(Blocks.STONE), "its ring not back at " + cell.toShortString());
+		}
+		// The next day: bo under 10 health, nothing; healed, but ana near the third opening: only the fifth (bo's other side) mends.
+		bo.setHealth(8.0F);
+		t += 400;
+		now.set(t);
+		line.look(server, t);
+		answers.tryAll(server);
+		helper.assertTrue(openAt(level, px, holes.get(3)), "under 10 health");
+		bo.setHealth(20.0F);
+		ana.snapTo(new Vec3(px + 6.5, GRASS + 1, holes.get(3) + 9.0), 0.0F, 0.0F);
+		t += 400;
+		now.set(t);
+		line.look(server, t);
+		answers.tryAll(server);
+		helper.assertTrue(openAt(level, px, holes.get(3)) && openAt(level, px, holes.get(4)), "mended one with someone near it, or the one stood in");
+		helper.assertTrue(holes.size() < 6 || !openAt(level, px, holes.get(5)), "the far side not mended");
+		// Given back: every mended cell open again through the ledger.
+		for (com.forzacode.a1016_02.core.TraceLedger.Entry entry : List.copyOf(com.forzacode.a1016_02.core.TraceLedger.get(server).entries())) {
+			if (entry.cause().equals(com.forzacode.a1016_02.world.sc2.s19.LineAnswers.CLOSE) && built.box().inflatedBy(LineShape.LIT_REACH).isInside(entry.pos().pos())) {
+				Services.traces().forced().undo(level, entry);
+			}
+		}
+		for (int hole : holes) {
+			helper.assertTrue(openAt(level, px, hole), "not given back at " + hole);
+		}
+		helper.succeed();
 	}
 }

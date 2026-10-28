@@ -18,10 +18,16 @@ import org.jspecify.annotations.Nullable;
  * here on its first decoration and read back on every later one. Any thread reads and fixes (worldgen); the server
  * thread loads it from the kit's data ({@link Sc2Data}, key {@code plans}) before worldgen may run and drains what was
  * fixed into it every tick and at stop. Until it is loaded nothing that needs it builds ({@link #ready}).
+ * <p>
+ * Round 3: the crumbs' lines are fixed here too ({@link #fixLine}, saved under the kit's key {@code c}: a line's layout
+ * and version, the first time any chunk builds it), and {@link Decided} (worldgen's decision for each candidate chunk,
+ * key {@code d}) is loaded, drained and cleared with the plans, so the world's lifecycle has one entry point.
  */
 public final class Plans {
 	private static final Map<String, CompoundTag> FIXED = new ConcurrentHashMap<>();
 	private static final Queue<String> NEW = new ConcurrentLinkedQueue<>();
+	private static final Map<String, CompoundTag> LINES = new ConcurrentHashMap<>();
+	private static final Queue<String> NEW_LINES = new ConcurrentLinkedQueue<>();
 	private static volatile boolean ready;
 
 	private Plans() {
@@ -32,6 +38,10 @@ public final class Plans {
 		FIXED.clear();
 		NEW.clear();
 		FIXED.putAll(data.plans());
+		LINES.clear();
+		NEW_LINES.clear();
+		LINES.putAll(data.lines());
+		Decided.load(data);
 		ready = true;
 	}
 
@@ -70,9 +80,31 @@ public final class Plans {
 		return plan.copy();
 	}
 
-	/** True while something fixed waits to be kept. Any thread. */
+	/**
+	 * The crumb line fixed under this key, or null (R3-C: a line's layout and version, fixed the first time any chunk
+	 * builds it). Any thread.
+	 */
+	public static @Nullable CompoundTag line(String key) {
+		CompoundTag tag = LINES.get(key);
+		return tag == null ? null : tag.copy();
+	}
+
+	/**
+	 * Fixes a crumb line under {@code key} unless one is fixed there already; returns the one in force (the first fixed
+	 * wins, on any thread). Kept in the world's data (key {@code c}) at the next drain.
+	 */
+	public static CompoundTag fixLine(String key, CompoundTag line) {
+		CompoundTag before = LINES.putIfAbsent(key, line.copy());
+		if (before != null) {
+			return before.copy();
+		}
+		NEW_LINES.add(key);
+		return line.copy();
+	}
+
+	/** True while something fixed or decided waits to be kept. Any thread. */
 	public static boolean pending() {
-		return !NEW.isEmpty();
+		return !NEW.isEmpty() || !NEW_LINES.isEmpty() || Decided.pending();
 	}
 
 	/** Keeps everything fixed since the last drain in {@code data}; returns how many. Server thread. */
@@ -84,13 +116,21 @@ public final class Plans {
 				kept++;
 			}
 		}
-		return kept;
+		for (String key = NEW_LINES.poll(); key != null; key = NEW_LINES.poll()) {
+			CompoundTag tag = LINES.get(key);
+			if (tag != null && data.fixLine(key, tag)) {
+				kept++;
+			}
+		}
+		return kept + Decided.drain(data);
 	}
 
 	/** Tests: forgets the plans under this prefix here (not in any data). */
 	public static void forget(String prefix) {
 		FIXED.keySet().removeIf(key -> key.startsWith(prefix));
 		NEW.removeIf(key -> key.startsWith(prefix));
+		LINES.keySet().removeIf(key -> key.startsWith(prefix));
+		NEW_LINES.removeIf(key -> key.startsWith(prefix));
 	}
 
 	/** Server stop: nothing is fixed until the next world's are loaded. */
@@ -98,5 +138,8 @@ public final class Plans {
 		ready = false;
 		FIXED.clear();
 		NEW.clear();
+		LINES.clear();
+		NEW_LINES.clear();
+		Decided.clear();
 	}
 }

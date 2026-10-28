@@ -74,7 +74,8 @@ public class DebugGameTests {
 				}
 				helper.assertTrue(report.result().stageAt(Stage.PROXIMITY) >= 0, at + "never reached Proximity in 20 h, so most limits went untested");
 				helper.assertTrue(report.result().count(Kind.FIRE) > 0, at + "nothing fired in 20 h, so the limits went untested");
-				helper.assertTrue(report.hard().size() == 7, at + "expected 7 hard checks, got " + report.hard().size());
+				int expected = report.limits().groupGap() > 0 && !report.limits().groupCards().isEmpty() ? 8 : 7; // R3-P: the wave's gap when the layer paces
+				helper.assertTrue(report.hard().size() == expected, at + "expected " + expected + " hard checks, got " + report.hard().size());
 				for (PlaythroughCheck.Check check : report.hard()) {
 					helper.assertTrue(check.status() == PlaythroughCheck.Status.PASS, at + check.name() + " broken: " + check.breaches());
 				}
@@ -430,8 +431,35 @@ public class DebugGameTests {
 		helper.succeed();
 	}
 
+	/**
+	 * R3-P: the second wave's moments apart is a hard check: its cards and its moments that are no card (the crumbs')
+	 * never closer than the gap; the depths' (33) only start it.
+	 */
+	@GameTest
+	public void theSecondWavesMomentsApartIsAHardCheck(GameTestHelper helper) {
+		long hour = 72_000;
+		long gap = hour / 2;
+		PlaythroughCheck.Limits plain = limits(hour);
+		PlaythroughCheck.Limits limits = new PlaythroughCheck.Limits(hour, 600, 6_000, 18_000, 1, 1, 6 * hour, 6, 1.0, 1.0, 1, 2, 2 * hour, 4 * hour, 0.25,
+				java.util.Set.of(), 0, java.util.Set.of("w_a", "w_b"), gap);
+		List<Event> events = new ArrayList<>();
+		events.add(session(0, Stage.PROXIMITY));
+		events.add(fire(hour, hour, Stage.PROXIMITY, Tier.MINOR, "w_a"));
+		events.add(new Event(Kind.MOMENT, hour + gap / 3, hour + gap / 3, Stage.PROXIMITY, null, "33", false, 0, -1, false, "")); // starts it
+		events.add(fire(hour + gap, hour + gap, Stage.PROXIMITY, Tier.MINOR, "w_b"));                                      // 20 min after 33
+		events.add(new Event(Kind.MOMENT, 3 * hour, 3 * hour, Stage.PROXIMITY, null, "32c", false, 0, -1, false, ""));
+		events.add(new Event(Kind.MOMENT, 3 * hour + gap / 6, 3 * hour + gap / 6, Stage.PROXIMITY, null, "32b", false, 0, -1, false, ""));
+		events.add(fire(5 * hour, 5 * hour, Stage.PROXIMITY, Tier.MINOR, "w_a"));
+		String name = "at least 30 min between the second wave's moments";
+		PlaythroughCheck.Check check = PlaythroughCheck.hard(events, limits, Map.of(), List.of()).stream().filter(c -> c.name().equals(name)).findFirst()
+				.orElse(null);
+		helper.assertTrue(check != null && check.failed() && check.breaches().size() == 2, "two breaches: " + check);
+		helper.assertTrue(PlaythroughCheck.hard(events, plain, Map.of(), List.of()).stream().noneMatch(c -> c.name().equals(name)), "no gap, no check");
+		helper.succeed();
+	}
+
 	private static PlaythroughCheck.Limits limits(long hour) {
-		return new PlaythroughCheck.Limits(hour, 600, 6_000, 18_000, 1, 1, 6 * hour, 6, 1.0, 1.0, 1, 2, 2 * hour, 4 * hour, 0.25, java.util.Set.of(), 0);
+		return new PlaythroughCheck.Limits(hour, 600, 6_000, 18_000, 1, 1, 6 * hour, 6, 1.0, 1.0, 1, 2, 2 * hour, 4 * hour, 0.25, java.util.Set.of(), 0, java.util.Set.of(), 0);
 	}
 
 	private static Event session(long play, Stage stage) {

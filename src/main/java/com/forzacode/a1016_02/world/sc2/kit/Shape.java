@@ -51,6 +51,16 @@ public interface Shape {
 	}
 
 	/**
+	 * Where it shows itself from far (docs/SELF_CREATED_2_R3.md, D-110): the point its error sign is judged from, the
+	 * one the gallery's sign views ({@code Gallery.signViews}) aim at, the crumbs' lines begin at and {@code /locate}'s
+	 * find tests measure to. The entrance unless a kind's shape says otherwise (17 v3: the well's top; 18 v3: the foot;
+	 * ...). Decided from the constructor's numbers, like everything else of a shape; {@link Decided} keeps it.
+	 */
+	default BlockPos sign() {
+		return entrance();
+	}
+
+	/**
 	 * Its interior ({@code Remains.containing}); by default the whole box. Its kind's {@link Sc2Kind.Interiors} decides
 	 * the interior of a recorded place; the default one rebuilds the shape and asks this.
 	 */

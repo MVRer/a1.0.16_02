@@ -277,8 +277,12 @@ public class SelfCreated2KitTests {
 			helper.assertTrue("no snapshot".equals(Snapshot.refusal(null, DemoKind.KIND, far)), "no snapshot's reason");
 			Snapshot.install(snapshot(false, Stage.TRACES, BlockPos.ZERO, level));
 			helper.assertFalse(Live.generate(level, k0(level), far).isValid(), "a start with the switch off");
+			// Round 3 (D-108): the places generate from the world's creation; a stage raised by hand is still honoured.
 			Snapshot.install(snapshot(true, Stage.ALONE, BlockPos.ZERO, level));
-			helper.assertFalse(Live.generate(level, k0(level), far).isValid(), "a start in Alone");
+			helper.assertTrue(Live.generate(level, k0(level), far).isValid(), "no start in Alone");
+			DemoKind.CONFIG.fromStage = 2;
+			helper.assertFalse(Live.generate(level, k0(level), near).isValid(), "a start under a stage raised by hand");
+			DemoKind.CONFIG.fromStage = 0;
 			Snapshot.install(snapshot(true, Stage.TRACES, BlockPos.ZERO, level));
 			helper.assertTrue(Live.generate(level, k0(level), far).isValid(), "no start with everything allowed");
 			DemoKind.CONFIG.minOriginDistance = 500;
@@ -290,6 +294,7 @@ public class SelfCreated2KitTests {
 			BoundingBox wide = new BoundingBox(far.getMinBlockX() - 200, 0, far.getMinBlockZ(), far.getMinBlockX() + 10, 10, far.getMinBlockZ() + 10);
 			helper.assertFalse(com.forzacode.a1016_02.world.sc2.kit.Sc2Structure.withinReach(wide, far), "a box 13 chunks wide is within reach");
 		} finally {
+			DemoKind.CONFIG.fromStage = 0;
 			DemoKind.CONFIG.minOriginDistance = 0;
 			DemoKind.disarm(far);
 			DemoKind.disarm(near);

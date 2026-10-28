@@ -44,10 +44,19 @@ import net.minecraft.server.level.ServerPlayer;
  * @param quiet        in their director quiet
  * @param playTicks    their own play time
  * @param sink         what a done answer does that is not the kit's (17c): the event and the tension
+ * @param days         the day books' days (R3-B's books; a test's own)
  */
 record ArchiveEnv(Answers answers, TraceService traces, Answers.View view, Function<Remains.Place, List<ServerPlayer>> inside,
 		Supplier<List<ServerPlayer>> people, Supplier<Sc2Data> data, LongSupplier day, LongSupplier now, Figure figure, Supplier<Sc17Config> config,
-		PlayerWatch watch, Supplier<List<HerobrineState.Subject>> known, Predicate<UUID> quiet, ToLongFunction<UUID> playTicks, Answers.Sink sink) {
+		PlayerWatch watch, Supplier<List<HerobrineState.Subject>> known, Predicate<UUID> quiet, ToLongFunction<UUID> playTicks, Answers.Sink sink,
+		DayBooks.Days days) {
+
+	/** Round 2's env (the books' own days). */
+	ArchiveEnv(Answers answers, TraceService traces, Answers.View view, Function<Remains.Place, List<ServerPlayer>> inside,
+			Supplier<List<ServerPlayer>> people, Supplier<Sc2Data> data, LongSupplier day, LongSupplier now, Figure figure, Supplier<Sc17Config> config,
+			PlayerWatch watch, Supplier<List<HerobrineState.Subject>> known, Predicate<UUID> quiet, ToLongFunction<UUID> playTicks, Answers.Sink sink) {
+		this(answers, traces, view, inside, people, data, day, now, figure, config, watch, known, quiet, playTicks, sink, DayBooks.Days.LIVE);
+	}
 
 	/** The live world's. */
 	static ArchiveEnv live(MinecraftServer server) {

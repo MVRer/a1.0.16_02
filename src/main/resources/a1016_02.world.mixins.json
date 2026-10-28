@@ -3,6 +3,7 @@
 	"package": "com.forzacode.a1016_02.world.mixin",
 	"compatibilityLevel": "JAVA_25",
 	"mixins": [
+		"ChunkGeneratorLocateMixin",
 		"WorldGenRegionGuardMixin"
 	],
 	"client": [],

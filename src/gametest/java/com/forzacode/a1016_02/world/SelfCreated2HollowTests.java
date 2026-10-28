@@ -217,7 +217,8 @@ public class SelfCreated2HollowTests {
 	private static Start start(Hill hill, Direction facing, boolean window, long seed) {
 		Sc18Config config = new Sc18Config();
 		int variant = HollowShape.variant(window, true, config.shellTop, config.shellSide, config.pillarEvery, 11);
-		return new Start(hill.middle().above(2), facing, variant, seed);
+		// Round 2's shape (R12-2): version 3 (R3-3) is tested in SelfCreated3HollowFloorTests.
+		return new Start(hill.middle().above(2), facing, variant, seed).withVersion(2);
 	}
 
 	private static ServerPlayer armed(ServerLevel level, String name) {
@@ -263,7 +264,11 @@ public class SelfCreated2HollowTests {
 		ChunkPos near = new ChunkPos(10, 0);
 		helper.assertTrue("no snapshot".equals(Snapshot.refusal(null, S18.KIND, far)), "no snapshot");
 		helper.assertTrue("switched off".equals(Snapshot.refusal(snapshot(false, Stage.TRACES, config), S18.KIND, far)), "off");
-		helper.assertTrue(String.valueOf(Snapshot.refusal(snapshot(true, Stage.ALONE, config), S18.KIND, far)).contains("stage"), "under Traces");
+		// Round 3 (D-108): no stage gate by default; a stage raised by hand is still honoured.
+		helper.assertTrue(Snapshot.refusal(snapshot(true, Stage.ALONE, config), S18.KIND, far) == null, "refused in Alone");
+		config.fromStage = 1;
+		helper.assertTrue(String.valueOf(Snapshot.refusal(snapshot(true, Stage.ALONE, config), S18.KIND, far)).contains("stage"), "under a raised stage");
+		config.fromStage = 0;
 		helper.assertTrue(String.valueOf(Snapshot.refusal(snapshot(true, Stage.TRACES, config), S18.KIND, near)).contains("origin"), "near the origin");
 		helper.assertTrue(Snapshot.refusal(snapshot(true, Stage.TRACES, config), S18.KIND, far) == null, "far, at Traces");
 
@@ -272,7 +277,7 @@ public class SelfCreated2HollowTests {
 		Direction facing = Siting.facingToOrigin(cx, cz);
 		helper.assertTrue(facing == Direction.WEST, "the facing: " + facing);
 		IntBinaryOperator peak = (x, z) -> 70 + mountain(x - cx, z - cz, facing, 110, 100, 20, false);
-		helper.assertTrue(find(far, terrain(level, peak, Biomes.PLAINS, 63), config, -64, 319).isEmpty(), "a start in plains");
+		helper.assertTrue(find(far, terrain(level, peak, Biomes.DESERT, 63), config, -64, 319).isEmpty(), "a start in a desert");
 		helper.assertTrue(find(far, terrain(level, (x, z) -> 70, Biomes.JAGGED_PEAKS, 63), config, -64, 319).isEmpty(), "a start on flat land");
 		config.highWindowChance = 0;
 		Terrain jagged = terrain(level, peak, Biomes.JAGGED_PEAKS, 63);
@@ -319,11 +324,11 @@ public class SelfCreated2HollowTests {
 				Biomes.WINDSWEPT_GRAVELLY_HILLS, Biomes.WOODED_BADLANDS, Biomes.MEADOW)) {
 			helper.assertTrue(structure.value().biomes().contains(biomes.getOrThrow(key)), "not in " + key.identifier());
 		}
-		for (ResourceKey<Biome> key : List.of(Biomes.PLAINS, Biomes.FOREST, Biomes.OCEAN, Biomes.RIVER, Biomes.DEEP_DARK, Biomes.MUSHROOM_FIELDS)) {
+		for (ResourceKey<Biome> key : List.of(Biomes.DESERT, Biomes.SWAMP, Biomes.OCEAN, Biomes.RIVER, Biomes.DEEP_DARK, Biomes.MUSHROOM_FIELDS)) {
 			helper.assertFalse(structure.value().biomes().contains(biomes.getOrThrow(key)), "in " + key.identifier());
 		}
 		StructureSet set = level.registryAccess().lookupOrThrow(Registries.STRUCTURE_SET).getOrThrow(SET_KEY).value();
-		helper.assertTrue(set.placement() instanceof RandomSpreadStructurePlacement spread && spread.spacing() == 24 && spread.separation() == 10,
+		helper.assertTrue(set.placement() instanceof RandomSpreadStructurePlacement spread && spread.spacing() == 14 && spread.separation() == 5,
 				"the set's spread: " + set.placement());
 		helper.succeed();
 	}
@@ -738,7 +743,7 @@ public class SelfCreated2HollowTests {
 		long every = 0;
 		List<Object[]> cases = new ArrayList<>();
 		for (Start start : real.starts()) {
-			cases.add(new Object[] {start, real.terrain()});
+			cases.add(new Object[] {start.withVersion(2), real.terrain()});
 		}
 		cases.add(new Object[] {start(hill, Direction.NORTH, true, 0x18A05L), Live.terrain(level)});
 		for (Object[] c : cases) {

@@ -30,6 +30,8 @@ public final class S17 {
 	/** Called once from its workstream's second-wave init. */
 	public static void init() {
 		Sc2Kind.register(KIND);
+		// R3-B: the day log keeps the world's days from here on (the books' facts).
+		com.forzacode.a1016_02.world.sc2.s17.books.Books.init();
 		Answers.giveBackWhenOff("sc17", CAUSE);
 		ServerTickEvents.END_SERVER_TICK.register(ArchiveRules.LIVE::tick);
 		ServerLifecycleEvents.SERVER_STOPPED.register(server -> ArchiveRules.LIVE.clear());

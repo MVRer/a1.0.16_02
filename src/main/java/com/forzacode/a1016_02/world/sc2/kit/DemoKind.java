@@ -37,7 +37,7 @@ public final class DemoKind {
 
 	/** Its gates (a test may change them; never written to the config file). */
 	public static final class Config implements Sc2Kind.Gates {
-		public volatile int fromStage = 1;
+		public volatile int fromStage = 0;
 		public volatile int minOriginDistance = 0;
 
 		@Override
@@ -56,6 +56,14 @@ public final class DemoKind {
 
 	public static final Sc2Kind KIND = new Sc2Kind(ID, Remains.Kind.FLOOR, () -> CONFIG, query -> Optional.ofNullable(ARMED.get(query.chunk())),
 			House::new, Sc2Kind.Interiors.FROM_SHAPE);
+
+	static {
+		// Round 3: the kit's own exhibit (00f, the error sign's grammar) comes with the demo kind, development only:
+		// WorldSc2 reads KIND only in a development environment.
+		if (com.forzacode.a1016_02.core.Gallery.active()) {
+			FaultGallery.register();
+		}
+	}
 
 	private DemoKind() {
 	}

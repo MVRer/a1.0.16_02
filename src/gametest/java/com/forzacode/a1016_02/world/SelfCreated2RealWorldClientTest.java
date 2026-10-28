@@ -58,6 +58,17 @@ import net.minecraft.world.phys.Vec3;
  */
 public class SelfCreated2RealWorldClientTest implements FabricClientGameTest {
 	public static final String PROPERTY = "a1016_02.sc2real";
+	/**
+	 * FIX-R3-17: {@code -Da1016_02.sc2real.only=s17,...} builds and shoots only these kinds' sites (and their /locate
+	 * sites), without the line's crumbs: one window for one kind's fix instead of the whole round.
+	 */
+	public static final String ONLY = "a1016_02.sc2real.only";
+
+	/** True if this run shoots {@code kind} ({@link #ONLY} empty: every kind). */
+	static boolean shoots(String kind) {
+		String only = System.getProperty(ONLY, "");
+		return only.isEmpty() || java.util.Arrays.asList(only.split(",")).contains(kind);
+	}
 
 	/** One place to make and look at. */
 	record Site(String kind, @org.jspecify.annotations.Nullable Holder<Structure> structure, ChunkPos chunk, BoundingBox box, BlockPos entrance, Direction facing,
@@ -86,7 +97,10 @@ public class SelfCreated2RealWorldClientTest implements FabricClientGameTest {
 				Snapshot.refresh(server);
 				return null;
 			});
-			List<Site> sites = driver.server(server -> sites(server.overworld()));
+			List<Site> all = driver.server(server -> sites(server.overworld()));
+			List<Site> sites = all.stream().filter(s -> shoots(s.kind())).toList();
+			// Round 3 (D-112): /locate for every kind from the world spawn, against what the kit decided.
+			Sc2RealNoise.log("real locate: " + driver.server(server -> locate(server.overworld())));
 			Sc2RealNoise.log("real world " + seed + ": " + sites.size() + " sites " + sites.stream().map(s -> s.kind() + " " + s.chunk()).toList());
 			Map<String, Integer> shotsOf = new TreeMap<>();
 			for (Site site : sites) {
@@ -99,7 +113,92 @@ public class SelfCreated2RealWorldClientTest implements FabricClientGameTest {
 					return null;
 				});
 			}
+			// R3-3: the hollow and the floor /locate finds from the spawn (the kit's own decision, its spacing and avoid
+			// list kept), built and shot as <kind>h_loc (the picked sites above may get no start).
+			// FIX-R3-17: the archive's too (R3A-1: its sign judged from two real sites).
+			for (String id : List.of("s17", "s18", "s20")) {
+				if (!shoots(id)) {
+					continue;
+				}
+				Site site = driver.server(server -> located(server.overworld(), id));
+				if (site == null) {
+					Sc2RealNoise.log("real " + id + " located: none");
+					continue;
+				}
+				String report = driver.server(server -> generate(server.overworld(), site));
+				Sc2RealNoise.log("real " + id + " located at " + site.chunk() + ": " + report);
+				shoot(driver, site, id + "h_loc");
+				if (id.equals("s20")) {
+					// R3A-16 (FIX-R3-B): two in-game minutes on (a player there, not a spectator, so its chunks take random
+					// ticks), the snow worldgen's freeze laid on the floor melted under its light.
+					List<Gallery.View> late = driver.server(server -> lateViews(server.overworld(), site));
+					driver.server(server -> {
+						net.minecraft.server.level.ServerPlayer camera = GalleryRun.camera(server);
+						GalleryRun.stage(camera, late.getFirst());
+						camera.setGameMode(net.minecraft.world.level.GameType.CREATIVE);
+						return null;
+					});
+					driver.waitTicks(2400);
+					shootViews(driver, id + "h_loc_late", late, "real world, " + site.kind() + " at " + site.chunk() + ", two in-game minutes after it was made");
+				}
+				driver.server(server -> {
+					forceChunks(server.overworld(), site.box(), false);
+					return null;
+				});
+			}
+			// Round 3 (R3-C): each kind's first line of crumbs, built by real worldgen (FIX-R3-C: "s32" in the filter runs them
+			// alone, from every kind's site, none of the sites built or shot but the kinds it names).
+			if (System.getProperty(ONLY, "").isEmpty() || shoots("s32")) {
+				SelfCreated3CrumbRealShots.shoot(driver, all);
+			}
 		}
+	}
+
+	/** The start /locate finds for this kind from the world spawn, as a site (the kit's decision), or null. */
+	static @org.jspecify.annotations.Nullable Site located(ServerLevel level, String id) {
+		Holder<Structure> holder = level.registryAccess().lookupOrThrow(net.minecraft.core.registries.Registries.STRUCTURE).getOrThrow(
+				net.minecraft.resources.ResourceKey.create(net.minecraft.core.registries.Registries.STRUCTURE, com.forzacode.a1016_02.A1016_02.id("world/" + id)));
+		com.mojang.datafixers.util.Pair<BlockPos, Holder<Structure>> found = level.getChunkSource().getGenerator().findNearestMapStructure(level,
+				net.minecraft.core.HolderSet.direct(holder), level.getRespawnData().pos(), 100, false);
+		if (found == null) {
+			return null;
+		}
+		com.forzacode.a1016_02.world.sc2.kit.Decided.Decision d = com.forzacode.a1016_02.world.sc2.kit.Decided.get(id, ChunkPos.containing(found.getFirst()));
+		if (d == null || !d.made() || d.box() == null) {
+			return null;
+		}
+		return new Site(id, holder, d.chunk(), d.box(), d.entrance(), d.facing(), d.anchor());
+	}
+
+	// --- /locate (round 3) ---
+
+	/** /locate's own search for each kind from the world spawn (radius 100 chunks), and whether it is the kit's nearest decision. */
+	static String locate(ServerLevel level) {
+		BlockPos spawn = level.getRespawnData().pos();
+		List<String> out = new ArrayList<>();
+		for (String id : List.of("s16", "s16d", "s17", "s18", "s19", "s20")) {
+			Holder<Structure> holder = level.registryAccess().lookupOrThrow(net.minecraft.core.registries.Registries.STRUCTURE).getOrThrow(
+					net.minecraft.resources.ResourceKey.create(net.minecraft.core.registries.Registries.STRUCTURE, com.forzacode.a1016_02.A1016_02.id("world/" + id)));
+			long t = System.nanoTime();
+			com.mojang.datafixers.util.Pair<BlockPos, Holder<Structure>> found = level.getChunkSource().getGenerator().findNearestMapStructure(level,
+					net.minecraft.core.HolderSet.direct(holder), spawn, 100, false);
+			long ms = (System.nanoTime() - t) / 1_000_000;
+			if (found == null) {
+				out.add(id + " none (" + ms + " ms)");
+				continue;
+			}
+			ChunkPos at = ChunkPos.containing(found.getFirst());
+			String same;
+			if (id.equals("s19")) {
+				same = com.forzacode.a1016_02.world.sc2.kit.AxesPlacement.marked("s19", Snapshot.current()).contains(at) ? "a mark" : "not a mark";
+			} else {
+				com.forzacode.a1016_02.world.sc2.kit.Decided.Decision d = com.forzacode.a1016_02.world.sc2.kit.Decided.get(id, at);
+				same = d != null && d.made() ? "decided made" : "not decided made";
+			}
+			out.add(String.format(Locale.ROOT, "%s at %d %d, %.0f out (%d ms, %s)", id, found.getFirst().getX(), found.getFirst().getZ(),
+					Math.sqrt(found.getFirst().distSqr(new BlockPos(spawn.getX(), 0, spawn.getZ()))), ms, same));
+		}
+		return String.join("; ", out);
 	}
 
 	// --- the sites ---
@@ -137,7 +236,7 @@ public class SelfCreated2RealWorldClientTest implements FabricClientGameTest {
 				}
 			}
 			made.sort((a, b) -> Integer.compare(extremity(world.terrain(), b.box()), extremity(world.terrain(), a.box())));
-			out.addAll(made.subList(0, Math.min(e.getKey().equals("s18") ? 2 : 1, made.size())));
+			out.addAll(made.subList(0, Math.min(e.getKey().equals("s18") || e.getKey().equals("s17") ? 2 : 1, made.size())));
 		}
 		// The line: the stretch of a segment over the highest ground (every 16 along it), 96 either way.
 		for (LinePlan.Segment segment : LineFeature.segments(snapshot, level.getMinY(), level.getMaxY())) {
@@ -287,6 +386,29 @@ public class SelfCreated2RealWorldClientTest implements FabricClientGameTest {
 			all.add(Gallery.View.looking("side_" + k++, lifted(level, side, 16), focus, Gallery.NOON, Gallery.Sky.CLEAR, false)
 					.noted("110 out at " + (int) degrees + " degrees, over the land"));
 		}
+		// Round 3 (D-110): the error sign's views from its sign point (the entrance until a kind says otherwise).
+		com.forzacode.a1016_02.world.sc2.kit.Decided.Decision decided = com.forzacode.a1016_02.world.sc2.kit.Decided.get(site.kind(), site.chunk());
+		BlockPos sign = decided != null && decided.made() ? decided.sign() : site.entrance();
+		List<Gallery.View> signs = Gallery.signViews(level, sign, site.facing());
+		if (Set.of("s18", "s19", "s20").contains(site.kind())) {
+			// FIX-R3-B (R3A-2d): each sign camera raised, or slid along its bearing, to the first spot with a clear sight of
+			// the sign point (leaves and logs included); the offset is in its note.
+			// The hollow's mouth sits in a cut under its lintel: its cameras aim over the foot in front of it (the lit grey
+			// square, its night sign), 4 out and 6 up, which a camera can see over the land round the cut.
+			Vec3 target = site.kind().equals("s18")
+					? Vec3.atBottomCenterOf(sign).add(site.facing().getStepX() * 4.0, 6.0, site.facing().getStepZ() * 4.0)
+					: Vec3.atBottomCenterOf(sign).add(0, 2.0, 0);
+			List<Gallery.View> cleared = new ArrayList<>();
+			for (Gallery.View v : signs) {
+				Vec3 eye = com.forzacode.a1016_02.world.sc2.s19.LineGallery.clearEye(level, v.eye(), target, 48);
+				double slid = Math.hypot(eye.x - v.eye().x, eye.z - v.eye().z);
+				cleared.add(Gallery.View.looking(v.name(), eye, target, v.dayTime(), v.sky(), v.survey()).noted(v.note() + String.format(java.util.Locale.ROOT,
+						"; raised %.0f, slid %.0f for a clear sight%s", eye.y - v.eye().y, slid,
+						com.forzacode.a1016_02.world.sc2.s19.LineGallery.clear(level, eye, target) ? "" : " (none clear: raised the most)")));
+			}
+			signs = cleared;
+		}
+		all.addAll(signs);
 		if (line) {
 			return all;
 		}
@@ -307,9 +429,26 @@ public class SelfCreated2RealWorldClientTest implements FabricClientGameTest {
 		return new Vec3(spot.x, top + over, spot.z);
 	}
 
+	/** R3A-16: a floor two in-game minutes after it was made: from on it at midnight, and from the air at noon. */
+	static List<Gallery.View> lateViews(ServerLevel level, Site site) {
+		List<Gallery.View> out = new ArrayList<>();
+		for (Gallery.View v : Gallery.standardViews(level, site.box(), site.entrance(), site.facing())) {
+			if (v.name().equals("near")) {
+				out.addFirst(v.named("near_2min").at(Gallery.NIGHT, Gallery.Sky.CLEAR).noted("two in-game minutes after it was made, midnight"));
+			} else if (v.name().equals("aerial")) {
+				out.add(v.named("aerial_2min").noted("two in-game minutes after it was made, from the air at noon"));
+			}
+		}
+		return out;
+	}
+
 	private static void shoot(ClientTestDriver driver, Site site, String id) {
-		Path dir = GalleryRun.freshDir(id);
 		List<Gallery.View> views = driver.server(server -> cameras(server.overworld(), site));
+		shootViews(driver, id, views, "real world, " + site.kind() + " at " + site.chunk());
+	}
+
+	private static void shootViews(ClientTestDriver driver, String id, List<Gallery.View> views, String title) {
+		Path dir = GalleryRun.freshDir(id);
 		List<GalleryRun.Entry> entries = new ArrayList<>();
 		for (Gallery.View view : views) {
 			driver.server(server -> {
@@ -323,6 +462,6 @@ public class SelfCreated2RealWorldClientTest implements FabricClientGameTest {
 			Path png = driver.screenshot(dir, view.name());
 			entries.add(GalleryRun.entry(id, GalleryRun.relative(png), view, GalleryRun.check(png) + (loaded ? "" : " CHUNKS?")));
 		}
-		GalleryRun.writeIndex(entries, "real world, " + site.kind() + " at " + site.chunk());
+		GalleryRun.writeIndex(entries, title);
 	}
 }

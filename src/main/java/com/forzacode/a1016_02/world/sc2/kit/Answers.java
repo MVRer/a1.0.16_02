@@ -21,6 +21,7 @@ import com.forzacode.a1016_02.core.HerobrineState;
 import com.forzacode.a1016_02.core.Remains;
 import com.forzacode.a1016_02.core.SelfCreated;
 import com.forzacode.a1016_02.core.Services;
+import com.forzacode.a1016_02.core.Stage;
 import com.forzacode.a1016_02.core.TraceService;
 import com.forzacode.a1016_02.world.sc.ScGates;
 import com.forzacode.a1016_02.world.sc.WorldSc;
@@ -219,7 +220,7 @@ public final class Answers {
 	public static Env live(MinecraftServer server) {
 		TraceService traces = Services.traces();
 		return new Env(s -> RemainsImpl.LIVE.data(), traces, traces::isOutOfView, Visits.LIVE::inside, uuid -> Services.director().inQuiet(server, uuid),
-				uuid -> GameClock.playTicks(server, uuid), s -> ScGates.worldRefusal(HerobrineState.get(s)), () -> GameClock.day(server),
+				uuid -> GameClock.playTicks(server, uuid), Answers::story, () -> GameClock.day(server),
 				server::getTickCount, (level, place, answer, player) -> {
 					HerobrineEvents.REMAINS_ANSWERED.invoker().onAnswered(level, place, answer, player.getUUID());
 					Attention.raiseTension(server, player.getUUID(), TENSION, "s2 " + answer);
@@ -228,6 +229,23 @@ public final class Answers {
 
 	private Env env(MinecraftServer server) {
 		return fixed != null ? fixed : live(server);
+	}
+
+	/** The reason {@link #held} and {@link #refusal} give while the world is under Traces (D-108: his places sleep). */
+	public static final String ASLEEP = "asleep";
+
+	/**
+	 * The live story's reason to hold the places back now, or null: the story's own gates ({@code ScGates.worldRefusal}:
+	 * quiet for good, path C, the endings), then {@link #ASLEEP} while the world's stage is under Traces (D-108: the
+	 * places are there from the world's creation and do nothing until then). A test's env passes its own.
+	 */
+	public static @Nullable String story(MinecraftServer server) {
+		HerobrineState state = HerobrineState.get(server);
+		String world = ScGates.worldRefusal(state);
+		if (world != null) {
+			return world;
+		}
+		return state.stage().level() < Stage.TRACES.level() ? ASLEEP : null;
 	}
 
 	private static String key(Remains.Place place, String answer) {
@@ -284,8 +302,9 @@ public final class Answers {
 
 	/**
 	 * Why nothing of the layer's places may happen now, whatever and wherever: the switch off, or the story's own gates
-	 * ({@code ScGates.worldRefusal}: quiet for good, path C, the endings), or null. For rules that are not answers (17a,
-	 * 17c: R12-10).
+	 * ({@code ScGates.worldRefusal}: quiet for good, path C, the endings), or the places asleep under Traces
+	 * ({@link #ASLEEP}, D-108; the live env's {@link #story}), or null. For rules that are not answers (17a, 17c: R12-10).
+	 * {@code core.Remains.awake} is this being null.
 	 */
 	public @Nullable String held(MinecraftServer server) {
 		if (!SelfCreated.enabled()) {
@@ -295,9 +314,9 @@ public final class Answers {
 	}
 
 	/**
-	 * Why this answer may not happen at this place now, or null: the switch and the story, nobody inside, the place not
-	 * known, then for everyone inside their quiet, their first hour, their health and their tool, then (if it counts) the
-	 * caps.
+	 * Why this answer may not happen at this place now, or null: the switch and the story (asleep under Traces included,
+	 * D-108), nobody inside (a creative or spectator player is never inside: D-116), the place not known, then for everyone
+	 * inside their quiet, their first hour, their health and their tool, then (if it counts) the caps.
 	 */
 	public @Nullable String refusal(MinecraftServer server, Remains.Place place, Rules rules) {
 		return refusal(env(server), server, place, rules, null);
@@ -329,7 +348,9 @@ public final class Answers {
 			if (env.quiet().test(player.getUUID()) && !first) {
 				return name + " is in their quiet";
 			}
-			if (env.playTicks().applyAsLong(player.getUUID()) < FIRST_HOUR_TICKS) {
+			// A creative player is inside only where a kind counts them (Visits.CREATIVE_INSIDE, R3-2: tried in a creative
+			// world); the first hour protects a player's first play, not a test.
+			if (!player.isCreative() && env.playTicks().applyAsLong(player.getUUID()) < FIRST_HOUR_TICKS) {
 				return name + " is in their first hour";
 			}
 			if (player.getHealth() < rules.minHealth()) {

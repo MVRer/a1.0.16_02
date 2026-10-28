@@ -29,13 +29,15 @@ import org.jspecify.annotations.Nullable;
  * before versions ({@code g} absent) is version 1, and a later jar builds each piece with its own version, so a place
  * half generated when a shape changed is finished as it was begun. Each chunk it touches calls {@link #postProcess} once, which fills the chunk's part through a
  * {@link Writer}; the first call offers its place to the {@link Recorder}. A piece of a kind this jar does not know
- * (a removed kind, or a dev-only one) loads and places nothing.
+ * (a removed kind, or a dev-only one) loads and places nothing. A marker's piece ({@code m}, {@link AxesPlacement})
+ * is one empty block of box and places nothing.
  */
 public final class Sc2Piece extends StructurePiece {
 	public static final StructurePieceType TYPE = (context, tag) -> new Sc2Piece(tag);
 
 	private final String kind;
 	private final Start start;
+	private final boolean marker;
 	private final Object shapeLock = new Object();
 	private volatile @Nullable Shape shape;
 	private final AtomicBoolean offered = new AtomicBoolean();
@@ -46,6 +48,29 @@ public final class Sc2Piece extends StructurePiece {
 		this.kind = kind;
 		this.start = Sc2Kind.resolved(kind, start);
 		this.shape = shape;
+		this.marker = false;
+	}
+
+	/** A start {@link Decided} kept: its box known, its shape made when its first chunk is filled. */
+	public Sc2Piece(String kind, Start start, BoundingBox box) {
+		super(TYPE, 0, box);
+		this.kind = kind;
+		this.start = Sc2Kind.resolved(kind, start);
+		this.shape = null;
+		this.marker = false;
+	}
+
+	private Sc2Piece(String kind, BlockPos at) {
+		super(TYPE, 0, new BoundingBox(at));
+		this.kind = kind;
+		this.start = new Start(at, Direction.NORTH, 0, 0L, Start.FIRST);
+		this.shape = null;
+		this.marker = true;
+	}
+
+	/** A marker's piece: one block of box at {@code at}, nothing placed, nothing recorded. */
+	public static Sc2Piece marker(String kind, BlockPos at) {
+		return new Sc2Piece(kind, at);
 	}
 
 	/** A saved piece. */
@@ -55,6 +80,7 @@ public final class Sc2Piece extends StructurePiece {
 		BlockPos origin = BlockPos.of(tag.getLongOr("o", 0L));
 		this.start = new Start(origin, Direction.from2DDataValue(tag.getIntOr("f", 2)), tag.getIntOr("v", 0), tag.getLongOr("s", 0L),
 				Math.max(Start.FIRST, tag.getIntOr("g", Start.FIRST)));
+		this.marker = tag.getBooleanOr("m", false);
 	}
 
 	@Override
@@ -65,6 +91,14 @@ public final class Sc2Piece extends StructurePiece {
 		tag.putLong("o", start.origin().asLong());
 		tag.putInt("f", start.facing().get2DDataValue());
 		tag.putInt("g", Sc2Kind.resolved(kind, start).versionOr(Start.FIRST));
+		if (marker) {
+			tag.putBoolean("m", true);
+		}
+	}
+
+	/** True for a marker's piece. */
+	public boolean marker() {
+		return marker;
 	}
 
 	public String kind() {
@@ -77,6 +111,9 @@ public final class Sc2Piece extends StructurePiece {
 
 	/** Its shape, made once over this terrain (null if its kind is unknown). Any thread. */
 	public @Nullable Shape shape(Terrain terrain) {
+		if (marker) {
+			return null;
+		}
 		Shape made = shape;
 		if (made == null) {
 			Sc2Kind def = Sc2Kind.get(kind);
@@ -98,7 +135,7 @@ public final class Sc2Piece extends StructurePiece {
 	public void postProcess(WorldGenLevel level, StructureManager structureManager, ChunkGenerator generator, RandomSource random, BoundingBox chunkBB,
 			ChunkPos chunkPos, BlockPos referencePos) {
 		Sc2Kind def = Sc2Kind.get(kind);
-		if (def == null) {
+		if (def == null || marker) {
 			return;
 		}
 		try {

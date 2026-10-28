@@ -28,6 +28,18 @@ public class SelfCreatedDebugTests {
 	/** The second wave's words (D-103, {@code VerifyScSpoilerTests.SC2} and {@code SC2_GENERIC}): none may be in them either. */
 	static final List<String> NAMES_SC2 = java.util.stream.Stream.concat(com.forzacode.a1016_02.core.VerifyScSpoilerTests.SC2.stream(),
 			com.forzacode.a1016_02.core.VerifyScSpoilerTests.SC2_GENERIC.stream()).toList();
+	/**
+	 * Round 3's generic words that a line of the first wave already uses here, watched by hand (as {@code SC2_DROPPED}):
+	 * {@code day} (04's "last day 0").
+	 */
+	static final List<String> SC3_WATCHED = List.of("day");
+	/**
+	 * Round 3's words (D-103 extended, R3-P: {@code VerifyScSpoilerTests.SC3} and {@code SC3_GENERIC}), held as whole words
+	 * ({@link #wordIn}): "fault" inside "default" or "hanging" inside "changing" is no word of theirs. {@link #SC3_WATCHED}
+	 * are left out.
+	 */
+	static final List<String> NAMES_SC3 = java.util.stream.Stream.concat(com.forzacode.a1016_02.core.VerifyScSpoilerTests.SC3.stream(),
+			com.forzacode.a1016_02.core.VerifyScSpoilerTests.SC3_GENERIC.stream()).filter(word -> !SC3_WATCHED.contains(word)).toList();
 	/** The last number of the layer. */
 	static final int LAST = 31;
 
@@ -144,6 +156,29 @@ public class SelfCreatedDebugTests {
 			for (String word : NAMES_SC2) {
 				helper.assertFalse(lower.contains(word), "'" + word + "' names a feature of the second wave: " + line);
 			}
+			for (String word : NAMES_SC3) {
+				helper.assertFalse(wordIn(lower, word), "'" + word + "' names a feature of round 3: " + line);
+			}
 		}
+	}
+
+	/**
+	 * True if {@code word} stands in {@code lower} as a word of its own, or with a plain ending (s, es, ed, ing): never
+	 * inside another word ("default", "changing", "today", "split").
+	 */
+	static boolean wordIn(String lower, String word) {
+		return java.util.regex.Pattern.compile("(?<![a-z])" + java.util.regex.Pattern.quote(word) + "(?:s|es|ed|ing)?(?![a-z])").matcher(lower).find();
+	}
+
+	/** R3-P: the whole-word rule of round 3's words: their own words trip it, the words they hide in do not. */
+	@GameTest
+	public void roundThreesWordsAreHeldAsWholeWords(GameTestHelper helper) {
+		for (String trips : List.of("a fault here", "faults", "the crumbs", "it is hanging", "asleep: 2", "lit", "(well)")) {
+			helper.assertTrue(NAMES_SC3.stream().anyMatch(word -> wordIn(trips, word)), "not held: " + trips);
+		}
+		for (String passes : List.of("default", "by default", "changing", "today", "split", "delight", "sweller", "campaign")) {
+			helper.assertFalse(NAMES_SC3.stream().anyMatch(word -> wordIn(passes, word)), "held: " + passes);
+		}
+		helper.succeed();
 	}
 }

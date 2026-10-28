@@ -185,6 +185,9 @@ final class PlaythroughLog {
 			case QUIET -> Fmt.f("%s, until day %d (tension was %.1f)", days((e.until() - e.dayTicks()) / DAY_TICKS),
 					Math.floorDiv(e.until(), DAY_TICKS), e.value());
 			case TELLING -> "someone named him (in " + e.stage() + ")";
+			case VISIT -> "a visit inside a place of 16 to 20";
+			case ANSWER -> Fmt.f("an answer of a place  tension %.1f", e.value());
+			case MOMENT -> "moment " + e.cardId() + " of the second wave (no card)";
 		};
 	}
 

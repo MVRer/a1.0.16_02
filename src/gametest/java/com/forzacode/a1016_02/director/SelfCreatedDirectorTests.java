@@ -447,7 +447,7 @@ public class SelfCreatedDirectorTests {
 		helper.assertTrue(cfg.version == Sc01Config.CURRENT && cfg.maxPlaces == 24 && cfg.radius == 32 && cfg.maxFactor == 1.8 && cfg.halfLifeDays == 4
 				&& cfg.weightAmbient == 0.15 && cfg.weightMinor == 0.3 && cfg.weightMajor == 0.5 && cfg.weightSighting == 0.2 && cfg.trustedFactor == 1.6
 				&& cfg.trustedMinHours == 1 && cfg.awayFactor == 0.9 && cfg.simDreadShare == 0.3 && cfg.simDreadFactor == 1.4 && cfg.simTrustedShare == 0.05
-				&& cfg.remainsFactor == 1.5 && cfg.simRemainsShare == 0.06, "the section's numbers");
+				&& cfg.remainsFactor == 1.5 && cfg.simRemainsShare == 0.10, "the section's numbers");
 		helper.assertTrue(versionOne(1.0).version == Sc01Config.CURRENT && versionOne(1.0).awayFactor == 0.9, "version 1's default was not lowered");
 		helper.assertTrue(versionOne(1.2).awayFactor == 1.2 && versionOne(0.5).awayFactor == 0.5, "a value someone set was not kept");
 		helper.succeed();

@@ -157,7 +157,7 @@ public final class LinePlan {
 
 		/** True if this segment's cells (its ribs' reach included) touch this chunk. */
 		public boolean touches(ChunkPos chunk) {
-			BoundingBox box = box().inflatedBy(LineShape.REACH, 0, LineShape.REACH);
+			BoundingBox box = box().inflatedBy(LineShape.LIT_REACH, 0, LineShape.LIT_REACH);
 			return box.minX() <= chunk.getMaxBlockX() && box.maxX() >= chunk.getMinBlockX() && box.minZ() <= chunk.getMaxBlockZ()
 					&& box.maxZ() >= chunk.getMinBlockZ();
 		}
@@ -312,5 +312,107 @@ public final class LinePlan {
 	/** True if an opening at {@code at} would stand within {@link #CLEAR} of the cut. */
 	private static boolean near(int at, int width, int gapStart) {
 		return width > 0 && at + 1 >= gapStart - CLEAR && at <= gapStart + width - 1 + CLEAR;
+	}
+
+	// --- clear of the places (FIX-R3-E) ---
+
+	/** The line keeps this far (blocks, across x and z) from every other place's box: its footprint never comes nearer. */
+	public static final int CLEARANCE = 32;
+	/**
+	 * How far a place's box may reach from its start's chunk (blocks): the places asked about are those whose start chunk
+	 * lies within this, the clearance and the lit foot of the segment (measured, {@code SelfCreated2LineTests}: at most 128
+	 * over 297 places of 12 worlds; every candidate asked is sited, once a world).
+	 */
+	public static final int PLACE_REACH = 192;
+
+	/** Where the decided places stand: the boxes of every place whose start chunk lies in a rectangle of chunks (inclusive). */
+	@FunctionalInterface
+	public interface Places {
+		/** No place anywhere (a test's own segments, a level with none). */
+		Places NONE = (c0x, c0z, c1x, c1z) -> List.of();
+
+		List<BoundingBox> in(int c0x, int c0z, int c1x, int c1z);
+	}
+
+	/** The segment's cells across x and z: its plane with its lit foot either side ({@link LineShape#LIT_REACH}), every height. */
+	public static BoundingBox footprint(Segment s) {
+		int reach = LineShape.LIT_REACH;
+		return s.box().inflatedBy(s.arm().alongX() ? 0 : reach, 0, s.arm().alongX() ? reach : 0);
+	}
+
+	/**
+	 * {@code s} kept clear of the places worldgen decides along it ({@link #clear(Segment, List, Sc19Config)}), asking
+	 * {@code places} for those whose start chunk lies within {@link #PLACE_REACH} and {@link #CLEARANCE} of its footprint.
+	 */
+	public static @Nullable Segment clear(Segment s, Places places, Sc19Config config) {
+		BoundingBox look = footprint(s).inflatedBy(CLEARANCE + PLACE_REACH, 0, CLEARANCE + PLACE_REACH);
+		return clear(s, places.in(look.minX() >> 4, look.minZ() >> 4, look.maxX() >> 4, look.maxZ() >> 4), config);
+	}
+
+	/** A stretch left this long or longer is taken before a longer one farther out: half the config's shortest segment. */
+	public static int preferred(Sc19Config config) {
+		return Math.max(MIN_LENGTH, config.lengthMin / 2);
+	}
+
+	/**
+	 * {@code s} (laid out with {@code config}) kept clear of these boxes (FIX-R3-E: the line ran through the real seed's
+	 * archive, its obsidian in 5 124 of the archive's cells): {@code s} itself if no box comes within {@link #CLEARANCE} of
+	 * its {@link #footprint}. Else it is laid out again over one stretch of its own between the places (ribs alone at its
+	 * ends, its cut in the middle half, its openings on the same rule), as it ends anywhere else: the nearest stretch to
+	 * the origin at least {@link #preferred} long (so it keeps its near end and ends short of the first place in its way
+	 * when that leaves enough of it), else the longest stretch of at least eight bays (the shortest segment), else none
+	 * (that half-axis has no line in this world). It never bends off its axis: a straight wall exactly on zero that stops
+	 * where a place stands.
+	 */
+	public static @Nullable Segment clear(Segment s, List<BoundingBox> boxes, Sc19Config config) {
+		boolean alongX = s.arm().alongX();
+		int across0 = s.plane() - LineShape.LIT_REACH;
+		int across1 = s.plane() + LineShape.LIT_REACH;
+		List<int[]> blocked = new ArrayList<>();
+		for (BoundingBox b : boxes) {
+			int a0 = (alongX ? b.minZ() : b.minX()) - CLEARANCE;
+			int a1 = (alongX ? b.maxZ() : b.maxX()) + CLEARANCE;
+			int b0 = (alongX ? b.minX() : b.minZ()) - CLEARANCE;
+			int b1 = (alongX ? b.maxX() : b.maxZ()) + CLEARANCE;
+			if (a1 >= across0 && a0 <= across1 && b1 >= s.t0() && b0 <= s.t1()) {
+				blocked.add(new int[] {b0, b1});
+			}
+		}
+		if (blocked.isEmpty()) {
+			return s;
+		}
+		blocked.sort((p, q) -> Integer.compare(p[0], q[0]));
+		List<int[]> free = new ArrayList<>();
+		int from = s.t0();
+		for (int[] b : blocked) {
+			if (b[0] > from) {
+				free.add(new int[] {from, b[0] - 1});
+			}
+			from = Math.max(from, b[1] + 1);
+		}
+		if (from <= s.t1()) {
+			free.add(new int[] {from, s.t1()});
+		}
+		if (s.arm().sign() < 0) {
+			java.util.Collections.reverse(free);
+		}
+		// Nearest the origin first; on the grid, its ends on ribs inside the stretch.
+		int prefer = preferred(config);
+		int[] longest = null;
+		for (int[] f : free) {
+			int t0 = Math.ceilDiv(f[0], BAY) * BAY;
+			int t1 = Math.floorDiv(f[1], BAY) * BAY;
+			if (t1 - t0 < MIN_LENGTH - BAY) {
+				continue;
+			}
+			if (t1 - t0 + 1 >= prefer) {
+				return cut(s.arm(), s.plane(), t0, t1 - t0 + 1, s.seed(), config.holeEvery, config.gapWidth, s.bottom(), s.top());
+			}
+			if (longest == null || t1 - t0 > longest[1] - longest[0]) {
+				longest = new int[] {t0, t1};
+			}
+		}
+		return longest == null ? null
+				: cut(s.arm(), s.plane(), longest[0], longest[1] - longest[0] + 1, s.seed(), config.holeEvery, config.gapWidth, s.bottom(), s.top());
 	}
 }

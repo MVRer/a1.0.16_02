@@ -65,6 +65,23 @@ public interface Director {
 		return inQuiet(server);
 	}
 
+	/**
+	 * True if one of the second wave's moments that is no card (docs/SELF_CREATED_2_R3.md, D-119: the crumbs' 32b and
+	 * 32c) may come to this player now: past their own first hour of play and outside the wave's gap ({@code sc01 t}).
+	 * Such a rule waits while it is false. Default: true.
+	 */
+	default boolean waveMomentMay(MinecraftServer server, UUID player) {
+		return true;
+	}
+
+	/**
+	 * One of the second wave's moments that is no card came to this player (32b, 32c; and the director's own count of a
+	 * visit's answers below a pyramid's pit): it starts their wave gap as the wave's cards do. Server thread. Default:
+	 * nothing.
+	 */
+	default void waveMoment(MinecraftServer server, UUID player) {
+	}
+
 	/** Lines for {@code /a1016 state}. */
 	List<String> debugLines(MinecraftServer server);
 
