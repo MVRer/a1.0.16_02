@@ -420,6 +420,42 @@ public class SelfCreated3KitTests {
 	 * line's marker in each planned segment's middle chunk and nowhere else, and reads the kit's kept decisions (a made
 	 * one is there to load, a refused one is not) for the rays (the mixin's placement) and the random spreads.
 	 */
+	/**
+	 * R3-V: the marker's placement is asked by every chunk worldgen makes, and asking it for the marks lays the line out
+	 * (every place along the four half-axes sited): a new world's spawn chunks paid that while its loading screen waited.
+	 * Only a chunk on an axis and 32 or more chunks out may hold a mark, and every segment's chunks (its ends and its middle, as
+	 * {@code LineMarker}) of many worlds' planned lines is such a chunk; the chunks round the origin and off the axes are not.
+	 */
+	@GameTest
+	public void theLinesMarkerIsAskedOnlyOnTheAxesPastTheirNearEnds(GameTestHelper helper) {
+		List<String> wrong = new ArrayList<>();
+		com.forzacode.a1016_02.world.sc2.s19.Sc19Config config = new com.forzacode.a1016_02.world.sc2.s19.Sc19Config();
+		java.util.Random seeds = new java.util.Random(0x19A5L);
+		for (int w = 0; w < 64; w++) {
+			for (com.forzacode.a1016_02.world.sc2.s19.LinePlan.Segment s : com.forzacode.a1016_02.world.sc2.s19.LinePlan.of(seeds.nextLong(), seeds.nextLong(),
+					config, -64, 320)) {
+				for (int t : new int[] {s.t0(), (s.t0() + s.t1()) / 2, s.t1()}) {
+					ChunkPos mark = ChunkPos.containing(new BlockPos(s.x(t), 0, s.z(t)));
+					if (!com.forzacode.a1016_02.world.sc2.kit.AxesPlacement.onAnAxis(mark.x(), mark.z())) {
+						wrong.add("a segment's chunk " + mark + " is not asked");
+					}
+				}
+			}
+		}
+		for (int x = -31; x <= 31; x++) {
+			for (int z = -31; z <= 31; z++) {
+				if (com.forzacode.a1016_02.world.sc2.kit.AxesPlacement.onAnAxis(x, z)) {
+					wrong.add("asked within 32 of the origin: " + x + ", " + z);
+				}
+			}
+		}
+		if (com.forzacode.a1016_02.world.sc2.kit.AxesPlacement.onAnAxis(40, 3) || com.forzacode.a1016_02.world.sc2.kit.AxesPlacement.onAnAxis(-3, -60)) {
+			wrong.add("asked off the axes");
+		}
+		helper.assertTrue(wrong.isEmpty(), wrong.size() + ": " + wrong.stream().limit(8).toList());
+		helper.succeed();
+	}
+
 	@GameTest(maxTicks = 1200)
 	public void locatesStructureCheckSeesTheLinesMarkersAndTheKeptDecisions(GameTestHelper helper) {
 		ServerLevel level = helper.getLevel();

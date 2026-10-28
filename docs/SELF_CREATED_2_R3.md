@@ -1896,6 +1896,50 @@ the self-created tip `0ac6f1c` with round 2's dry-run inputs (its numbers equal 
   not a proto-chunk's own writes (heightmaps, light sources). T2's 19 "512 to 768 out" now holds only where no place
   stands at the near end (17 of 48 segments begin farther out).
 
+#### Verified (R3-V, second pass) and fixed
+On `self-created` at `1eaae7f` (1.6.0-self-created.1), branch `verify/r3b`. Dev runs: the real world
+(`-Da1016_02.sc2real`, SC2-H's seed, every kind, then the crumbs alone with the sites `/locate` finds), the find run
+(`-Da1016_02.sc3find=20`), a new world's first 90 s (`world.SelfCreated3SpawnLoadClientTest`, `-Da1016_02.sc3spawn`,
+default preset, hardcore, Mariano's render distance 18 and simulation 10, the layer on and off on one seed) and
+`runDevGallery -Pgallery.iris` over his install.
+- **Fixed: the answers wait for calm** (`kit.Answers.refusal`): anyone inside who fought (hurt or hurting) within 30 s
+  holds every answer of the places (`ScGates.combatRefusal`, the layer's common gate), as 33's own answers already did:
+  16b's closing (16d's waterline way in too), 16c and 16e, 17b to 17f, 18b, 18c and 20b took a way, a light or gave a
+  glimpse mid-fight. Test: `SelfCreated2KitTests.answersRefuseQuietHealthToolFirstHourAndTheirCaps` (a player hurt
+  through the core's own damage hook).
+- **Fixed: crumbs on flowers** (`CrumbFooting.natural`): the land's flowers and ground cover (`#flowers`,
+  `#replaceable_by_trees`: pink petals, wildflowers, leaf litter, bushes, dry grass, small and tall flowers) are plants a
+  crumb takes the place of; vanilla lets no block replace them, so `canBeReplaced` missed them and the real cherry grove's
+  lines lost crumbs to them. No new line version: a line's layout is unchanged, only spots it could not build before now
+  build. Test: `SelfCreated3CrumbTests.aCrumbTakesThePlaceOfFlowersAsOfGrass`.
+- **Fixed: a new world's loading screen** (`kit.AxesPlacement.onAnAxis`): every chunk asks the line marker's placement,
+  and its first answer laid the line out (every place along the four half-axes sited, FIX-R3-E's "Open"): in a new world
+  the spawn chunks paid it, "Preparing spawn area" stood at 16 % for 13 to 17 s (layer off: 2 s). Now only a chunk on an
+  axis and 32 or more chunks out asks for the marks. Creation 16.0 s → 3.7 s (off 2.7 s). Test:
+  `SelfCreated3KitTests.theLinesMarkerIsAskedOnlyOnTheAxesPastTheirNearEnds`.
+- **Left (LOW): the first minute's horizon.** At render distance 18 the chunks past the crumbs' spawn ring (256) ask
+  their regions' lines, which site every candidate within about 900 (854 sitings in the first 90 s, on worldgen's
+  threads): every chunk in view is drawn 55 s after the join (layer off 8 s). The server never stalls (worst tick 29 ms,
+  none over 50) and the client neither (worst frame gap 65 ms); once a world (the decisions are kept).
+- **Left (LOW): the crumbs' sight.** The real run's next-crumb-in-view by day, both runs pooled (lines of 16, 16d, 17,
+  18 and 20): near 73 %, mid 64 % (review 70), far 42 % (review 50); the full run alone 71 / 69 / 49 %. The sight curve
+  is flat for the mid tier from 20 to 24 (the land hides it, not the spacing); the far tier would reach 50 % about 24
+  apart, a third more far crumbs, against its deniability (the orchestrator's call; not changed). Live T5 15 of 18 lines
+  (gaps: two crumbs in a structure's box the noise did not foresee, twice, and one near pair on the pyramid's reshaped
+  ground); over the noise 100 % (19 738 lines, 14.5 crumbs a line). T2 17 within 640 is 70 % (85), as FIX-R3-B and E.
+- Passed: `/locate` finds every kind from the spawn (s16 439, s16d 385, s17 738, s18 595, s19 880 a mark, s20 962); the
+  real sites' shots (nothing floating or exposed; 17 shows only its block; the signs read at 64 and 128 by day and
+  night, 16d's at 128 by night in the haze as before); a 1.5.0 config (`review/a1016_02_v15_sc1.json`, the
+  1.5.0-self-created.1 jar's own defaults) upgrades with every changed default stepped and hand edits kept
+  (`core.VerifySc3UpgradeTests`); the generated keys, `/a1016 sc` and its index, and the logs name nothing. Under Iris
+  1.11.7, Sodium 0.9.2 and Complementary Reimagined r5.9.3 (his install's, copied by `-Pgallery.iris`; render distance
+  18): `00f`, `16`, `16d`, `17`, `18`, `19`, `20`, `32_17`, `33`, 293 files, no `(Iris)` ERROR, no `override list`, no
+  mark of the run's own at ERROR; the faults read at night as warm block light (the pack's), the lights and torches
+  without artifacts; 19's lit foot is faint behind trees there, as in vanilla on real land.
+- **Builds:** two green in a row, 1 225 game tests each. One run before them failed
+  `builtLiveItLetsItsLightOutAndMatchesWorldgen` once (the dark copy's light not worked out within the test's 60 s; the
+  test FIX-R3-C made wait for the engine), unrelated to these fixes.
+
 ## Waves
 
 | wave | tasks (at most 4 at once) | starts when |

@@ -89,7 +89,7 @@ public final class AxesPlacement implements StructurePlacement, KitPlacement {
 	@Override
 	public boolean isStructureChunk(ChunkGeneratorStructureState state, int sourceX, int sourceZ) {
 		Snapshot snapshot = Snapshot.current();
-		if (snapshot == null || snapshot.seed() != state.getLevelSeed()) {
+		if (snapshot == null || snapshot.seed() != state.getLevelSeed() || !onAnAxis(sourceX, sourceZ)) {
 			return false;
 		}
 		for (ChunkPos chunk : marked(kind, snapshot)) {
@@ -98,6 +98,20 @@ public final class AxesPlacement implements StructurePlacement, KitPlacement {
 			}
 		}
 		return false;
+	}
+
+	/** The marks' near end: no segment's middle lies within this many chunks of the origin (its arm begins 512 out). */
+	public static final int NEAREST_MARK_CHUNKS = 32;
+
+	/**
+	 * R3-V: true if a mark may stand in this chunk: on an axis (the line's plane is 0: chunk column or row 0, or -1 for a
+	 * plane read from a negative block) and {@value #NEAREST_MARK_CHUNKS} chunks or more from the origin. Every chunk
+	 * worldgen makes asks this placement; asking the marks lays the line out, which sites every place along the four
+	 * half-axes (FIX-R3-E), so without this a new world's spawn chunks paid it while the loading screen waited.
+	 */
+	public static boolean onAnAxis(int chunkX, int chunkZ) {
+		boolean onAnArm = chunkX >= -1 && chunkX <= 0 || chunkZ >= -1 && chunkZ <= 0;
+		return onAnArm && Math.max(Math.abs(chunkX), Math.abs(chunkZ)) >= NEAREST_MARK_CHUNKS;
 	}
 
 	@Override

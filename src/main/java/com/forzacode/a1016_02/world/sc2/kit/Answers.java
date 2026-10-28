@@ -316,7 +316,8 @@ public final class Answers {
 	/**
 	 * Why this answer may not happen at this place now, or null: the switch and the story (asleep under Traces included,
 	 * D-108), nobody inside (a creative or spectator player is never inside: D-116), the place not known, then for everyone
-	 * inside their quiet, their first hour, their health and their tool, then (if it counts) the caps.
+	 * inside their quiet, their first hour, their health, their combat within 30 s and their tool, then (if it counts) the
+	 * caps.
 	 */
 	public @Nullable String refusal(MinecraftServer server, Remains.Place place, Rules rules) {
 		return refusal(env(server), server, place, rules, null);
@@ -355,6 +356,12 @@ public final class Answers {
 			}
 			if (player.getHealth() < rules.minHealth()) {
 				return name + " has under " + rules.minHealth() + " health";
+			}
+			// R3-V: never within 30 s of the combat of anyone inside (the layer's common gate, as 33's answers hold it):
+			// a way shut, a light taken or a glimpse never comes while someone fights.
+			String fight = ScGates.combatRefusal(Services.watch().ticksSinceCombat(player));
+			if (fight != null) {
+				return name + " " + fight;
 			}
 			if (rules.tool() != null && !carries(player, rules.tool())) {
 				return name + " carries no tool for it";

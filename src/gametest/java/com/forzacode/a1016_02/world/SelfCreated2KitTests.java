@@ -934,7 +934,7 @@ public class SelfCreated2KitTests {
 	}
 
 	/**
-	 * Refused for anyone inside in their quiet, under the health floor, without the tool or in their first hour; for
+	 * Refused for anyone inside in their quiet, under the health floor, in a fight within 30 s, without the tool or in their first hour; for
 	 * nobody inside; then the caps: a player once a day, a place once a day, a place twice ever. A later part counts
 	 * nothing.
 	 */
@@ -960,6 +960,13 @@ public class SelfCreated2KitTests {
 			ben.setHealth(8.0F);
 			helper.assertTrue(refused(rig, level, rules, "health"), "ben under the health floor");
 			ben.setHealth(20.0F);
+			// R3-V: anyone inside who fought within 30 s (hurt, through the core's own damage hook).
+			TestPlayer dee = armed(level, "dee");
+			rig.inside().add(dee);
+			net.fabricmc.fabric.api.entity.event.v1.ServerLivingEntityEvents.AFTER_DAMAGE.invoker().afterDamage(dee, level.damageSources().generic(), 1.0F, 1.0F,
+					false);
+			helper.assertTrue(refused(rig, level, rules, "combat"), "dee fought a moment ago");
+			rig.inside().remove(dee);
 			ben.getInventory().clearContent();
 			helper.assertTrue(refused(rig, level, rules, "tool"), "ben without a pickaxe");
 			ben.getInventory().add(new ItemStack(Items.WOODEN_PICKAXE));

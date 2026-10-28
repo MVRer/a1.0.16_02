@@ -55,6 +55,7 @@
 			"com.forzacode.a1016_02.core.VerifyScSwitchTests",
 			"com.forzacode.a1016_02.core.VerifyScCostTests",
 			"com.forzacode.a1016_02.core.VerifyScSpoilerTests",
+			"com.forzacode.a1016_02.core.VerifySc3UpgradeTests",
 			"com.forzacode.a1016_02.debug.gallery.SelfCreated2GalleryTests",
 			"com.forzacode.a1016_02.world.SelfCreated2PyramidTests",
 			"com.forzacode.a1016_02.world.SelfCreated2ArchiveTests",
@@ -84,7 +85,8 @@
 		"fabric-client-gametest": [
 			"com.forzacode.a1016_02.debug.gallery.GalleryClientTest",
 			"com.forzacode.a1016_02.world.SelfCreated2RealWorldClientTest",
-			"com.forzacode.a1016_02.world.sc2.s17.ArchiveBooksClientTest"
+			"com.forzacode.a1016_02.world.sc2.s17.ArchiveBooksClientTest",
+			"com.forzacode.a1016_02.world.SelfCreated3SpawnLoadClientTest"
 		]
 	},
 	"depends": {

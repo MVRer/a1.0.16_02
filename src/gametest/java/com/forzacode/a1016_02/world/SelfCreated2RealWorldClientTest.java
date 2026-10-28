@@ -149,7 +149,15 @@ public class SelfCreated2RealWorldClientTest implements FabricClientGameTest {
 			// Round 3 (R3-C): each kind's first line of crumbs, built by real worldgen (FIX-R3-C: "s32" in the filter runs them
 			// alone, from every kind's site, none of the sites built or shot but the kinds it names).
 			if (System.getProperty(ONLY, "").isEmpty() || shoots("s32")) {
-				SelfCreated3CrumbRealShots.shoot(driver, all);
+				// R3-V: and the sites /locate finds, for the kinds whose picked sites got no start (17 and 18 on this seed).
+				List<Site> crumbSites = new ArrayList<>(all);
+				for (String id : List.of("s17", "s18", "s20")) {
+					Site located = driver.server(server -> located(server.overworld(), id));
+					if (located != null) {
+						crumbSites.add(located);
+					}
+				}
+				SelfCreated3CrumbRealShots.shoot(driver, crumbSites);
 			}
 		}
 	}

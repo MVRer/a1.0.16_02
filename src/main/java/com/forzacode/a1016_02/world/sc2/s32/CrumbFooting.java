@@ -257,7 +257,10 @@ public final class CrumbFooting {
 	public static boolean natural(BlockState s) {
 		if (s.isAir() || s.is(BlockTags.LEAVES) || s.is(Blocks.SNOW) || s.is(Blocks.WATER) || s.is(Blocks.KELP) || s.is(Blocks.KELP_PLANT)
 				|| s.is(Blocks.SEAGRASS) || s.is(Blocks.TALL_SEAGRASS) || s.is(Blocks.SEA_PICKLE) || s.is(Blocks.SUGAR_CANE) || s.is(Blocks.MOSS_CARPET)
-				|| s.is(Blocks.BAMBOO) || s.is(Blocks.CACTUS) || s.is(Blocks.COCOA)) {
+				|| s.is(Blocks.BAMBOO) || s.is(Blocks.CACTUS) || s.is(Blocks.COCOA)
+				// R3-V: the land's flowers and ground cover are plants too (vanilla does not let a block replace them, so
+				// canBeReplaced missed them: in a cherry grove or a meadow a crumb stepped aside or was left out).
+				|| s.is(BlockTags.FLOWERS) || s.is(BlockTags.REPLACEABLE_BY_TREES)) {
 			return true;
 		}
 		if (s.is(BlockTags.LOGS) || s.hasBlockEntity() || s.getFluidState().is(Fluids.LAVA) || s.getFluidState().is(Fluids.FLOWING_LAVA)) {

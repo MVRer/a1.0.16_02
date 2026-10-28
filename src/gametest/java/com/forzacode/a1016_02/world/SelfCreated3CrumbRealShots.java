@@ -41,9 +41,12 @@ final class SelfCreated3CrumbRealShots {
 	static void shoot(ClientTestDriver driver, List<SelfCreated2RealWorldClientTest.Site> sites) {
 		Set<String> done = new HashSet<>();
 		for (SelfCreated2RealWorldClientTest.Site site : sites) {
-			if (site.structure() == null || !done.add(site.kind())) {
+			// A picked site may get no start (the spacing rule): the kind's next site, then (R3-V).
+			Decided.Decision made = Decided.get(site.kind(), site.chunk());
+			if (site.structure() == null || done.contains(site.kind()) || made == null || !made.made()) {
 				continue;
 			}
+			done.add(site.kind());
 			List<Crumb> crumbs = driver.server(server -> build(server.overworld(), site));
 			driver.waitTicks(4);
 			List<Crumb> kept = driver.server(server -> {

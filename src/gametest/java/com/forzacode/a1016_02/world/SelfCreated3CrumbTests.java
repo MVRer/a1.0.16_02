@@ -890,6 +890,28 @@ public class SelfCreated3CrumbTests {
 		helper.succeed();
 	}
 
+	/**
+	 * R3-V: a crumb takes the place of the land's flowers and ground cover as of its grass (the real run's lines in a
+	 * cherry grove lost crumbs to pink petals and wildflowers), never of a log, a made block or a torch.
+	 */
+	@GameTest
+	public void aCrumbTakesThePlaceOfFlowersAsOfGrass(GameTestHelper helper) {
+		List<String> wrong = new ArrayList<>();
+		for (net.minecraft.world.level.block.Block plant : List.of(Blocks.SHORT_GRASS, Blocks.POPPY, Blocks.DANDELION, Blocks.PINK_PETALS, Blocks.WILDFLOWERS,
+				Blocks.LEAF_LITTER, Blocks.BUSH, Blocks.FIREFLY_BUSH, Blocks.SHORT_DRY_GRASS, Blocks.SUNFLOWER, Blocks.CACTUS_FLOWER)) {
+			if (!CrumbFooting.natural(plant.defaultBlockState())) {
+				wrong.add(plant + " is not the land's");
+			}
+		}
+		for (net.minecraft.world.level.block.Block made : List.of(Blocks.OAK_LOG, Blocks.COBBLESTONE, Blocks.TORCH, Blocks.CHEST, Blocks.OAK_PLANKS, Blocks.LAVA)) {
+			if (CrumbFooting.natural(made.defaultBlockState())) {
+				wrong.add(made + " taken as the land's");
+			}
+		}
+		helper.assertTrue(wrong.isEmpty(), String.join("; ", wrong));
+		helper.succeed();
+	}
+
 	/** The feature refuses without a snapshot, switched off, before the spawn is known, without a config. */
 	@GameTest
 	public void theFeatureBuildsNothingWhenRefused(GameTestHelper helper) {
